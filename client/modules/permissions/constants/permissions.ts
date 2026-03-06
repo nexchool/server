@@ -75,7 +75,11 @@ export const PROFILE_UPDATE_SELF = 'profile.update.self';
 export const PROFILE_UPDATE_ALL = 'profile.update.all';
 export const PROFILE_MANAGE = 'profile.manage';
 
-// Finance Management
+// Finance Management (RBAC uses finance.read, finance.manage)
+export const FINANCE_READ = 'finance.read';
+export const FINANCE_MANAGE = 'finance.manage';
+
+// Finance Management (legacy fee permissions)
 export const FEE_CREATE = 'fee.create';
 export const FEE_READ_SELF = 'fee.read.self';
 export const FEE_READ_CHILD = 'fee.read.child';

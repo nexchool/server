@@ -6,31 +6,19 @@ from backend.core.database import db
 from backend.core.tenant import get_tenant_id
 from backend.modules.classes.models import Class
 from backend.modules.students.models import Student
-from backend.modules.teachers.models import Teacher
 from .models import Attendance
 
 
 def get_teacher_class_ids(user_id: str) -> List[str]:
     """
-    Get class IDs assigned to a teacher (via ClassTeacher or Class.teacher_id).
+    Get class IDs for attendance marking.
+
+    Only the class teacher (Class.teacher_id) can take attendance for a class.
+    Users with attendance.manage permission bypass this and can mark any class (admin override).
     """
-    from backend.modules.classes.models import ClassTeacher
-    
-    teacher = Teacher.query.filter_by(user_id=user_id).first()
-    if not teacher:
-        return []
-
-    # Get classes from ClassTeacher junction
-    class_teacher_records = ClassTeacher.query.filter_by(teacher_id=teacher.id).all()
-    class_ids = [ct.class_id for ct in class_teacher_records]
-
-    # Also include classes where this teacher is the class teacher (via Class.teacher_id -> user_id)
+    # Only classes where this user is the class teacher (Class.teacher_id = user_id)
     direct_classes = Class.query.filter_by(teacher_id=user_id).all()
-    for c in direct_classes:
-        if c.id not in class_ids:
-            class_ids.append(c.id)
-
-    return class_ids
+    return [c.id for c in direct_classes]
 
 
 def mark_attendance(

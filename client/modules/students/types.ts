@@ -7,6 +7,7 @@ export interface Student {
   profile_picture?: string;
   admission_number: string;
   academic_year?: string;
+  academic_year_id?: string;
   roll_number?: number;
   class_id?: string;
   class_name?: string;
@@ -34,10 +35,13 @@ export interface Class {
 export interface CreateStudentDTO {
   // Required fields
   name: string;
-  academic_year: string;
   guardian_name: string;
   guardian_relationship: string;
   guardian_phone: string;
+  
+  // Academic: either class_id (derives academic year) or academic_year_id
+  class_id?: string;
+  academic_year_id?: string;
   
   // Optional fields
   admission_number?: string; // Auto-generated if not provided
@@ -45,7 +49,6 @@ export interface CreateStudentDTO {
   phone?: string;
   date_of_birth?: string;
   gender?: string;
-  class_id?: string;
   roll_number?: number;
   address?: string;
   guardian_email?: string;

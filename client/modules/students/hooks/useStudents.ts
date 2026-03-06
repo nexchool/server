@@ -8,7 +8,7 @@ export const useStudents = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchStudents = useCallback(async (params?: { class_id?: string; search?: string }) => {
+  const fetchStudents = useCallback(async (params?: { class_id?: string; academic_year_id?: string; search?: string }) => {
     setLoading(true);
     setError(null);
     try {

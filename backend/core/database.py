@@ -71,6 +71,7 @@ def init_db(app):
         from backend.modules.academics.academic_year.models import AcademicYear
         from backend.modules.finance.models import (
             FeeStructure,
+            FeeStructureClass,
             FeeComponent,
             StudentFee,
             StudentFeeItem,

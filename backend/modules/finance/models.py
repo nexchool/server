@@ -17,6 +17,41 @@ from backend.core.models import TenantBaseModel
 from .enums import StudentFeeStatus, PaymentStatus, PaymentMethod
 
 
+class FeeStructureClass(TenantBaseModel):
+    """Junction: fee structure <-> class (many-to-many). One structure can apply to multiple classes."""
+    __tablename__ = "fee_structure_classes"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "academic_year_id", "class_id", "tenant_id",
+            name="uq_fee_structure_classes_year_class_tenant",
+        ),
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fee_structure_id = db.Column(
+        db.String(36),
+        db.ForeignKey("fee_structures.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    class_id = db.Column(
+        db.String(36),
+        db.ForeignKey("classes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    fee_structure = db.relationship("FeeStructure", backref=db.backref("structure_classes", lazy=True))
+    class_ref = db.relationship("Class", backref=db.backref("fee_structure_classes", lazy=True))
+
+
 class FeeStructure(TenantBaseModel):
     """
     Fee Structure Model.
@@ -35,12 +70,6 @@ class FeeStructure(TenantBaseModel):
         index=True,
     )
     name = db.Column(db.String(100), nullable=False, index=True)
-    class_id = db.Column(
-        db.String(36),
-        db.ForeignKey("classes.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     due_date = db.Column(db.Date, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -50,7 +79,6 @@ class FeeStructure(TenantBaseModel):
         backref=db.backref("fee_structure", lazy=True),
         order_by="FeeComponent.sort_order, FeeComponent.created_at",
     )
-    class_ref = db.relationship("Class", backref=db.backref("fee_structures", lazy=True))
     student_fees = db.relationship("StudentFee", backref=db.backref("fee_structure", lazy=True))
     academic_year = db.relationship(
         "AcademicYear",
@@ -58,13 +86,27 @@ class FeeStructure(TenantBaseModel):
         lazy=True,
     )
 
+    @property
+    def class_ids(self):
+        return [sc.class_id for sc in self.structure_classes]
+
+    @property
+    def class_names(self):
+        return [
+            f"{sc.class_ref.name}-{sc.class_ref.section}" if sc.class_ref else None
+            for sc in self.structure_classes
+        ]
+
     def to_dict(self):
+        class_ids = self.class_ids
+        class_names = self.class_names
         return {
             "id": self.id,
             "academic_year_id": self.academic_year_id,
             "name": self.name,
-            "class_id": self.class_id,
-            "class_name": f"{self.class_ref.name}-{self.class_ref.section}" if self.class_ref else None,
+            "class_id": class_ids[0] if len(class_ids) == 1 else None,
+            "class_ids": class_ids,
+            "class_name": ", ".join(n for n in class_names if n) if class_names else None,
             "due_date": self.due_date.isoformat() if self.due_date else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

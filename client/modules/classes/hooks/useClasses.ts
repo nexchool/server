@@ -12,7 +12,7 @@ export const useClasses = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchClasses = useCallback(async (params?: { academic_year?: string }) => {
+  const fetchClasses = useCallback(async (params?: { academic_year_id?: string }) => {
     setLoading(true);
     setError(null);
     try {

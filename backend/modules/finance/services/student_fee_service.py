@@ -4,6 +4,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
+from sqlalchemy import case
+
 from backend.core.database import db
 from backend.core.tenant import get_tenant_id
 from backend.modules.finance.models import (
@@ -11,9 +13,11 @@ from backend.modules.finance.models import (
     FeeComponent,
     StudentFee,
     StudentFeeItem,
+    FeeStructureClass,
+    Payment,
 )
+from backend.modules.finance.enums import PaymentStatus, StudentFeeStatus
 from backend.modules.students.models import Student
-from backend.modules.finance.enums import StudentFeeStatus
 from backend.modules.audit.services import log_finance_action
 
 
@@ -21,20 +25,60 @@ def list_student_fees(
     student_id: Optional[str] = None,
     fee_structure_id: Optional[str] = None,
     status: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> List[Dict]:
     """List student fees with optional filters."""
+    from backend.modules.auth.models import User
+
     tenant_id = get_tenant_id()
     if not tenant_id:
         return []
 
-    query = StudentFee.query.filter_by(tenant_id=tenant_id)
+    query = StudentFee.query.filter_by(tenant_id=tenant_id).join(
+        Student, StudentFee.student_id == Student.id
+    )
     if student_id:
-        query = query.filter_by(student_id=student_id)
+        query = query.filter(StudentFee.student_id == student_id)
     if fee_structure_id:
-        query = query.filter_by(fee_structure_id=fee_structure_id)
+        query = query.filter(StudentFee.fee_structure_id == fee_structure_id)
     if status:
-        query = query.filter_by(status=status)
-    query = query.order_by(StudentFee.due_date.desc())
+        # Allow records to fall into multiple logical status "buckets".
+        # Example: a partially paid fee that is now overdue should appear in both
+        # the "partial" and "overdue" views.
+        if status == StudentFeeStatus.partial.value:
+            query = query.filter(
+                db.or_(
+                    StudentFee.status == StudentFeeStatus.partial.value,
+                    db.and_(
+                        StudentFee.status == StudentFeeStatus.overdue.value,
+                        StudentFee.paid_amount > 0,
+                    ),
+                )
+            )
+        else:
+            query = query.filter(StudentFee.status == status)
+    if academic_year_id:
+        query = query.join(
+            FeeStructure, StudentFee.fee_structure_id == FeeStructure.id
+        ).filter(
+            FeeStructure.academic_year_id == academic_year_id,
+            FeeStructure.tenant_id == tenant_id,
+        )
+    if class_id:
+        query = query.filter(Student.class_id == class_id)
+    if search and search.strip():
+        query = query.join(User, Student.user_id == User.id).filter(
+            db.or_(
+                User.name.ilike(f"%{search.strip()}%"),
+                Student.admission_number.ilike(f"%{search.strip()}%"),
+            )
+        )
+
+    query = query.order_by(
+        case((StudentFee.status == "overdue", 0), else_=1)
+    ).order_by(StudentFee.due_date.asc())
 
     fees = query.all()
     result = []
@@ -44,6 +88,8 @@ def list_student_fees(
         d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
         d["admission_number"] = sf.student.admission_number if sf.student else None
         d["fee_structure_name"] = sf.fee_structure.name if sf.fee_structure else None
+        d["class_id"] = sf.student.class_id if sf.student else None
+        d["academic_year_id"] = sf.fee_structure.academic_year_id if sf.fee_structure else None
         result.append(d)
     return result
 
@@ -91,11 +137,29 @@ def assign_student_fees_for_structure(
             Student.tenant_id == tenant_id,
         ).all()
     else:
-        if fs.class_id:
-            students = Student.query.filter_by(
-                class_id=fs.class_id,
+        # Query FeeStructureClass directly to ensure we have committed data (e.g. after update)
+        class_ids = [
+            fsc.class_id
+            for fsc in FeeStructureClass.query.filter_by(
+                fee_structure_id=fee_structure_id,
                 tenant_id=tenant_id,
             ).all()
+        ]
+        if class_ids:
+            # Include students in structure's classes; match academic year when set
+            query = Student.query.filter(
+                Student.class_id.in_(class_ids),
+                Student.tenant_id == tenant_id,
+            )
+            if fs.academic_year_id:
+                from sqlalchemy import or_
+                query = query.filter(
+                    or_(
+                        Student.academic_year_id == fs.academic_year_id,
+                        Student.academic_year_id.is_(None),
+                    )
+                )
+            students = query.all()
         else:
             students = Student.query.filter_by(tenant_id=tenant_id).all()
 
@@ -151,3 +215,181 @@ def assign_student_fees_for_structure(
     except Exception as e:
         db.session.rollback()
         return {"success": False, "error": str(e)}
+
+
+def unassign_fees_for_removed_classes(
+    fee_structure_id: str,
+    class_ids: List[str],
+    user_id: Optional[str] = None,
+) -> Dict:
+    """
+    Remove StudentFee assignments for students in the given classes.
+    Only removes when there are no successful payments for that fee.
+    Call this when a fee structure is updated to exclude certain classes.
+    """
+    if not class_ids:
+        return {"success": True, "removed_count": 0}
+
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context is required"}
+
+    students_in_classes = Student.query.filter(
+        Student.class_id.in_(class_ids),
+        Student.tenant_id == tenant_id,
+    ).with_entities(Student.id).all()
+    student_ids = [s[0] for s in students_in_classes]
+    if not student_ids:
+        return {"success": True, "removed_count": 0}
+
+    student_fees = StudentFee.query.filter(
+        StudentFee.fee_structure_id == fee_structure_id,
+        StudentFee.student_id.in_(student_ids),
+        StudentFee.tenant_id == tenant_id,
+    ).all()
+
+    removed = 0
+    for sf in student_fees:
+        has_payments = (
+            Payment.query.filter_by(
+                tenant_id=tenant_id,
+                student_fee_id=sf.id,
+                status=PaymentStatus.success.value,
+            ).count()
+            > 0
+        )
+        if has_payments:
+            continue
+        Payment.query.filter_by(
+            tenant_id=tenant_id, student_fee_id=sf.id
+        ).delete(synchronize_session=False)
+        StudentFeeItem.query.filter_by(
+            tenant_id=tenant_id, student_fee_id=sf.id
+        ).delete(synchronize_session=False)
+        StudentFee.query.filter_by(
+            tenant_id=tenant_id, id=sf.id
+        ).delete(synchronize_session=False)
+        removed += 1
+
+    try:
+        db.session.commit()
+        if removed > 0:
+            log_finance_action(
+                action="finance.student_fee.bulk_removed",
+                tenant_id=tenant_id,
+                user_id=user_id,
+                extra_data={
+                    "fee_structure_id": fee_structure_id,
+                    "removed_count": removed,
+                    "class_ids": class_ids,
+                },
+            )
+        return {"success": True, "removed_count": removed}
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": str(e), "removed_count": 0}
+
+
+def remove_student_fee_for_structure(
+    fee_structure_id: str,
+    student_id: str,
+) -> Dict:
+    """
+    Remove a student's assignment to a given fee structure.
+
+    Only allowed when there are no successful payments for that StudentFee.
+    """
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context is required"}
+
+    sf = StudentFee.query.filter_by(
+        tenant_id=tenant_id,
+        fee_structure_id=fee_structure_id,
+        student_id=student_id,
+    ).first()
+    if not sf:
+        return {"success": False, "error": "Student fee not found"}
+
+    try:
+        # Prevent deletion if there are successful payments
+        has_payments = (
+            Payment.query.filter_by(
+                tenant_id=tenant_id,
+                student_fee_id=sf.id,
+                status=PaymentStatus.success.value,
+            ).count()
+            > 0
+        )
+        if has_payments:
+            return {
+                "success": False,
+                "error": "Cannot remove fee: there are successful payments recorded for this student",
+            }
+
+        # Delete related records in safe order (payments, items, then student_fee)
+        Payment.query.filter_by(
+            tenant_id=tenant_id,
+            student_fee_id=sf.id,
+        ).delete(synchronize_session=False)
+
+        StudentFeeItem.query.filter_by(
+            tenant_id=tenant_id,
+            student_fee_id=sf.id,
+        ).delete(synchronize_session=False)
+
+        StudentFee.query.filter_by(
+            tenant_id=tenant_id,
+            id=sf.id,
+        ).delete(synchronize_session=False)
+
+        db.session.commit()
+        log_finance_action(
+            action="finance.student_fee.removed",
+            tenant_id=tenant_id,
+            user_id=None,
+            extra_data={
+                "fee_structure_id": fee_structure_id,
+                "student_id": student_id,
+                "student_fee_id": sf.id,
+            },
+        )
+        return {"success": True, "message": "Student removed from fee structure"}
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": str(e)}
+
+
+def auto_assign_fees_for_student(student_id: str) -> None:
+    """
+    Ensure a student has StudentFee records for all fee structures
+    that apply to their class and academic year.
+    Safe to call multiple times; underlying assignment is idempotent.
+    """
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return
+
+    student = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
+    if not student or not student.class_id or not student.academic_year_id:
+        return
+
+    # Find all fee structures linked to this class in this academic year
+    structure_ids = [
+        fsc.fee_structure_id
+        for fsc in FeeStructureClass.query.filter_by(
+            tenant_id=tenant_id,
+            class_id=student.class_id,
+            academic_year_id=student.academic_year_id,
+        ).all()
+    ]
+    if not structure_ids:
+        return
+
+    for sid in structure_ids:
+        # Use existing assignment logic; it will skip if already present
+        assign_student_fees_for_structure(
+            fee_structure_id=sid,
+            student_ids=[student_id],
+            user_id=None,
+        )

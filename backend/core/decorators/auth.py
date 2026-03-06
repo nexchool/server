@@ -39,6 +39,10 @@ def auth_required(fn):
     """
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        # CORS preflight: allow OPTIONS without auth
+        if request.method == "OPTIONS":
+            return ("", 204)
+
         # Import here to avoid circular imports
         from backend.modules.auth.models import User, Session
         from backend.modules.auth.services import validate_jwt_token, refresh_access_token

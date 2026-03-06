@@ -3,12 +3,19 @@ import { Student, CreateStudentDTO, UpdateStudentDTO, CreateStudentResponse } fr
 
 export const studentService = {
   // Get all students (Admin) or class students (Teacher)
-  getStudents: async (params?: { class_id?: string; search?: string }) => {
-    // Basic query string construction
+  getStudents: async (params?: {
+    class_id?: string;
+    class_ids?: string[];
+    academic_year_id?: string;
+    search?: string;
+  }) => {
     let url = '/api/students/';
     if (params) {
       const query = new URLSearchParams();
-      if (params.class_id) query.append('class_id', params.class_id);
+      if (params.class_ids?.length)
+        query.append('class_ids', params.class_ids.join(','));
+      else if (params.class_id) query.append('class_id', params.class_id);
+      if (params.academic_year_id) query.append('academic_year_id', params.academic_year_id);
       if (params.search) query.append('search', params.search);
       const queryString = query.toString();
       if (queryString) url += `?${queryString}`;

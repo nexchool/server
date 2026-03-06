@@ -15,6 +15,11 @@ import { Spacing, Layout } from "@/common/constants/spacing";
 import { Ionicons } from "@expo/vector-icons";
 import { CreateStudentDTO, Student } from "../types";
 import { validateStudentData } from "../validation/schemas";
+import { useAcademicYears } from "@/modules/academics/hooks/useAcademicYears";
+import { useAcademicYearContext } from "@/modules/academics/context/AcademicYearContext";
+import { classService } from "@/modules/classes/services/classService";
+import { ClassSelect } from "@/common/components/ClassSelect";
+import { useQuery } from "@tanstack/react-query";
 
 interface CreateStudentModalProps {
   visible: boolean;
@@ -33,7 +38,6 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
 }) => {
   const [formData, setFormData] = useState<CreateStudentDTO>({
     name: "",
-    academic_year: "",
     guardian_name: "",
     guardian_relationship: "",
     guardian_phone: "",
@@ -43,17 +47,24 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
     date_of_birth: "",
     gender: "",
     class_id: "",
+    academic_year_id: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const { data: academicYears = [] } = useAcademicYears(false);
+  const { selectedAcademicYearId: contextYearId } = useAcademicYearContext();
+  const { data: classes = [] } = useQuery({
+    queryKey: ["classes"],
+    queryFn: () => classService.getClasses(),
+  });
 
   // Populate form when editing
   useEffect(() => {
     if (mode === "edit" && initialData) {
       setFormData({
         name: initialData.name || "",
-        academic_year: initialData.academic_year || "",
         guardian_name: initialData.guardian_name || "",
         guardian_relationship: initialData.guardian_relationship || "",
         guardian_phone: initialData.guardian_phone || "",
@@ -63,13 +74,13 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
         date_of_birth: initialData.date_of_birth || "",
         gender: initialData.gender || "",
         class_id: initialData.class_id || "",
+        academic_year_id: initialData.academic_year_id || "",
         guardian_email: initialData.guardian_email || "",
       });
     } else {
-      // Reset for create mode
+      // Reset for create mode - default academic_year_id from global selection when admin has chosen a year
       setFormData({
         name: "",
-        academic_year: "",
         guardian_name: "",
         guardian_relationship: "",
         guardian_phone: "",
@@ -79,9 +90,10 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
         date_of_birth: "",
         gender: "",
         class_id: "",
+        academic_year_id: contextYearId || "",
       });
     }
-  }, [mode, initialData, visible]);
+  }, [mode, initialData, visible, contextYearId]);
 
   const validateForm = (): boolean => {
     // Use Zod validation
@@ -107,10 +119,9 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
     setFieldErrors({});
     
     try {
-      // Clean up formData - remove empty strings for optional fields
+      // Clean up formData - send class_id or academic_year_id (backend derives from class)
       const cleanData: CreateStudentDTO = {
         name: formData.name.trim(),
-        academic_year: formData.academic_year.trim(),
         guardian_name: formData.guardian_name.trim(),
         guardian_relationship: formData.guardian_relationship.trim(),
         guardian_phone: formData.guardian_phone.trim(),
@@ -119,7 +130,8 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
         phone: formData.phone?.trim() || undefined,
         date_of_birth: formData.date_of_birth || undefined,
         gender: formData.gender || undefined,
-        class_id: formData.class_id || undefined,
+        class_id: formData.class_id?.trim() || undefined,
+        academic_year_id: formData.class_id ? undefined : (formData.academic_year_id?.trim() || undefined),
         guardian_email: formData.guardian_email?.trim() || undefined,
       };
       
@@ -130,7 +142,6 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
       if (mode === "create") {
         setFormData({
           name: "",
-          academic_year: "",
           guardian_name: "",
           guardian_relationship: "",
           guardian_phone: "",
@@ -140,6 +151,7 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
           date_of_birth: "",
           gender: "",
           class_id: "",
+          academic_year_id: "",
         });
       }
       setError(null);
@@ -255,25 +267,69 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
               </View>
             </View>
 
-            <Text style={styles.label}>Academic Year *</Text>
-            <TextInput
-              style={[styles.input, fieldErrors.academic_year && styles.inputError]}
-              value={formData.academic_year}
-              onChangeText={(text) => {
-                setFormData((prev) => ({ ...prev, academic_year: text }));
-                if (fieldErrors.academic_year) {
-                  setFieldErrors((prev) => {
-                    const next = { ...prev };
-                    delete next.academic_year;
+            {/* Class (optional) - when selected, academic year is derived */}
+            <Text style={styles.label}>Class</Text>
+            <Text style={styles.helperText}>
+              Optional. If selected, academic year is auto-set from the class.
+            </Text>
+            <ClassSelect
+              value={formData.class_id || null}
+              onChange={(id) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  class_id: id ?? "",
+                  academic_year_id: id ? "" : prev.academic_year_id,
+                }));
+                if (fieldErrors.class_id || fieldErrors.academic_year_id) {
+                  setFieldErrors((p) => {
+                    const next = { ...p };
+                    delete next.class_id;
+                    delete next.academic_year_id;
                     return next;
                   });
                 }
               }}
-              placeholder="e.g. 2025-2026"
-              placeholderTextColor={Colors.textSecondary}
+              options={classes.map((c) => ({
+                id: c.id,
+                label: c.section ? `${c.name}-${c.section}` : c.name,
+                name: c.name,
+                section: c.section,
+              }))}
+              allowEmpty
+              emptyLabel="None"
+              placeholder="Select class"
             />
-            {fieldErrors.academic_year && (
-              <Text style={styles.fieldError}>{fieldErrors.academic_year}</Text>
+
+            {/* Academic Year (required when class not selected) */}
+            {!formData.class_id && (
+              <>
+                <Text style={styles.label}>Academic Year *</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+                  {academicYears.map((ay) => (
+                    <TouchableOpacity
+                      key={ay.id}
+                      style={[styles.chip, formData.academic_year_id === ay.id && styles.chipActive]}
+                      onPress={() => {
+                        setFormData((prev) => ({ ...prev, academic_year_id: ay.id }));
+                        if (fieldErrors.academic_year_id) {
+                          setFieldErrors((prev) => {
+                            const next = { ...prev };
+                            delete next.academic_year_id;
+                            return next;
+                          });
+                        }
+                      }}
+                    >
+                      <Text style={[styles.chipText, formData.academic_year_id === ay.id && styles.chipTextActive]}>
+                        {ay.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {fieldErrors.academic_year_id && (
+                  <Text style={styles.fieldError}>{fieldErrors.academic_year_id}</Text>
+                )}
+              </>
             )}
 
             {/* Guardian Information */}
@@ -541,4 +597,20 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "600",
   },
+  chipRow: { marginBottom: Spacing.xs, flexDirection: "row" },
+  chip: {
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginRight: Spacing.sm,
+    borderRadius: Layout.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  chipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + "20",
+  },
+  chipText: { fontSize: 14, color: Colors.text },
+  chipTextActive: { color: Colors.primary, fontWeight: "600" },
 });

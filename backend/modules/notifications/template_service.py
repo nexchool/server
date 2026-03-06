@@ -124,6 +124,49 @@ def render_notification_template(
     return rendered_subject, rendered_body
 
 
+# Dummy context for preview and test-send
+PREVIEW_CONTEXT = {
+    "student_name": "John Doe",
+    "user_name": "Admin User",
+    "user_email": "admin@example.com",
+    "amount": "₹5,000",
+    "due_date": "31 March 2026",
+    "school_name": "Demo School",
+    "verify_url": "https://example.com/verify",
+    "reset_url": "https://example.com/reset",
+    "expires_in": "60",
+    "admission_number": "ADM001",
+    "username": "johndoe",
+    "password": "••••••••",
+    "admin_name": "School Admin",
+    "tenant_name": "Demo School",
+    "login_url": "https://demo.example.com",
+    "admin_email": "admin@school.com",
+    "total_amount": "₹5,000",
+    "message": "This is a preview.",
+}
+
+
+def validate_notification_template(
+    subject_template: str,
+    body_template: str,
+) -> tuple[bool, Optional[str]]:
+    """
+    Validate Jinja2 syntax of subject and body templates.
+
+    Returns:
+        (True, None) if valid.
+        (False, error_message) if invalid.
+    """
+    env = _safe_jinja_env()
+    try:
+        env.from_string(subject_template or "")
+        env.from_string(body_template or "")
+        return True, None
+    except TemplateError as e:
+        return False, str(e)
+
+
 def get_and_render_notification_template(
     tenant_id: Optional[str],
     notification_type: str,

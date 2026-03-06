@@ -17,6 +17,7 @@ import { useStudents } from "../hooks/useStudents";
 import { StudentListItem } from "../components/StudentListItem";
 import { CreateStudentModal } from "../components/CreateStudentModal";
 import { usePermissions } from "@/modules/permissions/hooks/usePermissions";
+import { useAcademicYearContext } from "@/modules/academics/context/AcademicYearContext";
 import * as PERMS from "@/modules/permissions/constants/permissions";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
@@ -50,6 +51,7 @@ export default function StudentsScreen() {
     createStudent,
   } = useStudents();
   const { hasPermission, hasAnyPermission } = usePermissions();
+  const { selectedAcademicYearId } = useAcademicYearContext();
   const params = useLocalSearchParams();
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -66,7 +68,7 @@ export default function StudentsScreen() {
 
   useEffect(() => {
     loadData();
-  }, [canViewAll, canViewSelf, debouncedSearch]);
+  }, [canViewAll, canViewSelf, debouncedSearch, selectedAcademicYearId]);
 
   useEffect(() => {
     // Check if navigated with Create intent
@@ -77,7 +79,10 @@ export default function StudentsScreen() {
 
   const loadData = () => {
     if (canViewAll) {
-      fetchStudents({ search: debouncedSearch || undefined });
+      fetchStudents({
+        search: debouncedSearch || undefined,
+        academic_year_id: selectedAcademicYearId || undefined,
+      });
     } else if (canViewSelf) {
       fetchMyProfile();
     }

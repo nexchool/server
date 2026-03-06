@@ -111,7 +111,10 @@ ROLES = {
             'grades.manage',
             'course.manage',
             'class.manage',
+            'finance.read',
             'finance.manage',
+            'finance.collect',
+            'finance.refund',
         ]
     },
     'Teacher': {

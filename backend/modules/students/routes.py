@@ -31,19 +31,29 @@ def list_students():
     from backend.modules.rbac.services import has_permission
     
     class_id = request.args.get('class_id')
+    class_ids_param = request.args.get('class_ids')
+    class_ids = [c.strip() for c in class_ids_param.split(',') if c.strip()] if class_ids_param else None
+    academic_year_id = request.args.get('academic_year_id')
     search = request.args.get('search')
-    
+
     # Check permissions
     if has_permission(user_id, PERM_READ_ALL):
-        # Admin can see all
-        students = services.list_students(class_id, search)
+        students = services.list_students(
+            class_id=class_id if not class_ids else None,
+            class_ids=class_ids,
+            academic_year_id=academic_year_id,
+            search=search,
+        )
         return success_response(data=students)
-        
+
     if has_permission(user_id, PERM_READ_CLASS):
-        # Teacher: Filter by assigned classes only
         from backend.modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
-        students = services.list_students_by_class_ids(teacher_class_ids, search)
+        students = services.list_students_by_class_ids(
+            teacher_class_ids,
+            academic_year_id=academic_year_id,
+            search=search,
+        )
         return success_response(data=students)
         
     return unauthorized_response()
@@ -81,18 +91,17 @@ def create_student():
     """
     data = request.get_json()
     
-    # Validate required fields (academic_year or academic_year_id or class_id)
+    # Validate required fields (academic_year_id or class_id - academic year derived from class)
     required = ['name', 'guardian_name', 'guardian_relationship', 'guardian_phone']
     missing = [field for field in required if not data.get(field)]
     if missing:
         return validation_error_response(f"Missing required fields: {', '.join(missing)}")
-    if not data.get('academic_year') and not data.get('academic_year_id') and not data.get('class_id'):
-        return validation_error_response("academic_year, academic_year_id, or class_id is required")
+    if not data.get('academic_year_id') and not data.get('class_id'):
+        return validation_error_response("academic_year_id or class_id is required")
 
     # Call service
     result = services.create_student(
         name=data['name'],
-        academic_year=data.get('academic_year'),
         academic_year_id=data.get('academic_year_id'),
         guardian_name=data['guardian_name'],
         guardian_relationship=data['guardian_relationship'],
@@ -220,7 +229,6 @@ def update_student(student_id):
     result = services.update_student(
         student_id,
         name=data.get('name'),
-        academic_year=data.get('academic_year'),
         academic_year_id=data.get('academic_year_id'),
         class_id=data.get('class_id'),
         roll_number=data.get('roll_number'),

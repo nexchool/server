@@ -4,10 +4,10 @@ import { Student } from "@/modules/students/types";
 import { Teacher } from "@/modules/teachers/types";
 
 export const classService = {
-  getClasses: async (params?: { academic_year?: string }) => {
+  getClasses: async (params?: { academic_year_id?: string }) => {
     let url = "/api/classes/";
-    if (params?.academic_year) {
-      url += `?academic_year=${params.academic_year}`;
+    if (params?.academic_year_id) {
+      url += `?academic_year_id=${params.academic_year_id}`;
     }
     return await apiGet<ClassItem[]>(url);
   },
@@ -54,5 +54,10 @@ export const classService = {
 
   getUnassignedTeachers: async (classId: string) => {
     return await apiGet<Teacher[]>(`/api/classes/${classId}/unassigned-teachers`);
+  },
+
+  /** Teachers who can be selected as class teacher (excludes those already class teacher elsewhere) */
+  getAvailableClassTeachers: async () => {
+    return await apiGet<Teacher[]>(`/api/classes/meta/available-class-teachers`);
   },
 };

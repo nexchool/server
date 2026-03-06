@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
 import { CreateClassDTO } from "../types";
+import { useAcademicYears } from "@/modules/academics/hooks/useAcademicYears";
+import { useAcademicYearContext } from "@/modules/academics/context/AcademicYearContext";
+import { classService } from "@/modules/classes/services/classService";
+import { Teacher } from "@/modules/teachers/types";
 
 interface Props {
   visible: boolean;
@@ -32,22 +36,40 @@ export const CreateClassModal: React.FC<Props> = ({
 
   const [name, setName] = useState("");
   const [section, setSection] = useState("");
-  const [academicYear, setAcademicYear] = useState("");
+  const [academicYearId, setAcademicYearId] = useState("");
+  const [classTeacherId, setClassTeacherId] = useState<string>("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+
+  const { data: academicYears = [], isLoading: academicYearsLoading } = useAcademicYears(false);
+  const { selectedAcademicYearId: contextYearId } = useAcademicYearContext();
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [teachersLoading, setTeachersLoading] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setTeachersLoading(true);
+      classService
+        .getAvailableClassTeachers()
+        .then(setTeachers)
+        .finally(() => setTeachersLoading(false));
+      setAcademicYearId(contextYearId || "");
+    }
+  }, [visible, contextYearId]);
 
   const resetForm = () => {
     setName("");
     setSection("");
-    setAcademicYear("");
+    setAcademicYearId(contextYearId || "");
+    setClassTeacherId("");
     setStartDate("");
     setEndDate("");
     setError(null);
   };
 
   const handleSubmit = async () => {
-    if (!name.trim() || !section.trim() || !academicYear.trim()) {
-      setError("All fields are required");
+    if (!name.trim() || !section.trim() || !academicYearId) {
+      setError("Class name, section, and academic year are required");
       return;
     }
 
@@ -58,7 +80,8 @@ export const CreateClassModal: React.FC<Props> = ({
       await onSubmit({
         name: name.trim(),
         section: section.trim(),
-        academic_year: academicYear.trim(),
+        academic_year_id: academicYearId,
+        teacher_id: classTeacherId || undefined,
         start_date: startDate.trim() || undefined,
         end_date: endDate.trim() || undefined,
       });
@@ -116,13 +139,59 @@ export const CreateClassModal: React.FC<Props> = ({
 
           <View style={styles.fieldContainer}>
             <Text style={styles.fieldLabel}>Academic Year *</Text>
-            <TextInput
-              style={styles.input}
-              value={academicYear}
-              onChangeText={setAcademicYear}
-              placeholder="e.g. 2025-2026"
-              placeholderTextColor={Colors.textTertiary}
-            />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+              {academicYearsLoading ? (
+                <Text style={styles.placeholderText}>Loading...</Text>
+              ) : academicYears.length === 0 ? (
+                <Text style={styles.placeholderText}>No academic years. Create one in Finance.</Text>
+              ) : (
+                academicYears.map((ay) => (
+                  <TouchableOpacity
+                    key={ay.id}
+                    style={[styles.chip, academicYearId === ay.id && styles.chipActive]}
+                    onPress={() => setAcademicYearId(ay.id)}
+                  >
+                    <Text style={[styles.chipText, academicYearId === ay.id && styles.chipTextActive]}>
+                      {ay.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Class Teacher (optional)</Text>
+            <Text style={styles.fieldHint}>Only the class teacher can mark attendance for this class.</Text>
+            {teachersLoading ? (
+              <ActivityIndicator size="small" color={Colors.primary} style={styles.teacherLoader} />
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
+                <TouchableOpacity
+                  style={[styles.chip, !classTeacherId && styles.chipActive]}
+                  onPress={() => setClassTeacherId("")}
+                >
+                  <Text style={[styles.chipText, !classTeacherId && styles.chipTextActive]}>None</Text>
+                </TouchableOpacity>
+                {teachers.map((t) => (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[styles.chip, classTeacherId === t.user_id && styles.chipActive]}
+                    onPress={() => setClassTeacherId(classTeacherId === t.user_id ? "" : t.user_id)}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        classTeacherId === t.user_id && styles.chipTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {t.name} ({t.employee_id})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
 
           <View style={styles.fieldContainer}>
@@ -198,6 +267,14 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: Spacing.xs,
   },
+  fieldHint: {
+    fontSize: 12,
+    color: Colors.textTertiary,
+    marginBottom: Spacing.sm,
+  },
+  teacherLoader: {
+    marginVertical: Spacing.sm,
+  },
   input: {
     borderWidth: 1,
     borderColor: Colors.borderLight,
@@ -234,4 +311,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  chipRow: { marginBottom: Spacing.xs },
+  chip: {
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginRight: Spacing.sm,
+    borderRadius: Layout.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  chipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + "20",
+  },
+  chipText: { fontSize: 14, color: Colors.text },
+  chipTextActive: { color: Colors.primary, fontWeight: "600" },
+  placeholderText: { fontSize: 14, color: Colors.textTertiary, paddingVertical: Spacing.sm },
 });

@@ -6,6 +6,7 @@ export interface ClassItem {
   name: string;
   section: string;
   academic_year: string;
+  academic_year_id?: string;
   start_date?: string;
   end_date?: string;
   teacher_id?: string;
@@ -34,7 +35,7 @@ export interface ClassDetail extends ClassItem {
 export interface CreateClassDTO {
   name: string;
   section: string;
-  academic_year: string;
+  academic_year_id: string;
   teacher_id?: string;
   start_date?: string;
   end_date?: string;

@@ -1,3 +1,4 @@
+import logging
 from flask import request
 from backend.modules.classes import classes_bp
 from backend.core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
@@ -8,6 +9,8 @@ from backend.shared.helpers import (
     validation_error_response,
 )
 from . import services
+
+logger = logging.getLogger(__name__)
 
 # Permissions
 PERM_READ = 'class.read'
@@ -23,9 +26,8 @@ PERM_DELETE = 'class.delete'
 @require_permission(PERM_READ)
 def get_classes():
     """List all classes"""
-    academic_year = request.args.get('academic_year')
     academic_year_id = request.args.get('academic_year_id')
-    classes = services.get_all_classes(academic_year=academic_year, academic_year_id=academic_year_id)
+    classes = services.get_all_classes(academic_year_id=academic_year_id)
     return success_response(data=classes)
 
 
@@ -36,18 +38,18 @@ def get_classes():
 @require_permission(PERM_CREATE)
 def create_class():
     """Create a new class"""
-    data = request.get_json()
+    data = request.get_json() or {}
+    logger.warning("[classes] POST /api/classes/ request data: %r", data)
 
     if not all(k in data for k in ('name', 'section')):
         return validation_error_response({'message': 'Missing required fields: name, section'})
-    if not data.get('academic_year') and not data.get('academic_year_id'):
-        return validation_error_response({'message': 'academic_year or academic_year_id is required'})
+    if not data.get('academic_year_id'):
+        return validation_error_response({'message': 'academic_year_id is required'})
 
     result = services.create_class(
         name=data['name'],
         section=data['section'],
-        academic_year=data.get('academic_year'),
-        academic_year_id=data.get('academic_year_id'),
+        academic_year_id=data['academic_year_id'],
         teacher_id=data.get('teacher_id'),
         start_date=data.get('start_date'),
         end_date=data.get('end_date'),
@@ -55,7 +57,20 @@ def create_class():
 
     if result['success']:
         return success_response(data=result['class'], message='Class created successfully', status_code=201)
-    return error_response('CreationError', result['error'], 400)
+    logger.warning("[classes] create_class failed: %r", result.get('error'))
+    details = {'raw': result.get('raw_error')} if result.get('raw_error') else None
+    return error_response('CreationError', result['error'], 400, details=details)
+
+
+@classes_bp.route('/meta/available-class-teachers', methods=['GET'])
+@tenant_required
+@auth_required
+@require_plan_feature('class_management')
+@require_permission(PERM_READ)
+def get_available_class_teachers():
+    """Get teachers who can be selected as class teacher (excludes those already class teacher of another class)."""
+    teachers = services.get_available_class_teachers()
+    return success_response(data=teachers)
 
 
 @classes_bp.route('/<class_id>', methods=['GET'])
@@ -83,7 +98,6 @@ def update_class(class_id):
         class_id,
         name=data.get('name'),
         section=data.get('section'),
-        academic_year=data.get('academic_year'),
         academic_year_id=data.get('academic_year_id'),
         teacher_id=data.get('teacher_id'),
         start_date=data.get('start_date'),

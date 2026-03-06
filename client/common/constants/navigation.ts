@@ -85,13 +85,8 @@ export const ALL_TABS: TabConfig[] = [
     title: 'Finance',
     icon: 'wallet',
     iconOutline: 'wallet-outline',
-    requiredPermissions: [
-      PERMS.FEE_READ_SELF,
-      PERMS.FEE_READ_CHILD,
-      PERMS.FEE_READ_ALL,
-      PERMS.FEE_PAY,
-      PERMS.FEE_MANAGE,
-    ],
+    requiredPermissions: [PERMS.FINANCE_READ, PERMS.FINANCE_MANAGE],
+    requiredPlanFeature: 'fees_management',
   },
   {
     name: 'profile',

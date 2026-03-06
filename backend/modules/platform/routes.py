@@ -426,6 +426,64 @@ def delete_notification_template(template_id):
     return success_response(message="Template deleted")
 
 
+@platform_bp.route("/notification-templates/preview", methods=["POST", "OPTIONS"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def preview_notification_template_unsaved():
+    """POST /platform/notification-templates/preview  Body: subject_template, body_template. Renders with dummy context."""
+    data = request.get_json() or {}
+    subject_template = data.get("subject_template", "")
+    body_template = data.get("body_template", "")
+    result = services.preview_notification_template(
+        subject_template=subject_template,
+        body_template=body_template,
+    )
+    if not result["success"]:
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(data={"subject": result["subject"], "body": result["body"]})
+
+
+@platform_bp.route("/notification-templates/<template_id>/preview", methods=["POST", "OPTIONS"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def preview_notification_template_by_id(template_id):
+    """POST /platform/notification-templates/<id>/preview  Renders template with dummy context."""
+    data = request.get_json() or {}
+    subject_template = data.get("subject_template")
+    body_template = data.get("body_template")
+    if subject_template is not None and body_template is not None:
+        result = services.preview_notification_template(
+            subject_template=subject_template,
+            body_template=body_template,
+        )
+    else:
+        result = services.preview_notification_template(template_id=template_id)
+    if not result["success"]:
+        if result["error"] == "Template not found":
+            return not_found_response("Template")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(data={"subject": result["subject"], "body": result["body"]})
+
+
+@platform_bp.route("/notification-templates/<template_id>/test-send", methods=["POST", "OPTIONS"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def test_send_notification_template(template_id):
+    """POST /platform/notification-templates/<id>/test-send  Sends rendered template to logged-in super admin email."""
+    admin_email = getattr(g.current_user, "email", None)
+    if not admin_email:
+        return error_response("BadRequest", "No email for current user", 400)
+    result = services.test_send_notification_template(template_id, admin_email)
+    if not result["success"]:
+        if result["error"] == "Template not found":
+            return not_found_response("Template")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(message=result.get("message", "Test email sent"))
+
+
 # --- Audit logs ---
 @platform_bp.route("/audit-logs", methods=["GET"])
 @limiter.limit(PLATFORM_LIMIT)

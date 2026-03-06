@@ -37,6 +37,7 @@ _DEFAULT_ROLES = {
             "user.manage", "role.manage", "permission.manage",
             "student.manage", "teacher.manage", "attendance.manage",
             "grades.manage", "course.manage", "class.manage",
+            "finance.read", "finance.manage", "finance.collect", "finance.refund",
         ],
     },
     "Teacher": {
@@ -68,13 +69,23 @@ def seed_roles_for_tenant(tenant_id: str) -> Dict[str, str]:
     """
     Create default roles (Admin, Teacher, Student, Parent) and assign permissions
     for the given tenant. Permissions are global; roles are tenant-scoped.
+    When role already exists, backfills any missing permissions (idempotent).
     Returns dict of role_name -> role_id for use when assigning Admin to school admin.
     """
     role_ids = {}
     for role_name, role_data in _DEFAULT_ROLES.items():
         existing = Role.query.filter_by(name=role_name, tenant_id=tenant_id).first()
         if existing:
-            role_ids[role_name] = existing.id
+            role = existing
+            role_ids[role_name] = role.id
+            # Backfill missing permissions for existing roles
+            existing_perm_ids = {p.id for p in role.permissions}
+            for perm_name in role_data["permissions"]:
+                perm = Permission.query.filter_by(name=perm_name).first()
+                if not perm or perm.id in existing_perm_ids:
+                    continue
+                rp = RolePermission(tenant_id=tenant_id, role_id=role.id, permission_id=perm.id)
+                db.session.add(rp)
             continue
         role = Role(tenant_id=tenant_id, name=role_name, description=role_data["description"])
         db.session.add(role)
@@ -864,6 +875,11 @@ def create_notification_template(
     if category not in NOTIFICATION_CATEGORIES:
         return {"success": False, "error": f"Invalid category: {category}"}
 
+    from backend.modules.notifications.template_service import validate_notification_template
+    valid, err = validate_notification_template(subject_template, body_template)
+    if not valid:
+        return {"success": False, "error": f"Invalid template syntax: {err}"}
+
     # Default template content for new types when not provided
     DEFAULT_SUBJECT_TEMPLATE = "{{ school_name }} Notification"
     DEFAULT_BODY_TEMPLATE = "<p>Hello {{ user_name }},</p><p>{{ message }}</p>"
@@ -926,6 +942,13 @@ def update_notification_template(
     if category is not None and category not in NOTIFICATION_CATEGORIES:
         return {"success": False, "error": f"Invalid category: {category}"}
 
+    subj = subject_template if subject_template is not None else tpl.subject_template
+    body = body_template if body_template is not None else tpl.body_template
+    from backend.modules.notifications.template_service import validate_notification_template
+    valid, err = validate_notification_template(subj, body)
+    if not valid:
+        return {"success": False, "error": f"Invalid template syntax: {err}"}
+
     if type is not None:
         tpl.type = type
     if channel is not None:
@@ -968,6 +991,65 @@ def delete_notification_template(template_id: str, platform_admin_id: Optional[s
             metadata={"template_id": template_id},
         )
     return {"success": True}
+
+
+def preview_notification_template(
+    template_id: Optional[str] = None,
+    subject_template: Optional[str] = None,
+    body_template: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Render template with dummy context. Either template_id or (subject_template, body_template) required."""
+    from backend.modules.notifications.models import NotificationTemplate
+    from backend.modules.notifications.template_service import (
+        render_notification_template,
+        PREVIEW_CONTEXT,
+    )
+
+    if template_id:
+        tpl = NotificationTemplate.query.get(template_id)
+        if not tpl:
+            return {"success": False, "error": "Template not found"}
+        subject_template = tpl.subject_template
+        body_template = tpl.body_template
+    elif subject_template is not None and body_template is not None:
+        pass
+    else:
+        return {"success": False, "error": "Either template_id or subject_template and body_template required"}
+
+    try:
+        subj, body = render_notification_template(
+            subject_template or "",
+            body_template or "",
+            PREVIEW_CONTEXT,
+        )
+        return {"success": True, "subject": subj, "body": body}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def test_send_notification_template(template_id: str, to_email: str) -> Dict[str, Any]:
+    """Render template and send to given email. Used for test-send to super admin."""
+    from backend.modules.notifications.models import NotificationTemplate
+    from backend.modules.notifications.template_service import (
+        render_notification_template,
+        PREVIEW_CONTEXT,
+    )
+    from backend.tasks.notifications import send_email_task
+
+    tpl = NotificationTemplate.query.get(template_id)
+    if not tpl:
+        return {"success": False, "error": "Template not found"}
+
+    try:
+        subj, body = render_notification_template(
+            tpl.subject_template,
+            tpl.body_template,
+            PREVIEW_CONTEXT,
+        )
+        send_email_task.delay(to_email, subj, body or "", is_html=True)
+        return {"success": True, "message": "Test email sent"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def update_platform_settings(updates: Dict[str, Any], platform_admin_id: Optional[str] = None) -> Dict[str, Any]:

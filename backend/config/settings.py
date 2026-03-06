@@ -34,13 +34,17 @@ class Config:
     # Password Reset
     RESET_TOKEN_EXP_MINUTES = int(os.getenv('RESET_TOKEN_EXP_MINUTES', 30))
     
-    # Email Configuration
-    MAIL_SERVER = os.getenv('MAIL_SERVER')
-    MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
+    # Email Configuration (support both MAIL_* and SMTP_*/EMAIL_* env vars)
+    MAIL_SERVER = os.getenv('MAIL_SERVER') or os.getenv('SMTP_SERVER')
+    MAIL_PORT = int(os.getenv('MAIL_PORT') or os.getenv('SMTP_PORT', 587))
     MAIL_USE_TLS = os.getenv('MAIL_USE_TLS', 'True').lower() == 'true'
-    MAIL_USERNAME = os.getenv('MAIL_USERNAME')
-    MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
-    MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
+    MAIL_USERNAME = os.getenv('MAIL_USERNAME') or os.getenv('EMAIL_ADDRESS')
+    MAIL_PASSWORD = os.getenv('MAIL_PASSWORD') or os.getenv('EMAIL_PASSWORD')
+    _sender = os.getenv('MAIL_DEFAULT_SENDER') or MAIL_USERNAME
+    if os.getenv('DEFAULT_SENDER_NAME') and MAIL_USERNAME and _sender == MAIL_USERNAME:
+        MAIL_DEFAULT_SENDER = (os.getenv('DEFAULT_SENDER_NAME'), MAIL_USERNAME)
+    else:
+        MAIL_DEFAULT_SENDER = _sender
     
     # URLs
     BACKEND_URL = os.getenv('BACKEND_URL', 'http://0.0.0.0:5001')

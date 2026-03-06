@@ -17,7 +17,6 @@ class Class(TenantBaseModel):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(50), nullable=False)  # e.g. "Grade 10"
     section = db.Column(db.String(10), nullable=False)  # e.g. "A"
-    academic_year = db.Column(db.String(20), nullable=True)  # Deprecated; use academic_year_id
     academic_year_id = db.Column(
         db.String(36),
         db.ForeignKey("academic_years.id", ondelete="RESTRICT"),
@@ -40,6 +39,11 @@ class Class(TenantBaseModel):
             "name", "section", "academic_year_id", "tenant_id",
             name="uq_class_section_academic_year_id_tenant",
         ),
+        # One teacher can only be class teacher of one class per tenant
+        db.UniqueConstraint(
+            "teacher_id", "tenant_id",
+            name="uq_classes_teacher_id_tenant",
+        ),
     )
 
     # Relationships
@@ -59,7 +63,7 @@ class Class(TenantBaseModel):
             "id": self.id,
             "name": self.name,
             "section": self.section,
-            "academic_year": self.academic_year_ref.name if self.academic_year_ref else self.academic_year,
+            "academic_year": self.academic_year_ref.name if self.academic_year_ref else None,
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
@@ -69,7 +73,7 @@ class Class(TenantBaseModel):
         }
 
     def __repr__(self):
-        return f"<Class {self.name}-{self.section} ({self.academic_year})>"
+        return f"<Class {self.name}-{self.section} ({self.academic_year_ref.name if self.academic_year_ref else None})>"
 
 
 class ClassTeacher(TenantBaseModel):

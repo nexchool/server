@@ -14,6 +14,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useClasses } from "../hooks/useClasses";
 import { usePermissions } from "@/modules/permissions/hooks/usePermissions";
+import { useAcademicYearContext } from "@/modules/academics/context/AcademicYearContext";
 import * as PERMS from "@/modules/permissions/constants/permissions";
 import { CreateClassModal } from "../components/CreateClassModal";
 import { Colors } from "@/common/constants/colors";
@@ -24,13 +25,14 @@ export default function ClassesScreen() {
   const router = useRouter();
   const { classes, loading, fetchClasses, createClass } = useClasses();
   const { hasPermission } = usePermissions();
+  const { selectedAcademicYearId } = useAcademicYearContext();
 
   const canCreate = hasPermission(PERMS.CLASS_CREATE);
   const [modalVisible, setModalVisible] = useState(false);
 
   useEffect(() => {
-    fetchClasses();
-  }, []);
+    fetchClasses({ academic_year_id: selectedAcademicYearId || undefined });
+  }, [selectedAcademicYearId, fetchClasses]);
 
   const handleClassPress = (cls: ClassItem) => {
     router.push(`/classes/${cls.id}` as any);

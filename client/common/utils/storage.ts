@@ -7,6 +7,7 @@ const KEYS = {
   PERMISSIONS: 'permissions',
   ENABLED_FEATURES: 'enabled_features',
   TENANT_ID: 'tenant_id',
+  SELECTED_ACADEMIC_YEAR_ID: 'selected_academic_year_id',
 } as const;
 
 export const setAccessToken = async (token: string) => {
@@ -60,6 +61,14 @@ export const getTenantId = async (): Promise<string | null> => {
   return SecureStore.getItemAsync(KEYS.TENANT_ID);
 };
 
+export const setSelectedAcademicYearId = async (id: string) => {
+  await SecureStore.setItemAsync(KEYS.SELECTED_ACADEMIC_YEAR_ID, id);
+};
+
+export const getSelectedAcademicYearId = async (): Promise<string | null> => {
+  return SecureStore.getItemAsync(KEYS.SELECTED_ACADEMIC_YEAR_ID);
+};
+
 export const clearAuth = async () => {
   await Promise.all([
     SecureStore.deleteItemAsync(KEYS.ACCESS_TOKEN),
@@ -68,5 +77,6 @@ export const clearAuth = async () => {
     SecureStore.deleteItemAsync(KEYS.PERMISSIONS),
     SecureStore.deleteItemAsync(KEYS.ENABLED_FEATURES),
     SecureStore.deleteItemAsync(KEYS.TENANT_ID),
+    SecureStore.deleteItemAsync(KEYS.SELECTED_ACADEMIC_YEAR_ID),
   ]);
 };

@@ -26,8 +26,6 @@ from . import services
 @academics_bp.route("/academic-years", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
-@require_any_permission(PERM_READ, PERM_MANAGE)
 def list_academic_years():
     """GET /api/academics/academic-years"""
     active_only = request.args.get("active_only", "false").lower() == "true"
