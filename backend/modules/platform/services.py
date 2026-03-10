@@ -644,6 +644,93 @@ def add_tenant_admin(
     return {"success": True, "admin_user_id": user.id}
 
 
+def remove_tenant_admin(
+    tenant_id: str,
+    admin_user_id: str,
+    platform_admin_id: str,
+) -> Dict[str, Any]:
+    """Remove Admin role from a user for the given tenant. Keeps user record; revokes admin access."""
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+    user = User.query.filter_by(id=admin_user_id, tenant_id=tenant_id).first()
+    if not user:
+        return {"success": False, "error": "Admin user not found for this tenant"}
+    admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
+    if not admin_role:
+        return {"success": False, "error": "Admin role not found for tenant"}
+    admin_user_count = UserRole.query.filter_by(
+        tenant_id=tenant_id,
+        role_id=admin_role.id,
+    ).count()
+    if admin_user_count <= 1:
+        return {"success": False, "error": "Cannot remove the last admin. A tenant must have at least one admin."}
+    ur = UserRole.query.filter_by(
+        tenant_id=tenant_id,
+        user_id=admin_user_id,
+        role_id=admin_role.id,
+    ).first()
+    if not ur:
+        return {"success": False, "error": "User is not an admin for this tenant"}
+    db.session.delete(ur)
+    remaining_roles = UserRole.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).count()
+    has_student = Student.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).first() is not None
+    has_teacher = Teacher.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).first() is not None
+    if remaining_roles == 0 and not has_student and not has_teacher:
+        db.session.delete(user)
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="school_admin.removed",
+        tenant_id=tenant_id,
+        metadata={"admin_user_id": admin_user_id, "admin_email": user.email},
+    )
+    return {"success": True}
+
+
+def update_tenant_admin(
+    tenant_id: str,
+    admin_user_id: str,
+    platform_admin_id: str,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Update a school admin user's name and/or email for the given tenant."""
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+    user = User.query.filter_by(id=admin_user_id, tenant_id=tenant_id).first()
+    if not user:
+        return {"success": False, "error": "Admin user not found for this tenant"}
+    admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
+    if not admin_role:
+        return {"success": False, "error": "Admin role not found for tenant"}
+    ur = UserRole.query.filter_by(
+        tenant_id=tenant_id,
+        user_id=admin_user_id,
+        role_id=admin_role.id,
+    ).first()
+    if not ur:
+        return {"success": False, "error": "User is not an admin for this tenant"}
+    if name is not None:
+        user.name = name
+    if email is not None:
+        if email.strip() == "":
+            return {"success": False, "error": "Email cannot be empty"}
+        existing = User.query.filter_by(tenant_id=tenant_id, email=email).first()
+        if existing and existing.id != admin_user_id:
+            return {"success": False, "error": "A user with this email already exists for this tenant"}
+        user.email = email.strip()
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="school_admin.updated",
+        tenant_id=tenant_id,
+        metadata={"admin_user_id": admin_user_id, "admin_email": user.email},
+    )
+    return {"success": True}
+
+
 def get_platform_settings() -> Dict[str, Any]:
     """Return all platform settings as key -> value (strings)."""
     from backend.core.models import PLATFORM_SETTING_KEYS

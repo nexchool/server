@@ -244,6 +244,51 @@ def add_tenant_admin(tenant_id):
     return success_response(data={"admin_user_id": result["admin_user_id"]}, message="Admin created", status_code=201)
 
 
+@platform_bp.route("/tenants/<tenant_id>/admins/<admin_id>", methods=["DELETE"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def remove_tenant_admin_route(tenant_id, admin_id):
+    """DELETE /platform/tenants/<id>/admins/<admin_id>  Remove admin role from user."""
+    result = services.remove_tenant_admin(
+        tenant_id=tenant_id,
+        admin_user_id=admin_id,
+        platform_admin_id=g.current_user.id,
+    )
+    if not result["success"]:
+        if result["error"] == "Tenant not found":
+            return not_found_response("Tenant")
+        if "not found" in result["error"].lower():
+            return not_found_response("Admin")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(message="Admin removed")
+
+
+@platform_bp.route("/tenants/<tenant_id>/admins/<admin_id>", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def update_tenant_admin_route(tenant_id, admin_id):
+    """PATCH /platform/tenants/<id>/admins/<admin_id>  Body: name?, email?"""
+    data = request.get_json() or {}
+    if not data.get("name") and not data.get("email"):
+        return validation_error_response({"name": "At least one of name or email is required"})
+    result = services.update_tenant_admin(
+        tenant_id=tenant_id,
+        admin_user_id=admin_id,
+        platform_admin_id=g.current_user.id,
+        name=data.get("name"),
+        email=data.get("email"),
+    )
+    if not result["success"]:
+        if result["error"] == "Tenant not found":
+            return not_found_response("Tenant")
+        if "not found" in result["error"].lower():
+            return not_found_response("Admin")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(message="Admin updated")
+
+
 # --- Plans CRUD ---
 @platform_bp.route("/plans", methods=["POST"])
 @limiter.limit(PLATFORM_LIMIT)
