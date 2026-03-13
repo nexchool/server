@@ -64,7 +64,7 @@ def init_db(app):
         from backend.core.models import Tenant, Plan, AuditLog, PlatformSetting
         from backend.modules.auth.models import User, Session
         from backend.modules.rbac.models import Role, Permission, RolePermission, UserRole
-        from backend.modules.students.models import Student
+        from backend.modules.students.models import Student, StudentDocument
         from backend.modules.classes.models import Class, ClassTeacher
         from backend.modules.teachers.models import Teacher
         from backend.modules.attendance.models import Attendance

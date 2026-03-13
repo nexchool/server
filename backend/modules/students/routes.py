@@ -1,6 +1,12 @@
 from flask import request, g
 from backend.modules.students import students_bp
-from backend.core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from backend.core.decorators import (
+    require_permission,
+    require_any_permission,
+    auth_required,
+    tenant_required,
+    require_plan_feature,
+)
 from backend.shared.helpers import (
     success_response,
     error_response,
@@ -10,6 +16,7 @@ from backend.shared.helpers import (
     forbidden_response,
 )
 from . import services
+from .document_schemas import validate_document_type
 
 # Permissions
 PERM_CREATE = 'student.create'
@@ -18,6 +25,7 @@ PERM_READ_CLASS = 'student.read.class'
 PERM_READ_SELF = 'student.read.self'
 PERM_UPDATE = 'student.update'
 PERM_DELETE = 'student.delete'
+PERM_MANAGE = 'student.manage'
 
 @students_bp.route('/', methods=['GET'], strict_slashes=False)
 @tenant_required
@@ -153,6 +161,108 @@ def create_student():
     if "limit" in result.get("error", "").lower():
         return forbidden_response(result["error"])
     return error_response('CreationError', result['error'], 400)
+
+# --- Document routes: more specific paths, register before /<student_id> ---
+
+@students_bp.route('/<student_id>/documents', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_plan_feature('student_management')
+def list_student_documents(student_id):
+    """List all documents for a student. Uses same permission logic as get_student."""
+    user_id = g.current_user.id
+    from backend.modules.rbac.services import has_permission
+
+    student = services.get_student_by_id(student_id)
+    if not student:
+        return not_found_response('Student')
+
+    # RBAC: same as get_student
+    if has_permission(user_id, PERM_READ_ALL):
+        result = services.list_student_documents(student_id)
+        if not result.get("success"):
+            return not_found_response("Student")
+        return success_response(data=result["documents"])
+    if has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
+        result = services.list_student_documents(student_id)
+        if not result.get("success"):
+            return not_found_response("Student")
+        return success_response(data=result["documents"])
+    if has_permission(user_id, PERM_READ_CLASS):
+        from backend.modules.attendance.services import get_teacher_class_ids
+        teacher_class_ids = get_teacher_class_ids(user_id)
+        if student.get("class_id") in teacher_class_ids:
+            result = services.list_student_documents(student_id)
+            if not result.get("success"):
+                return not_found_response("Student")
+            return success_response(data=result["documents"])
+
+    return unauthorized_response()
+
+
+@students_bp.route('/<student_id>/documents', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_plan_feature('student_management')
+@require_permission(PERM_MANAGE)
+def create_student_document(student_id):
+    """Upload a document for a student. multipart/form-data: file, document_type."""
+    student = services.get_student_by_id(student_id)
+    if not student:
+        return not_found_response('Student')
+
+    file = request.files.get('file') or request.files.get('document')
+    document_type_str = request.form.get('document_type')
+
+    if not file or file.filename == '':
+        return error_response('ValidationError', 'File is required', 400)
+    err = validate_document_type(document_type_str)
+    if err:
+        return error_response('ValidationError', err, 400)
+
+    # Normalize to enum value (lowercase) so DB receives "aadhar_card" not "AADHAR_CARD"
+    document_type_normalized = document_type_str.strip().lower()
+
+    result = services.create_student_document(
+        student_id=student_id,
+        file_obj=file,
+        filename=file.filename or "document",
+        document_type=document_type_normalized,
+        user_id=g.current_user.id,
+    )
+    if result['success']:
+        return success_response(
+            data=result['document'],
+            message='Document uploaded successfully',
+            status_code=201,
+        )
+    # Map service error_code to API contract
+    err_code = result.get('error_code', 'ValidationError')
+    err_msg = result.get('error', 'Upload failed')
+    if err_code == 'FileTooLarge':
+        return error_response('FileTooLarge', err_msg, 400)
+    if err_code == 'UnsupportedFileType':
+        return error_response('UnsupportedFileType', err_msg, 400)
+    if err_code == 'StorageError':
+        return error_response('StorageError', err_msg, 503)
+    return error_response(err_code, err_msg, 400)
+
+
+@students_bp.route('/<student_id>/documents/<document_id>', methods=['DELETE'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_plan_feature('student_management')
+@require_permission(PERM_MANAGE)
+def delete_student_document(student_id, document_id):
+    """Delete a document for a student."""
+    student = services.get_student_by_id(student_id)
+    if not student:
+        return not_found_response('Student')
+    result = services.delete_student_document(document_id, student_id)
+    if result.get('success'):
+        return success_response(message='Document deleted successfully')
+    return not_found_response('Document')
+
 
 @students_bp.route('/<student_id>', methods=['GET'])
 @tenant_required

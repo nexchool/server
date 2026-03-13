@@ -1,8 +1,10 @@
 from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
+import logging
 import secrets
 import string
+import uuid
 
 from backend.core.database import db
 from backend.core.tenant import get_tenant_id
@@ -11,7 +13,11 @@ from backend.modules.auth.models import User
 from backend.modules.rbac.services import assign_role_to_user_by_email
 from backend.modules.rbac.role_seeder import seed_roles_for_tenant
 from backend.modules.classes.models import Class
-from .models import Student
+from backend.shared.cloudinary_utils import destroy_cloudinary_asset, upload_to_cloudinary
+from .models import Student, StudentDocument, DocumentType
+from .document_schemas import validate_document_type
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_student_academic_year_id(
@@ -460,3 +466,155 @@ def delete_student(student_id: str) -> Dict:
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': f'Failed to delete student: {str(e)}'}
+
+
+# ---------------------------------------------------------------------------
+# Student Documents (Cloudinary)
+# ---------------------------------------------------------------------------
+
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+ALLOWED_MIME_TYPES = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
+
+
+def create_student_document(
+    student_id: str,
+    file_obj,
+    filename: str,
+    document_type: str,
+    user_id: str,
+) -> Dict:
+    """
+    Validate file, upload to Cloudinary, save StudentDocument. Returns doc dict or error.
+    file_obj: Flask FileStorage with .stream, .content_type, .filename
+    """
+    try:
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {"success": False, "error": "Tenant context required", "error_code": "ValidationError"}
+
+        student = Student.query.get(student_id)
+        if not student:
+            return {"success": False, "error": "Student not found", "error_code": "NotFound"}
+
+        if student.tenant_id != tenant_id:
+            return {"success": False, "error": "Student not found", "error_code": "NotFound"}
+
+        err = validate_document_type(document_type)
+        if err:
+            return {"success": False, "error": err, "error_code": "ValidationError"}
+
+        # Normalize to enum value (lowercase) for PostgreSQL enum
+        document_type = (document_type or "").strip().lower()
+
+        stream = getattr(file_obj, "stream", file_obj)
+        stream.seek(0, 2)
+        size = stream.tell()
+        stream.seek(0)
+        if size > MAX_FILE_SIZE_BYTES:
+            return {
+                "success": False,
+                "error": "File too large. Maximum allowed size is 10 MB.",
+                "error_code": "FileTooLarge",
+            }
+        if size == 0:
+            return {"success": False, "error": "File is empty.", "error_code": "ValidationError"}
+
+        content_type = getattr(file_obj, "content_type", getattr(stream, "content_type", None)) or ""
+        mime = (content_type or "").split(";")[0].strip().lower()
+        if mime not in ALLOWED_MIME_TYPES:
+            return {
+                "success": False,
+                "error": "Unsupported file type. Allowed: PDF, JPG, PNG.",
+                "error_code": "UnsupportedFileType",
+            }
+
+        try:
+            folder = f"school_erp/{tenant_id}/students/{student_id}/documents"
+            public_id = f"{document_type}_{uuid.uuid4().hex[:12]}"
+            secure_url, public_id = upload_to_cloudinary(
+                stream, folder=folder, public_id=public_id
+            )
+        except Exception as e:
+            logger.exception("Cloudinary upload failed: %s", e)
+            return {
+                "success": False,
+                "error": "Document storage unavailable. Please try again.",
+                "error_code": "StorageError",
+            }
+
+        doc = StudentDocument(
+            tenant_id=tenant_id,
+            student_id=student_id,
+            document_type=DocumentType(document_type),
+            original_filename=filename,
+            cloudinary_url=secure_url,
+            cloudinary_public_id=public_id,
+            mime_type=mime,
+            file_size_bytes=size,
+            uploaded_by_user_id=user_id,
+        )
+        db.session.add(doc)
+        db.session.commit()
+
+        return {"success": True, "document": doc.to_dict()}
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": str(e), "error_code": "InternalError"}
+
+
+def list_student_documents(student_id: str) -> Dict:
+    """List documents for a student. Returns {documents: [...]} or error."""
+    try:
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {"success": False, "error": "Tenant context required"}
+
+        student = Student.query.get(student_id)
+        if not student:
+            return {"success": False, "error": "Student not found"}
+        if student.tenant_id != tenant_id:
+            return {"success": False, "error": "Student not found"}
+
+        docs = StudentDocument.query.filter_by(student_id=student_id, tenant_id=tenant_id).order_by(
+            StudentDocument.created_at.desc()
+        ).all()
+        return {"success": True, "documents": [d.to_dict() for d in docs]}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_student_document_by_id(document_id: str, student_id: str) -> Optional[Dict]:
+    """Get a single document by id, verifying it belongs to student and tenant."""
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return None
+    doc = StudentDocument.query.filter_by(
+        id=document_id, student_id=student_id, tenant_id=tenant_id
+    ).first()
+    return doc.to_dict() if doc else None
+
+
+def delete_student_document(document_id: str, student_id: str) -> Dict:
+    """Delete document from DB and Cloudinary."""
+    try:
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {"success": False, "error": "Tenant context required"}
+
+        doc = StudentDocument.query.filter_by(
+            id=document_id, student_id=student_id, tenant_id=tenant_id
+        ).first()
+        if not doc:
+            return {"success": False, "error": "Document not found"}
+
+        try:
+            destroy_cloudinary_asset(doc.cloudinary_public_id)
+        except Exception:
+            pass
+
+        db.session.delete(doc)
+        db.session.commit()
+        return {"success": True}
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": str(e)}

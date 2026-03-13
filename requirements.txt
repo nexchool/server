@@ -19,3 +19,4 @@ gunicorn==25.1.0
 celery[redis]==5.4.0
 redis==5.2.1
 psutil>=6.0.0
+cloudinary>=1.36.0

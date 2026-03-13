@@ -288,7 +288,7 @@ export const HolidayFormModal: React.FC<HolidayFormModalProps> = ({
                   <Text style={styles.infoText}>
                     Recurring holidays (e.g. every Sunday) apply across all weeks. They count
                     as weekly-off days — any public holiday that also falls on this day will show
-                    a "Falls on Sunday" warning.
+                    a {'"' }Falls on Sunday{'"' } warning.
                   </Text>
                 </View>
               </>

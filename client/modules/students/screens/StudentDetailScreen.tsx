@@ -17,6 +17,7 @@ import * as PERMS from "@/modules/permissions/constants/permissions";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
 import { CreateStudentModal } from "../components/CreateStudentModal";
+import { StudentDocumentsSection } from "../components/StudentDocumentsSection";
 
 export default function StudentDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -218,6 +219,9 @@ export default function StudentDetailScreen() {
             </View>
           )}
         </View>
+
+        {/* Documents */}
+        <StudentDocumentsSection studentId={currentStudent.id} />
       </ScrollView>
 
       {/* Edit Modal */}

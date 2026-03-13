@@ -67,3 +67,52 @@ export interface CreateStudentResponse {
 }
 
 export interface UpdateStudentDTO extends Partial<CreateStudentDTO> {}
+
+// Document types for student documents (must match backend DocumentType enum)
+export type DocumentType =
+  | 'aadhar_card'
+  | 'birth_certificate'
+  | 'leaving_certificate'
+  | 'transfer_certificate'
+  | 'passport'
+  | 'other';
+
+/** Alias for DocumentType (used in upload modal) */
+export type DocumentTypeValue = DocumentType;
+
+/** All document type values for the type picker */
+export const DOCUMENT_TYPES: DocumentType[] = [
+  'aadhar_card',
+  'birth_certificate',
+  'leaving_certificate',
+  'transfer_certificate',
+  'passport',
+  'other',
+];
+
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  aadhar_card: 'Aadhar Card',
+  birth_certificate: 'Birth Certificate',
+  leaving_certificate: 'Leaving Certificate',
+  transfer_certificate: 'Transfer Certificate',
+  passport: 'Passport',
+  other: 'Other',
+};
+
+export interface StudentDocument {
+  id: string;
+  student_id: string;
+  document_type: string;
+  document_type_label: string;
+  original_filename: string;
+  cloudinary_url: string;
+  mime_type: string;
+  file_size_bytes: number;
+  uploaded_by?: { id: string; name: string } | null;
+  created_at: string;
+}
+
+export interface UploadDocumentInput {
+  documentType: string;
+  file: { uri: string; name: string; mimeType?: string };
+}

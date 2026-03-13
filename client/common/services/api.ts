@@ -21,6 +21,7 @@ export class ApiException extends Error {
 const apiRequest = async (
   endpoint: string,
   options: RequestInit = {},
+  skipJsonContentType = false,
 ): Promise<Response> => {
   const url = getApiUrl(endpoint);
   const [accessToken, refreshToken, tenantId] = await Promise.all([
@@ -29,10 +30,12 @@ const apiRequest = async (
     getTenantId(),
   ]);
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string>),
-  };
+  const headers: Record<string, string> = skipJsonContentType
+    ? { ...(options.headers as Record<string, string>) }
+    : {
+        "Content-Type": "application/json",
+        ...(options.headers as Record<string, string>),
+      };
 
   if (accessToken) {
     headers["Authorization"] = `Bearer ${accessToken}`;
@@ -122,6 +125,16 @@ export const apiPost = async <T>(endpoint: string, body?: any): Promise<T> => {
     method: "POST",
     body: body ? JSON.stringify(body) : undefined,
   });
+  return handleResponse<T>(response);
+};
+
+/** POST with FormData (multipart). Omits Content-Type so fetch sets boundary. */
+export const apiPostForm = async <T>(endpoint: string, formData: FormData): Promise<T> => {
+  const response = await apiRequest(
+    endpoint,
+    { method: "POST", body: formData },
+    true,
+  );
   return handleResponse<T>(response);
 };
 
