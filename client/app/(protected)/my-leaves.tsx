@@ -26,6 +26,7 @@ import { useHolidays } from "@/modules/holidays/hooks/useHolidays";
 import { HolidayFormModal } from "@/modules/holidays/components/HolidayFormModal";
 import { usePermissions } from "@/modules/permissions/hooks/usePermissions";
 import * as PERMS from "@/modules/permissions/constants/permissions";
+import { DateField } from "@/common/components/DateField";
 
 const { width: SW } = Dimensions.get("window");
 
@@ -520,28 +521,24 @@ function ApplyModal({ visible, balances, onClose, onSubmit }: ApplyModalProps) {
           {/* Dates */}
           <View style={am.dateRow}>
             <View style={{ flex: 1 }}>
-              <Text style={am.label}>Start Date</Text>
-              <TextInput
-                style={am.input}
+              <DateField
+                label="Start Date"
                 value={leaveStart}
-                onChangeText={onStart}
+                onChange={onStart}
                 placeholder="YYYY-MM-DD"
-                placeholderTextColor={Colors.textTertiary}
-                autoCorrect={false}
+                useOverlayInsideModal
               />
             </View>
             <View style={am.arrow}>
               <Ionicons name="arrow-forward" size={16} color={Colors.textTertiary} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={am.label}>End Date</Text>
-              <TextInput
-                style={am.input}
+              <DateField
+                label="End Date"
                 value={leaveEnd}
-                onChangeText={onEnd}
+                onChange={onEnd}
                 placeholder="YYYY-MM-DD"
-                placeholderTextColor={Colors.textTertiary}
-                autoCorrect={false}
+                useOverlayInsideModal
               />
             </View>
           </View>

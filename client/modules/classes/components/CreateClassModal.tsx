@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
 import { CreateClassDTO } from "../types";
+import { DateField } from "@/common/components/DateField";
 import { useAcademicYears } from "@/modules/academics/hooks/useAcademicYears";
 import { useAcademicYearContext } from "@/modules/academics/context/AcademicYearContext";
 import { classService } from "@/modules/classes/services/classService";
@@ -229,24 +230,22 @@ export const CreateClassModal: React.FC<Props> = ({
           </View>
 
           <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>Start Date</Text>
-            <TextInput
-              style={styles.input}
+            <DateField
+              label="Start Date"
               value={startDate}
-              onChangeText={setStartDate}
+              onChange={setStartDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor={Colors.textTertiary}
+              useOverlayInsideModal
             />
           </View>
 
           <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>End Date</Text>
-            <TextInput
-              style={styles.input}
+            <DateField
+              label="End Date"
               value={endDate}
-              onChangeText={setEndDate}
+              onChange={setEndDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor={Colors.textTertiary}
+              useOverlayInsideModal
             />
           </View>
 

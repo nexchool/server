@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   SafeAreaView,
   TouchableOpacity,
-  TextInput,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +14,7 @@ import { useAttendance } from "../hooks/useAttendance";
 import { useClasses } from "@/modules/classes/hooks/useClasses";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
+import { DateField } from "@/common/components/DateField";
 import { ClassItem } from "@/modules/classes/types";
 import { holidayService } from "@/modules/holidays/services/holidayService";
 import { Holiday } from "@/modules/holidays/types";
@@ -91,13 +91,11 @@ export default function AdminAttendanceScreen() {
 
       {/* Date Picker */}
       <View style={styles.dateRow}>
-        <Ionicons name="calendar-outline" size={20} color={Colors.textSecondary} />
-        <TextInput
-          style={styles.dateInput}
+        <DateField
+          label="Date"
           value={selectedDate}
-          onChangeText={handleDateChange}
+          onChange={handleDateChange}
           placeholder="YYYY-MM-DD"
-          placeholderTextColor={Colors.textTertiary}
         />
       </View>
 

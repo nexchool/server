@@ -9,6 +9,7 @@ import { Colors } from '@/common/constants/colors';
 import { Spacing, Layout } from '@/common/constants/spacing';
 import { Holiday, CreateHolidayDTO, HolidayType, HOLIDAY_TYPE_LABELS, DAY_NAMES } from '../types';
 import { validateHolidayData } from '../validation/schemas';
+import { DateField } from '@/common/components/DateField';
 import { useAcademicYears } from '@/modules/academics/hooks/useAcademicYears';
 import { useAcademicYearContext } from '@/modules/academics/context/AcademicYearContext';
 
@@ -210,47 +211,38 @@ export const HolidayFormModal: React.FC<HolidayFormModalProps> = ({
             {/* ─── Date inputs ──────────────────────────────────── */}
             {holidayMode === 'single' && (
               <>
-                <Text style={styles.label}>Date *</Text>
-                <TextInput
-                  style={[styles.input, fieldErrors.start_date && styles.inputError]}
+                <DateField
+                  label="Date *"
                   value={form.start_date}
-                  onChangeText={(v) => setField('start_date', v)}
+                  onChange={(v) => setField('start_date', v)}
                   placeholder="YYYY-MM-DD"
-                  placeholderTextColor={Colors.textSecondary}
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={10}
+                  error={fieldErrors.start_date}
+                  useOverlayInsideModal
                 />
-                {fieldErrors.start_date && <Text style={styles.fieldError}>{fieldErrors.start_date}</Text>}
               </>
             )}
 
             {holidayMode === 'range' && (
               <View style={styles.row}>
                 <View style={styles.col}>
-                  <Text style={styles.label}>Start Date *</Text>
-                  <TextInput
-                    style={[styles.input, fieldErrors.start_date && styles.inputError]}
+                  <DateField
+                    label="Start Date *"
                     value={form.start_date}
-                    onChangeText={(v) => setField('start_date', v)}
+                    onChange={(v) => setField('start_date', v)}
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor={Colors.textSecondary}
-                    keyboardType="numbers-and-punctuation"
-                    maxLength={10}
+                    error={fieldErrors.start_date}
+                    useOverlayInsideModal
                   />
-                  {fieldErrors.start_date && <Text style={styles.fieldError}>{fieldErrors.start_date}</Text>}
                 </View>
                 <View style={[styles.col, { marginLeft: Spacing.md }]}>
-                  <Text style={styles.label}>End Date *</Text>
-                  <TextInput
-                    style={[styles.input, fieldErrors.end_date && styles.inputError]}
+                  <DateField
+                    label="End Date *"
                     value={form.end_date}
-                    onChangeText={(v) => setField('end_date', v)}
+                    onChange={(v) => setField('end_date', v)}
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor={Colors.textSecondary}
-                    keyboardType="numbers-and-punctuation"
-                    maxLength={10}
+                    error={fieldErrors.end_date}
+                    useOverlayInsideModal
                   />
-                  {fieldErrors.end_date && <Text style={styles.fieldError}>{fieldErrors.end_date}</Text>}
                 </View>
               </View>
             )}

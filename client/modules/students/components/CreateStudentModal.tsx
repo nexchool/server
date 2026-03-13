@@ -19,6 +19,7 @@ import { useAcademicYears } from "@/modules/academics/hooks/useAcademicYears";
 import { useAcademicYearContext } from "@/modules/academics/context/AcademicYearContext";
 import { classService } from "@/modules/classes/services/classService";
 import { ClassSelect } from "@/common/components/ClassSelect";
+import { DateField } from "@/common/components/DateField";
 import { useQuery } from "@tanstack/react-query";
 
 interface CreateStudentModalProps {
@@ -254,15 +255,15 @@ export const CreateStudentModal: React.FC<CreateStudentModalProps> = ({
                 />
               </View>
               <View style={[styles.col, { marginLeft: Spacing.md }]}>
-                <Text style={styles.label}>Date of Birth</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.date_of_birth}
-                  onChangeText={(text) =>
+                <DateField
+                  label="Date of Birth"
+                  value={formData.date_of_birth || null}
+                  onChange={(text) =>
                     setFormData((prev) => ({ ...prev, date_of_birth: text }))
                   }
                   placeholder="YYYY-MM-DD"
-                  placeholderTextColor={Colors.textSecondary}
+                  error={fieldErrors.date_of_birth}
+                  useOverlayInsideModal
                 />
               </View>
             </View>

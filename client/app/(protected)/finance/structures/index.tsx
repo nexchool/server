@@ -29,6 +29,7 @@ import type { FeeStructure } from "@/modules/finance/types";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
 import { ClassMultiSelect } from "@/common/components/ClassMultiSelect";
+import { DateField } from "@/common/components/DateField";
 
 function formatDate(s: string) {
   try {
@@ -405,12 +406,10 @@ function StructureModal({
               placeholder="All classes"
             />
 
-            <Text style={styles.inputLabel}>Due Date</Text>
-            <Text style={styles.helperText}>When is the fee due? Use YYYY-MM-DD format.</Text>
-            <TextInput
-              style={styles.input}
+            <DateField
+              label="Due Date"
               value={dueDate}
-              onChangeText={setDueDate}
+              onChange={setDueDate}
               placeholder="e.g. 2025-03-31"
             />
 

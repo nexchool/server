@@ -5,7 +5,6 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
-  TextInput,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -14,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/common/constants/colors";
 import { Spacing, Layout } from "@/common/constants/spacing";
 import { academicYearService, type AcademicYear } from "../services/academicYearService";
+import { DateField } from "@/common/components/DateField";
 
 interface CreateAcademicYearModalProps {
   visible: boolean;
@@ -104,31 +104,30 @@ export function CreateAcademicYearModal({
           )}
 
           <Text style={styles.label}>Name *</Text>
-          <TextInput
-            style={styles.input}
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. 2025-2026"
-            placeholderTextColor={Colors.textTertiary}
-            autoCapitalize="none"
-          />
+          <View style={styles.input}>
+            <Text
+              style={{
+                fontSize: 16,
+                color: name ? Colors.text : Colors.textTertiary,
+              }}
+              numberOfLines={1}
+            >
+              {name || "e.g. 2025-2026"}
+            </Text>
+          </View>
 
-          <Text style={styles.label}>Start Date *</Text>
-          <TextInput
-            style={styles.input}
+          <DateField
+            label="Start Date *"
             value={startDate}
-            onChangeText={setStartDate}
+            onChange={setStartDate}
             placeholder="YYYY-MM-DD"
-            placeholderTextColor={Colors.textTertiary}
           />
 
-          <Text style={styles.label}>End Date *</Text>
-          <TextInput
-            style={styles.input}
+          <DateField
+            label="End Date *"
             value={endDate}
-            onChangeText={setEndDate}
+            onChange={setEndDate}
             placeholder="YYYY-MM-DD"
-            placeholderTextColor={Colors.textTertiary}
           />
 
           <TouchableOpacity
