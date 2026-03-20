@@ -1,5 +1,8 @@
 #!/bin/bash
-# Run Flask + Celery worker + Celery beat in one container
+# All-in-one: Gunicorn + Celery worker with embedded beat in a single container.
+# Intended for small setups; set RUN_EMBEDDED_CELERY=1 on the API container.
+# When using docker-compose.yml with separate celery-worker / celery-beat services,
+# keep RUN_EMBEDDED_CELERY unset so only Gunicorn runs in the API container.
 
 cd "$(dirname "$0")"
 
