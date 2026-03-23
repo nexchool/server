@@ -82,9 +82,11 @@ class Config:
     CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
 
     # Celery
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    # In Docker Compose, Redis is reachable via the `redis` service name.
+    # If you run locally without Compose, override REDIS_URL to point at your local Redis.
+    REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://redis:6379/0"))
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", os.getenv("REDIS_URL", "redis://redis:6379/0"))
 
 
 class DevelopmentConfig(Config):

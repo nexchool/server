@@ -16,6 +16,10 @@ def make_celery(app):
     """Create Celery app bound to Flask app. Use ContextTask for db access."""
     broker = app.config.get("CELERY_BROKER_URL") or app.config.get("REDIS_URL") or "redis://localhost:6379/0"
     backend = app.config.get("CELERY_RESULT_BACKEND") or app.config.get("REDIS_URL") or "redis://localhost:6379/0"
+    # Default fallback for local Docker Compose (can be overridden via REDIS_URL env var).
+    # Keep it Docker-friendly to avoid accidental "localhost" failures inside containers.
+    broker = broker.replace("redis://localhost:6379/0", "redis://redis:6379/0")
+    backend = backend.replace("redis://localhost:6379/0", "redis://redis:6379/0")
     celery = Celery(
         app.import_name,
         broker=broker,

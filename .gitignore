@@ -72,5 +72,10 @@ __pycache__
 venv
 
 .env
+!.env.example
 
 package-lock.json
+
+# logs / dumps
+*.log
+*.dump

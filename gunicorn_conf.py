@@ -9,7 +9,10 @@ On macOS (with Conda/Anaconda), set before running:
 """
 import os
 
-bind = os.getenv("GUNICORN_BIND", "0.0.0.0:5001")
+# Render sets `PORT`; Docker Compose/local can set `GUNICORN_BIND` or `PORT`.
+# Gunicorn accepts a single bind string like `0.0.0.0:5001`.
+_port = os.getenv("PORT") or os.getenv("GUNICORN_PORT") or "5001"
+bind = os.getenv("GUNICORN_BIND", f"0.0.0.0:{_port}")
 workers = int(os.getenv("GUNICORN_WORKERS", "4"))
 worker_class = "sync"
 timeout = 120

@@ -39,4 +39,4 @@ WORKDIR /app
 EXPOSE 5001
 
 # Expect source mounted at /app (see docker-compose.local.yml)
-CMD ["sh", "-c", "flask db upgrade && python backend/app.py"]
+CMD ["sh", "-c", "chmod +x ./startup.sh && ./startup.sh"]

@@ -55,7 +55,7 @@ RUN useradd --uid 10001 --no-create-home --shell /bin/sh app
 
 COPY --chown=app:app . .
 
-RUN chmod +x docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh startup.sh
 
 USER app
 
