@@ -33,10 +33,13 @@ jobs:
         id: image
         run: |
           IMAGE_URI="${ECR_REPO}:${GITHUB_SHA}"
-          docker build -t "$IMAGE_URI" .
-          docker tag "$IMAGE_URI" "${ECR_REPO}:latest"
-          docker push "$IMAGE_URI"
-          docker push "${ECR_REPO}:latest"
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -t "$IMAGE_URI" \
+            -t "${ECR_REPO}:latest" \
+            --push .
+
           REGISTRY=$(echo "$ECR_REPO" | cut -d'/' -f1)
           echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
 
