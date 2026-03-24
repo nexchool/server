@@ -56,9 +56,6 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-
 # typescript
 *.tsbuildinfo
 
@@ -71,8 +68,10 @@ app-example
 __pycache__
 venv
 
-.env
+# Env files (never commit secrets)
+.env*
 !.env.example
+!.env.*.example
 
 package-lock.json
 

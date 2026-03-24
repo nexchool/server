@@ -17,6 +17,7 @@ WORKDIR /app
 
 # Runtime libs only (WeasyPrint / Cairo stack — no *-dev in final image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     libpango-1.0-0 \
     libharfbuzz0b \
     libpangoft2-1.0-0 \

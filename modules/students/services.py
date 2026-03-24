@@ -13,7 +13,7 @@ from backend.modules.auth.models import User
 from backend.modules.rbac.services import assign_role_to_user_by_email
 from backend.modules.rbac.role_seeder import seed_roles_for_tenant
 from backend.modules.classes.models import Class
-from backend.shared.cloudinary_utils import destroy_cloudinary_asset, upload_to_cloudinary
+from backend.shared.s3_utils import delete_s3_object, upload_to_s3
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
 
@@ -469,7 +469,7 @@ def delete_student(student_id: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
-# Student Documents (Cloudinary)
+# Student Documents (S3-backed storage)
 # ---------------------------------------------------------------------------
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -484,7 +484,7 @@ def create_student_document(
     user_id: str,
 ) -> Dict:
     """
-    Validate file, upload to Cloudinary, save StudentDocument. Returns doc dict or error.
+    Validate file, upload to S3, save StudentDocument. Returns doc dict or error.
     file_obj: Flask FileStorage with .stream, .content_type, .filename
     """
     try:
@@ -530,12 +530,14 @@ def create_student_document(
 
         try:
             folder = f"school_erp/{tenant_id}/students/{student_id}/documents"
-            public_id = f"{document_type}_{uuid.uuid4().hex[:12]}"
-            secure_url, public_id = upload_to_cloudinary(
-                stream, folder=folder, public_id=public_id
+            secure_url, object_key = upload_to_s3(
+                stream,
+                folder=folder,
+                filename=filename,
+                content_type=mime,
             )
         except Exception as e:
-            logger.exception("Cloudinary upload failed: %s", e)
+            logger.exception("S3 upload failed: %s", e)
             return {
                 "success": False,
                 "error": "Document storage unavailable. Please try again.",
@@ -548,7 +550,7 @@ def create_student_document(
             document_type=DocumentType(document_type),
             original_filename=filename,
             cloudinary_url=secure_url,
-            cloudinary_public_id=public_id,
+            cloudinary_public_id=object_key,
             mime_type=mime,
             file_size_bytes=size,
             uploaded_by_user_id=user_id,
@@ -595,7 +597,7 @@ def get_student_document_by_id(document_id: str, student_id: str) -> Optional[Di
 
 
 def delete_student_document(document_id: str, student_id: str) -> Dict:
-    """Delete document from DB and Cloudinary."""
+    """Delete document from DB and S3."""
     try:
         tenant_id = get_tenant_id()
         if not tenant_id:
@@ -608,7 +610,7 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
             return {"success": False, "error": "Document not found"}
 
         try:
-            destroy_cloudinary_asset(doc.cloudinary_public_id)
+            delete_s3_object(doc.cloudinary_public_id)
         except Exception:
             pass
 

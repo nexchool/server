@@ -1,0 +1,56 @@
+name: Build & push API image, deploy to EC2 (production)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ap-south-1
+      ECR_REPO: ${{ secrets.ECR_REPO_API_PROD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        run: |
+          IMAGE_URI="${ECR_REPO}:${GITHUB_SHA}"
+          docker build -t "$IMAGE_URI" .
+          docker tag "$IMAGE_URI" "${ECR_REPO}:latest"
+          docker push "$IMAGE_URI"
+          docker push "${ECR_REPO}:latest"
+          REGISTRY=$(echo "$ECR_REPO" | cut -d'/' -f1)
+          echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy on EC2 (docker compose pull)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST_PROD }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            REGISTRY="${{ steps.image.outputs.registry }}"
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin "$REGISTRY"
+            cd /home/ec2-user/app
+            sudo docker compose pull
+            sudo docker compose up -d
+            sudo docker system prune -af --volumes || true

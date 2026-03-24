@@ -76,10 +76,12 @@ class Config:
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
 
-    # Cloudinary (document storage)
-    CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
-    CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
-    CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+    # S3 (document storage)
+    AWS_REGION = os.getenv("AWS_REGION")
+    S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
 
     # Celery
     # In Docker Compose, Redis is reachable via the `redis` service name.
@@ -114,8 +116,8 @@ class ProductionConfig(Config):
     if not (os.getenv('CORS_ORIGINS', '').strip()):
         CORS_ORIGINS = []  # Force explicit config; empty will fail — must set CORS_ORIGINS in prod
 
-    # Enforce secure settings
-    SESSION_COOKIE_SECURE = True
+    # Secure cookies (SESSION_COOKIE_SECURE=false only for rare HTTP-only labs; default true)
+    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
     SESSION_COOKIE_HTTPONLY = True
     # Use 'None' when panel and API are on different domains (cross-site); 'Lax' when same domain
     SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'None')
@@ -131,9 +133,7 @@ class ProductionConfig(Config):
 
 
 class StagingConfig(ProductionConfig):
-    """Staging: production-like validation; cookies can follow SESSION_COOKIE_SECURE for HTTP labs."""
-
-    SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
+    """Staging: production-like validation; inherits SESSION_COOKIE_SECURE from ProductionConfig (env-driven)."""
 
 
 def is_production():
