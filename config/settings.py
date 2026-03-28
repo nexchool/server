@@ -12,6 +12,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _get_bool_env(var_name: str, default: bool = False) -> bool:
+    """Parse common boolean env values (true/false, 1/0, yes/no)."""
+    value = os.getenv(var_name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Config:
     """Base configuration shared across all environments"""
     
@@ -37,7 +45,11 @@ class Config:
     # Email Configuration (support both MAIL_* and SMTP_*/EMAIL_* env vars)
     MAIL_SERVER = os.getenv('MAIL_SERVER') or os.getenv('SMTP_SERVER')
     MAIL_PORT = int(os.getenv('MAIL_PORT') or os.getenv('SMTP_PORT', 587))
-    MAIL_USE_TLS = os.getenv('MAIL_USE_TLS', 'True').lower() == 'true'
+    MAIL_USE_TLS = _get_bool_env('MAIL_USE_TLS', True)
+    MAIL_USE_SSL = _get_bool_env('MAIL_USE_SSL', False)
+    if MAIL_USE_TLS and MAIL_USE_SSL:
+        # Flask-Mail transports should not enable both at once.
+        MAIL_USE_TLS = False
     MAIL_USERNAME = os.getenv('MAIL_USERNAME') or os.getenv('EMAIL_ADDRESS')
     MAIL_PASSWORD = os.getenv('MAIL_PASSWORD') or os.getenv('EMAIL_PASSWORD')
     _sender = os.getenv('MAIL_DEFAULT_SENDER') or MAIL_USERNAME
