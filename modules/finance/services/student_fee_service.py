@@ -17,6 +17,7 @@ from backend.modules.finance.models import (
     Payment,
 )
 from backend.modules.finance.enums import PaymentStatus, StudentFeeStatus
+from backend.shared.s3_utils import profile_picture_public_url
 from backend.modules.students.models import Student
 from backend.modules.auth.models import User
 from backend.modules.classes.models import Class
@@ -169,6 +170,11 @@ def list_student_fees(
         if include_items:
             d["items"] = [i.to_dict() for i in sf.items]
         d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
+        d["student_profile_picture"] = (
+            profile_picture_public_url(sf.student.user.profile_picture_url)
+            if sf.student and sf.student.user
+            else None
+        )
         d["admission_number"] = sf.student.admission_number if sf.student else None
         d["fee_structure_name"] = sf.fee_structure.name if sf.fee_structure else None
         d["class_id"] = sf.student.class_id if sf.student else None
@@ -191,6 +197,11 @@ def get_student_fee(fee_id: str) -> Optional[Dict]:
     d["items"] = [i.to_dict() for i in sf.items]
     d["payments"] = [p.to_dict() for p in sf.payments]
     d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
+    d["student_profile_picture"] = (
+        profile_picture_public_url(sf.student.user.profile_picture_url)
+        if sf.student and sf.student.user
+        else None
+    )
     d["admission_number"] = sf.student.admission_number if sf.student else None
     d["fee_structure_name"] = sf.fee_structure.name if sf.fee_structure else None
     return d

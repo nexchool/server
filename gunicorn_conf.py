@@ -23,6 +23,10 @@ worker_class = "gthread" if threads > 1 else "sync"
 keepalive = 5
 preload = False  # Set True to load app before forking (can help on macOS)
 
+# When GUNICORN_RELOAD=1, restart workers on code changes (bind-mounted /app in Docker).
+# Without reload or restart, new routes can 404 until workers load the new code.
+reload = os.getenv("GUNICORN_RELOAD", "").strip().lower() in ("1", "true", "yes")
+
 # Log requests to terminal (like Flask dev server)
 accesslog = "-"
 errorlog = "-"

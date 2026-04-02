@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from backend.core.database import db
 from backend.core.tenant import get_tenant_id
 from backend.modules.auth.models import User
+from backend.shared.s3_utils import normalize_stored_file_value_for_db, profile_picture_public_url
 from backend.shared.utils import paginate_query
 
 
@@ -129,7 +130,10 @@ def update_user(user_id: str, data: Dict) -> Dict:
         allowed_fields = ['name', 'profile_picture_url']
         for field in allowed_fields:
             if field in data:
-                setattr(user, field, data[field])
+                if field == 'profile_picture_url':
+                    setattr(user, field, normalize_stored_file_value_for_db(data[field]))
+                else:
+                    setattr(user, field, data[field])
         
         user.save()
         
@@ -228,7 +232,7 @@ def serialize_user(user: User, include_metadata: bool = False) -> Dict:
         'id': user.id,
         'email': user.email,
         'name': user.name,
-        'profile_picture_url': user.profile_picture_url,
+        'profile_picture_url': profile_picture_public_url(user.profile_picture_url),
         'email_verified': user.email_verified,
     }
     

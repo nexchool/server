@@ -14,9 +14,16 @@ Routes:
 
 from flask import request, jsonify, redirect, g, current_app
 from urllib.parse import quote
+import logging
 import os
 
 from backend.core.tenant import get_tenant_id, resolve_tenant_for_auth
+from backend.shared.s3_utils import (
+    normalize_stored_file_value_for_db,
+    profile_picture_public_url,
+    upload_file,
+)
+from backend.shared.storage_constants import PROFILE_PICTURES, TENANTS
 from . import auth_bp
 from .models import User, Session
 from .services import (
@@ -30,6 +37,13 @@ from backend.core.decorators import auth_required, tenant_required  # tenant_req
 from backend.core.database import db
 from backend.core.extensions import limiter
 from backend.shared.helpers import success_response, error_response
+
+logger = logging.getLogger(__name__)
+
+PROFILE_PICTURE_MAX_BYTES = 5 * 1024 * 1024
+PROFILE_PICTURE_ALLOWED_MIME = frozenset(
+    {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+)
 
 
 # ==================== REGISTRATION ====================
@@ -293,12 +307,13 @@ def login():
             'refresh_token': session.refresh_token,
             'tenant_id': str(user.tenant_id),
             'subdomain': tenant.subdomain if tenant else None,
+            'tenant_name': tenant.name if tenant else None,
             'user': {
                 'id': user.id,
                 'email': user.email,
                 'name': user.name,
                 'email_verified': user.email_verified,
-                'profile_picture_url': user.profile_picture_url
+                'profile_picture_url': profile_picture_public_url(user.profile_picture_url),
             },
             'permissions': permissions,
             'enabled_features': enabled_features,
@@ -617,7 +632,7 @@ def get_profile():
                 'email': user.email,
                 'name': user.name,
                 'email_verified': user.email_verified,
-                'profile_picture_url': user.profile_picture_url,
+                'profile_picture_url': profile_picture_public_url(user.profile_picture_url),
                 'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
                 'created_at': user.created_at.isoformat(),
             },
@@ -645,7 +660,7 @@ def update_profile():
         user.name = data['name']
     
     if 'profile_picture_url' in data:
-        user.profile_picture_url = data['profile_picture_url']
+        user.profile_picture_url = normalize_stored_file_value_for_db(data['profile_picture_url'])
 
     user.save()
 
@@ -655,9 +670,102 @@ def update_profile():
                 'id': user.id,
                 'email': user.email,
                 'name': user.name,
-                'profile_picture_url': user.profile_picture_url,
+                'profile_picture_url': profile_picture_public_url(user.profile_picture_url),
             }
         },
         message='Profile updated successfully',
         status_code=200
     )
+
+
+def _upload_profile_picture_handler():
+    """Shared implementation: multipart file field 'file' or 'picture'."""
+    err = resolve_tenant_for_auth({})
+    if err:
+        return err[1], err[0]
+
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return error_response('ValidationError', 'Tenant context required', 400)
+
+    file = request.files.get('file') or request.files.get('picture')
+    if not file or not getattr(file, 'filename', None):
+        return error_response('ValidationError', 'Image file is required', 400)
+
+    stream = getattr(file, 'stream', file)
+    stream.seek(0, 2)
+    size = stream.tell()
+    stream.seek(0)
+    if size > PROFILE_PICTURE_MAX_BYTES:
+        return error_response(
+            'FileTooLarge',
+            'Image must be 5 MB or smaller',
+            400,
+        )
+    if size == 0:
+        return error_response('ValidationError', 'File is empty', 400)
+
+    raw_ct = getattr(file, 'content_type', '') or ''
+    content_type = raw_ct.split(';')[0].strip().lower()
+    if content_type not in PROFILE_PICTURE_ALLOWED_MIME:
+        return error_response(
+            'UnsupportedFileType',
+            'Allowed image types: JPEG, PNG, WebP',
+            400,
+        )
+
+    ext = '.jpg'
+    if 'png' in content_type:
+        ext = '.png'
+    elif 'webp' in content_type:
+        ext = '.webp'
+
+    user = g.current_user
+    safe_name = f'avatar{ext}'
+
+    try:
+        folder = f"{TENANTS}/{tenant_id}/{PROFILE_PICTURES}/users/{user.id}"
+        _, object_key = upload_file(
+            stream,
+            folder=folder,
+            original_filename=safe_name,
+            content_type=content_type,
+        )
+    except Exception as e:
+        logger.exception('Profile picture upload failed: %s', e)
+        return error_response(
+            'StorageError',
+            'Could not upload image. Please try again.',
+            503,
+        )
+
+    if len(object_key) > 255:
+        logger.error('Profile picture object key exceeds column length: %s', len(object_key))
+        return error_response(
+            'StorageError',
+            'Upload failed due to server configuration.',
+            503,
+        )
+
+    user.profile_picture_url = object_key
+    user.save()
+
+    return success_response(
+        data={'profile_picture_url': profile_picture_public_url(user.profile_picture_url)},
+        message='Profile photo updated',
+        status_code=200,
+    )
+
+
+@auth_bp.route('/profile/picture', methods=['POST'])
+@auth_required
+def upload_profile_picture():
+    """Upload profile photo (legacy path). Prefer POST /upload-profile-picture."""
+    return _upload_profile_picture_handler()
+
+
+@auth_bp.route('/upload-profile-picture', methods=['POST'])
+@auth_required
+def upload_profile_picture_short():
+    """Upload profile photo. multipart: file or picture."""
+    return _upload_profile_picture_handler()

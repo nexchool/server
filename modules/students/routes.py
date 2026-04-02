@@ -1,4 +1,5 @@
-from flask import request, g
+from flask import request, g, Response
+from werkzeug.utils import secure_filename
 from backend.modules.students import students_bp
 from backend.core.decorators import (
     require_permission,
@@ -246,6 +247,60 @@ def create_student_document(student_id):
     if err_code == 'StorageError':
         return error_response('StorageError', err_msg, 503)
     return error_response(err_code, err_msg, 400)
+
+
+@students_bp.route(
+    '/<student_id>/documents/<document_id>/file',
+    methods=['GET'],
+    strict_slashes=False,
+)
+@tenant_required
+@auth_required
+@require_plan_feature('student_management')
+def get_student_document_file(student_id, document_id):
+    """
+    Stream document bytes from S3. Requires same read access as listing documents.
+    Not a shareable URL — must send Authorization (and tenant) like other API calls.
+    """
+    user_id = g.current_user.id
+    from backend.modules.rbac.services import has_permission
+
+    student = services.get_student_by_id(student_id)
+    if not student:
+        return not_found_response('Student')
+
+    allowed = False
+    if has_permission(user_id, PERM_READ_ALL):
+        allowed = True
+    elif has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
+        allowed = True
+    elif has_permission(user_id, PERM_READ_CLASS):
+        from backend.modules.attendance.services import get_teacher_class_ids
+        teacher_class_ids = get_teacher_class_ids(user_id)
+        if student.get("class_id") in teacher_class_ids:
+            allowed = True
+
+    if not allowed:
+        return unauthorized_response()
+
+    result = services.get_student_document_file_content(document_id, student_id)
+    if not result.get("success"):
+        return not_found_response('Document')
+
+    data = result["data"]
+    mime = result["mime_type"]
+    filename = result["filename"]
+    safe = secure_filename(filename) or "document"
+
+    return Response(
+        data,
+        mimetype=mime,
+        headers={
+            "Content-Disposition": f'inline; filename="{safe}"',
+            "Cache-Control": "private, no-store, max-age=0",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @students_bp.route('/<student_id>/documents/<document_id>', methods=['DELETE'], strict_slashes=False)

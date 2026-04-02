@@ -1,4 +1,6 @@
 import enum
+
+from backend.shared.s3_utils import profile_picture_public_url
 from backend.core.database import db
 from backend.core.models import TenantBaseModel
 from datetime import datetime
@@ -68,7 +70,7 @@ class StudentDocument(TenantBaseModel):
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id])
 
     def to_dict(self):
-        """Serialize for API response."""
+        """Serialize for API response. Do not expose direct S3 URLs — use view_url with auth."""
         return {
             "id": self.id,
             "student_id": self.student_id,
@@ -79,7 +81,8 @@ class StudentDocument(TenantBaseModel):
             if self.document_type
             else None,
             "original_filename": self.original_filename,
-            "cloudinary_url": self.cloudinary_url,
+            "cloudinary_url": None,
+            "view_url": f"/api/students/{self.student_id}/documents/{self.id}/file",
             "mime_type": self.mime_type,
             "file_size_bytes": self.file_size_bytes,
             "uploaded_by": {
@@ -166,7 +169,9 @@ class Student(TenantBaseModel):
             "user_id": self.user_id,
             "name": self.user.name if self.user else None,
             "email": self.user.email if self.user else None,
-            "profile_picture": self.user.profile_picture_url if self.user else None,
+            "profile_picture": profile_picture_public_url(self.user.profile_picture_url)
+            if self.user
+            else None,
             "admission_number": self.admission_number,
             "roll_number": self.roll_number,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else self.academic_year,

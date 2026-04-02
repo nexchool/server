@@ -13,7 +13,8 @@ from backend.modules.auth.models import User
 from backend.modules.rbac.services import assign_role_to_user_by_email
 from backend.modules.rbac.role_seeder import seed_roles_for_tenant
 from backend.modules.classes.models import Class
-from backend.shared.s3_utils import delete_s3_object, upload_to_s3
+from backend.shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
+from backend.shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
 
@@ -529,11 +530,11 @@ def create_student_document(
             }
 
         try:
-            folder = f"school_erp/{tenant_id}/students/{student_id}/documents"
-            secure_url, object_key = upload_to_s3(
+            folder = f"{TENANTS}/{tenant_id}/{STUDENTS}/{student_id}/{DOCUMENTS}"
+            _, object_key = upload_file(
                 stream,
                 folder=folder,
-                filename=filename,
+                original_filename=filename,
                 content_type=mime,
             )
         except Exception as e:
@@ -549,7 +550,7 @@ def create_student_document(
             student_id=student_id,
             document_type=DocumentType(document_type),
             original_filename=filename,
-            cloudinary_url=secure_url,
+            cloudinary_url=object_key,
             cloudinary_public_id=object_key,
             mime_type=mime,
             file_size_bytes=size,
@@ -596,6 +597,47 @@ def get_student_document_by_id(document_id: str, student_id: str) -> Optional[Di
     return doc.to_dict() if doc else None
 
 
+def get_student_document_file_content(document_id: str, student_id: str) -> Dict:
+    """
+    Load file bytes from S3 for authenticated download proxy.
+
+    Returns:
+        {success, data, mime_type, filename} or {success: False, error}
+    """
+    try:
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {"success": False, "error": "Tenant context required"}
+
+        doc = StudentDocument.query.filter_by(
+            id=document_id, student_id=student_id, tenant_id=tenant_id
+        ).first()
+        if not doc:
+            return {"success": False, "error": "Document not found"}
+
+        key = doc.cloudinary_public_id or doc.cloudinary_url
+        if not key:
+            return {"success": False, "error": "Document has no storage key"}
+
+        try:
+            data, ct = fetch_s3_object_bytes(key)
+        except FileNotFoundError:
+            return {"success": False, "error": "File not found in storage"}
+        except Exception as e:
+            logger.exception("S3 fetch failed for document %s: %s", document_id, e)
+            return {"success": False, "error": "Could not load file from storage"}
+
+        return {
+            "success": True,
+            "data": data,
+            "mime_type": doc.mime_type or ct,
+            "filename": doc.original_filename or "document",
+        }
+    except Exception as e:
+        logger.exception("get_student_document_file_content: %s", e)
+        return {"success": False, "error": str(e)}
+
+
 def delete_student_document(document_id: str, student_id: str) -> Dict:
     """Delete document from DB and S3."""
     try:
@@ -610,7 +652,7 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
             return {"success": False, "error": "Document not found"}
 
         try:
-            delete_s3_object(doc.cloudinary_public_id)
+            delete_file(doc.cloudinary_public_id)
         except Exception:
             pass
 

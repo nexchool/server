@@ -88,12 +88,17 @@ class Config:
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
 
-    # S3 (document storage)
+    # S3 (document storage) — single bucket; S3_ENV_PREFIX separates local/prod keys
     AWS_REGION = os.getenv("AWS_REGION")
-    S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+    AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME") or os.getenv("S3_BUCKET_NAME")
+    S3_BUCKET_NAME = AWS_S3_BUCKET_NAME  # legacy alias
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
+    _raw_prefix = os.getenv("S3_ENV_PREFIX", "").strip()
+    S3_ENV_PREFIX = _raw_prefix or (
+        "prod" if os.getenv("FLASK_ENV", "development").lower() in ("production", "staging") else "local"
+    )
 
     # Celery
     # In Docker Compose, Redis is reachable via the `redis` service name.

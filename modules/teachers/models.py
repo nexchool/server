@@ -1,3 +1,4 @@
+from backend.shared.s3_utils import profile_picture_public_url
 from backend.core.database import db
 from backend.core.models import TenantBaseModel
 from datetime import datetime
@@ -105,7 +106,9 @@ class Teacher(TenantBaseModel):
             "user_id": self.user_id,
             "name": self.user.name if self.user else None,
             "email": self.user.email if self.user else None,
-            "profile_picture": self.user.profile_picture_url if self.user else None,
+            "profile_picture": profile_picture_public_url(self.user.profile_picture_url)
+            if self.user
+            else None,
             "employee_id": self.employee_id,
             "designation": self.designation,
             "department": self.department,
@@ -257,6 +260,9 @@ class TeacherLeave(TenantBaseModel):
             "teacher_id": self.teacher_id,
             "teacher_name": self.teacher.user.name if self.teacher and self.teacher.user else None,
             "teacher_employee_id": self.teacher.employee_id if self.teacher else None,
+            "teacher_profile_picture": profile_picture_public_url(self.teacher.user.profile_picture_url)
+            if self.teacher and self.teacher.user
+            else None,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
             "leave_type": self.leave_type,
