@@ -2,6 +2,9 @@
 Timetable Services
 
 Business logic for timetable slot CRUD and config. All operations are tenant-scoped.
+
+TODO (phase 2): Migrate to TimetableVersion + TimetableEntry; timetable_slots kept for
+compatibility after migration 023.
 """
 
 from datetime import time

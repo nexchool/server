@@ -28,6 +28,7 @@ class AcademicYear(TenantBaseModel):
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(20), nullable=False, index=True)  # e.g. "2025-2026"
+    calendar_code = db.Column(db.String(32), nullable=True)  # optional external calendar linkage
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=text("true"))
@@ -38,6 +39,7 @@ class AcademicYear(TenantBaseModel):
         return {
             "id": self.id,
             "name": self.name,
+            "calendar_code": self.calendar_code,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
             "is_active": self.is_active,

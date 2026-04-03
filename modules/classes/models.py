@@ -3,6 +3,8 @@ from backend.core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 
+from sqlalchemy import CheckConstraint, Index, text
+
 
 class Class(TenantBaseModel):
     """
@@ -142,8 +144,63 @@ class ClassTeacher(TenantBaseModel):
         return f"<ClassTeacher class={self.class_id} teacher={self.teacher_id}>"
 
 
+class ClassSubject(TenantBaseModel):
+    """
+    Subject offering for a class (per academic year via Class.academic_year_id).
+
+    Source of truth for weekly load and subject linkage. New code should use this table.
+
+    DEPRECATED PARALLEL TABLE: subject_load — migrated in 023; kept for legacy routes until phase 2.
+    """
+
+    __tablename__ = "class_subjects"
+    __table_args__ = (
+        CheckConstraint("weekly_periods > 0", name="ck_class_subjects_weekly_periods_positive"),
+        Index(
+            "uq_class_subjects_active_class_subject",
+            "tenant_id",
+            "class_id",
+            "subject_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND status = 'active'"),
+        ),
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    class_id = db.Column(db.String(36), db.ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject_id = db.Column(db.String(36), db.ForeignKey("subjects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    weekly_periods = db.Column(db.SmallInteger, nullable=False)
+    is_mandatory = db.Column(db.Boolean, nullable=False, default=True)
+    is_elective_bucket = db.Column(db.Boolean, nullable=False, default=False)
+    sort_order = db.Column(db.SmallInteger, nullable=True)
+    academic_term_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_terms.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status = db.Column(db.String(20), nullable=False, default="active")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+        onupdate=datetime.utcnow,
+    )
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    class_ref = db.relationship("Class", backref=db.backref("class_subjects", lazy=True))
+    subject_ref = db.relationship("Subject", foreign_keys=[subject_id], lazy=True)
+    assigned_teachers = db.relationship(
+        "ClassSubjectTeacher",
+        back_populates="class_subject",
+        lazy=True,
+    )
+
+
 class SubjectLoad(TenantBaseModel):
     """
+    DEPRECATED: use ClassSubject (class_subjects) — see migration 023.
+
     Subject Weekly Period Load per Class.
 
     Defines how many periods per week a given subject should be scheduled

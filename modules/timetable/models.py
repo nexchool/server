@@ -61,11 +61,9 @@ class TimetableConfig(TenantBaseModel):
 
 class TimetableSlot(TenantBaseModel):
     """
-    TimetableSlot Model
+    DEPRECATED (migration 023): Prefer TimetableVersion + TimetableEntry (class_subject-based).
 
-    Represents a single period in the weekly timetable for a class.
-    Links class, subject, and teacher. Unique per (class_id, day_of_week, period_number).
-    day_of_week: 0=Monday, 6=Sunday.
+    Legacy weekly slot tied to raw subject_id. Kept for existing timetable routes until migrated.
     """
     __tablename__ = "timetable_slots"
 

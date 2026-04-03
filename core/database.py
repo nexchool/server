@@ -65,10 +65,24 @@ def init_db(app):
         from backend.modules.auth.models import User, Session
         from backend.modules.rbac.models import Role, Permission, RolePermission, UserRole
         from backend.modules.students.models import Student, StudentDocument
-        from backend.modules.classes.models import Class, ClassTeacher
-        from backend.modules.teachers.models import Teacher
-        from backend.modules.attendance.models import Attendance
         from backend.modules.academics.academic_year.models import AcademicYear
+        from backend.modules.subjects.models import Subject
+        from backend.modules.teachers.models import Teacher
+        from backend.modules.classes.models import Class, ClassTeacher, ClassSubject
+        from backend.modules.academics.backbone.models import (
+            AcademicSettings,
+            AcademicTerm,
+            AttendanceRecord,
+            AttendanceSession,
+            BellSchedule,
+            BellSchedulePeriod,
+            ClassSubjectTeacher,
+            ClassTeacherAssignment,
+            StudentClassEnrollment,
+            TimetableEntry,
+            TimetableVersion,
+        )
+        from backend.modules.attendance.models import Attendance
         from backend.modules.finance.models import (
             FeeStructure,
             FeeStructureClass,
@@ -84,7 +98,6 @@ def init_db(app):
             FeeReceipt,
         )
         from backend.modules.notifications.models import Notification, NotificationTemplate
-        from backend.modules.subjects.models import Subject
         from backend.modules.timetable.models import TimetableSlot, TimetableConfig
         from backend.modules.schedule.models import ScheduleOverride
         from backend.modules.holidays.models import Holiday

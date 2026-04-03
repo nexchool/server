@@ -1,3 +1,10 @@
+"""
+Attendance services (legacy flat `attendance` rows).
+
+TODO (phase 2): Prefer AttendanceSession + AttendanceRecord (migration 023). The legacy
+table remains until routes are migrated to session-based marking.
+"""
+
 from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, date

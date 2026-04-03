@@ -3,6 +3,9 @@ Subject Load Services
 
 Business logic for managing subject weekly period loads per class.
 These are used by the timetable generator as scheduling constraints.
+
+TODO (phase 2): Switch reads/writes to ClassSubject (class_subjects). The subject_load table
+remains for backward compatibility after migration 023; new code should use class_subjects.
 """
 
 from typing import Dict, List, Optional
