@@ -9,6 +9,7 @@ from flask import request, g
 from backend.modules.subjects import subjects_bp
 from backend.core.decorators import (
     require_permission,
+    require_any_permission,
     auth_required,
     tenant_required,
     require_plan_feature,
@@ -21,22 +22,21 @@ from backend.shared.helpers import (
 )
 from . import services
 
-# Permissions
+# Permissions — subject.manage implies create/update/delete per RBAC hierarchy
 PERM_READ = "subject.read"
-PERM_CREATE = "subject.create"
-PERM_UPDATE = "subject.update"
-PERM_DELETE = "subject.delete"
+PERM_MANAGE = "subject.manage"
 
 
 @subjects_bp.route("/", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
 @require_plan_feature("class_management")
-@require_permission(PERM_READ)
+@require_any_permission(PERM_READ, PERM_MANAGE)
 def list_subjects():
     """List all subjects for the current tenant."""
     tenant_id = g.tenant_id
-    subjects = services.get_subjects(tenant_id)
+    include_inactive = request.args.get("include_inactive", "false").lower() == "true"
+    subjects = services.get_subjects(tenant_id, include_inactive=include_inactive)
     return success_response(data=subjects)
 
 
@@ -44,7 +44,7 @@ def list_subjects():
 @tenant_required
 @auth_required
 @require_plan_feature("class_management")
-@require_permission(PERM_CREATE)
+@require_permission(PERM_MANAGE)
 def create_subject():
     """Create a new subject."""
     data = request.get_json() or {}
@@ -67,7 +67,7 @@ def create_subject():
 @tenant_required
 @auth_required
 @require_plan_feature("class_management")
-@require_permission(PERM_READ)
+@require_any_permission(PERM_READ, PERM_MANAGE)
 def get_subject(subject_id):
     """Get subject by ID."""
     tenant_id = g.tenant_id
@@ -77,13 +77,13 @@ def get_subject(subject_id):
     return success_response(data=subject)
 
 
-@subjects_bp.route("/<subject_id>", methods=["PUT"])
+@subjects_bp.route("/<subject_id>", methods=["PATCH", "PUT"])
 @tenant_required
 @auth_required
 @require_plan_feature("class_management")
-@require_permission(PERM_UPDATE)
+@require_permission(PERM_MANAGE)
 def update_subject(subject_id):
-    """Update a subject."""
+    """Update a subject (PATCH preferred; PUT kept for compatibility)."""
     data = request.get_json() or {}
     tenant_id = g.tenant_id
     result = services.update_subject(subject_id, data, tenant_id)
@@ -102,7 +102,7 @@ def update_subject(subject_id):
 @tenant_required
 @auth_required
 @require_plan_feature("class_management")
-@require_permission(PERM_DELETE)
+@require_permission(PERM_MANAGE)
 def delete_subject(subject_id):
     """Delete a subject."""
     tenant_id = g.tenant_id

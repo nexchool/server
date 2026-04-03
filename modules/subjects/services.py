@@ -4,6 +4,7 @@ Subject Services
 Business logic for subject CRUD operations. All operations are tenant-scoped.
 """
 
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
@@ -33,16 +34,35 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         if not name:
             return {"success": False, "error": "name is required"}
 
-        # Check unique (name, tenant_id)
-        existing = Subject.query.filter_by(tenant_id=tenant_id, name=name).first()
+        existing = Subject.query.filter(
+            Subject.tenant_id == tenant_id,
+            Subject.name == name,
+            Subject.deleted_at.is_(None),
+        ).first()
         if existing:
             return {"success": False, "error": "Subject with this name already exists"}
+
+        code = (data.get("code") or "").strip() or None
+        if code:
+            dup = Subject.query.filter(
+                Subject.tenant_id == tenant_id,
+                Subject.code == code,
+                Subject.deleted_at.is_(None),
+            ).first()
+            if dup:
+                return {"success": False, "error": "Subject with this code already exists"}
+
+        subject_type = (data.get("subject_type") or "core").strip()
+        if subject_type not in ("core", "elective", "activity", "other"):
+            subject_type = "core"
 
         subject = Subject(
             tenant_id=tenant_id,
             name=name,
-            code=(data.get("code") or "").strip() or None,
+            code=code,
             description=(data.get("description") or "").strip() or None,
+            subject_type=subject_type,
+            is_active=bool(data.get("is_active", True)),
         )
         subject.save()
 
@@ -58,17 +78,21 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": str(e)}
 
 
-def get_subjects(tenant_id: str) -> List[Dict]:
-    """
-    Get all subjects for a tenant.
+def get_subjects(tenant_id: str, include_inactive: bool = False) -> List[Dict]:
+    """Get subjects for a tenant (excludes soft-deleted)."""
+    q = Subject.query.filter_by(tenant_id=tenant_id).filter(Subject.deleted_at.is_(None))
+    if not include_inactive:
+        q = q.filter(Subject.is_active.is_(True))
+    subjects = q.order_by(Subject.name).all()
+    return [s.to_dict() for s in subjects]
 
-    Args:
-        tenant_id: Tenant ID for scoping
 
-    Returns:
-        List of subject dicts
-    """
-    subjects = Subject.query.filter_by(tenant_id=tenant_id).order_by(Subject.name).all()
+def list_subjects_filtered(tenant_id: str, include_inactive: bool = False) -> List[Dict]:
+    """List subjects without Flask request; optional inactive rows."""
+    q = Subject.query.filter_by(tenant_id=tenant_id).filter(Subject.deleted_at.is_(None))
+    if not include_inactive:
+        q = q.filter(Subject.is_active.is_(True))
+    subjects = q.order_by(Subject.name).all()
     return [s.to_dict() for s in subjects]
 
 
@@ -83,7 +107,9 @@ def get_subject_by_id(subject_id: str, tenant_id: str) -> Optional[Dict]:
     Returns:
         Subject dict or None if not found
     """
-    subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).first()
+    subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).filter(
+        Subject.deleted_at.is_(None)
+    ).first()
     return subject.to_dict() if subject else None
 
 
@@ -100,7 +126,9 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
         Dict with success status and updated subject data or error
     """
     try:
-        subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).first()
+        subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).filter(
+            Subject.deleted_at.is_(None)
+        ).first()
         if not subject:
             return {"success": False, "error": "Subject not found"}
 
@@ -113,16 +141,34 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
                 Subject.tenant_id == tenant_id,
                 Subject.name == name,
                 Subject.id != subject_id,
+                Subject.deleted_at.is_(None),
             ).first()
             if existing:
                 return {"success": False, "error": "Subject with this name already exists"}
             subject.name = name
 
         if "code" in data:
-            subject.code = (data["code"] or "").strip() or None
+            code = (data["code"] or "").strip() or None
+            if code:
+                dup = Subject.query.filter(
+                    Subject.tenant_id == tenant_id,
+                    Subject.code == code,
+                    Subject.id != subject_id,
+                    Subject.deleted_at.is_(None),
+                ).first()
+                if dup:
+                    return {"success": False, "error": "Subject with this code already exists"}
+            subject.code = code
         if "description" in data:
             subject.description = (data["description"] or "").strip() or None
+        if "subject_type" in data and data["subject_type"] is not None:
+            st = str(data["subject_type"]).strip()
+            if st in ("core", "elective", "activity", "other"):
+                subject.subject_type = st
+        if "is_active" in data and data["is_active"] is not None:
+            subject.is_active = bool(data["is_active"])
 
+        subject.updated_at = datetime.utcnow()
         subject.save()
         return {"success": True, "subject": subject.to_dict()}
     except IntegrityError as e:
@@ -138,22 +184,33 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
 
 def delete_subject(subject_id: str, tenant_id: str) -> Dict:
     """
-    Delete a subject (tenant-scoped).
-
-    Args:
-        subject_id: Subject UUID
-        tenant_id: Tenant ID for scoping
-
-    Returns:
-        Dict with success status or error
+    Soft-archive a subject. Hard delete is not used when the subject is referenced.
     """
     try:
-        subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).first()
+        from backend.modules.classes.models import ClassSubject
+
+        subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).filter(
+            Subject.deleted_at.is_(None)
+        ).first()
         if not subject:
             return {"success": False, "error": "Subject not found"}
 
-        subject.delete()
-        return {"success": True, "message": "Subject deleted successfully"}
+        ref = ClassSubject.query.filter(
+            ClassSubject.tenant_id == tenant_id,
+            ClassSubject.subject_id == subject_id,
+            ClassSubject.deleted_at.is_(None),
+        ).first()
+        if ref:
+            return {
+                "success": False,
+                "error": "Subject is assigned to a class; archive it instead of deleting.",
+            }
+
+        subject.is_active = False
+        subject.deleted_at = datetime.now(timezone.utc)
+        db.session.add(subject)
+        db.session.commit()
+        return {"success": True, "message": "Subject archived successfully"}
     except Exception as e:
         db.session.rollback()
         return {"success": False, "error": str(e)}
