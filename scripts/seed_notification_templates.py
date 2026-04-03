@@ -102,6 +102,15 @@ def seed_default_notification_templates() -> dict:
             or '<html><body><p>Hello {{ admin_name }}, School: {{ tenant_name }}, Login: {{ login_url }}, Email: {{ admin_email }}, Password: {{ password }}</p></body></html>',
             "is_system": True,
         },
+        {
+            "type": "ADMIN_PASSWORD_RESET",
+            "channel": "EMAIL",
+            "category": NOTIFICATION_CATEGORY_PLATFORM,
+            "subject_template": "Your School Admin Password Has Been Reset",
+            "body_template": _read_mailer_template("school_admin_credentials.html")
+            or '<html><body><p>Hello {{ admin_name }}, School: {{ tenant_name }}, Login: {{ login_url }}, Email: {{ admin_email }}, Password: {{ password }}</p></body></html>',
+            "is_system": True,
+        },
         # FINANCE - for notification dispatcher
         {
             "type": "FEE_OVERDUE",

@@ -6,6 +6,7 @@ school admin creation, plan changes, audit. All operations are platform-scoped
 (no g.tenant_id); tenant_id is passed explicitly where needed.
 """
 
+import logging
 import secrets
 import string
 from datetime import datetime
@@ -28,6 +29,8 @@ from backend.modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenan
 from backend.modules.students.models import Student
 from backend.modules.teachers.models import Teacher
 from backend.modules.platform.audit import log_platform_action
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_strong_password(length: int = 16) -> str:
@@ -153,7 +156,7 @@ def create_tenant(
         from backend.modules.notifications.services import notification_dispatcher
         from backend.modules.notifications.enums import NotificationChannel
 
-        notification_dispatcher.dispatch(
+        _results = notification_dispatcher.dispatch(
             user_id=user.id,
             tenant_id=tenant_id,
             notification_type="ADMIN_CREDENTIALS",
@@ -168,9 +171,24 @@ def create_tenant(
                 "login_url": login_url or "",
             },
         )
-    except Exception:
-        # Log but do not fail tenant creation
-        pass
+        for _ch, ok in _results.items():
+            if not ok:
+                logger.warning(
+                    "ADMIN_CREDENTIALS email not sent (channel=%s); check notification_templates "
+                    "and SMTP/Celery. tenant=%s admin=%s",
+                    _ch,
+                    tenant_id,
+                    admin_email,
+                )
+    except Exception as e:
+        # Log but do not fail tenant creation (missing template, SMTP, Celery worker, etc.)
+        logger.warning(
+            "Failed to send ADMIN_CREDENTIALS email for tenant %s admin %s: %s",
+            tenant_id,
+            admin_email,
+            e,
+            exc_info=True,
+        )
 
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -276,7 +294,7 @@ def reset_tenant_admin(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]
         from backend.modules.notifications.services import notification_dispatcher
         from backend.modules.notifications.enums import NotificationChannel
 
-        notification_dispatcher.dispatch(
+        _results = notification_dispatcher.dispatch(
             user_id=user.id,
             tenant_id=tenant_id,
             notification_type="ADMIN_PASSWORD_RESET",
@@ -291,8 +309,21 @@ def reset_tenant_admin(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]
                 "login_url": "",
             },
         )
-    except Exception:
-        pass
+        for _ch, ok in _results.items():
+            if not ok:
+                logger.warning(
+                    "ADMIN_PASSWORD_RESET email not sent (channel=%s); ensure global "
+                    "notification_templates row exists for ADMIN_PASSWORD_RESET + EMAIL. tenant=%s",
+                    _ch,
+                    tenant_id,
+                )
+    except Exception as e:
+        logger.warning(
+            "Failed to send ADMIN_PASSWORD_RESET email for tenant %s: %s",
+            tenant_id,
+            e,
+            exc_info=True,
+        )
 
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -630,7 +661,7 @@ def add_tenant_admin(
         from backend.modules.notifications.services import notification_dispatcher
         from backend.modules.notifications.enums import NotificationChannel
 
-        notification_dispatcher.dispatch(
+        _results = notification_dispatcher.dispatch(
             user_id=user.id,
             tenant_id=tenant_id,
             notification_type="ADMIN_CREDENTIALS",
@@ -645,8 +676,22 @@ def add_tenant_admin(
                 "login_url": login_url or "",
             },
         )
-    except Exception:
-        pass
+        for _ch, ok in _results.items():
+            if not ok:
+                logger.warning(
+                    "ADMIN_CREDENTIALS email not sent (channel=%s); check notification_templates "
+                    "and SMTP/Celery. tenant=%s admin=%s",
+                    _ch,
+                    tenant_id,
+                    email,
+                )
+    except Exception as e:
+        logger.warning(
+            "Failed to send ADMIN_CREDENTIALS email (add tenant admin) for tenant %s: %s",
+            tenant_id,
+            e,
+            exc_info=True,
+        )
     log_platform_action(
         platform_admin_id=platform_admin_id,
         action="school_admin.created",
