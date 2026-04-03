@@ -9,6 +9,8 @@ from .models import Class, ClassTeacher
 
 logger = logging.getLogger(__name__)
 
+_MISSING = object()
+
 
 def create_class(
     name: str,
@@ -17,6 +19,7 @@ def create_class(
     teacher_id: str = None,
     start_date: str = None,
     end_date: str = None,
+    grade_level: Optional[int] = None,
 ) -> Dict:
     """Create a new class (tenant-scoped). academic_year_id is required."""
     logger.warning(
@@ -73,6 +76,7 @@ def create_class(
             teacher_id=teacher_id,
             start_date=datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None,
             end_date=datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None,
+            grade_level=grade_level,
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
@@ -185,6 +189,7 @@ def update_class(
     teacher_id: str = None,
     start_date: str = None,
     end_date: str = None,
+    grade_level=_MISSING,
 ) -> Dict:
     """Update class details."""
     try:
@@ -241,6 +246,8 @@ def update_class(
             cls.start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
         if end_date is not None:
             cls.end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
+        if grade_level is not _MISSING:
+            cls.grade_level = grade_level
 
         cls.save()
         return {'success': True, 'class': cls.to_dict()}

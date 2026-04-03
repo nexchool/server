@@ -33,6 +33,9 @@ class Class(TenantBaseModel):
     # Class Teacher (User with Teacher role)
     teacher_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
 
+    # Standard / grade number (e.g. 10) — sections A,B under same grade share subject offerings
+    grade_level = db.Column(db.SmallInteger, nullable=True)
+
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -65,6 +68,7 @@ class Class(TenantBaseModel):
             "id": self.id,
             "name": self.name,
             "section": self.section,
+            "grade_level": self.grade_level,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else None,
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,

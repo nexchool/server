@@ -1,7 +1,13 @@
 import logging
-from flask import request
+from flask import g, request
 from backend.modules.classes import classes_bp
-from backend.core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from backend.core.decorators import (
+    require_permission,
+    require_any_permission,
+    auth_required,
+    tenant_required,
+    require_plan_feature,
+)
 from backend.shared.helpers import (
     success_response,
     error_response,
@@ -17,6 +23,7 @@ PERM_READ = 'class.read'
 PERM_CREATE = 'class.create'
 PERM_UPDATE = 'class.update'
 PERM_DELETE = 'class.delete'
+PERM_CS_MANAGE = 'class_subject.manage'
 
 
 @classes_bp.route('/', methods=['GET'])
@@ -41,18 +48,32 @@ def create_class():
     data = request.get_json() or {}
     logger.warning("[classes] POST /api/classes/ request data: %r", data)
 
-    if not all(k in data for k in ('name', 'section')):
-        return validation_error_response({'message': 'Missing required fields: name, section'})
+    if not data.get('section'):
+        return validation_error_response({'message': 'section is required'})
     if not data.get('academic_year_id'):
         return validation_error_response({'message': 'academic_year_id is required'})
 
+    grade_raw = data.get('grade_level')
+    if grade_raw is not None and grade_raw != '':
+        try:
+            gl = int(grade_raw)
+        except (TypeError, ValueError):
+            return validation_error_response({'message': 'grade_level must be an integer'})
+        display_name = f'Grade {gl}'
+    else:
+        gl = None
+        display_name = data.get('name')
+        if not display_name or not str(display_name).strip():
+            return validation_error_response({'message': 'name is required unless grade_level is set'})
+
     result = services.create_class(
-        name=data['name'],
-        section=data['section'],
+        name=str(display_name).strip(),
+        section=str(data['section']).strip(),
         academic_year_id=data['academic_year_id'],
         teacher_id=data.get('teacher_id'),
         start_date=data.get('start_date'),
         end_date=data.get('end_date'),
+        grade_level=gl,
     )
 
     if result['success']:
@@ -60,6 +81,41 @@ def create_class():
     logger.warning("[classes] create_class failed: %r", result.get('error'))
     details = {'raw': result.get('raw_error')} if result.get('raw_error') else None
     return error_response('CreationError', result['error'], 400, details=details)
+
+
+@classes_bp.route('/subjects/by-grade', methods=['POST'])
+@tenant_required
+@auth_required
+@require_plan_feature('class_management')
+@require_any_permission(PERM_CS_MANAGE, 'class.manage')
+def apply_subject_by_grade():
+    """
+    Add a subject offering to every class section that shares the same grade (standard)
+    within an academic year. Requires subject catalog entry + grade_level on classes.
+    """
+    from backend.modules.academics.services.grade_subjects import apply_subject_to_grade
+
+    data = request.get_json() or {}
+    ay = data.get('academic_year_id')
+    subj = data.get('subject_id')
+    try:
+        wl = int(data.get('weekly_periods'))
+    except (TypeError, ValueError):
+        return validation_error_response({'message': 'weekly_periods is required as a positive integer'})
+    try:
+        gl = int(data.get('grade_level'))
+    except (TypeError, ValueError):
+        return validation_error_response({'message': 'grade_level is required as an integer'})
+
+    if not ay or not subj or wl <= 0:
+        return validation_error_response(
+            {'message': 'academic_year_id, subject_id, grade_level, and weekly_periods are required'}
+        )
+
+    r = apply_subject_to_grade(g.tenant_id, ay, gl, subj, wl, data)
+    if not r['success']:
+        return error_response('Error', r['error'], 400)
+    return success_response(data=r, message='Subject applied to grade sections', status_code=201)
 
 
 @classes_bp.route('/meta/available-class-teachers', methods=['GET'])
@@ -98,9 +154,8 @@ def get_class(class_id):
 @require_permission(PERM_UPDATE)
 def update_class(class_id):
     """Update class details"""
-    data = request.get_json()
-    result = services.update_class(
-        class_id,
+    data = request.get_json() or {}
+    kw = dict(
         name=data.get('name'),
         section=data.get('section'),
         academic_year_id=data.get('academic_year_id'),
@@ -108,6 +163,17 @@ def update_class(class_id):
         start_date=data.get('start_date'),
         end_date=data.get('end_date'),
     )
+    if 'grade_level' in data:
+        gv = data.get('grade_level')
+        if gv is None or gv == '':
+            kw['grade_level'] = None
+        else:
+            try:
+                kw['grade_level'] = int(gv)
+            except (TypeError, ValueError):
+                return validation_error_response({'message': 'grade_level must be an integer'})
+
+    result = services.update_class(class_id, **kw)
 
     if result['success']:
         return success_response(data=result['class'], message='Class updated successfully')

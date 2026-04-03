@@ -279,6 +279,8 @@ def patch_academic_settings(tenant_id: str, data: Dict[str, Any]) -> Dict[str, A
         row.allow_teacher_timetable_override = bool(data["allow_teacher_timetable_override"])
     if "allow_admin_attendance_override" in data:
         row.allow_admin_attendance_override = bool(data["allow_admin_attendance_override"])
+    if "default_working_days_json" in data:
+        row.default_working_days_json = data.get("default_working_days_json")
     row.updated_at = datetime.now(timezone.utc)
     db.session.commit()
     return {
@@ -290,6 +292,7 @@ def patch_academic_settings(tenant_id: str, data: Dict[str, Any]) -> Dict[str, A
             "attendance_mode": row.attendance_mode,
             "allow_teacher_timetable_override": row.allow_teacher_timetable_override,
             "allow_admin_attendance_override": row.allow_admin_attendance_override,
+            "default_working_days_json": row.default_working_days_json,
         },
     }
 
@@ -305,5 +308,6 @@ def get_academic_settings(tenant_id: str) -> Dict[str, Any]:
             "attendance_mode": row.attendance_mode,
             "allow_teacher_timetable_override": row.allow_teacher_timetable_override,
             "allow_admin_attendance_override": row.allow_admin_attendance_override,
+            "default_working_days_json": row.default_working_days_json,
         },
     }

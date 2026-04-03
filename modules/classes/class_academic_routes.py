@@ -7,6 +7,7 @@ TODO: Legacy subject-load routes remain; clients should migrate to /subjects API
 from flask import g, request
 
 from backend.modules.classes import classes_bp
+from backend.modules.rbac.services import has_permission
 from backend.core.decorators import (
     auth_required,
     require_any_permission,
@@ -199,7 +200,8 @@ def delete_class_teacher_assignment(class_id, aid):
 @require_plan_feature("timetable")
 @require_any_permission(PERM_TT_READ, PERM_TT_MANAGE)
 def list_timetable_versions(class_id):
-    r = timetable_v2.list_versions(g.tenant_id, class_id)
+    include_drafts = has_permission(g.current_user.id, PERM_TT_MANAGE)
+    r = timetable_v2.list_versions(g.tenant_id, class_id, include_drafts=include_drafts)
     if not r["success"]:
         return error_response("Error", r["error"], 400)
     return success_response(data={"items": r["items"]})
@@ -212,6 +214,18 @@ def list_timetable_versions(class_id):
 @require_permission(PERM_TT_MANAGE)
 def create_timetable_version(class_id):
     r = timetable_v2.create_version(g.tenant_id, class_id, request.get_json() or {}, g.current_user.id)
+    if not r["success"]:
+        return error_response("Error", r["error"], 400)
+    return success_response(data=r["version"], status_code=201)
+
+
+@classes_bp.route("/<class_id>/timetable/versions/clone", methods=["POST"])
+@tenant_required
+@auth_required
+@require_plan_feature("timetable")
+@require_permission(PERM_TT_MANAGE)
+def clone_timetable_version_route(class_id):
+    r = timetable_v2.clone_active_to_draft(g.tenant_id, class_id, g.current_user.id, request.get_json() or {})
     if not r["success"]:
         return error_response("Error", r["error"], 400)
     return success_response(data=r["version"], status_code=201)
@@ -241,6 +255,18 @@ def activate_timetable_version_route(class_id, vid):
     return success_response(data=r["version"])
 
 
+@classes_bp.route("/<class_id>/timetable/versions/<vid>", methods=["DELETE"])
+@tenant_required
+@auth_required
+@require_plan_feature("timetable")
+@require_permission(PERM_TT_MANAGE)
+def delete_timetable_version_route(class_id, vid):
+    r = timetable_v2.delete_version(g.tenant_id, class_id, vid)
+    if not r["success"]:
+        return error_response("Error", r["error"], 400)
+    return success_response(message=r.get("message", "OK"))
+
+
 @classes_bp.route("/<class_id>/timetable", methods=["GET"])
 @tenant_required
 @auth_required
@@ -248,13 +274,19 @@ def activate_timetable_version_route(class_id, vid):
 @require_any_permission(PERM_TT_READ, PERM_TT_MANAGE)
 def get_class_timetable(class_id):
     vid = request.args.get("version_id")
-    r = timetable_v2.list_entries_for_active_or_draft(g.tenant_id, class_id, version_id=vid)
+    reader_mode = not has_permission(g.current_user.id, PERM_TT_MANAGE)
+    r = timetable_v2.list_entries_for_active_or_draft(
+        g.tenant_id, class_id, version_id=vid, reader_mode=reader_mode
+    )
     if not r["success"]:
         return error_response("Error", r["error"], 400)
     return success_response(
         data={
             "timetable_version": r.get("timetable_version"),
             "items": r.get("items", []),
+            "bell_schedule": r.get("bell_schedule"),
+            "working_days": r.get("working_days"),
+            "editable": r.get("editable"),
         }
     )
 
@@ -269,6 +301,18 @@ def create_timetable_entry(class_id):
     if not r["success"]:
         return error_response("Error", r["error"], 400)
     return success_response(data=r["entry"], status_code=201)
+
+
+@classes_bp.route("/<class_id>/timetable/entries/swap", methods=["POST"])
+@tenant_required
+@auth_required
+@require_plan_feature("timetable")
+@require_permission(PERM_TT_MANAGE)
+def swap_timetable_entries(class_id):
+    r = timetable_v2.swap_entries(g.tenant_id, class_id, request.get_json() or {})
+    if not r["success"]:
+        return error_response("Error", r["error"], 400)
+    return success_response(data={"entry_a": r["entry_a"], "entry_b": r["entry_b"]})
 
 
 @classes_bp.route("/<class_id>/timetable/entries/<eid>", methods=["PATCH"])
@@ -295,13 +339,25 @@ def delete_timetable_entry(class_id, eid):
     return success_response(message=r.get("message", "OK"))
 
 
+@classes_bp.route("/<class_id>/timetable/entries/<eid>/move", methods=["POST"])
+@tenant_required
+@auth_required
+@require_plan_feature("timetable")
+@require_permission(PERM_TT_MANAGE)
+def move_timetable_entry(class_id, eid):
+    r = timetable_v2.move_entry(g.tenant_id, class_id, eid, request.get_json() or {})
+    if not r["success"]:
+        return error_response("Error", r["error"], 400)
+    return success_response(data=r["entry"])
+
+
 @classes_bp.route("/<class_id>/timetable/generate", methods=["POST"])
 @tenant_required
 @auth_required
 @require_plan_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def generate_class_timetable(class_id):
-    r = timetable_v2.generate_draft(g.tenant_id, class_id, g.current_user.id)
+    r = timetable_v2.generate_draft(g.tenant_id, class_id, g.current_user.id, request.get_json() or {})
     if not r["success"]:
         return error_response(
             "GeneratorError",
@@ -314,7 +370,9 @@ def generate_class_timetable(class_id):
             "timetable_version": r.get("timetable_version"),
             "entries_placed": r.get("entries_placed"),
             "total_required": r.get("total_required"),
+            "unplaced_periods": r.get("unplaced_periods"),
             "warnings": r.get("warnings", []),
+            "conflicts": r.get("conflicts", []),
         },
         status_code=201,
     )

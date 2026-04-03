@@ -55,8 +55,13 @@ def get_class_attendance_session(class_id):
 
     s = svc.get_session_for_class_date(g.tenant_id, class_id, d)
     if not s:
-        return success_response(data={"session": None})
-    return success_response(data={"session": svc.serialize_session(s, f"{cls.name}-{cls.section}")})
+        return success_response(data={"session": None, "records": []})
+    return success_response(
+        data={
+            "session": svc.serialize_session(s, f"{cls.name}-{cls.section}"),
+            "records": svc.list_records_for_session(g.tenant_id, s.id),
+        }
+    )
 
 
 @attendance_bp.route("/class/<class_id>/session", methods=["POST"])

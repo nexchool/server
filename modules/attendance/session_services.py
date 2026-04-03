@@ -284,6 +284,26 @@ def get_session_by_id(tenant_id: str, session_id: str) -> Optional[AttendanceSes
     )
 
 
+def list_records_for_session(tenant_id: str, session_id: str) -> List[Dict[str, Any]]:
+    """Per-student rows for a session (for marking UI)."""
+    rows = AttendanceRecord.query.filter_by(
+        tenant_id=tenant_id, attendance_session_id=session_id
+    ).all()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        st = Student.query.get(r.student_id)
+        out.append(
+            {
+                "student_id": r.student_id,
+                "student_name": st.user.name if st and st.user else None,
+                "admission_number": st.admission_number if st else None,
+                "status": r.status,
+                "remarks": r.remarks,
+            }
+        )
+    return out
+
+
 def upsert_records(
     tenant_id: str,
     session_id: str,
