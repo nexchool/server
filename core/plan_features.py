@@ -35,6 +35,7 @@ PLAN_FEATURE_KEYS = [
     "hostel",
     "inventory",
     "holiday_management",
+    "academics_advanced",
 ]
 
 # Human-readable labels for super admin UI (optional; backend can stay key-only).
@@ -55,6 +56,7 @@ PLAN_FEATURE_LABELS = {
     "hostel": "Hostel",
     "inventory": "Inventory",
     "holiday_management": "Holiday management",
+    "academics_advanced": "Advanced academics (health checks, bulk tools)",
 }
 
 

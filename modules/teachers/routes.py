@@ -73,6 +73,21 @@ def create_teacher():
     return error_response('CreationError', result['error'], 400)
 
 
+@teachers_bp.route('/me/today-schedule', methods=['GET'])
+@tenant_required
+@auth_required
+@require_plan_feature('timetable')
+@require_permission('timetable.read')
+def get_my_today_schedule():
+    """Today's teaching slots from active timetable entries (v2)."""
+    from backend.modules.academics.services.dashboards import teacher_today_schedule
+
+    r = teacher_today_schedule(g.tenant_id, g.current_user.id)
+    if not r['success']:
+        return error_response('Error', r.get('error', 'Failed'), 400)
+    return success_response(data=r)
+
+
 @teachers_bp.route('/<teacher_id>', methods=['GET'])
 @tenant_required
 @auth_required

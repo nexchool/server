@@ -1,3 +1,10 @@
+"""
+Attendance services (legacy flat `attendance` rows).
+
+TODO (phase 2): Prefer AttendanceSession + AttendanceRecord (migration 023). The legacy
+table remains until routes are migrated to session-based marking.
+"""
+
 from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, date
@@ -14,12 +21,34 @@ def get_teacher_class_ids(user_id: str) -> List[str]:
     """
     Get class IDs for attendance marking.
 
-    Only the class teacher (Class.teacher_id) can take attendance for a class.
+    Includes legacy Class.teacher_id and authoritative ClassTeacherAssignment (primary + allow_attendance).
     Users with attendance.manage permission bypass this and can mark any class (admin override).
     """
-    # Only classes where this user is the class teacher (Class.teacher_id = user_id)
+    from backend.modules.academics.backbone.models import ClassTeacherAssignment
+    from backend.modules.teachers.models import Teacher
+
+    ids: List[str] = []
+
     direct_classes = Class.query.filter_by(teacher_id=user_id).all()
-    return [c.id for c in direct_classes]
+    ids.extend(c.id for c in direct_classes)
+
+    teacher = Teacher.query.filter_by(user_id=user_id).first()
+    if teacher:
+        rows = (
+            ClassTeacherAssignment.query.filter_by(
+                tenant_id=teacher.tenant_id,
+                teacher_id=teacher.id,
+            )
+            .filter(
+                ClassTeacherAssignment.is_active.is_(True),
+                ClassTeacherAssignment.deleted_at.is_(None),
+                ClassTeacherAssignment.allow_attendance_marking.is_(True),
+            )
+            .all()
+        )
+        ids.extend(r.class_id for r in rows)
+
+    return list(dict.fromkeys(ids))
 
 
 def mark_attendance(
@@ -30,6 +59,8 @@ def mark_attendance(
 ) -> Dict:
     """
     Mark attendance for a class on a given date.
+
+    TODO: Migrate to AttendanceSession + AttendanceRecord (POST /api/attendance/class/:id/session).
 
     Args:
         class_id: Class ID

@@ -97,6 +97,15 @@ PERMISSIONS = [
     ('timetable.delete', 'Delete timetable slots'),
     ('timetable.manage', 'Full timetable management access'),
 
+    # Class subject & class teacher (academic backbone)
+    ('class_subject.read', 'View class subject assignments'),
+    ('class_subject.manage', 'Manage class subject assignments'),
+    ('class_teacher.manage', 'Manage class teacher assignments'),
+
+    # Academics hub (dashboards, health)
+    ('academics.read', 'View academic summaries and health'),
+    ('academics.manage', 'Full academic operations dashboard'),
+
     # Course permissions
     ('course.read', 'View course information'),
     ('course.create', 'Create new courses'),
@@ -154,6 +163,10 @@ ROLES = {
             'fees.receipt.download',
             'teacher.leave.manage',
             'holiday.manage',
+            'class_subject.manage',
+            'class_teacher.manage',
+            'academics.read',
+            'academics.manage',
         ]
     },
     'Teacher': {
@@ -171,6 +184,8 @@ ROLES = {
             'timetable.read',
             'teacher.leave.apply',
             'holiday.read',
+            'class_subject.read',
+            'academics.read',
         ]
     },
     'Student': {
@@ -182,6 +197,7 @@ ROLES = {
             'course.read',
             'timetable.read',
             'holiday.read',
+            'academics.read',
         ]
     },
     'Parent': {

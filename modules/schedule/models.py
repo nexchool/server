@@ -14,19 +14,18 @@ from backend.core.models import TenantBaseModel
 
 class ScheduleOverride(TenantBaseModel):
     """
-    A per-day override of a timetable slot.
+    A per-day override of a timetable slot or timetable entry.
 
     override_type:
       'substitute' – different teacher takes the class
       'activity'   – replaced by an activity (sports, assembly, library, etc.)
       'cancelled'  – class is cancelled for the day
 
-    Only one override per (slot_id, override_date).
+    Prefer timetable_entry_id for new rows; slot_id remains for legacy timetable_slots.
+    Uniqueness is enforced via partial indexes on (slot_id, override_date) and
+    (timetable_entry_id, override_date) — see migration 023.
     """
     __tablename__ = "schedule_overrides"
-    __table_args__ = (
-        db.UniqueConstraint("slot_id", "override_date", name="uq_schedule_override_slot_date"),
-    )
 
     TYPE_SUBSTITUTE = "substitute"
     TYPE_ACTIVITY = "activity"
@@ -36,9 +35,16 @@ class ScheduleOverride(TenantBaseModel):
     slot_id = db.Column(
         db.String(36),
         db.ForeignKey("timetable_slots.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    timetable_entry_id = db.Column(
+        db.String(36),
+        db.ForeignKey("timetable_entries.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    override_scope = db.Column(db.String(20), nullable=True)
     override_date = db.Column(db.Date, nullable=False, index=True)
     override_type = db.Column(db.String(20), nullable=False, default=TYPE_SUBSTITUTE)
     substitute_teacher_id = db.Column(
@@ -57,6 +63,7 @@ class ScheduleOverride(TenantBaseModel):
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     slot_ref = db.relationship("TimetableSlot", foreign_keys=[slot_id], lazy=True)
+    timetable_entry = db.relationship("TimetableEntry", foreign_keys=[timetable_entry_id], lazy=True)
     substitute_teacher = db.relationship("Teacher", foreign_keys=[substitute_teacher_id], lazy=True)
     creator = db.relationship("User", foreign_keys=[created_by], lazy=True)
 
@@ -67,6 +74,8 @@ class ScheduleOverride(TenantBaseModel):
         return {
             "id": self.id,
             "slot_id": self.slot_id,
+            "timetable_entry_id": self.timetable_entry_id,
+            "override_scope": self.override_scope,
             "override_date": self.override_date.isoformat() if self.override_date else None,
             "override_type": self.override_type,
             "substitute_teacher_id": self.substitute_teacher_id,

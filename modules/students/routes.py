@@ -28,6 +28,22 @@ PERM_UPDATE = 'student.update'
 PERM_DELETE = 'student.delete'
 PERM_MANAGE = 'student.manage'
 
+
+@students_bp.route('/me/dashboard', methods=['GET'])
+@tenant_required
+@auth_required
+@require_plan_feature('timetable')
+@require_any_permission(PERM_READ_SELF, PERM_MANAGE, 'academics.read')
+def student_me_dashboard():
+    """Student home: today's slots, weekly preview, attendance summary (v2 sessions)."""
+    from backend.modules.academics.services.dashboards import student_dashboard
+
+    r = student_dashboard(g.tenant_id, g.current_user.id)
+    if not r['success']:
+        return error_response('Error', r.get('error', 'Failed'), 400)
+    return success_response(data=r)
+
+
 @students_bp.route('/', methods=['GET'], strict_slashes=False)
 @tenant_required
 @auth_required

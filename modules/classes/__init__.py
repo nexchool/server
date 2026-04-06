@@ -4,3 +4,4 @@ classes_bp = Blueprint('classes', __name__)
 
 from . import routes
 from . import subject_load_routes
+from . import class_academic_routes

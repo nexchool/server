@@ -6,10 +6,10 @@ import uuid
 
 class Attendance(TenantBaseModel):
     """
-    Attendance Model
+    DEPRECATED (migration 023): Prefer AttendanceSession + AttendanceRecord for new reads/writes.
 
-    Records daily attendance for each student in a class.
-    Unique constraint prevents duplicate records per date/class/student. Scoped by tenant.
+    Legacy flat table — one row per student per class per date. Kept for backward compatibility
+    until attendance services are switched to session-based API (phase 2).
     """
     __tablename__ = "attendance"
 
