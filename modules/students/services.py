@@ -1,10 +1,11 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import logging
 import secrets
 import string
 import uuid
+from decimal import Decimal
 
 from backend.core.database import db
 from backend.core.tenant import get_tenant_id
@@ -19,6 +20,48 @@ from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
 
 logger = logging.getLogger(__name__)
+
+def _clean_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        v = value.strip()
+        return v if v != "" else None
+    return str(value).strip() or None
+
+
+def _clean_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _clean_decimal(value: Any) -> Optional[Decimal]:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _clean_bool(value: Any) -> Optional[bool]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(int(value))
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes", "on"):
+            return True
+        if v in ("false", "0", "no", "off"):
+            return False
+    return None
 
 
 def _resolve_student_academic_year_id(
@@ -133,7 +176,70 @@ def create_student(
     class_id: Optional[str] = None,
     roll_number: Optional[int] = None,
     address: Optional[str] = None,
-    guardian_email: Optional[str] = None
+    guardian_email: Optional[str] = None,
+    # Extended fields (all optional)
+    blood_group: Optional[str] = None,
+    height_cm: Optional[int] = None,
+    weight_kg: Optional[str] = None,
+    medical_allergies: Optional[str] = None,
+    medical_conditions: Optional[str] = None,
+    disability_details: Optional[str] = None,
+    identification_marks: Optional[str] = None,
+
+    father_name: Optional[str] = None,
+    father_phone: Optional[str] = None,
+    father_email: Optional[str] = None,
+    father_occupation: Optional[str] = None,
+    father_annual_income: Optional[int] = None,
+
+    mother_name: Optional[str] = None,
+    mother_phone: Optional[str] = None,
+    mother_email: Optional[str] = None,
+    mother_occupation: Optional[str] = None,
+    mother_annual_income: Optional[int] = None,
+
+    guardian_address: Optional[str] = None,
+    guardian_occupation: Optional[str] = None,
+    guardian_aadhar_number: Optional[str] = None,
+
+    aadhar_number: Optional[str] = None,
+    apaar_id: Optional[str] = None,
+    emis_number: Optional[str] = None,
+    udise_student_id: Optional[str] = None,
+    religion: Optional[str] = None,
+    category: Optional[str] = None,
+    caste: Optional[str] = None,
+    nationality: Optional[str] = None,
+    mother_tongue: Optional[str] = None,
+    place_of_birth: Optional[str] = None,
+
+    current_address: Optional[str] = None,
+    current_city: Optional[str] = None,
+    current_state: Optional[str] = None,
+    current_pincode: Optional[str] = None,
+
+    permanent_address: Optional[str] = None,
+    permanent_city: Optional[str] = None,
+    permanent_state: Optional[str] = None,
+    permanent_pincode: Optional[str] = None,
+
+    is_same_as_permanent_address: Optional[bool] = None,
+    is_commuting_from_outstation: Optional[bool] = None,
+    commute_location: Optional[str] = None,
+    commute_notes: Optional[str] = None,
+
+    emergency_contact_name: Optional[str] = None,
+    emergency_contact_relationship: Optional[str] = None,
+    emergency_contact_phone: Optional[str] = None,
+    emergency_contact_alt_phone: Optional[str] = None,
+
+    admission_date: Optional[str] = None,
+    previous_school_name: Optional[str] = None,
+    previous_school_class: Optional[str] = None,
+    last_school_board: Optional[str] = None,
+    tc_number: Optional[str] = None,
+    house_name: Optional[str] = None,
+    student_status: Optional[str] = None,
 ) -> Dict:
     """
     Create a new student with optional login credentials.
@@ -269,7 +375,72 @@ def create_student(
             guardian_name=guardian_name,
             guardian_relationship=guardian_relationship,
             guardian_phone=guardian_phone,
-            guardian_email=guardian_email
+            guardian_email=guardian_email,
+            # Extended profile fields
+            blood_group=_clean_str(blood_group),
+            height_cm=_clean_int(height_cm),
+            weight_kg=_clean_decimal(weight_kg),
+            medical_allergies=_clean_str(medical_allergies),
+            medical_conditions=_clean_str(medical_conditions),
+            disability_details=_clean_str(disability_details),
+            identification_marks=_clean_str(identification_marks),
+
+            father_name=_clean_str(father_name),
+            father_phone=_clean_str(father_phone),
+            father_email=_clean_str(father_email),
+            father_occupation=_clean_str(father_occupation),
+            father_annual_income=_clean_int(father_annual_income),
+
+            mother_name=_clean_str(mother_name),
+            mother_phone=_clean_str(mother_phone),
+            mother_email=_clean_str(mother_email),
+            mother_occupation=_clean_str(mother_occupation),
+            mother_annual_income=_clean_int(mother_annual_income),
+
+            guardian_address=_clean_str(guardian_address),
+            guardian_occupation=_clean_str(guardian_occupation),
+            guardian_aadhar_number=_clean_str(guardian_aadhar_number),
+
+            aadhar_number=_clean_str(aadhar_number),
+            apaar_id=_clean_str(apaar_id),
+            emis_number=_clean_str(emis_number),
+            udise_student_id=_clean_str(udise_student_id),
+            religion=_clean_str(religion),
+            category=_clean_str(category),
+            caste=_clean_str(caste),
+            nationality=_clean_str(nationality),
+            mother_tongue=_clean_str(mother_tongue),
+            place_of_birth=_clean_str(place_of_birth),
+
+            current_address=_clean_str(current_address),
+            current_city=_clean_str(current_city),
+            current_state=_clean_str(current_state),
+            current_pincode=_clean_str(current_pincode),
+
+            permanent_address=_clean_str(permanent_address),
+            permanent_city=_clean_str(permanent_city),
+            permanent_state=_clean_str(permanent_state),
+            permanent_pincode=_clean_str(permanent_pincode),
+
+            is_same_as_permanent_address=_clean_bool(is_same_as_permanent_address),
+            is_commuting_from_outstation=_clean_bool(is_commuting_from_outstation),
+            commute_location=_clean_str(commute_location),
+            commute_notes=_clean_str(commute_notes),
+
+            emergency_contact_name=_clean_str(emergency_contact_name),
+            emergency_contact_relationship=_clean_str(emergency_contact_relationship),
+            emergency_contact_phone=_clean_str(emergency_contact_phone),
+            emergency_contact_alt_phone=_clean_str(emergency_contact_alt_phone),
+
+            admission_date=datetime.strptime(admission_date, "%Y-%m-%d").date()
+            if admission_date
+            else None,
+            previous_school_name=_clean_str(previous_school_name),
+            previous_school_class=_clean_str(previous_school_class),
+            last_school_board=_clean_str(last_school_board),
+            tc_number=_clean_str(tc_number),
+            house_name=_clean_str(house_name),
+            student_status=_clean_str(student_status),
         )
         student.save()
 
@@ -395,7 +566,70 @@ def update_student(
     guardian_name: Optional[str] = None,
     guardian_relationship: Optional[str] = None,
     guardian_phone: Optional[str] = None,
-    guardian_email: Optional[str] = None
+    guardian_email: Optional[str] = None,
+    # Extended fields (all optional)
+    blood_group: Optional[str] = None,
+    height_cm: Optional[int] = None,
+    weight_kg: Optional[str] = None,
+    medical_allergies: Optional[str] = None,
+    medical_conditions: Optional[str] = None,
+    disability_details: Optional[str] = None,
+    identification_marks: Optional[str] = None,
+
+    father_name: Optional[str] = None,
+    father_phone: Optional[str] = None,
+    father_email: Optional[str] = None,
+    father_occupation: Optional[str] = None,
+    father_annual_income: Optional[int] = None,
+
+    mother_name: Optional[str] = None,
+    mother_phone: Optional[str] = None,
+    mother_email: Optional[str] = None,
+    mother_occupation: Optional[str] = None,
+    mother_annual_income: Optional[int] = None,
+
+    guardian_address: Optional[str] = None,
+    guardian_occupation: Optional[str] = None,
+    guardian_aadhar_number: Optional[str] = None,
+
+    aadhar_number: Optional[str] = None,
+    apaar_id: Optional[str] = None,
+    emis_number: Optional[str] = None,
+    udise_student_id: Optional[str] = None,
+    religion: Optional[str] = None,
+    category: Optional[str] = None,
+    caste: Optional[str] = None,
+    nationality: Optional[str] = None,
+    mother_tongue: Optional[str] = None,
+    place_of_birth: Optional[str] = None,
+
+    current_address: Optional[str] = None,
+    current_city: Optional[str] = None,
+    current_state: Optional[str] = None,
+    current_pincode: Optional[str] = None,
+
+    permanent_address: Optional[str] = None,
+    permanent_city: Optional[str] = None,
+    permanent_state: Optional[str] = None,
+    permanent_pincode: Optional[str] = None,
+
+    is_same_as_permanent_address: Optional[bool] = None,
+    is_commuting_from_outstation: Optional[bool] = None,
+    commute_location: Optional[str] = None,
+    commute_notes: Optional[str] = None,
+
+    emergency_contact_name: Optional[str] = None,
+    emergency_contact_relationship: Optional[str] = None,
+    emergency_contact_phone: Optional[str] = None,
+    emergency_contact_alt_phone: Optional[str] = None,
+
+    admission_date: Optional[str] = None,
+    previous_school_name: Optional[str] = None,
+    previous_school_class: Optional[str] = None,
+    last_school_board: Optional[str] = None,
+    tc_number: Optional[str] = None,
+    house_name: Optional[str] = None,
+    student_status: Optional[str] = None,
 ) -> Dict:
     """
     Update student details.
@@ -446,6 +680,125 @@ def update_student(
             student.guardian_phone = guardian_phone
         if guardian_email is not None:
             student.guardian_email = guardian_email
+
+        # Extended fields (only if provided)
+        if blood_group is not None:
+            student.blood_group = _clean_str(blood_group)
+        if height_cm is not None:
+            student.height_cm = _clean_int(height_cm)
+        if weight_kg is not None:
+            student.weight_kg = _clean_decimal(weight_kg)
+        if medical_allergies is not None:
+            student.medical_allergies = _clean_str(medical_allergies)
+        if medical_conditions is not None:
+            student.medical_conditions = _clean_str(medical_conditions)
+        if disability_details is not None:
+            student.disability_details = _clean_str(disability_details)
+        if identification_marks is not None:
+            student.identification_marks = _clean_str(identification_marks)
+
+        if father_name is not None:
+            student.father_name = _clean_str(father_name)
+        if father_phone is not None:
+            student.father_phone = _clean_str(father_phone)
+        if father_email is not None:
+            student.father_email = _clean_str(father_email)
+        if father_occupation is not None:
+            student.father_occupation = _clean_str(father_occupation)
+        if father_annual_income is not None:
+            student.father_annual_income = _clean_int(father_annual_income)
+
+        if mother_name is not None:
+            student.mother_name = _clean_str(mother_name)
+        if mother_phone is not None:
+            student.mother_phone = _clean_str(mother_phone)
+        if mother_email is not None:
+            student.mother_email = _clean_str(mother_email)
+        if mother_occupation is not None:
+            student.mother_occupation = _clean_str(mother_occupation)
+        if mother_annual_income is not None:
+            student.mother_annual_income = _clean_int(mother_annual_income)
+
+        if guardian_address is not None:
+            student.guardian_address = _clean_str(guardian_address)
+        if guardian_occupation is not None:
+            student.guardian_occupation = _clean_str(guardian_occupation)
+        if guardian_aadhar_number is not None:
+            student.guardian_aadhar_number = _clean_str(guardian_aadhar_number)
+
+        if aadhar_number is not None:
+            student.aadhar_number = _clean_str(aadhar_number)
+        if apaar_id is not None:
+            student.apaar_id = _clean_str(apaar_id)
+        if emis_number is not None:
+            student.emis_number = _clean_str(emis_number)
+        if udise_student_id is not None:
+            student.udise_student_id = _clean_str(udise_student_id)
+        if religion is not None:
+            student.religion = _clean_str(religion)
+        if category is not None:
+            student.category = _clean_str(category)
+        if caste is not None:
+            student.caste = _clean_str(caste)
+        if nationality is not None:
+            student.nationality = _clean_str(nationality)
+        if mother_tongue is not None:
+            student.mother_tongue = _clean_str(mother_tongue)
+        if place_of_birth is not None:
+            student.place_of_birth = _clean_str(place_of_birth)
+
+        if current_address is not None:
+            student.current_address = _clean_str(current_address)
+        if current_city is not None:
+            student.current_city = _clean_str(current_city)
+        if current_state is not None:
+            student.current_state = _clean_str(current_state)
+        if current_pincode is not None:
+            student.current_pincode = _clean_str(current_pincode)
+
+        if permanent_address is not None:
+            student.permanent_address = _clean_str(permanent_address)
+        if permanent_city is not None:
+            student.permanent_city = _clean_str(permanent_city)
+        if permanent_state is not None:
+            student.permanent_state = _clean_str(permanent_state)
+        if permanent_pincode is not None:
+            student.permanent_pincode = _clean_str(permanent_pincode)
+
+        if is_same_as_permanent_address is not None:
+            student.is_same_as_permanent_address = _clean_bool(is_same_as_permanent_address)
+        if is_commuting_from_outstation is not None:
+            student.is_commuting_from_outstation = _clean_bool(is_commuting_from_outstation)
+        if commute_location is not None:
+            student.commute_location = _clean_str(commute_location)
+        if commute_notes is not None:
+            student.commute_notes = _clean_str(commute_notes)
+
+        if emergency_contact_name is not None:
+            student.emergency_contact_name = _clean_str(emergency_contact_name)
+        if emergency_contact_relationship is not None:
+            student.emergency_contact_relationship = _clean_str(emergency_contact_relationship)
+        if emergency_contact_phone is not None:
+            student.emergency_contact_phone = _clean_str(emergency_contact_phone)
+        if emergency_contact_alt_phone is not None:
+            student.emergency_contact_alt_phone = _clean_str(emergency_contact_alt_phone)
+
+        if admission_date is not None:
+            student.admission_date = (
+                datetime.strptime(admission_date, "%Y-%m-%d").date() if admission_date else None
+            )
+        if previous_school_name is not None:
+            student.previous_school_name = _clean_str(previous_school_name)
+        if previous_school_class is not None:
+            student.previous_school_class = _clean_str(previous_school_class)
+        if last_school_board is not None:
+            student.last_school_board = _clean_str(last_school_board)
+        if tc_number is not None:
+            student.tc_number = _clean_str(tc_number)
+        if house_name is not None:
+            student.house_name = _clean_str(house_name)
+        if student_status is not None:
+            student.student_status = _clean_str(student_status)
             
         student.save()
         return {'success': True, 'student': student.to_dict()}

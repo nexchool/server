@@ -18,6 +18,7 @@ from backend.shared.helpers import (
 )
 from . import services
 from .document_schemas import validate_document_type
+from .student_schemas import validate_student_payload
 
 # Permissions
 PERM_CREATE = 'student.create'
@@ -114,7 +115,11 @@ def create_student():
         201: Student created with credentials if email provided
         400: Validation error
     """
-    data = request.get_json()
+    data = request.get_json() or {}
+
+    err = validate_student_payload(data, is_update=False)
+    if err:
+        return validation_error_response(err)
     
     # Validate required fields (academic_year_id or class_id - academic year derived from class)
     required = ['name', 'guardian_name', 'guardian_relationship', 'guardian_phone']
@@ -139,7 +144,70 @@ def create_student():
         class_id=data.get('class_id'),
         roll_number=data.get('roll_number'),
         address=data.get('address'),
-        guardian_email=data.get('guardian_email')
+        guardian_email=data.get('guardian_email'),
+        # Extended fields
+        blood_group=data.get("blood_group"),
+        height_cm=data.get("height_cm"),
+        weight_kg=data.get("weight_kg"),
+        medical_allergies=data.get("medical_allergies"),
+        medical_conditions=data.get("medical_conditions"),
+        disability_details=data.get("disability_details"),
+        identification_marks=data.get("identification_marks"),
+
+        father_name=data.get("father_name"),
+        father_phone=data.get("father_phone"),
+        father_email=data.get("father_email"),
+        father_occupation=data.get("father_occupation"),
+        father_annual_income=data.get("father_annual_income"),
+
+        mother_name=data.get("mother_name"),
+        mother_phone=data.get("mother_phone"),
+        mother_email=data.get("mother_email"),
+        mother_occupation=data.get("mother_occupation"),
+        mother_annual_income=data.get("mother_annual_income"),
+
+        guardian_address=data.get("guardian_address"),
+        guardian_occupation=data.get("guardian_occupation"),
+        guardian_aadhar_number=data.get("guardian_aadhar_number"),
+
+        aadhar_number=data.get("aadhar_number"),
+        apaar_id=data.get("apaar_id"),
+        emis_number=data.get("emis_number"),
+        udise_student_id=data.get("udise_student_id"),
+        religion=data.get("religion"),
+        category=data.get("category"),
+        caste=data.get("caste"),
+        nationality=data.get("nationality"),
+        mother_tongue=data.get("mother_tongue"),
+        place_of_birth=data.get("place_of_birth"),
+
+        current_address=data.get("current_address"),
+        current_city=data.get("current_city"),
+        current_state=data.get("current_state"),
+        current_pincode=data.get("current_pincode"),
+
+        permanent_address=data.get("permanent_address"),
+        permanent_city=data.get("permanent_city"),
+        permanent_state=data.get("permanent_state"),
+        permanent_pincode=data.get("permanent_pincode"),
+
+        is_same_as_permanent_address=data.get("is_same_as_permanent_address"),
+        is_commuting_from_outstation=data.get("is_commuting_from_outstation"),
+        commute_location=data.get("commute_location"),
+        commute_notes=data.get("commute_notes"),
+
+        emergency_contact_name=data.get("emergency_contact_name"),
+        emergency_contact_relationship=data.get("emergency_contact_relationship"),
+        emergency_contact_phone=data.get("emergency_contact_phone"),
+        emergency_contact_alt_phone=data.get("emergency_contact_alt_phone"),
+
+        admission_date=data.get("admission_date"),
+        previous_school_name=data.get("previous_school_name"),
+        previous_school_class=data.get("previous_school_class"),
+        last_school_board=data.get("last_school_board"),
+        tc_number=data.get("tc_number"),
+        house_name=data.get("house_name"),
+        student_status=data.get("student_status"),
     )
 
     if result['success']:
@@ -405,7 +473,11 @@ def update_student(student_id):
         if student.get('class_id') not in teacher_class_ids:
             return unauthorized_response()
 
-    data = request.get_json()
+    data = request.get_json() or {}
+
+    err = validate_student_payload(data, is_update=True)
+    if err:
+        return validation_error_response(err)
     
     result = services.update_student(
         student_id,
@@ -420,7 +492,70 @@ def update_student(student_id):
         guardian_name=data.get('guardian_name'),
         guardian_relationship=data.get('guardian_relationship'),
         guardian_phone=data.get('guardian_phone'),
-        guardian_email=data.get('guardian_email')
+        guardian_email=data.get('guardian_email'),
+        # Extended fields
+        blood_group=data.get("blood_group"),
+        height_cm=data.get("height_cm"),
+        weight_kg=data.get("weight_kg"),
+        medical_allergies=data.get("medical_allergies"),
+        medical_conditions=data.get("medical_conditions"),
+        disability_details=data.get("disability_details"),
+        identification_marks=data.get("identification_marks"),
+
+        father_name=data.get("father_name"),
+        father_phone=data.get("father_phone"),
+        father_email=data.get("father_email"),
+        father_occupation=data.get("father_occupation"),
+        father_annual_income=data.get("father_annual_income"),
+
+        mother_name=data.get("mother_name"),
+        mother_phone=data.get("mother_phone"),
+        mother_email=data.get("mother_email"),
+        mother_occupation=data.get("mother_occupation"),
+        mother_annual_income=data.get("mother_annual_income"),
+
+        guardian_address=data.get("guardian_address"),
+        guardian_occupation=data.get("guardian_occupation"),
+        guardian_aadhar_number=data.get("guardian_aadhar_number"),
+
+        aadhar_number=data.get("aadhar_number"),
+        apaar_id=data.get("apaar_id"),
+        emis_number=data.get("emis_number"),
+        udise_student_id=data.get("udise_student_id"),
+        religion=data.get("religion"),
+        category=data.get("category"),
+        caste=data.get("caste"),
+        nationality=data.get("nationality"),
+        mother_tongue=data.get("mother_tongue"),
+        place_of_birth=data.get("place_of_birth"),
+
+        current_address=data.get("current_address"),
+        current_city=data.get("current_city"),
+        current_state=data.get("current_state"),
+        current_pincode=data.get("current_pincode"),
+
+        permanent_address=data.get("permanent_address"),
+        permanent_city=data.get("permanent_city"),
+        permanent_state=data.get("permanent_state"),
+        permanent_pincode=data.get("permanent_pincode"),
+
+        is_same_as_permanent_address=data.get("is_same_as_permanent_address"),
+        is_commuting_from_outstation=data.get("is_commuting_from_outstation"),
+        commute_location=data.get("commute_location"),
+        commute_notes=data.get("commute_notes"),
+
+        emergency_contact_name=data.get("emergency_contact_name"),
+        emergency_contact_relationship=data.get("emergency_contact_relationship"),
+        emergency_contact_phone=data.get("emergency_contact_phone"),
+        emergency_contact_alt_phone=data.get("emergency_contact_alt_phone"),
+
+        admission_date=data.get("admission_date"),
+        previous_school_name=data.get("previous_school_name"),
+        previous_school_class=data.get("previous_school_class"),
+        last_school_board=data.get("last_school_board"),
+        tc_number=data.get("tc_number"),
+        house_name=data.get("house_name"),
+        student_status=data.get("student_status"),
     )
     
     if result['success']:
