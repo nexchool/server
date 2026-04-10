@@ -107,6 +107,13 @@ class Config:
     CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", os.getenv("REDIS_URL", "redis://redis:6379/0"))
     CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", os.getenv("REDIS_URL", "redis://redis:6379/0"))
 
+    # Firebase FCM HTTP v1 (push for native FCM tokens). Optional; Expo tokens use Expo Push API.
+    FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "").strip()
+    FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    FCM_PROJECT_ID = os.getenv("FCM_PROJECT_ID", "").strip()
+    # Expo Push API (ExpoPushToken[...]) — optional access token for higher Expo rate limits
+    EXPO_ACCESS_TOKEN = os.getenv("EXPO_ACCESS_TOKEN", "").strip()
+
 
 class DevelopmentConfig(Config):
     """Development environment configuration"""

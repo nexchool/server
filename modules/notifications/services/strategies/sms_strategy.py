@@ -23,6 +23,7 @@ class SmsStrategy(NotificationStrategy):
         title: str,
         body: Optional[str] = None,
         extra_data: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> bool:
         # Stub: no SMS implementation
         return False

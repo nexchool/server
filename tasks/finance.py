@@ -49,7 +49,11 @@ def process_overdue_fees_task(self):
                 user_id=student.user_id,
                 tenant_id=sf.tenant_id,
                 notification_type=NotificationType.FEE_OVERDUE.value,
-                channels=[NotificationChannel.IN_APP.value, NotificationChannel.EMAIL.value],
+                channels=[
+                    NotificationChannel.IN_APP.value,
+                    NotificationChannel.EMAIL.value,
+                    NotificationChannel.PUSH.value,
+                ],
                 title="Fee Overdue",
                 body=f"Your fee (due {sf.due_date}) is now overdue. Please pay at the earliest.",
                 extra_data={

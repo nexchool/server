@@ -233,7 +233,10 @@ def create_student():
                 user_id=user_id,
                 tenant_id=g.tenant_id,
                 notification_type="STUDENT_CREDENTIALS",
-                channels=[NotificationChannel.EMAIL.value],
+                channels=[
+                    NotificationChannel.EMAIL.value,
+                    NotificationChannel.PUSH.value,
+                ],
                 title="Welcome to the school",
                 body=None,
                 extra_data={

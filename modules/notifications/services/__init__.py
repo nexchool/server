@@ -5,7 +5,7 @@ Dispatcher and delivery strategies.
 """
 
 from .dispatcher import NotificationDispatcher
-from .strategies import InAppStrategy, EmailStrategy, SmsStrategy
+from .strategies import InAppStrategy, EmailStrategy, PushStrategy, SmsStrategy
 
 notification_dispatcher = NotificationDispatcher()
 
@@ -14,5 +14,6 @@ __all__ = [
     "notification_dispatcher",
     "InAppStrategy",
     "EmailStrategy",
+    "PushStrategy",
     "SmsStrategy",
 ]

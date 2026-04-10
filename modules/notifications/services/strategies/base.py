@@ -20,6 +20,7 @@ class NotificationStrategy(ABC):
         title: str,
         body: Optional[str] = None,
         extra_data: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> bool:
         """
         Deliver the notification.

@@ -27,6 +27,8 @@ def make_celery(app):
         include=[
             "backend.tasks.notifications",
             "backend.tasks.finance",
+            "backend.tasks.notification_dispatch",
+            "backend.tasks.push_notifications",
         ],
     )
     # Use new lowercase config keys; avoid celery.conf.update(app.config) to prevent old-key conflicts

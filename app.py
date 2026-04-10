@@ -136,6 +136,7 @@ def register_blueprints(app: Flask):
     from backend.modules.holidays import holidays_bp
     from backend.modules.fees import fees_bp
     from backend.modules.transport import transport_bp
+    from backend.modules.devices import devices_bp
 
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -151,10 +152,11 @@ def register_blueprints(app: Flask):
     app.register_blueprint(subjects_bp, url_prefix='/api/subjects')
     app.register_blueprint(timetable_bp, url_prefix='/api/timetable')
     app.register_blueprint(schedule_bp, url_prefix='/api/schedule')
-    app.register_blueprint(notifications_bp, url_prefix='/api')
+    app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
     app.register_blueprint(holidays_bp, url_prefix='/api/holidays')
     app.register_blueprint(fees_bp, url_prefix='/api/fees')
     app.register_blueprint(transport_bp, url_prefix='/api/transport')
+    app.register_blueprint(devices_bp, url_prefix='/api/devices')
 
 
 def register_error_handlers(app: Flask):
@@ -311,6 +313,7 @@ def register_health_check(app: Flask):
                 'academics': '/api/academics',
                 'subjects': '/api/subjects',
                 'notifications': '/api/notifications',
+                'devices': '/api/devices',
                 'platform': '/api/platform',
                 'health': '/api/health',
                 'fees': '/api/fees'

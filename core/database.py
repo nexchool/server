@@ -97,10 +97,15 @@ def init_db(app):
             FeePayment,
             FeeReceipt,
         )
-        from backend.modules.notifications.models import Notification, NotificationTemplate
+        from backend.modules.notifications.models import (
+            Notification,
+            NotificationRecipient,
+            NotificationTemplate,
+        )
         from backend.modules.timetable.models import TimetableSlot, TimetableConfig
         from backend.modules.schedule.models import ScheduleOverride
         from backend.modules.holidays.models import Holiday
+        from backend.modules.devices.models import DeviceToken
         from backend.modules.transport.models import (
             TransportBus,
             TransportBusAssignment,
