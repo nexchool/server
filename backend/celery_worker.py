@@ -1,1 +1,0 @@
-../celery_worker.py
