@@ -1,6 +1,8 @@
 import enum
 
 from backend.shared.s3_utils import profile_picture_public_url
+from sqlalchemy import text
+
 from backend.core.database import db
 from backend.core.models import TenantBaseModel
 from datetime import datetime
@@ -205,7 +207,14 @@ class Student(TenantBaseModel):
     tc_number = db.Column(db.String(50), nullable=True)
     house_name = db.Column(db.String(50), nullable=True)
     student_status = db.Column(db.String(30), nullable=True)
-    
+
+    is_transport_opted = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+
     # Guardian Info
     guardian_name = db.Column(db.String(100), nullable=True)
     guardian_relationship = db.Column(db.String(50), nullable=True)
@@ -321,6 +330,7 @@ class Student(TenantBaseModel):
             "tc_number": self.tc_number,
             "house_name": self.house_name,
             "student_status": self.student_status,
+            "is_transport_opted": bool(self.is_transport_opted),
             "created_at": self.created_at.isoformat()
         }
 

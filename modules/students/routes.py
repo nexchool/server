@@ -61,6 +61,11 @@ def list_students():
     class_ids = [c.strip() for c in class_ids_param.split(',') if c.strip()] if class_ids_param else None
     academic_year_id = request.args.get('academic_year_id')
     search = request.args.get('search')
+    include_transport_summary = request.args.get('include_transport_summary', '').lower() in (
+        '1',
+        'true',
+        'yes',
+    )
 
     # Check permissions
     if has_permission(user_id, PERM_READ_ALL):
@@ -69,6 +74,7 @@ def list_students():
             class_ids=class_ids,
             academic_year_id=academic_year_id,
             search=search,
+            include_transport_summary=include_transport_summary,
         )
         return success_response(data=students)
 
@@ -79,6 +85,7 @@ def list_students():
             teacher_class_ids,
             academic_year_id=academic_year_id,
             search=search,
+            include_transport_summary=include_transport_summary,
         )
         return success_response(data=students)
         
@@ -419,12 +426,14 @@ def get_student(student_id):
     # RBAC Checks
     # 1. Admin/Staff
     if has_permission(user_id, PERM_READ_ALL):
+        services.attach_transport_to_student_dict(student, student_id, user_id)
         return success_response(data=student)
         
     # 2. Self (Student)
     if has_permission(user_id, PERM_READ_SELF):
         # Check if the requested student is the current user
         if student['user_id'] == user_id:
+            services.attach_transport_to_student_dict(student, student_id, user_id)
             return success_response(data=student)
             
     # 3. Teacher (Class) — only if student is in one of teacher's assigned classes
@@ -432,6 +441,7 @@ def get_student(student_id):
         from backend.modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
         if student.get('class_id') in teacher_class_ids:
+            services.attach_transport_to_student_dict(student, student_id, user_id)
             return success_response(data=student)
         
     return unauthorized_response()
@@ -446,6 +456,7 @@ def get_my_student_profile():
     student = services.get_student_by_user_id(user_id)
     
     if student:
+        services.attach_transport_to_student_dict(student, student["id"], user_id)
         return success_response(data=student)
     return not_found_response('Student profile')
 

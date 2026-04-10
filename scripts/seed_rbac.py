@@ -126,6 +126,43 @@ PERMISSIONS = [
     ('fees.payment.record', 'Record fee payments'),
     ('fees.receipt.download', 'Download fee receipts'),
 
+    # Transport permissions (granular + transport.manage; legacy grouped perms kept for old roles)
+    ('transport.manage', 'Full transport module access'),
+    ('transport.buses.create', 'Create buses'),
+    ('transport.buses.read', 'View buses'),
+    ('transport.buses.update', 'Update buses'),
+    ('transport.buses.delete', 'Delete or deactivate buses'),
+    ('transport.drivers.create', 'Create drivers'),
+    ('transport.drivers.read', 'View drivers'),
+    ('transport.drivers.update', 'Update drivers'),
+    ('transport.drivers.delete', 'Deactivate drivers'),
+    ('transport.routes.create', 'Create routes'),
+    ('transport.routes.read', 'View routes'),
+    ('transport.routes.update', 'Update routes'),
+    ('transport.routes.delete', 'Deactivate routes'),
+    ('transport.stops.create', 'Create transport stops'),
+    ('transport.stops.read', 'View transport stops'),
+    ('transport.stops.update', 'Update transport stops'),
+    ('transport.stops.delete', 'Deactivate transport stops'),
+    ('transport.assignments.create', 'Create bus assignments'),
+    ('transport.assignments.read', 'View bus assignments'),
+    ('transport.assignments.update', 'Update bus assignments'),
+    ('transport.assignments.delete', 'End bus assignments'),
+    ('transport.enrollment.create', 'Create transport enrollments'),
+    ('transport.enrollment.read', 'View transport enrollments'),
+    ('transport.enrollment.update', 'Update transport enrollments'),
+    ('transport.enrollment.delete', 'Deactivate transport enrollments'),
+    ('transport.fee_plans.read', 'View transport fee plans'),
+    ('transport.fee_plans.manage', 'Manage transport fee plans'),
+    ('transport.dashboard.read', 'View transport dashboard'),
+    ('transport.exports.read', 'Export transport CSV reports'),
+    ('transport.student.read_own', 'View own transport details (mobile)'),
+    ('transport.info.read.class', 'View transport info for students in own classes'),
+    ('transport.info.read.self', 'View own transport details'),
+    ('transport.drivers.manage', 'Manage drivers (legacy)'),
+    ('transport.routes.manage', 'Manage routes (legacy)'),
+    ('transport.assignments.manage', 'Manage bus assignments (legacy)'),
+
     # Holiday permissions
     ('holiday.read', 'View holidays and weekly-off calendar'),
     ('holiday.create', 'Create holidays'),
@@ -167,6 +204,7 @@ ROLES = {
             'class_teacher.manage',
             'academics.read',
             'academics.manage',
+            'transport.manage',
         ]
     },
     'Teacher': {
@@ -186,6 +224,7 @@ ROLES = {
             'holiday.read',
             'class_subject.read',
             'academics.read',
+            'transport.info.read.class',
         ]
     },
     'Student': {
@@ -198,6 +237,8 @@ ROLES = {
             'timetable.read',
             'holiday.read',
             'academics.read',
+            'transport.info.read.self',
+            'transport.student.read_own',
         ]
     },
     'Parent': {
@@ -209,6 +250,8 @@ ROLES = {
             'course.read',
             'timetable.read',
             'holiday.read',
+            'transport.info.read.self',
+            'transport.student.read_own',
         ]
     },
 }

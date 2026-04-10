@@ -224,6 +224,12 @@ def assign_student_fees_for_structure(
     if not fs:
         return {"success": False, "error": "Fee structure not found"}
 
+    if getattr(fs, "is_transport_only", False) and not student_ids:
+        return {
+            "success": False,
+            "error": "Transport fee structures must be assigned to explicit students only",
+        }
+
     # Resolve student set
     if student_ids:
         students = Student.query.filter(
@@ -255,6 +261,11 @@ def assign_student_fees_for_structure(
                 )
             students = query.all()
         else:
+            if getattr(fs, "is_transport_only", False):
+                return {
+                    "success": False,
+                    "error": "Transport fee structures must be assigned to explicit students only",
+                }
             students = Student.query.filter_by(tenant_id=tenant_id).all()
 
     created = 0

@@ -488,6 +488,7 @@ def list_students(
     class_ids: List[str] = None,
     academic_year_id: str = None,
     search: str = None,
+    include_transport_summary: bool = False,
 ) -> List[Dict]:
     """List students with optional filters."""
     query = Student.query.join(User)
@@ -513,12 +514,26 @@ def list_students(
     query = query.order_by(Student.class_id, User.name)
     
     students = query.all()
-    return [s.to_dict() for s in students]
+    rows = [s.to_dict() for s in students]
+    if include_transport_summary:
+        tenant_id = get_tenant_id()
+        if tenant_id:
+            from backend.core.plan_features import is_plan_feature_enabled
+            if is_plan_feature_enabled(tenant_id, "transport"):
+                from backend.modules.transport.services import transport_summaries_for_students
+
+                summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
+                for r in rows:
+                    extra = summ.get(r.get("id"))
+                    if extra:
+                        r.update(extra)
+    return rows
 
 def list_students_by_class_ids(
     class_ids: List[str],
     academic_year_id: str = None,
     search: str = None,
+    include_transport_summary: bool = False,
 ) -> List[Dict]:
     """List students filtered to specific class IDs (for teacher scoping)."""
     if not class_ids:
@@ -540,13 +555,41 @@ def list_students_by_class_ids(
 
     query = query.order_by(Student.class_id, User.name)
     students = query.all()
-    return [s.to_dict() for s in students]
+    rows = [s.to_dict() for s in students]
+    if include_transport_summary:
+        tenant_id = get_tenant_id()
+        if tenant_id:
+            from backend.core.plan_features import is_plan_feature_enabled
+            if is_plan_feature_enabled(tenant_id, "transport"):
+                from backend.modules.transport.services import transport_summaries_for_students
+
+                summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
+                for r in rows:
+                    extra = summ.get(r.get("id"))
+                    if extra:
+                        r.update(extra)
+    return rows
 
 
 def get_student_by_id(student_id: str) -> Optional[Dict]:
     """Get student details by ID"""
     student = Student.query.get(student_id)
     return student.to_dict() if student else None
+
+
+def attach_transport_to_student_dict(
+    student_dict: Optional[Dict],
+    student_id: str,
+    viewer_user_id: str,
+) -> Optional[Dict]:
+    """Adds `transport` key when plan feature + RBAC allow (see transport module)."""
+    if not student_dict:
+        return student_dict
+    from backend.modules.transport.services import build_student_transport_block
+
+    student_dict["transport"] = build_student_transport_block(student_id, viewer_user_id)
+    return student_dict
+
 
 def get_student_by_user_id(user_id: str) -> Optional[Dict]:
     """Get student details by User ID"""

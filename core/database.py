@@ -101,6 +101,16 @@ def init_db(app):
         from backend.modules.timetable.models import TimetableSlot, TimetableConfig
         from backend.modules.schedule.models import ScheduleOverride
         from backend.modules.holidays.models import Holiday
+        from backend.modules.transport.models import (
+            TransportBus,
+            TransportBusAssignment,
+            TransportDriver,
+            TransportEnrollment,
+            TransportFeePlan,
+            TransportRoute,
+            TransportStaff,
+            TransportStop,
+        )
 
 
 def reset_db(app):

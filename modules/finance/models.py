@@ -70,6 +70,12 @@ class FeeStructure(TenantBaseModel):
         index=True,
     )
     name = db.Column(db.String(100), nullable=False, index=True)
+    is_transport_only = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
     due_date = db.Column(db.Date, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -104,6 +110,7 @@ class FeeStructure(TenantBaseModel):
             "id": self.id,
             "academic_year_id": self.academic_year_id,
             "name": self.name,
+            "is_transport_only": bool(self.is_transport_only),
             "class_id": class_ids[0] if len(class_ids) == 1 else None,
             "class_ids": class_ids,
             "class_name": ", ".join(n for n in class_names if n) if class_names else None,

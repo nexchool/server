@@ -31,6 +31,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "fees.payment.record", "fees.receipt.download",
             "teacher.leave.manage",
             "holiday.manage",
+            "transport.manage",
         ],
     },
     "Teacher": {
@@ -41,6 +42,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "course.read", "class.read", "subject.read", "timetable.read",
             "teacher.leave.apply",
             "holiday.read",
+            "transport.info.read.class",
         ],
     },
     "Student": {
@@ -49,6 +51,8 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "student.read.self", "attendance.read.self", "grades.read.self",
             "course.read", "timetable.read",
             "holiday.read",
+            "transport.info.read.self",
+            "transport.student.read_own",
         ],
     },
     "Parent": {
@@ -57,6 +61,8 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "student.read.self", "attendance.read.self", "grades.read.self",
             "course.read", "timetable.read",
             "holiday.read",
+            "transport.info.read.self",
+            "transport.student.read_own",
         ],
     },
 }
