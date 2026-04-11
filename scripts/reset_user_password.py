@@ -8,19 +8,19 @@ so this script sets a new password instead.
 Usage (from the app/ directory):
 
   # Reset by email — prompts for new password interactively
-  python -m backend.scripts.reset_user_password --email teacher@school.com
+  python -m scripts.reset_user_password --email teacher@school.com
 
   # Reset by user ID — prompts for new password interactively
-  python -m backend.scripts.reset_user_password --id <user-uuid>
+  python -m scripts.reset_user_password --id <user-uuid>
 
   # Generate a random temporary password automatically
-  python -m backend.scripts.reset_user_password --email teacher@school.com --auto
+  python -m scripts.reset_user_password --email teacher@school.com --auto
 
   # Also force the user to change their password on next login
-  python -m backend.scripts.reset_user_password --email teacher@school.com --auto --force-reset
+  python -m scripts.reset_user_password --email teacher@school.com --auto --force-reset
 
   # Show user info without changing anything
-  python -m backend.scripts.reset_user_password --email teacher@school.com --info
+  python -m scripts.reset_user_password --email teacher@school.com --info
 """
 
 import sys
@@ -29,8 +29,8 @@ import string
 import getpass
 import argparse
 
-from backend.app import create_app
-from backend.modules.auth.models import User
+from app import create_app
+from modules.auth.models import User
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ def _find_user(email: str | None, user_id: str | None) -> User | None:
 
 
 def _print_user_info(user: User) -> None:
-    from backend.modules.rbac.services import get_user_permissions, get_user_roles
+    from modules.rbac.services import get_user_permissions, get_user_roles
     roles = get_user_roles(user.id)
     perms = get_user_permissions(user.id)
 

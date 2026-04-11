@@ -8,7 +8,7 @@ All tenant-scoped business models inherit from TenantBaseModel.
 from datetime import datetime
 import uuid
 
-from backend.core.database import db
+from core.database import db
 
 
 # Status values for Tenant

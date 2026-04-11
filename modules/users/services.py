@@ -7,11 +7,11 @@ Business logic for user administration and management.
 from typing import List, Dict, Optional
 from sqlalchemy import or_
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.auth.models import User
-from backend.shared.s3_utils import normalize_stored_file_value_for_db, profile_picture_public_url
-from backend.shared.utils import paginate_query
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.auth.models import User
+from shared.s3_utils import normalize_stored_file_value_for_db, profile_picture_public_url
+from shared.utils import paginate_query
 
 
 def list_users(

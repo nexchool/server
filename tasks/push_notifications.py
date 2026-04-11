@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
-from backend.celery_app import get_celery
+from celery_app import get_celery
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,11 @@ def send_push_task(
 
     Idempotent enough for Celery retries: deactivates bad tokens; skips missing user/notification.
     """
-    from backend.core.database import db
-    from backend.modules.auth.models import User
-    from backend.modules.notifications.models import Notification
-    from backend.modules.devices.device_service import list_active_tokens_for_user
-    from backend.modules.notifications.push_delivery import deliver_to_tokens, strip_html_for_push
+    from core.database import db
+    from modules.auth.models import User
+    from modules.notifications.models import Notification
+    from modules.devices.device_service import list_active_tokens_for_user
+    from modules.notifications.push_delivery import deliver_to_tokens, strip_html_for_push
 
     user = User.query.filter_by(id=user_id, tenant_id=tenant_id).first()
     if not user:

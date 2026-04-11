@@ -3,8 +3,8 @@ from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
+from core.database import db
+from core.tenant import get_tenant_id
 from .models import Class, ClassTeacher
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,7 @@ def get_all_classes(
 
     result = []
     for c in classes:
-        from backend.modules.students.models import Student
+        from modules.students.models import Student
         student_count = Student.query.filter_by(class_id=c.id).count()
         teacher_count = ClassTeacher.query.filter_by(class_id=c.id).count()
         data = c.to_dict()
@@ -162,7 +162,7 @@ def get_class_detail(class_id: str) -> Optional[Dict]:
     if not cls:
         return None
 
-    from backend.modules.students.models import Student
+    from modules.students.models import Student
 
     # Get students in this class
     students = Student.query.filter_by(class_id=class_id).all()
@@ -200,7 +200,7 @@ def update_class(
         tenant_id = get_tenant_id()
 
         if academic_year_id:
-            from backend.modules.academics.academic_year.models import AcademicYear
+            from modules.academics.academic_year.models import AcademicYear
             ay = AcademicYear.query.filter_by(id=academic_year_id, tenant_id=tenant_id).first()
             if not ay:
                 return {'success': False, 'error': 'Invalid academic year.'}
@@ -291,7 +291,7 @@ def assign_student_to_class(class_id: str, student_id: str) -> Dict:
         if not cls:
             return {'success': False, 'error': 'Class not found'}
 
-        from backend.modules.students.models import Student
+        from modules.students.models import Student
         student = Student.query.get(student_id)
         if not student:
             return {'success': False, 'error': 'Student not found'}
@@ -301,7 +301,7 @@ def assign_student_to_class(class_id: str, student_id: str) -> Dict:
 
         # Auto-assign any applicable fee structures for this student's class/year
         try:
-            from backend.modules.finance.services import student_fee_service
+            from modules.finance.services import student_fee_service
 
             student_fee_service.auto_assign_fees_for_student(student.id)
         except Exception:
@@ -316,7 +316,7 @@ def assign_student_to_class(class_id: str, student_id: str) -> Dict:
 def remove_student_from_class(class_id: str, student_id: str) -> Dict:
     """Remove a student from a class."""
     try:
-        from backend.modules.students.models import Student
+        from modules.students.models import Student
         student = Student.query.get(student_id)
         if not student:
             return {'success': False, 'error': 'Student not found'}
@@ -343,8 +343,8 @@ def assign_teacher_to_class(
     Validates: class exists, teacher exists, subject exists.
     """
     try:
-        from backend.modules.teachers.models import Teacher
-        from backend.modules.subjects.models import Subject
+        from modules.teachers.models import Teacher
+        from modules.subjects.models import Subject
 
         cls = Class.query.get(class_id)
         if not cls:
@@ -437,7 +437,7 @@ def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
 
 def get_unassigned_students(class_id: str) -> List[Dict]:
     """Get students not assigned to any class (for assignment picker)."""
-    from backend.modules.students.models import Student
+    from modules.students.models import Student
     students = Student.query.filter(
         db.or_(Student.class_id.is_(None), Student.class_id == '')
     ).all()
@@ -446,7 +446,7 @@ def get_unassigned_students(class_id: str) -> List[Dict]:
 
 def get_unassigned_teachers(class_id: str) -> List[Dict]:
     """Get teachers not yet assigned to this class."""
-    from backend.modules.teachers.models import Teacher
+    from modules.teachers.models import Teacher
     assigned_ids = [ct.teacher_id for ct in ClassTeacher.query.filter_by(class_id=class_id).all()]
     query = Teacher.query.filter(Teacher.status == 'active')
     if assigned_ids:
@@ -465,7 +465,7 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
     if not tenant_id:
         return []
 
-    from backend.modules.teachers.models import Teacher
+    from modules.teachers.models import Teacher
 
     # User IDs already assigned as class teacher via Class.teacher_id (exclude class_id if editing)
     class_filter = Class.query.filter(

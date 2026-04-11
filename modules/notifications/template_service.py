@@ -10,8 +10,8 @@ from typing import Any, Dict, Optional
 from jinja2 import Environment, BaseLoader, select_autoescape
 from jinja2.exceptions import TemplateError
 
-from backend.core.database import db
-from backend.modules.notifications.models import NotificationTemplate
+from core.database import db
+from modules.notifications.models import NotificationTemplate
 
 
 # Category constants (single source of truth)

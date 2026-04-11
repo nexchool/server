@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import ClassTeacherAssignment
-from backend.modules.teachers.models import Teacher
+from core.database import db
+from modules.academics.backbone.models import ClassTeacherAssignment
+from modules.teachers.models import Teacher
 
 from .common import get_class_for_tenant, teacher_is_active_for_class
 

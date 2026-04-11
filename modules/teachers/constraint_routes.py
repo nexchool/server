@@ -15,9 +15,9 @@ Endpoints for:
 """
 
 from flask import request, g
-from backend.modules.teachers import teachers_bp
-from backend.core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
-from backend.shared.helpers import (
+from modules.teachers import teachers_bp
+from core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,

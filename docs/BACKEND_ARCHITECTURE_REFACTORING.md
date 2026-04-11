@@ -20,7 +20,7 @@ The Flask School ERP backend has been refactored into a **production-grade modul
 ## 📁 New Folder Structure
 
 ```
-backend/
+server/
 ├── __init__.py                 # Package initialization
 ├── app.py                      # Application factory
 │
@@ -79,7 +79,7 @@ backend/
 
 ## 🏗️ Architecture Components
 
-### 1. Configuration Management (`backend/config/`)
+### 1. Configuration Management (`server/config/`)
 
 **Purpose**: Centralized configuration with environment-specific settings.
 
@@ -96,7 +96,7 @@ backend/
 
 **Example Usage**:
 ```python
-from backend.config import get_config
+from config import get_config
 
 config = get_config('production')
 app.config.from_object(config)
@@ -104,7 +104,7 @@ app.config.from_object(config)
 
 ---
 
-### 2. Core Infrastructure (`backend/core/`)
+### 2. Core Infrastructure (`server/core/`)
 
 **Purpose**: Foundational components used across all modules.
 
@@ -114,7 +114,7 @@ app.config.from_object(config)
 - Helper functions
 
 ```python
-from backend.core.database import db
+from core.database import db
 
 # In models
 class MyModel(db.Model):
@@ -130,7 +130,7 @@ class MyModel(db.Model):
 
 **Authentication Decorator** (`auth.py`):
 ```python
-from backend.core.decorators import auth_required
+from core.decorators import auth_required
 
 @bp.route('/protected')
 @auth_required
@@ -141,7 +141,7 @@ def protected_route():
 
 **RBAC Decorators** (`rbac.py`):
 ```python
-from backend.core.decorators import require_permission
+from core.decorators import require_permission
 
 @bp.route('/students', methods=['POST'])
 @auth_required
@@ -153,7 +153,7 @@ def create_student():
 
 **Advanced RBAC**:
 ```python
-from backend.core.decorators import require_any_permission, require_all_permissions
+from core.decorators import require_any_permission, require_all_permissions
 
 # Requires ANY of the listed permissions
 @require_any_permission('attendance.read.self', 'attendance.read.class', 'attendance.manage')
@@ -168,7 +168,7 @@ def sensitive_operation():
 
 ---
 
-### 3. Business Modules (`backend/modules/`)
+### 3. Business Modules (`server/modules/`)
 
 Each module follows a consistent structure:
 ```
@@ -205,7 +205,7 @@ module_name/
 
 **Example**:
 ```python
-from backend.modules.auth.services import authenticate_user, generate_access_token
+from modules.auth.services import authenticate_user, generate_access_token
 
 user = authenticate_user(email, password)
 if user:
@@ -245,7 +245,7 @@ if user:
 
 **Example**:
 ```python
-from backend.modules.rbac.services import has_permission
+from modules.rbac.services import has_permission
 
 if has_permission(user_id, 'student.create'):
     # User can create students
@@ -265,7 +265,7 @@ if has_permission(user_id, 'student.create'):
 
 **Example**:
 ```python
-from backend.modules.users.services import list_users
+from modules.users.services import list_users
 
 result = list_users(search='john', page=1, per_page=20)
 users = result['items']
@@ -277,7 +277,7 @@ users = result['items']
 
 **Functions**:
 ```python
-from backend.modules.mailer import send_template_email
+from modules.mailer import send_template_email
 
 send_template_email(
     to_email='user@example.com',
@@ -289,13 +289,13 @@ send_template_email(
 
 ---
 
-### 4. Shared Utilities (`backend/shared/`)
+### 4. Shared Utilities (`server/shared/`)
 
 **Purpose**: Common utilities used across modules
 
 #### Utilities (`utils.py`)
 ```python
-from backend.shared.utils import paginate_query, generate_uuid
+from shared.utils import paginate_query, generate_uuid
 
 # Paginate query
 result = paginate_query(query, page=1, per_page=20)
@@ -303,7 +303,7 @@ result = paginate_query(query, page=1, per_page=20)
 
 #### Response Helpers (`helpers.py`)
 ```python
-from backend.shared.helpers import success_response, error_response
+from shared.helpers import success_response, error_response
 
 # Standardized responses
 return success_response(data={'user': user}, message='Success', status_code=200)
@@ -312,13 +312,13 @@ return error_response('ValidationError', 'Email required', 400)
 
 ---
 
-### 5. Administrative Scripts (`backend/scripts/`)
+### 5. Administrative Scripts (`server/scripts/`)
 
 #### Seed RBAC (`seed_rbac.py`)
 Seeds database with default roles and permissions.
 
 ```bash
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 ```
 
 Defines:
@@ -330,14 +330,14 @@ Defines:
 Interactive script to create admin user.
 
 ```bash
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 ```
 
 #### RBAC Helpers (`rbac_helpers.py`)
 Helper functions for Flask shell.
 
 ```python
-from backend.scripts.rbac_helpers import *
+from scripts.rbac_helpers import *
 
 assign_admin_role('admin@school.com')
 show_user_permissions('user@school.com')
@@ -348,7 +348,7 @@ show_all_roles()
 
 ## 🚀 Application Factory Pattern
 
-### Main Application (`backend/app.py`)
+### Main Application (`server/app.py`)
 
 **Features**:
 - Application factory function
@@ -359,7 +359,7 @@ show_all_roles()
 
 **Usage**:
 ```python
-from backend.app import create_app
+from app import create_app
 
 # Create app with specific config
 app = create_app('production')
@@ -371,9 +371,9 @@ app = create_app()
 **Blueprint Registration**:
 ```python
 def register_blueprints(app: Flask):
-    from backend.modules.auth import auth_bp
-    from backend.modules.rbac import rbac_bp
-    from backend.modules.users import users_bp
+    from modules.auth import auth_bp
+    from modules.rbac import rbac_bp
+    from modules.users import users_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(rbac_bp, url_prefix='/api/rbac')
@@ -383,10 +383,10 @@ def register_blueprints(app: Flask):
 **Running**:
 ```bash
 # Development
-python backend/app.py
+python app.py
 
 # Production with Gunicorn
-gunicorn -w 4 -b 0.0.0.0:5001 backend.app:app
+gunicorn -w 4 -b 0.0.0.0:5001 app:app
 ```
 
 ---
@@ -459,7 +459,7 @@ has_permission(user_id, 'student.delete')   # True
 
 ### Usage in Routes
 ```python
-from backend.core.decorators import auth_required, require_permission
+from core.decorators import auth_required, require_permission
 
 @bp.route('/students', methods=['POST'])
 @auth_required
@@ -471,7 +471,7 @@ def create_student():
 
 ### Checking Permissions in Code
 ```python
-from backend.modules.rbac.services import has_permission
+from modules.rbac.services import has_permission
 
 if has_permission(user_id, 'student.create'):
     # User is authorized
@@ -511,7 +511,7 @@ def create_student(data: Dict) -> Dict:
 
 **Route** (`routes.py`):
 ```python
-from backend.shared.helpers import success_response, error_response
+from shared.helpers import success_response, error_response
 from .services import create_student
 
 @bp.route('/students', methods=['POST'])
@@ -551,40 +551,40 @@ cp .env.example .env
 # Edit .env with your settings
 
 # Initialize database
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.create_all()"
 
 # Seed RBAC system
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 
 # Create admin user
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 ```
 
 ### 2. Running the Server
 
 ```bash
 # Development
-python backend/app.py
+python app.py
 
 # Or use Flask CLI
-export FLASK_APP=backend.app:app
+export FLASK_APP=app:app
 flask run --host=0.0.0.0 --port=5001
 
 # Production with Gunicorn
-gunicorn -w 4 -b 0.0.0.0:5001 backend.app:app
+gunicorn -w 4 -b 0.0.0.0:5001 app:app
 ```
 
 ### 3. Adding a New Module
 
 ```bash
 # 1. Create module directory
-mkdir -p backend/modules/students
+mkdir -p server/modules/students
 
 # 2. Create files
-touch backend/modules/students/__init__.py
-touch backend/modules/students/models.py
-touch backend/modules/students/routes.py
-touch backend/modules/students/services.py
+touch server/modules/students/__init__.py
+touch server/modules/students/models.py
+touch server/modules/students/routes.py
+touch server/modules/students/services.py
 ```
 
 **`__init__.py`**:
@@ -600,7 +600,7 @@ __all__ = ['students_bp']
 
 **`models.py`**:
 ```python
-from backend.core.database import db
+from core.database import db
 
 class Student(db.Model):
     __tablename__ = 'students'
@@ -617,7 +617,7 @@ def create_student(data):
 **`routes.py`**:
 ```python
 from . import students_bp
-from backend.core.decorators import auth_required, require_permission
+from core.decorators import auth_required, require_permission
 
 @students_bp.route('', methods=['POST'])
 @auth_required
@@ -629,7 +629,7 @@ def create_student_route():
 
 **Register in `app.py`**:
 ```python
-from backend.modules.students import students_bp
+from modules.students import students_bp
 
 app.register_blueprint(students_bp, url_prefix='/api/students')
 ```
@@ -641,12 +641,12 @@ app.register_blueprint(students_bp, url_prefix='/api/students')
 ### Complete Route Example
 
 ```python
-# backend/modules/students/routes.py
+# server/modules/students/routes.py
 
 from flask import request, g
 from . import students_bp
-from backend.core.decorators import auth_required, require_permission
-from backend.shared.helpers import success_response, error_response
+from core.decorators import auth_required, require_permission
+from shared.helpers import success_response, error_response
 from .services import create_student, get_student_by_id
 
 @students_bp.route('', methods=['POST'])
@@ -702,10 +702,10 @@ def get_student_route(student_id):
 ### Complete Service Example
 
 ```python
-# backend/modules/students/services.py
+# server/modules/students/services.py
 
 from typing import Dict, Optional
-from backend.core.database import db
+from core.database import db
 from .models import Student
 
 def create_student(data: Dict, created_by: str) -> Dict:
@@ -785,7 +785,7 @@ def serialize_student(student: Student) -> Dict:
 - ✅ Log errors appropriately
 
 ### 4. Code Organization
-- ✅ Import from `backend.*`
+- ✅ Import from top-level packages (`core`, `modules`, …) with `PYTHONPATH` including `server/`
 - ✅ Use absolute imports
 - ✅ Keep routes thin
 - ✅ Keep services focused
@@ -807,9 +807,9 @@ from auth.services.rbac_service import has_permission
 
 **New**:
 ```python
-from backend.modules.auth.models import User
-from backend.core.decorators import auth_required
-from backend.modules.rbac.services import has_permission
+from modules.auth.models import User
+from core.decorators import auth_required
+from modules.rbac.services import has_permission
 ```
 
 #### Step 2: Update App Initialization
@@ -820,7 +820,7 @@ from app import app
 
 **New**:
 ```python
-from backend.app import create_app
+from app import create_app
 app = create_app()
 ```
 
@@ -832,7 +832,7 @@ from config import get_backend_url
 
 **New**:
 ```python
-from backend.config.settings import get_backend_url
+from config.settings import get_backend_url
 ```
 
 #### Step 4: Run Database Migration
@@ -891,7 +891,7 @@ gunicorn \
   --timeout 60 \
   --access-logfile - \
   --error-logfile - \
-  backend.app:app
+  app:app
 ```
 
 ### Docker
@@ -905,7 +905,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5001", "backend.app:app"]
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5001", "app:app"]
 ```
 
 ---

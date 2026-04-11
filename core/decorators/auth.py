@@ -44,8 +44,8 @@ def auth_required(fn):
             return ("", 204)
 
         # Import here to avoid circular imports
-        from backend.modules.auth.models import User, Session
-        from backend.modules.auth.services import validate_jwt_token, refresh_access_token
+        from modules.auth.models import User, Session
+        from modules.auth.services import validate_jwt_token, refresh_access_token
         
         # Check for Authorization header or auth-token cookie (for panel / Super Admin)
         auth_header = request.headers.get("Authorization")

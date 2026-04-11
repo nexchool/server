@@ -1,8 +1,8 @@
 from flask import request, g
-from backend.modules.attendance import attendance_bp
-from backend.core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
-from backend.core.decorators.rbac import require_any_permission
-from backend.shared.helpers import (
+from modules.attendance import attendance_bp
+from core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from core.decorators.rbac import require_any_permission
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,
@@ -57,7 +57,7 @@ def mark_attendance():
 
     # Verify teacher is assigned to this class
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission
+    from modules.rbac.services import has_permission
     if not has_permission(user_id, 'attendance.manage'):
         allowed_class_ids = services.get_teacher_class_ids(user_id)
         if class_id not in allowed_class_ids:
@@ -108,11 +108,11 @@ def get_student_attendance(student_id):
     Query: month=YYYY-MM (optional)
     """
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission
+    from modules.rbac.services import has_permission
 
     # If student reading self, verify it's their own record
     if has_permission(user_id, PERM_READ_SELF) and not has_permission(user_id, PERM_READ_ALL):
-        from backend.modules.students.models import Student
+        from modules.students.models import Student
         student = Student.query.get(student_id)
         if not student or student.user_id != user_id:
             if not has_permission(user_id, PERM_READ_CLASS):
@@ -133,7 +133,7 @@ def get_student_attendance(student_id):
 def get_my_attendance():
     """Get current user's attendance (for students)."""
     user_id = g.current_user.id
-    from backend.modules.students.models import Student
+    from modules.students.models import Student
     student = Student.query.filter_by(user_id=user_id).first()
     if not student:
         return not_found_response('Student profile')

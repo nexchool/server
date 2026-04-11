@@ -9,11 +9,11 @@ from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, date
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.classes.models import Class
-from backend.modules.students.models import Student
-from backend.modules.holidays.services import get_holiday_for_date
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.classes.models import Class
+from modules.students.models import Student
+from modules.holidays.services import get_holiday_for_date
 from .models import Attendance
 
 
@@ -24,8 +24,8 @@ def get_teacher_class_ids(user_id: str) -> List[str]:
     Includes legacy Class.teacher_id and authoritative ClassTeacherAssignment (primary + allow_attendance).
     Users with attendance.manage permission bypass this and can mark any class (admin override).
     """
-    from backend.modules.academics.backbone.models import ClassTeacherAssignment
-    from backend.modules.teachers.models import Teacher
+    from modules.academics.backbone.models import ClassTeacherAssignment
+    from modules.teachers.models import Teacher
 
     ids: List[str] = []
 

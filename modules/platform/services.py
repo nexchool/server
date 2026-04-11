@@ -13,8 +13,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
 
-from backend.core.database import db
-from backend.core.models import (
+from core.database import db
+from core.models import (
     Tenant,
     Plan,
     AuditLog,
@@ -23,12 +23,12 @@ from backend.core.models import (
     TENANT_STATUS_SUSPENDED,
     TENANT_STATUS_DELETED,
 )
-from backend.modules.auth.models import User
-from backend.modules.rbac.models import Role, Permission, RolePermission, UserRole
-from backend.modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noqa: F401 (re-exported)
-from backend.modules.students.models import Student
-from backend.modules.teachers.models import Teacher
-from backend.modules.platform.audit import log_platform_action
+from modules.auth.models import User
+from modules.rbac.models import Role, Permission, RolePermission, UserRole
+from modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noqa: F401 (re-exported)
+from modules.students.models import Student
+from modules.teachers.models import Teacher
+from modules.platform.audit import log_platform_action
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +153,8 @@ def create_tenant(
     db.session.commit()
 
     try:
-        from backend.modules.notifications.services import notification_dispatcher
-        from backend.modules.notifications.enums import NotificationChannel
+        from modules.notifications.services import notification_dispatcher
+        from modules.notifications.enums import NotificationChannel
 
         _results = notification_dispatcher.dispatch(
             user_id=user.id,
@@ -291,8 +291,8 @@ def reset_tenant_admin(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]
     user.save()
 
     try:
-        from backend.modules.notifications.services import notification_dispatcher
-        from backend.modules.notifications.enums import NotificationChannel
+        from modules.notifications.services import notification_dispatcher
+        from modules.notifications.enums import NotificationChannel
 
         _results = notification_dispatcher.dispatch(
             user_id=user.id,
@@ -658,8 +658,8 @@ def add_tenant_admin(
     db.session.add(ur)
     db.session.commit()
     try:
-        from backend.modules.notifications.services import notification_dispatcher
-        from backend.modules.notifications.enums import NotificationChannel
+        from modules.notifications.services import notification_dispatcher
+        from modules.notifications.enums import NotificationChannel
 
         _results = notification_dispatcher.dispatch(
             user_id=user.id,
@@ -790,7 +790,7 @@ def update_tenant_admin(
 
 def get_platform_settings() -> Dict[str, Any]:
     """Return all platform settings as key -> value (strings)."""
-    from backend.core.models import PLATFORM_SETTING_KEYS
+    from core.models import PLATFORM_SETTING_KEYS
     rows = PlatformSetting.query.all()
     result = {r.key: r.value for r in rows}
     for key in PLATFORM_SETTING_KEYS:
@@ -811,7 +811,7 @@ def get_platform_setting(key: str) -> Optional[str]:
 
 def get_tenant_notification_settings(tenant_id: str) -> Dict[str, Any]:
     """Get tenant's notification template overrides (tenant_id = tenant)."""
-    from backend.modules.notifications.models import NotificationTemplate
+    from modules.notifications.models import NotificationTemplate
 
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
@@ -831,8 +831,8 @@ def patch_tenant_notification_settings(
     platform_admin_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create or update tenant override templates."""
-    from backend.modules.notifications.models import NotificationTemplate
-    from backend.modules.notifications.template_service import NOTIFICATION_CATEGORIES
+    from modules.notifications.models import NotificationTemplate
+    from modules.notifications.template_service import NOTIFICATION_CATEGORIES
 
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
@@ -905,7 +905,7 @@ def list_notification_templates(
     per_page: int = 50,
 ) -> Dict[str, Any]:
     """List notification templates with optional filters."""
-    from backend.modules.notifications.models import NotificationTemplate
+    from modules.notifications.models import NotificationTemplate
 
     query = NotificationTemplate.query
     if tenant_id is not None:
@@ -947,14 +947,14 @@ def create_notification_template(
     platform_admin_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a notification template (global if tenant_id None)."""
-    from backend.modules.notifications.models import NotificationTemplate
-    from backend.modules.notifications.template_service import NOTIFICATION_CATEGORIES
+    from modules.notifications.models import NotificationTemplate
+    from modules.notifications.template_service import NOTIFICATION_CATEGORIES
     import uuid
 
     if category not in NOTIFICATION_CATEGORIES:
         return {"success": False, "error": f"Invalid category: {category}"}
 
-    from backend.modules.notifications.template_service import validate_notification_template
+    from modules.notifications.template_service import validate_notification_template
     valid, err = validate_notification_template(subject_template, body_template)
     if not valid:
         return {"success": False, "error": f"Invalid template syntax: {err}"}
@@ -1012,8 +1012,8 @@ def update_notification_template(
     is_system: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Update a notification template."""
-    from backend.modules.notifications.models import NotificationTemplate
-    from backend.modules.notifications.template_service import NOTIFICATION_CATEGORIES
+    from modules.notifications.models import NotificationTemplate
+    from modules.notifications.template_service import NOTIFICATION_CATEGORIES
 
     tpl = NotificationTemplate.query.get(template_id)
     if not tpl:
@@ -1023,7 +1023,7 @@ def update_notification_template(
 
     subj = subject_template if subject_template is not None else tpl.subject_template
     body = body_template if body_template is not None else tpl.body_template
-    from backend.modules.notifications.template_service import validate_notification_template
+    from modules.notifications.template_service import validate_notification_template
     valid, err = validate_notification_template(subj, body)
     if not valid:
         return {"success": False, "error": f"Invalid template syntax: {err}"}
@@ -1054,7 +1054,7 @@ def update_notification_template(
 
 def delete_notification_template(template_id: str, platform_admin_id: Optional[str] = None) -> Dict[str, Any]:
     """Delete a notification template."""
-    from backend.modules.notifications.models import NotificationTemplate
+    from modules.notifications.models import NotificationTemplate
 
     tpl = NotificationTemplate.query.get(template_id)
     if not tpl:
@@ -1078,8 +1078,8 @@ def preview_notification_template(
     body_template: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Render template with dummy context. Either template_id or (subject_template, body_template) required."""
-    from backend.modules.notifications.models import NotificationTemplate
-    from backend.modules.notifications.template_service import (
+    from modules.notifications.models import NotificationTemplate
+    from modules.notifications.template_service import (
         render_notification_template,
         PREVIEW_CONTEXT,
     )
@@ -1108,12 +1108,12 @@ def preview_notification_template(
 
 def test_send_notification_template(template_id: str, to_email: str) -> Dict[str, Any]:
     """Render template and send to given email. Used for test-send to super admin."""
-    from backend.modules.notifications.models import NotificationTemplate
-    from backend.modules.notifications.template_service import (
+    from modules.notifications.models import NotificationTemplate
+    from modules.notifications.template_service import (
         render_notification_template,
         PREVIEW_CONTEXT,
     )
-    from backend.tasks.notifications import send_email_task
+    from tasks.notifications import send_email_task
 
     tpl = NotificationTemplate.query.get(template_id)
     if not tpl:
@@ -1133,7 +1133,7 @@ def test_send_notification_template(template_id: str, to_email: str) -> Dict[str
 
 def update_platform_settings(updates: Dict[str, Any], platform_admin_id: Optional[str] = None) -> Dict[str, Any]:
     """Update platform settings. Values are stored as strings."""
-    from backend.core.models import PLATFORM_SETTING_KEYS
+    from core.models import PLATFORM_SETTING_KEYS
     for key, value in updates.items():
         if key not in PLATFORM_SETTING_KEYS:
             continue

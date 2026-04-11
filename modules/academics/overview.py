@@ -1,11 +1,11 @@
 """Academics overview API - GET /api/academics/overview."""
 
-from backend.modules.academics import academics_bp
-from backend.core.decorators import auth_required, tenant_required, require_plan_feature, require_permission
-from backend.core.tenant import get_tenant_id
-from backend.modules.classes.models import Class
-from backend.modules.subjects.models import Subject
-from backend.shared.helpers import success_response
+from modules.academics import academics_bp
+from core.decorators import auth_required, tenant_required, require_plan_feature, require_permission
+from core.tenant import get_tenant_id
+from modules.classes.models import Class
+from modules.subjects.models import Subject
+from shared.helpers import success_response
 
 
 @academics_bp.route("/overview", methods=["GET"])

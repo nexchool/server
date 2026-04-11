@@ -6,14 +6,14 @@ REST API for timetable slot CRUD. All routes require tenant context and RBAC per
 
 from flask import request, g
 
-from backend.modules.timetable import timetable_bp
-from backend.core.decorators import (
+from modules.timetable import timetable_bp
+from core.decorators import (
     require_permission,
     auth_required,
     tenant_required,
     require_plan_feature,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,

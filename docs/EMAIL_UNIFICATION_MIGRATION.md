@@ -14,7 +14,7 @@ All email sending is now routed through the notification template system via `No
 
 ```bash
 cd app
-python -m backend.scripts.seed_existing_mailer_templates_to_db
+python -m scripts.seed_existing_mailer_templates_to_db
 ```
 
 This inserts mailer templates (email_verification, forgot_password, register, student_creation, school_admin_credentials, ADMIN_PASSWORD_RESET) as GLOBAL notification_templates. Skips if already present.

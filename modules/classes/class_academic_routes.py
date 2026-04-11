@@ -6,17 +6,17 @@ TODO: Legacy subject-load routes remain; clients should migrate to /subjects API
 
 from flask import g, request
 
-from backend.modules.classes import classes_bp
-from backend.modules.rbac.services import has_permission
-from backend.core.decorators import (
+from modules.classes import classes_bp
+from modules.rbac.services import has_permission
+from core.decorators import (
     auth_required,
     require_any_permission,
     require_permission,
     tenant_required,
     require_plan_feature,
 )
-from backend.shared.helpers import success_response, error_response
-from backend.modules.academics.services import (
+from shared.helpers import success_response, error_response
+from modules.academics.services import (
     class_subjects,
     class_subject_teachers,
     class_teacher_assignments,

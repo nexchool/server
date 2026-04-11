@@ -5,7 +5,7 @@ PHASE 2 CLEANUP (TODO): Remove deprecated parallel tables subject_load, timetabl
 after all services read/write the new models.
 """
 
-from backend.modules.academics.backbone.models import (  # noqa: F401
+from modules.academics.backbone.models import (  # noqa: F401
     AcademicSettings,
     AcademicTerm,
     AttendanceRecord,

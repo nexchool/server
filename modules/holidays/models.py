@@ -18,8 +18,8 @@ Sunday collision:
 from datetime import datetime
 import uuid
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 
 HOLIDAY_TYPES = ("public", "school", "regional", "optional", "weekly_off")
 

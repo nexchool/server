@@ -7,10 +7,10 @@ Invoices, payments, receipts, reminders. Requires tenant_id and RBAC.
 from flask import request, g, send_file
 import io
 
-from backend.modules.fees import fees_bp
-from backend.core.decorators import auth_required, tenant_required, require_plan_feature
-from backend.core.decorators.rbac import require_permission, require_any_permission
-from backend.shared.helpers import (
+from modules.fees import fees_bp
+from core.decorators import auth_required, tenant_required, require_plan_feature
+from core.decorators.rbac import require_permission, require_any_permission
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,
@@ -135,7 +135,7 @@ def send_invoice_reminder(invoice_id):
 @require_any_permission(PERM_INVOICE_READ, PERM_RECEIPT_DOWNLOAD, "finance.read", "finance.manage")
 def download_invoice_pdf(invoice_id):
     """GET /api/fees/invoices/<id>/download - Generate and download invoice PDF."""
-    from backend.modules.fees.services.invoice_service import get_invoice
+    from modules.fees.services.invoice_service import get_invoice
 
     inv = get_invoice(invoice_id)
     if not inv:

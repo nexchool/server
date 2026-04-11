@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import AcademicTerm
-from backend.modules.classes.models import ClassSubject
-from backend.modules.subjects.models import Subject
+from core.database import db
+from modules.academics.backbone.models import AcademicTerm
+from modules.classes.models import ClassSubject
+from modules.subjects.models import Subject
 
 from .common import get_class_for_tenant
 

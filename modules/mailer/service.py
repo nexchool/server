@@ -1,7 +1,7 @@
 """
 Email Service (DEPRECATED).
 
-DEPRECATED: Use NotificationDispatcher from backend.modules.notifications instead.
+DEPRECATED: Use NotificationDispatcher from modules.notifications instead.
 This module is retained for backward compatibility only.
 All functions internally redirect to NotificationDispatcher.
 """
@@ -25,7 +25,7 @@ _TEMPLATE_TO_TYPE = {
 def _deprecation_warning():
     """Emit deprecation warning."""
     warnings.warn(
-        "Mailer module deprecated — use NotificationDispatcher from backend.modules.notifications",
+        "Mailer module deprecated — use NotificationDispatcher from modules.notifications",
         DeprecationWarning,
         stacklevel=3,
     )
@@ -43,8 +43,8 @@ def _send_via_dispatcher(
     Resolves user_id from to_email (requires tenant context).
     """
     from flask import has_request_context, g
-    from backend.modules.notifications.services import notification_dispatcher
-    from backend.modules.notifications.enums import NotificationChannel
+    from modules.notifications.services import notification_dispatcher
+    from modules.notifications.enums import NotificationChannel
 
     _deprecation_warning()
 
@@ -56,7 +56,7 @@ def _send_via_dispatcher(
         logger.warning("Mailer redirect: no tenant_id in context, cannot dispatch")
         return
 
-    from backend.modules.auth.models import User
+    from modules.auth.models import User
     user = User.get_user_by_email(to_email, tenant_id=tenant_id)
     if not user:
         logger.warning("Mailer redirect: user not found for email=%s tenant=%s", to_email, tenant_id)

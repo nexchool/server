@@ -6,9 +6,9 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import case
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.finance.models import (
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.finance.models import (
     FeeStructure,
     FeeComponent,
     StudentFee,
@@ -16,12 +16,12 @@ from backend.modules.finance.models import (
     FeeStructureClass,
     Payment,
 )
-from backend.modules.finance.enums import PaymentStatus, StudentFeeStatus
-from backend.shared.s3_utils import profile_picture_public_url
-from backend.modules.students.models import Student
-from backend.modules.auth.models import User
-from backend.modules.classes.models import Class
-from backend.modules.audit.services import log_finance_action
+from modules.finance.enums import PaymentStatus, StudentFeeStatus
+from shared.s3_utils import profile_picture_public_url
+from modules.students.models import Student
+from modules.auth.models import User
+from modules.classes.models import Class
+from modules.audit.services import log_finance_action
 
 
 def get_finance_summary(
@@ -102,7 +102,7 @@ def list_student_fees(
     include_items: bool = True,
 ) -> List[Dict]:
     """List student fees with optional filters. Set include_items=False for list views."""
-    from backend.modules.auth.models import User
+    from modules.auth.models import User
 
     tenant_id = get_tenant_id()
     if not tenant_id:

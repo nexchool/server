@@ -17,8 +17,8 @@ from datetime import datetime
 
 from sqlalchemy import CheckConstraint, Index, text
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 from sqlalchemy.dialects.postgresql import JSONB
 
 
@@ -307,7 +307,7 @@ class StudentClassEnrollment(TenantBaseModel):
         onupdate=datetime.utcnow,
     )
 
-    student = db.relationship("Student", foreign_keys=[student_id])
+    student = db.relationship("Student", foreign_keys=[student_id], passive_deletes=True)
     class_ref = db.relationship("Class", foreign_keys=[class_id])
     academic_year = db.relationship("AcademicYear", foreign_keys=[academic_year_id])
 
@@ -504,4 +504,4 @@ class AttendanceRecord(TenantBaseModel):
     updated_by_user_id = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     session = db.relationship("AttendanceSession", back_populates="records")
-    student = db.relationship("Student", foreign_keys=[student_id])
+    student = db.relationship("Student", foreign_keys=[student_id], passive_deletes=True)

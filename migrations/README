@@ -1,6 +1,6 @@
 Flask-Migrate (Alembic) migrations for School ERP.
 
-Commands (run from project root with FLASK_APP=backend.app:app):
+Commands (from `server/` with PYTHONPATH set, e.g. `FLASK_APP=app:create_app`):
 
   flask db upgrade     Apply all pending migrations
   flask db downgrade   Revert one revision

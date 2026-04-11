@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional, Tuple
 
-from backend.modules.classes.models import Class
-from backend.modules.teachers.models import Teacher
+from modules.classes.models import Class
+from modules.teachers.models import Teacher
 
 
 def get_class_for_tenant(class_id: str, tenant_id: str) -> Optional[Class]:

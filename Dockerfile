@@ -2,15 +2,15 @@
 # API — production image (multi-stage, non-root, runtime libs only).
 # Local dev with bind mounts: Dockerfile.dev + docker-compose.local.yml
 #
-#   docker build -t school-erp-api ./app
-#   docker build -f Dockerfile.dev -t school-erp-api:dev ./app
+#   docker build -t school-erp-api ./server
+#   docker build -f Dockerfile.dev -t school-erp-api:dev ./server
 
 FROM python:3.14-slim-bookworm AS base-runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    FLASK_APP=backend.app:create_app \
+    FLASK_APP=app:create_app \
     PYTHONPATH=/app
 
 WORKDIR /app

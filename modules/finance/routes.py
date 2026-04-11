@@ -8,15 +8,15 @@ import io
 
 from flask import request, g, send_file, make_response
 
-from backend.modules.finance import finance_bp
-from backend.core.decorators import (
+from modules.finance import finance_bp
+from core.decorators import (
     require_permission,
     auth_required,
     tenant_required,
     require_plan_feature,
 )
-from backend.core.decorators.rbac import require_any_permission
-from backend.shared.helpers import (
+from core.decorators.rbac import require_any_permission
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,
@@ -320,7 +320,7 @@ def download_student_fee_invoice(fee_id):
     from .services.pdf_service import generate_student_fee_invoice_pdf
     pdf_bytes = generate_student_fee_invoice_pdf(fee_id)
     if not pdf_bytes:
-        from backend.shared.helpers import error_response
+        from shared.helpers import error_response
         return error_response("PDFError", "Failed to generate invoice PDF", 500)
     ref = f"SF-{fee_id[:8].upper()}" if fee_id else "invoice"
     resp = make_response(send_file(
@@ -341,8 +341,8 @@ def download_student_fee_invoice(fee_id):
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def download_payment_receipt(payment_id):
     """GET /api/finance/payments/<id>/download-receipt - Generate and download receipt PDF."""
-    from backend.core.tenant import get_tenant_id
-    from backend.modules.finance.models import Payment
+    from core.tenant import get_tenant_id
+    from modules.finance.models import Payment
     tenant_id = get_tenant_id()
     if not tenant_id:
         return error_response("TenantError", "Tenant context required", 400)
@@ -352,7 +352,7 @@ def download_payment_receipt(payment_id):
     from .services.pdf_service import generate_finance_receipt_pdf
     pdf_bytes = generate_finance_receipt_pdf(payment_id)
     if not pdf_bytes:
-        from backend.shared.helpers import error_response
+        from shared.helpers import error_response
         return error_response("PDFError", "Failed to generate receipt PDF", 500)
     receipt_num = f"RCP-{payment_id[:8].upper()}" if payment_id else "receipt"
     resp = make_response(send_file(
@@ -373,7 +373,7 @@ def download_payment_receipt(payment_id):
 @require_permission(PERM_MANAGE)
 def delete_student_fee(fee_id):
     """DELETE /api/finance/student-fees/<id> - Remove a student's fee assignment if no payments."""
-    from backend.modules.finance.models import StudentFee
+    from modules.finance.models import StudentFee
 
     sf = StudentFee.query.filter_by(id=fee_id).first()
     if not sf:
@@ -468,8 +468,8 @@ def print_student_fee_invoice(fee_id):
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def print_payment_receipt(payment_id):
     """GET /api/finance/payments/<id>/print-receipt - Return HTML for browser print (dual-copy layout)."""
-    from backend.core.tenant import get_tenant_id
-    from backend.modules.finance.models import Payment
+    from core.tenant import get_tenant_id
+    from modules.finance.models import Payment
     tenant_id = get_tenant_id()
     if not tenant_id:
         return error_response("TenantError", "Tenant context required", 400)
@@ -494,8 +494,8 @@ def print_payment_receipt(payment_id):
 @auth_required
 def get_tenant_profile():
     """GET /api/finance/tenant-profile - Get current tenant's profile for school admin."""
-    from backend.core.models import Tenant
-    from backend.core.tenant import get_tenant_id
+    from core.models import Tenant
+    from core.tenant import get_tenant_id
     tenant_id = get_tenant_id()
     if not tenant_id:
         return error_response("TenantError", "Tenant context required", 400)
@@ -521,9 +521,9 @@ def get_tenant_profile():
 @require_permission("finance.manage")
 def update_tenant_profile():
     """PATCH /api/finance/tenant-profile - Update school branding details (admin only)."""
-    from backend.core.models import Tenant
-    from backend.core.database import db
-    from backend.core.tenant import get_tenant_id
+    from core.models import Tenant
+    from core.database import db
+    from core.tenant import get_tenant_id
     from datetime import datetime
     tenant_id = get_tenant_id()
     if not tenant_id:

@@ -39,7 +39,7 @@ flask db upgrade
 
 ## 3. Template Service Code
 
-**File:** `app/backend/modules/notifications/template_service.py`
+**File:** `server/modules/notifications/template_service.py`
 
 - `get_notification_template(tenant_id, type, channel)` — tenant → global fallback; raises `TemplateNotFoundError`
 - `render_notification_template(subject_template, body_template, context)` — Jinja2 safe env
@@ -118,7 +118,7 @@ flask db upgrade
 ## 7. Post-Migration Steps
 
 1. Run migration: `flask db upgrade`
-2. Seed templates: `python -m backend.scripts.seed_notification_templates`
+2. Seed templates: `python -m scripts.seed_notification_templates`
 3. Verify FEE_OVERDUE email: trigger overdue fee or inspect Celery task
 
 ---

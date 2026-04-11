@@ -8,8 +8,8 @@ Scoped by tenant.
 from datetime import datetime, time
 import uuid
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 
 
 # Default breaks structure: [{"after_period": 3, "duration_minutes": 15, "label": "Short Break"}, ...]

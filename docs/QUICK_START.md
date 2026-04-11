@@ -16,14 +16,14 @@ cd /Users/sahilsapariya/Documents/projects/school-ERP
 
 ```bash
 # Create all tables
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.create_all()"
 ```
 
 ### 3. Seed RBAC System
 
 ```bash
 # Seed roles and permissions
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 ```
 
 This creates:
@@ -35,13 +35,13 @@ This creates:
 
 ```bash
 # Interactive admin creation
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 ```
 
 Or use Flask shell:
 ```python
-from backend.app import create_app
-from backend.scripts.create_admin import create_admin_user
+from app import create_app
+from scripts.create_admin import create_admin_user
 
 app = create_app()
 with app.app_context():
@@ -52,7 +52,7 @@ with app.app_context():
 
 ```bash
 # Development server
-python backend/app.py
+python app.py
 ```
 
 Server will start on: `http://0.0.0.0:5001`
@@ -65,13 +65,13 @@ Server will start on: `http://0.0.0.0:5001`
 
 ```bash
 # Start Flask shell
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); import IPython; IPython.embed()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); import IPython; IPython.embed()"
 ```
 
 ### Assign Roles
 
 ```python
-from backend.scripts.rbac_helpers import *
+from scripts.rbac_helpers import *
 
 # Assign roles
 assign_admin_role('user@email.com')
@@ -113,7 +113,7 @@ curl -X POST http://localhost:5001/api/auth/login \
 ## 🏗️ Project Structure Overview
 
 ```
-backend/
+server/
 ├── app.py                  # Main application (run this)
 ├── config/                 # Configuration
 ├── core/                   # Infrastructure
@@ -140,10 +140,10 @@ backend/
 curl http://localhost:5001/api/health
 
 # 2. Check database tables exist
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; print([table.name for table in db.metadata.sorted_tables])"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; print([table.name for table in db.metadata.sorted_tables])"
 
 # 3. Check roles and permissions
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.scripts.rbac_helpers import show_all_roles; show_all_roles()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from scripts.rbac_helpers import show_all_roles; show_all_roles()"
 ```
 
 ---
@@ -153,9 +153,9 @@ python -c "from backend.app import create_app; app = create_app(); app.app_conte
 ### Create a Test User with Role
 
 ```python
-from backend.app import create_app
-from backend.modules.auth.models import User
-from backend.scripts.rbac_helpers import assign_student_role
+from app import create_app
+from modules.auth.models import User
+from scripts.rbac_helpers import assign_student_role
 
 app = create_app()
 with app.app_context():
@@ -173,8 +173,8 @@ with app.app_context():
 ### Check User Permissions
 
 ```python
-from backend.app import create_app
-from backend.scripts.rbac_helpers import show_user_permissions
+from app import create_app
+from scripts.rbac_helpers import show_user_permissions
 
 app = create_app()
 with app.app_context():
@@ -185,10 +185,10 @@ with app.app_context():
 
 ```bash
 # Drop all tables and recreate
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.drop_all(); db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.drop_all(); db.create_all()"
 
 # Then re-seed RBAC
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 ```
 
 ---
@@ -212,8 +212,8 @@ from models import User
 from auth.utils.auth_guard import auth_required
 
 # ✅ New
-from backend.modules.auth.models import User
-from backend.core.decorators import auth_required
+from modules.auth.models import User
+from core.decorators import auth_required
 ```
 
 ### Database Errors
@@ -222,7 +222,7 @@ from backend.core.decorators import auth_required
 echo $DATABASE_URL
 
 # Recreate tables
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.create_all()"
 ```
 
 ### Port Already in Use
@@ -239,7 +239,7 @@ kill -9 <PID>
 ## 📞 Need Help?
 
 - Check `BACKEND_ARCHITECTURE_REFACTORING.md` for detailed architecture docs
-- Review example modules in `backend/modules/`
-- Use `backend/scripts/rbac_helpers.py` for common operations
+- Review example modules in `server/modules/`
+- Use `server/scripts/rbac_helpers.py` for common operations
 
 **Happy Coding! 🎉**

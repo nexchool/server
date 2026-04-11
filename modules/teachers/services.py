@@ -3,12 +3,12 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import secrets
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.core.models import Tenant
-from backend.modules.auth.models import User
-from backend.modules.rbac.services import assign_role_to_user_by_email
-from backend.modules.rbac.role_seeder import seed_roles_for_tenant
+from core.database import db
+from core.tenant import get_tenant_id
+from core.models import Tenant
+from modules.auth.models import User
+from modules.rbac.services import assign_role_to_user_by_email
+from modules.rbac.role_seeder import seed_roles_for_tenant
 from .models import Teacher
 
 
@@ -276,7 +276,7 @@ def delete_teacher(teacher_id: str) -> Dict:
         # class_teachers has no ON DELETE CASCADE on its FK, so SQLAlchemy would
         # try to SET teacher_id = NULL (NOT NULL column) and raise a violation.
         # Explicitly remove those rows before deleting the teacher.
-        from backend.modules.classes.models import ClassTeacher
+        from modules.classes.models import ClassTeacher
         ClassTeacher.query.filter_by(teacher_id=teacher_id).delete(synchronize_session=False)
         db.session.flush()
 

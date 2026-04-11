@@ -55,21 +55,21 @@ def init_db(app):
         app: Flask application instance
     """
     db.init_app(app)
-    migrate.init_app(app, db, directory="backend/migrations")
+    migrate.init_app(app, db, directory="migrations")
 
     # Automatically scope tenant-scoped model queries by g.tenant_id
     event.listen(Query, "before_compile", _tenant_scope_query, retval=True)
 
     with app.app_context():
-        from backend.core.models import Tenant, Plan, AuditLog, PlatformSetting
-        from backend.modules.auth.models import User, Session
-        from backend.modules.rbac.models import Role, Permission, RolePermission, UserRole
-        from backend.modules.students.models import Student, StudentDocument
-        from backend.modules.academics.academic_year.models import AcademicYear
-        from backend.modules.subjects.models import Subject
-        from backend.modules.teachers.models import Teacher
-        from backend.modules.classes.models import Class, ClassTeacher, ClassSubject
-        from backend.modules.academics.backbone.models import (
+        from core.models import Tenant, Plan, AuditLog, PlatformSetting
+        from modules.auth.models import User, Session
+        from modules.rbac.models import Role, Permission, RolePermission, UserRole
+        from modules.students.models import Student, StudentDocument
+        from modules.academics.academic_year.models import AcademicYear
+        from modules.subjects.models import Subject
+        from modules.teachers.models import Teacher
+        from modules.classes.models import Class, ClassTeacher, ClassSubject
+        from modules.academics.backbone.models import (
             AcademicSettings,
             AcademicTerm,
             AttendanceRecord,
@@ -82,8 +82,8 @@ def init_db(app):
             TimetableEntry,
             TimetableVersion,
         )
-        from backend.modules.attendance.models import Attendance
-        from backend.modules.finance.models import (
+        from modules.attendance.models import Attendance
+        from modules.finance.models import (
             FeeStructure,
             FeeStructureClass,
             FeeComponent,
@@ -91,22 +91,22 @@ def init_db(app):
             StudentFeeItem,
             Payment,
         )
-        from backend.modules.fees.models import (
+        from modules.fees.models import (
             FeeInvoice,
             FeeInvoiceItem,
             FeePayment,
             FeeReceipt,
         )
-        from backend.modules.notifications.models import (
+        from modules.notifications.models import (
             Notification,
             NotificationRecipient,
             NotificationTemplate,
         )
-        from backend.modules.timetable.models import TimetableSlot, TimetableConfig
-        from backend.modules.schedule.models import ScheduleOverride
-        from backend.modules.holidays.models import Holiday
-        from backend.modules.devices.models import DeviceToken
-        from backend.modules.transport.models import (
+        from modules.timetable.models import TimetableSlot, TimetableConfig
+        from modules.schedule.models import ScheduleOverride
+        from modules.holidays.models import Holiday
+        from modules.devices.models import DeviceToken
+        from modules.transport.models import (
             TransportBus,
             TransportBusAssignment,
             TransportDriver,

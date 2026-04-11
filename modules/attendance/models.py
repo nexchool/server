@@ -1,5 +1,5 @@
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 
@@ -36,7 +36,11 @@ class Attendance(TenantBaseModel):
 
     # Relationships
     class_ref = db.relationship('Class', backref=db.backref('attendance_records', lazy=True))
-    student = db.relationship('Student', backref=db.backref('attendance_records', lazy=True))
+    student = db.relationship(
+        'Student',
+        backref=db.backref('attendance_records', lazy=True),
+        passive_deletes=True,
+    )
     marker = db.relationship('User', foreign_keys=[marked_by])
 
     def save(self):

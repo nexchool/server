@@ -4,8 +4,8 @@ Authentication Models
 Database models for user authentication and session management.
 """
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import os

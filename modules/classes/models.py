@@ -1,5 +1,5 @@
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 

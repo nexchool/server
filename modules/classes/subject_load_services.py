@@ -11,9 +11,9 @@ remains for backward compatibility after migration 023; new code should use clas
 from typing import Dict, List, Optional
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.subjects.models import Subject
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.subjects.models import Subject
 from .models import Class, SubjectLoad
 
 

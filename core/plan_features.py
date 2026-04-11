@@ -65,7 +65,7 @@ def get_tenant_enabled_features(tenant_id: str) -> List[str]:
     Return list of feature keys that are enabled for the given tenant's plan.
     If tenant has no plan or plan has no features_json, all features are considered enabled.
     """
-    from backend.core.models import Tenant, Plan
+    from core.models import Tenant, Plan
 
     tenant = Tenant.query.get(tenant_id)
     if not tenant or not tenant.plan_id:

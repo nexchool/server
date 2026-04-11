@@ -4,15 +4,15 @@ RBAC Seed Script
 Seeds the database with default roles and permissions for School ERP.
 
 Usage:
-    python -m backend.scripts.seed_rbac
+    python -m scripts.seed_rbac
     
 Or from Flask shell:
-    >>> from backend.scripts.seed_rbac import seed_rbac
+    >>> from scripts.seed_rbac import seed_rbac
     >>> seed_rbac()
 """
 
-from backend.app import create_app
-from backend.modules.rbac.services import (
+from app import create_app
+from modules.rbac.services import (
     create_role, create_permission,
     assign_permission_to_role_by_name
 )

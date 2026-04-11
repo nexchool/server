@@ -4,11 +4,11 @@ from datetime import date
 
 from flask import g, request
 
-from backend.modules.attendance import attendance_bp
-from backend.core.decorators import auth_required, require_any_permission, tenant_required, require_plan_feature
-from backend.shared.helpers import error_response, success_response, validation_error_response
+from modules.attendance import attendance_bp
+from core.decorators import auth_required, require_any_permission, tenant_required, require_plan_feature
+from shared.helpers import error_response, success_response, validation_error_response
 
-from backend.modules.rbac.services import has_permission
+from modules.rbac.services import has_permission
 
 from . import session_services as svc
 
@@ -47,7 +47,7 @@ def get_class_attendance_session(class_id):
     except ValueError:
         return validation_error_response("Invalid date (YYYY-MM-DD)")
 
-    from backend.modules.classes.models import Class
+    from modules.classes.models import Class
 
     cls = Class.query.filter_by(id=class_id, tenant_id=g.tenant_id).first()
     if not cls:
@@ -142,7 +142,7 @@ def class_attendance_history(class_id):
 def student_attendance_v2(student_id):
     user_id = g.current_user.id
     if has_permission(user_id, PERM_READ_SELF) and not has_permission(user_id, PERM_READ_ALL):
-        from backend.modules.students.models import Student
+        from modules.students.models import Student
 
         st = Student.query.filter_by(id=student_id).first()
         if not st or st.user_id != user_id:

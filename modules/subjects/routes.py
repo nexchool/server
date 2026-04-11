@@ -6,15 +6,15 @@ REST API for subject CRUD. All routes require tenant context and RBAC permission
 
 from flask import request, g
 
-from backend.modules.subjects import subjects_bp
-from backend.core.decorators import (
+from modules.subjects import subjects_bp
+from core.decorators import (
     require_permission,
     require_any_permission,
     auth_required,
     tenant_required,
     require_plan_feature,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,

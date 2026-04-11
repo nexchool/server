@@ -4,7 +4,7 @@ Document request/response validation for student documents.
 Used for multipart/form-data upload validation.
 """
 
-from backend.modules.students.models import DocumentType, DOCUMENT_TYPE_LABELS
+from modules.students.models import DocumentType, DOCUMENT_TYPE_LABELS
 
 # Allowed MIME types for upload
 ALLOWED_MIME_TYPES = {

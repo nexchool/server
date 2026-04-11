@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Sequence
 
-from backend.celery_app import get_celery
+from celery_app import get_celery
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,9 @@ def dispatch_notification_task(self, notification_id: str) -> Dict[str, Any]:
     Load pending recipients for a notification and enqueue process_notification_chunk
     tasks (500 users per chunk).
     """
-    from backend.core.database import db
-    from backend.modules.notifications.models import NotificationRecipient
-    from backend.modules.notifications.enums import NotificationRecipientStatus
+    from core.database import db
+    from modules.notifications.models import NotificationRecipient
+    from modules.notifications.enums import NotificationRecipientStatus
 
     pending_ids = [
         row[0]
@@ -73,11 +73,11 @@ def process_notification_chunk(self, notification_id: str, user_ids: List[str]) 
     """
     For each user in the chunk, run NotificationDispatcher and update recipient status.
     """
-    from backend.core.database import db
-    from backend.modules.notifications.models import Notification, NotificationRecipient
-    from backend.modules.notifications.enums import NotificationRecipientStatus
-    from backend.modules.notifications.services import notification_dispatcher
-    from backend.modules.notifications.notification_targeting_service import get_users_by_ids
+    from core.database import db
+    from modules.notifications.models import Notification, NotificationRecipient
+    from modules.notifications.enums import NotificationRecipientStatus
+    from modules.notifications.services import notification_dispatcher
+    from modules.notifications.notification_targeting_service import get_users_by_ids
 
     n = Notification.query.get(notification_id)
     if not n:

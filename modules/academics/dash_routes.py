@@ -2,11 +2,11 @@
 
 from flask import g
 
-from backend.modules.academics import academics_bp
-from backend.core.decorators import auth_required, require_any_permission, tenant_required, require_plan_feature
-from backend.shared.helpers import error_response, success_response
+from modules.academics import academics_bp
+from core.decorators import auth_required, require_any_permission, tenant_required, require_plan_feature
+from shared.helpers import error_response, success_response
 
-from backend.modules.academics.services import dashboards
+from modules.academics.services import dashboards
 
 PERM_READ = "academics.read"
 PERM_MANAGE = "academics.manage"

@@ -10,8 +10,8 @@ import uuid
 
 from sqlalchemy import Index, text
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 from sqlalchemy.dialects.postgresql import JSONB
 
 

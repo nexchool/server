@@ -11,21 +11,21 @@ Permissions assigned:
 - Parent: timetable.read (view child's schedule)
 
 Usage (from project root, e.g. app/ or school-ERP/):
-    python -m backend.scripts.backfill_timetable_subject_permissions
+    python -m scripts.backfill_timetable_subject_permissions
 """
 
-from backend.app import create_app
-from backend.core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
-from backend.scripts.seed_rbac import PERMISSIONS
-from backend.modules.rbac.services import create_permission
-from backend.modules.rbac.role_seeder import seed_roles_for_tenant
+from app import create_app
+from core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
+from scripts.seed_rbac import PERMISSIONS
+from modules.rbac.services import create_permission
+from modules.rbac.role_seeder import seed_roles_for_tenant
 
 
 def ensure_permissions():
     """Create global permissions if they don't exist."""
     created = 0
     for name, description in PERMISSIONS:
-        from backend.modules.rbac.models import Permission
+        from modules.rbac.models import Permission
         if Permission.query.filter_by(name=name).first():
             continue
         result = create_permission(name, description)

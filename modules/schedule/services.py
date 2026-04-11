@@ -15,13 +15,13 @@ from typing import List, Dict, Optional, Tuple
 
 from sqlalchemy import or_
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import TimetableEntry, TimetableVersion
-from backend.modules.academics.services.common import class_display_name
-from backend.modules.academics.services.timetable_v2 import _bell_period_map
-from backend.modules.classes.models import Class
-from backend.modules.timetable.models import TimetableSlot
-from backend.modules.schedule.models import ScheduleOverride
+from core.database import db
+from modules.academics.backbone.models import TimetableEntry, TimetableVersion
+from modules.academics.services.common import class_display_name
+from modules.academics.services.timetable_v2 import _bell_period_map
+from modules.classes.models import Class
+from modules.timetable.models import TimetableSlot
+from modules.schedule.models import ScheduleOverride
 
 
 def _time_to_str(t) -> Optional[str]:
@@ -71,7 +71,7 @@ def _build_slot_response(
 
 def _get_today_constraints(tenant_id: str, today: date, day_of_week: int):
     """Return (on_leave_ids, avail_unavail_set) for today."""
-    from backend.modules.teachers.models import TeacherLeave, TeacherAvailability
+    from modules.teachers.models import TeacherLeave, TeacherAvailability
 
     # Teachers on approved leave today
     leave_rows = TeacherLeave.query.filter_by(
@@ -244,8 +244,8 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
     day_of_week = today.weekday()  # 0=Monday … 6=Sunday (legacy slots + availability tuples)
     dow_iso = today.isoweekday()  # 1=Monday … 7=Sunday (TimetableEntry)
 
-    from backend.modules.teachers.models import Teacher
-    from backend.modules.students.models import Student
+    from modules.teachers.models import Teacher
+    from modules.students.models import Student
 
     on_leave_ids, unavail_set = _get_today_constraints(tenant_id, today, day_of_week)
 
@@ -379,7 +379,7 @@ def upsert_override(
     if override_type == ScheduleOverride.TYPE_SUBSTITUTE:
         if not substitute_teacher_id:
             return {"success": False, "error": "substitute_teacher_id is required for substitute overrides"}
-        from backend.modules.teachers.models import Teacher
+        from modules.teachers.models import Teacher
         sub = Teacher.query.filter_by(id=substitute_teacher_id, tenant_id=tenant_id).first()
         if not sub:
             return {"success": False, "error": "Substitute teacher not found"}

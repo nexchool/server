@@ -8,9 +8,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.core.database import db
-from backend.modules.auth.models import User
-from backend.modules.devices.models import DeviceToken
+from core.database import db
+from modules.auth.models import User
+from modules.devices.models import DeviceToken
 
 logger = logging.getLogger(__name__)
 

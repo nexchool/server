@@ -11,8 +11,8 @@ import uuid
 
 from sqlalchemy import text
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 
 from .enums import StudentFeeStatus, PaymentStatus, PaymentMethod
 
@@ -202,7 +202,12 @@ class StudentFee(TenantBaseModel):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    student = db.relationship("Student", backref=db.backref("student_fees", lazy=True))
+    # passive_deletes: rely on DB FK ON DELETE CASCADE; ORM must not null student_id first (NOT NULL).
+    student = db.relationship(
+        "Student",
+        backref=db.backref("student_fees", lazy=True),
+        passive_deletes=True,
+    )
     items = db.relationship(
         "StudentFeeItem",
         backref=db.backref("student_fee", lazy=True),

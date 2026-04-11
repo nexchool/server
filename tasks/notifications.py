@@ -2,8 +2,8 @@
 
 import logging
 
-from backend.celery_app import get_celery
-from backend.core.extensions import mail
+from celery_app import get_celery
+from core.extensions import mail
 
 # Worker loads via celery_worker; get_celery returns init'd instance
 celery_app = get_celery()

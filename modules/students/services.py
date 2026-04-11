@@ -7,15 +7,15 @@ import string
 import uuid
 from decimal import Decimal
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.core.models import Tenant
-from backend.modules.auth.models import User
-from backend.modules.rbac.services import assign_role_to_user_by_email
-from backend.modules.rbac.role_seeder import seed_roles_for_tenant
-from backend.modules.classes.models import Class
-from backend.shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
-from backend.shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
+from core.database import db
+from core.tenant import get_tenant_id
+from core.models import Tenant
+from modules.auth.models import User
+from modules.rbac.services import assign_role_to_user_by_email
+from modules.rbac.role_seeder import seed_roles_for_tenant
+from modules.classes.models import Class
+from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
+from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
 
@@ -446,7 +446,7 @@ def create_student(
 
         # Auto-assign any applicable fee structures for this student's class/year
         try:
-            from backend.modules.finance.services import student_fee_service
+            from modules.finance.services import student_fee_service
 
             student_fee_service.auto_assign_fees_for_student(student.id)
         except Exception:
@@ -518,9 +518,9 @@ def list_students(
     if include_transport_summary:
         tenant_id = get_tenant_id()
         if tenant_id:
-            from backend.core.plan_features import is_plan_feature_enabled
+            from core.plan_features import is_plan_feature_enabled
             if is_plan_feature_enabled(tenant_id, "transport"):
-                from backend.modules.transport.services import transport_summaries_for_students
+                from modules.transport.services import transport_summaries_for_students
 
                 summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
                 for r in rows:
@@ -559,9 +559,9 @@ def list_students_by_class_ids(
     if include_transport_summary:
         tenant_id = get_tenant_id()
         if tenant_id:
-            from backend.core.plan_features import is_plan_feature_enabled
+            from core.plan_features import is_plan_feature_enabled
             if is_plan_feature_enabled(tenant_id, "transport"):
-                from backend.modules.transport.services import transport_summaries_for_students
+                from modules.transport.services import transport_summaries_for_students
 
                 summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
                 for r in rows:
@@ -585,7 +585,7 @@ def attach_transport_to_student_dict(
     """Adds `transport` key when plan feature + RBAC allow (see transport module)."""
     if not student_dict:
         return student_dict
-    from backend.modules.transport.services import build_student_transport_block
+    from modules.transport.services import build_student_transport_block
 
     student_dict["transport"] = build_student_transport_block(student_id, viewer_user_id)
     return student_dict
@@ -853,12 +853,32 @@ def update_student(
         return {'success': False, 'error': f'Failed to update student: {str(e)}'}
 
 def delete_student(student_id: str) -> Dict:
-    """Delete student"""
+    """
+    Delete student.
+
+    Finance `student_fees` rows (from auto-assign when class/fee structure applies) must be
+    removed before the student row: SQLAlchemy otherwise syncs the parent delete by
+    UPDATE student_fees SET student_id=NULL, which violates NOT NULL even though the DB
+    has ON DELETE CASCADE. Bulk-delete issues DELETE and lets FK cascade to items/payments.
+    """
     try:
-        student = Student.query.get(student_id)
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {'success': False, 'error': 'Tenant context required'}
+
+        student = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
         if not student:
             return {'success': False, 'error': 'Student not found'}
-        student.delete()
+
+        from modules.finance.models import StudentFee
+
+        StudentFee.query.filter_by(
+            student_id=student_id,
+            tenant_id=tenant_id,
+        ).delete(synchronize_session=False)
+
+        db.session.delete(student)
+        db.session.commit()
         return {'success': True, 'message': 'Student deleted successfully'}
     except Exception as e:
         db.session.rollback()

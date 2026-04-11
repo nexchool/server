@@ -13,15 +13,15 @@ REST endpoints:
 
 from flask import request, g
 
-from backend.modules.holidays import holidays_bp
-from backend.core.decorators import (
+from modules.holidays import holidays_bp
+from core.decorators import (
     auth_required,
     tenant_required,
     require_permission,
     require_plan_feature,
 )
-from backend.core.decorators.rbac import require_any_permission
-from backend.shared.helpers import (
+from core.decorators.rbac import require_any_permission
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,

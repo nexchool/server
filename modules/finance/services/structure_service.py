@@ -6,10 +6,10 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.academics.academic_year.models import AcademicYear
-from backend.modules.finance.models import (
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.academics.academic_year.models import AcademicYear
+from modules.finance.models import (
     FeeStructure,
     FeeStructureClass,
     FeeComponent,
@@ -17,9 +17,9 @@ from backend.modules.finance.models import (
     StudentFeeItem,
     Payment,
 )
-from backend.modules.audit.services import log_finance_action
-from backend.modules.classes.models import Class
-from backend.modules.finance.services.payment_service import recalculate_student_fee_status
+from modules.audit.services import log_finance_action
+from modules.classes.models import Class
+from modules.finance.services.payment_service import recalculate_student_fee_status
 
 
 def list_available_classes_for_structure(

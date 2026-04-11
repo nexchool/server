@@ -8,7 +8,7 @@ Templates: templates/pdf/fee_invoice.html, templates/pdf/fee_receipt.html
 from typing import Optional
 
 from flask import render_template_string
-from backend.core.tenant import get_tenant_id
+from core.tenant import get_tenant_id
 
 try:
     from weasyprint import HTML
@@ -29,7 +29,7 @@ def _html_to_pdf(html: str) -> Optional[bytes]:
 
 def _render_invoice_html(invoice_id: str) -> Optional[str]:
     """Render invoice HTML from template."""
-    from backend.modules.fees.services.invoice_service import get_invoice
+    from modules.fees.services.invoice_service import get_invoice
     from datetime import datetime
 
     tenant_id = get_tenant_id()
@@ -46,7 +46,7 @@ def _render_invoice_html(invoice_id: str) -> Optional[str]:
 
 def _render_receipt_html(payment_id: str) -> Optional[str]:
     """Render receipt HTML from template."""
-    from backend.modules.fees.services.fee_payment_service import get_fee_payment
+    from modules.fees.services.fee_payment_service import get_fee_payment
 
     data = get_fee_payment(payment_id)
     if not data:

@@ -11,22 +11,22 @@ import logging
 from decimal import Decimal
 from typing import Dict, Optional, Any, List
 
-from backend.core.database import db
+from core.database import db
 
 logger = logging.getLogger(__name__)
-from backend.core.tenant import get_tenant_id
-from backend.modules.finance.models import (
+from core.tenant import get_tenant_id
+from modules.finance.models import (
     StudentFee,
     StudentFeeItem,
     Payment,
 )
-from backend.modules.students.models import Student
-from backend.modules.finance.enums import (
+from modules.students.models import Student
+from modules.finance.enums import (
     StudentFeeStatus,
     PaymentStatus,
     PaymentMethod,
 )
-from backend.modules.audit.services import log_finance_action
+from modules.audit.services import log_finance_action
 
 
 def list_recent_payments(limit: int = 10) -> List[Dict[str, Any]]:

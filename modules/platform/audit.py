@@ -4,8 +4,8 @@ Platform Audit Logging
 Helper for logging critical platform actions. Used only in platform routes.
 """
 
-from backend.core.database import db
-from backend.core.models import AuditLog
+from core.database import db
+from core.models import AuditLog
 
 
 def log_platform_action(

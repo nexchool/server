@@ -27,10 +27,10 @@ After migration, for async email and overdue fee processing:
 # macOS: brew services start redis
 
 # Celery worker
-celery -A backend.celery_worker:celery worker -l info
+celery -A celery_worker:celery worker -l info
 
 # Celery beat (scheduled tasks, e.g. overdue fees daily)
-celery -A backend.celery_worker:celery beat -l info
+celery -A celery_worker:celery beat -l info
 ```
 
 Configure `REDIS_URL` in `.env` (default: `redis://localhost:6379/0`).

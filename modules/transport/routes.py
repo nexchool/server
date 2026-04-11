@@ -4,14 +4,14 @@ from datetime import date
 
 from flask import Response, request
 
-from backend.core.decorators import (
+from core.decorators import (
     auth_required,
     require_any_permission,
     require_permission,
     tenant_required,
     require_plan_feature,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     error_response,
     not_found_response,
     success_response,

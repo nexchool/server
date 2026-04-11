@@ -9,7 +9,7 @@ RBAC Philosophy:
 - Permission naming: resource.action.scope
 
 Usage:
-    from backend.core.decorators import auth_required, require_permission, tenant_required
+    from core.decorators import auth_required, require_permission, tenant_required
 
     @bp.route('/protected')
     @auth_required
@@ -32,8 +32,8 @@ Usage:
 from .auth import auth_required
 from .rbac import require_permission, require_any_permission, require_all_permissions
 from .platform import platform_admin_required
-from backend.core.tenant import tenant_required
-from backend.core.plan_features import require_plan_feature
+from core.tenant import tenant_required
+from core.plan_features import require_plan_feature
 
 __all__ = [
     'auth_required',

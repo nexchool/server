@@ -1,14 +1,14 @@
 from flask import request, g, Response
 from werkzeug.utils import secure_filename
-from backend.modules.students import students_bp
-from backend.core.decorators import (
+from modules.students import students_bp
+from core.decorators import (
     require_permission,
     require_any_permission,
     auth_required,
     tenant_required,
     require_plan_feature,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,
@@ -37,7 +37,7 @@ PERM_MANAGE = 'student.manage'
 @require_any_permission(PERM_READ_SELF, PERM_MANAGE, 'academics.read')
 def student_me_dashboard():
     """Student home: today's slots, weekly preview, attendance summary (v2 sessions)."""
-    from backend.modules.academics.services.dashboards import student_dashboard
+    from modules.academics.services.dashboards import student_dashboard
 
     r = student_dashboard(g.tenant_id, g.current_user.id)
     if not r['success']:
@@ -54,7 +54,7 @@ def list_students():
     List students based on permissions.
     """
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission
+    from modules.rbac.services import has_permission
     
     class_id = request.args.get('class_id')
     class_ids_param = request.args.get('class_ids')
@@ -79,7 +79,7 @@ def list_students():
         return success_response(data=students)
 
     if has_permission(user_id, PERM_READ_CLASS):
-        from backend.modules.attendance.services import get_teacher_class_ids
+        from modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
         students = services.list_students_by_class_ids(
             teacher_class_ids,
@@ -226,8 +226,8 @@ def create_student():
         # Send credentials email via notification dispatcher (only when email/credentials were created)
         user_id = result.get('student', {}).get('user_id')
         if user_id and result.get('credentials'):
-            from backend.modules.notifications.services import notification_dispatcher
-            from backend.modules.notifications.enums import NotificationChannel
+            from modules.notifications.services import notification_dispatcher
+            from modules.notifications.enums import NotificationChannel
 
             notification_dispatcher.dispatch(
                 user_id=user_id,
@@ -266,7 +266,7 @@ def create_student():
 def list_student_documents(student_id):
     """List all documents for a student. Uses same permission logic as get_student."""
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission
+    from modules.rbac.services import has_permission
 
     student = services.get_student_by_id(student_id)
     if not student:
@@ -284,7 +284,7 @@ def list_student_documents(student_id):
             return not_found_response("Student")
         return success_response(data=result["documents"])
     if has_permission(user_id, PERM_READ_CLASS):
-        from backend.modules.attendance.services import get_teacher_class_ids
+        from modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
         if student.get("class_id") in teacher_class_ids:
             result = services.list_student_documents(student_id)
@@ -357,7 +357,7 @@ def get_student_document_file(student_id, document_id):
     Not a shareable URL — must send Authorization (and tenant) like other API calls.
     """
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission
+    from modules.rbac.services import has_permission
 
     student = services.get_student_by_id(student_id)
     if not student:
@@ -369,7 +369,7 @@ def get_student_document_file(student_id, document_id):
     elif has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
         allowed = True
     elif has_permission(user_id, PERM_READ_CLASS):
-        from backend.modules.attendance.services import get_teacher_class_ids
+        from modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
         if student.get("class_id") in teacher_class_ids:
             allowed = True
@@ -420,7 +420,7 @@ def delete_student_document(student_id, document_id):
 def get_student(student_id):
     """Get student details"""
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission
+    from modules.rbac.services import has_permission
     
     student = services.get_student_by_id(student_id)
     if not student:
@@ -441,7 +441,7 @@ def get_student(student_id):
             
     # 3. Teacher (Class) — only if student is in one of teacher's assigned classes
     if has_permission(user_id, PERM_READ_CLASS):
-        from backend.modules.attendance.services import get_teacher_class_ids
+        from modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
         if student.get('class_id') in teacher_class_ids:
             services.attach_transport_to_student_dict(student, student_id, user_id)
@@ -475,14 +475,14 @@ def update_student(student_id):
     Only updates fields that are provided in the request.
     """
     user_id = g.current_user.id
-    from backend.modules.rbac.services import has_permission as _has_perm
+    from modules.rbac.services import has_permission as _has_perm
 
     # If teacher (not admin), verify student is in their class
     if not _has_perm(user_id, PERM_READ_ALL):
         student = services.get_student_by_id(student_id)
         if not student:
             return not_found_response('Student')
-        from backend.modules.attendance.services import get_teacher_class_ids
+        from modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
         if student.get('class_id') not in teacher_class_ids:
             return unauthorized_response()

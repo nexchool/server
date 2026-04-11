@@ -18,11 +18,11 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time
 
-from backend.app import create_app
-from backend.core.database import db
-from backend.core.models import Tenant
-from backend.modules.academics.academic_year.models import AcademicYear
-from backend.modules.academics.backbone.models import (
+from app import create_app
+from core.database import db
+from core.models import Tenant
+from modules.academics.academic_year.models import AcademicYear
+from modules.academics.backbone.models import (
     AcademicSettings,
     AcademicTerm,
     AttendanceRecord,
@@ -35,11 +35,11 @@ from backend.modules.academics.backbone.models import (
     TimetableEntry,
     TimetableVersion,
 )
-from backend.modules.attendance.models import Attendance as LegacyAttendance
-from backend.modules.auth.models import Session, User
-from backend.modules.classes.models import Class, ClassSubject, ClassTeacher, SubjectLoad
-from backend.modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
-from backend.modules.finance.models import (
+from modules.attendance.models import Attendance as LegacyAttendance
+from modules.auth.models import Session, User
+from modules.classes.models import Class, ClassSubject, ClassTeacher, SubjectLoad
+from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
+from modules.finance.models import (
     FeeComponent,
     FeeStructure,
     FeeStructureClass,
@@ -47,13 +47,13 @@ from backend.modules.finance.models import (
     StudentFee,
     StudentFeeItem,
 )
-from backend.modules.notifications.models import Notification
-from backend.modules.rbac.models import Role, UserRole
-from backend.modules.schedule.models import ScheduleOverride
-from backend.modules.students.models import Student, StudentDocument
-from backend.modules.subjects.models import Subject
-from backend.modules.teachers.models import Teacher
-from backend.modules.timetable.models import TimetableSlot
+from modules.notifications.models import Notification
+from modules.rbac.models import Role, UserRole
+from modules.schedule.models import ScheduleOverride
+from modules.students.models import Student, StudentDocument
+from modules.subjects.models import Subject
+from modules.teachers.models import Teacher
+from modules.timetable.models import TimetableSlot
 
 
 def _get_default_tenant_id() -> str:

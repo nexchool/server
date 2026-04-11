@@ -17,13 +17,13 @@ from urllib.parse import quote
 import logging
 import os
 
-from backend.core.tenant import get_tenant_id, resolve_tenant_for_auth
-from backend.shared.s3_utils import (
+from core.tenant import get_tenant_id, resolve_tenant_for_auth
+from shared.s3_utils import (
     normalize_stored_file_value_for_db,
     profile_picture_public_url,
     upload_file,
 )
-from backend.shared.storage_constants import PROFILE_PICTURES, TENANTS
+from shared.storage_constants import PROFILE_PICTURES, TENANTS
 from . import auth_bp
 from .models import User, Session
 from .services import (
@@ -33,10 +33,10 @@ from .services import (
     create_session,
     logout_user as logout_user_service
 )
-from backend.core.decorators import auth_required, tenant_required  # tenant_required still used for routes that run after middleware
-from backend.core.database import db
-from backend.core.extensions import limiter
-from backend.shared.helpers import success_response, error_response
+from core.decorators import auth_required, tenant_required  # tenant_required still used for routes that run after middleware
+from core.database import db
+from core.extensions import limiter
+from shared.helpers import success_response, error_response
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +111,8 @@ def register():
     # seed_roles_for_tenant ensures the role exists and has all its permissions
     # before we try to assign it — guards against tenants seeded before global
     # permissions were created.
-    from backend.modules.rbac.services import assign_role_to_user_by_email
-    from backend.modules.rbac.role_seeder import seed_roles_for_tenant
+    from modules.rbac.services import assign_role_to_user_by_email
+    from modules.rbac.role_seeder import seed_roles_for_tenant
     default_role = os.getenv("DEFAULT_USER_ROLE", "Student")
     seed_roles_for_tenant(tenant_id)
     assign_result = assign_role_to_user_by_email(email, default_role, tenant_id=tenant_id)
@@ -122,9 +122,9 @@ def register():
         print(f"Warning: Could not assign default role to {email}: {assign_result.get('error')}")
 
     # Send verification email via notification dispatcher
-    from backend.config.settings import get_email_verification_url
-    from backend.modules.notifications.services import notification_dispatcher
-    from backend.modules.notifications.enums import NotificationChannel
+    from config.settings import get_email_verification_url
+    from modules.notifications.services import notification_dispatcher
+    from modules.notifications.enums import NotificationChannel
 
     verify_url = get_email_verification_url(email_verification_token, email)
     notification_dispatcher.dispatch(
@@ -189,7 +189,7 @@ def login():
         tenant_id = get_tenant_id()
         user_by_email = User.get_user_by_email(email, tenant_id=tenant_id)
         if user_by_email and not getattr(user_by_email, 'is_platform_admin', False):
-            from backend.modules.platform.services import get_platform_settings
+            from modules.platform.services import get_platform_settings
             settings = get_platform_settings()
             if settings.get('maintenance_mode') == 'true':
                 return error_response(
@@ -206,7 +206,7 @@ def login():
         user = authenticate_user(email, password, tenant_id=tenant_id)
         if not user:
             if user_by_email and not getattr(user_by_email, 'is_platform_admin', False):
-                from backend.modules.platform.services import get_platform_setting
+                from modules.platform.services import get_platform_setting
                 max_attempts_str = get_platform_setting('max_login_attempts')
                 max_attempts = int(max_attempts_str) if max_attempts_str and str(max_attempts_str).isdigit() else 5
                 user_by_email.failed_login_count = (user_by_email.failed_login_count or 0) + 1
@@ -246,7 +246,7 @@ def login():
         g.tenant = tenant
         # Apply maintenance and lockout for this tenant user
         if not getattr(user, 'is_platform_admin', False):
-            from backend.modules.platform.services import get_platform_settings
+            from modules.platform.services import get_platform_settings
             settings = get_platform_settings()
             if settings.get('maintenance_mode') == 'true':
                 return error_response(
@@ -269,7 +269,7 @@ def login():
             status_code=401
         )
 
-    from backend.modules.rbac.services import get_user_permissions
+    from modules.rbac.services import get_user_permissions
     permissions = get_user_permissions(user.id)
     if not permissions or len(permissions) == 0:
         return error_response(
@@ -288,7 +288,7 @@ def login():
     access_minutes = None
     if not getattr(user, 'is_platform_admin', False):
         try:
-            from backend.modules.platform.services import get_platform_setting
+            from modules.platform.services import get_platform_setting
             mins = get_platform_setting('session_timeout_minutes')
             if mins and str(mins).isdigit():
                 access_minutes = max(5, min(10080, int(mins)))
@@ -298,7 +298,7 @@ def login():
     access_token = generate_access_token(user, access_minutes=access_minutes)
     session = create_session(user, request)
 
-    from backend.core.plan_features import get_tenant_enabled_features
+    from core.plan_features import get_tenant_enabled_features
     enabled_features = get_tenant_enabled_features(tenant.id) if tenant else []
 
     response, status_code = success_response(
@@ -364,10 +364,10 @@ def logout():
     if refresh_token:
         logout_user_service(refresh_token)
     elif access_token_cookie:
-        from backend.modules.auth.services import validate_jwt_token
+        from modules.auth.services import validate_jwt_token
         payload = validate_jwt_token(access_token_cookie, token_type="access")
         if payload:
-            from backend.modules.auth.services import revoke_all_user_sessions
+            from modules.auth.services import revoke_all_user_sessions
             revoke_all_user_sessions(str(payload["sub"]))
     else:
         return error_response(
@@ -398,11 +398,11 @@ def validate_email():
     """
     err = resolve_tenant_for_auth()
     if err:
-        from backend.config.settings import get_app_verification_error_url
+        from config.settings import get_app_verification_error_url
         return redirect(get_app_verification_error_url(quote("Tenant is required")))
 
-    from backend.config.settings import get_app_verification_success_url, get_app_verification_error_url
-    from backend.modules.rbac.services import get_user_permissions
+    from config.settings import get_app_verification_success_url, get_app_verification_error_url
+    from modules.rbac.services import get_user_permissions
 
     token = request.args.get('token')
     email = request.args.get('email')
@@ -433,8 +433,8 @@ def validate_email():
     user.save()
 
     # Send welcome email via notification dispatcher
-    from backend.modules.notifications.services import notification_dispatcher
-    from backend.modules.notifications.enums import NotificationChannel
+    from modules.notifications.services import notification_dispatcher
+    from modules.notifications.enums import NotificationChannel
 
     features = [
         "Access to exclusive content",
@@ -483,9 +483,9 @@ def forgot_password():
     if err:
         return err[1], err[0]
 
-    from backend.config.settings import get_reset_password_url
-    from backend.modules.notifications.services import notification_dispatcher
-    from backend.modules.notifications.enums import NotificationChannel
+    from config.settings import get_reset_password_url
+    from modules.notifications.services import notification_dispatcher
+    from modules.notifications.enums import NotificationChannel
 
     data = request.get_json()
     email = data.get('email')
@@ -602,7 +602,7 @@ def get_enabled_features():
     if not user or not user.tenant_id:
         return success_response(data={'enabled_features': []}, status_code=200)
 
-    from backend.core.plan_features import get_tenant_enabled_features
+    from core.plan_features import get_tenant_enabled_features
     enabled_features = get_tenant_enabled_features(user.tenant_id)
     return success_response(data={'enabled_features': enabled_features}, status_code=200)
 
@@ -619,8 +619,8 @@ def get_profile():
 
     user = g.current_user
 
-    from backend.core.plan_features import get_tenant_enabled_features
-    from backend.modules.rbac.services import get_user_permissions, get_user_roles
+    from core.plan_features import get_tenant_enabled_features
+    from modules.rbac.services import get_user_permissions, get_user_roles
     permissions = get_user_permissions(user.id)
     roles = get_user_roles(user.id)
     enabled_features = get_tenant_enabled_features(user.tenant_id) if user.tenant_id else []

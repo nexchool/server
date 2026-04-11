@@ -9,11 +9,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment
-from backend.modules.students.models import Student
-from backend.modules.audit.services import log_finance_action
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment
+from modules.students.models import Student
+from modules.audit.services import log_finance_action
 
 
 def _next_invoice_number(tenant_id: str, academic_year: str) -> str:

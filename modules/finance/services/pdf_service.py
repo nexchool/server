@@ -17,7 +17,7 @@ from typing import Optional
 
 from flask import render_template, render_template_string
 
-from backend.core.tenant import get_tenant_id
+from core.tenant import get_tenant_id
 
 try:
     from weasyprint import HTML
@@ -47,7 +47,7 @@ def _html_to_pdf(html: str) -> Optional[bytes]:
 def _get_tenant_info() -> dict:
     """Fetch current tenant's branding info from DB."""
     try:
-        from backend.core.models import Tenant
+        from core.models import Tenant
         tenant_id = get_tenant_id()
         if tenant_id:
             t = Tenant.query.get(tenant_id)
@@ -76,7 +76,7 @@ def _get_tenant_info() -> dict:
 
 def _get_payment_with_student_fee(payment_id: str) -> Optional[dict]:
     """Get payment by ID with student_fee, items, and student context."""
-    from backend.modules.finance.models import Payment
+    from modules.finance.models import Payment
 
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -111,8 +111,8 @@ def _resolve_student_context(student_id: Optional[str]) -> dict:
     if not student_id:
         return result
     try:
-        from backend.modules.students.models import Student
-        from backend.modules.classes.models import Class
+        from modules.students.models import Student
+        from modules.classes.models import Class
         student = Student.query.filter_by(id=student_id).first()
         if student:
             result["admission_number"] = student.admission_number or "—"

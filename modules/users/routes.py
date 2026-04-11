@@ -15,10 +15,10 @@ Routes:
 from flask import request, g
 
 from . import users_bp
-from backend.core.decorators import auth_required, require_permission, tenant_required
-from backend.core.tenant import get_tenant_id
-from backend.shared.helpers import success_response, error_response
-from backend.modules.rbac.services import get_user_permissions, get_user_roles
+from core.decorators import auth_required, require_permission, tenant_required
+from core.tenant import get_tenant_id
+from shared.helpers import success_response, error_response
+from modules.rbac.services import get_user_permissions, get_user_roles
 from .services import (
     list_users, get_user_by_id, get_user_by_email,
     update_user, delete_user, verify_user_email

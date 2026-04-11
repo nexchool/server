@@ -10,12 +10,12 @@ from typing import List, Sequence
 
 from sqlalchemy.orm import load_only
 
-from backend.core.database import db
-from backend.modules.auth.models import User
-from backend.modules.classes.models import ClassTeacher
-from backend.modules.rbac.models import Role, UserRole
-from backend.modules.students.models import Student
-from backend.modules.teachers.models import Teacher
+from core.database import db
+from modules.auth.models import User
+from modules.classes.models import ClassTeacher
+from modules.rbac.models import Role, UserRole
+from modules.students.models import Student
+from modules.teachers.models import Teacher
 
 
 def get_users_by_ids(user_ids: Sequence[str], tenant_id: str) -> List[User]:

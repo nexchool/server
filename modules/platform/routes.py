@@ -7,11 +7,11 @@ Prefix: /platform (registered at /api/platform).
 
 from flask import request, g
 
-from backend.modules.platform import platform_bp
-from backend.core.decorators import auth_required, platform_admin_required
-from backend.core.extensions import limiter
-from backend.shared.helpers import success_response, error_response, not_found_response, validation_error_response
-from backend.modules.platform import services
+from modules.platform import platform_bp
+from core.decorators import auth_required, platform_admin_required
+from core.extensions import limiter
+from shared.helpers import success_response, error_response, not_found_response, validation_error_response
+from modules.platform import services
 
 # Rate limit: 30 requests per minute per IP for all platform routes
 PLATFORM_LIMIT = "30 per minute"
@@ -23,7 +23,7 @@ PLATFORM_LIMIT = "30 per minute"
 @platform_admin_required
 def list_plan_features():
     """GET /platform/plan-features - List all plan feature keys and labels (for plan config UI)."""
-    from backend.core.plan_features import PLAN_FEATURE_KEYS, PLAN_FEATURE_LABELS
+    from core.plan_features import PLAN_FEATURE_KEYS, PLAN_FEATURE_LABELS
     data = [
         {"key": k, "label": PLAN_FEATURE_LABELS.get(k, k.replace("_", " ").title())}
         for k in PLAN_FEATURE_KEYS

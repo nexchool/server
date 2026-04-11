@@ -1,6 +1,6 @@
 # Backend Scripts — High-Level Overview
 
-This document summarizes the scripts in `app/backend/scripts/`. All scripts are run from the project root (e.g. `app/` or `school-ERP/`) unless stated otherwise.
+This document summarizes the scripts in `server/scripts/`. All scripts are run from the project root (e.g. `app/` or `school-ERP/`) unless stated otherwise.
 
 ---
 
@@ -12,7 +12,7 @@ This document summarizes the scripts in `app/backend/scripts/`. All scripts are 
 | **`create_super_admin`** | Creates the first platform admin user with `is_platform_admin=True`. Use when the DB is empty to get access to the Super Admin panel. Ensures default tenant, permissions, and roles exist. |
 | **`create_admin`** | Interactive script to create an Admin user in a tenant. Prompts for email, password, name, and tenant ID. |
 | **`seed_notification_templates`** | Seeds notification templates (email verification, password reset, welcome, etc.) into `notification_templates` as global templates. Run via Flask shell. |
-| **`seed_existing_mailer_templates_to_db`** | Reads HTML templates from `backend/modules/mailer/templates/` and inserts them into `notification_templates` as global records. |
+| **`seed_existing_mailer_templates_to_db`** | Reads HTML templates from `server/modules/mailer/templates/` and inserts them into `notification_templates` as global records. |
 
 ---
 
@@ -49,21 +49,21 @@ These scripts add missing permissions to existing roles for tenants created befo
 
 ```bash
 # Initial setup (new deployment)
-python -m backend.scripts.seed_rbac
-python -m backend.scripts.create_super_admin
+python -m scripts.seed_rbac
+python -m scripts.create_super_admin
 
 # Create tenant admin
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 
 # Fix teacher login issues
-python -m backend.scripts.fix_teacher_permissions --all
-python -m backend.scripts.fix_teacher_permissions teacher@school.com
+python -m scripts.fix_teacher_permissions --all
+python -m scripts.fix_teacher_permissions teacher@school.com
 
 # Reset user password
-python -m backend.scripts.reset_user_password --email user@school.com --auto
+python -m scripts.reset_user_password --email user@school.com --auto
 
 # Backfill permissions (run after adding new features)
-python -m backend.scripts.backfill_teacher_leave_permissions
-python -m backend.scripts.backfill_timetable_subject_permissions
-python -m backend.scripts.backfill_admin_finance_permissions
+python -m scripts.backfill_teacher_leave_permissions
+python -m scripts.backfill_timetable_subject_permissions
+python -m scripts.backfill_admin_finance_permissions
 ```

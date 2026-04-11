@@ -17,17 +17,17 @@ Role → Permissions granted:
   Parent  → holiday.read
 
 Usage (from the app/ directory):
-    python -m backend.scripts.seed_holiday_permissions
+    python -m scripts.seed_holiday_permissions
 
 Or from a Python / Flask shell:
-    from backend.scripts.seed_holiday_permissions import run
+    from scripts.seed_holiday_permissions import run
     run()
 """
 
-from backend.app import create_app
-from backend.core.database import db
-from backend.core.models import Tenant
-from backend.modules.rbac.models import Role, Permission, RolePermission
+from app import create_app
+from core.database import db
+from core.models import Tenant
+from modules.rbac.models import Role, Permission, RolePermission
 
 
 # ---------------------------------------------------------------------------

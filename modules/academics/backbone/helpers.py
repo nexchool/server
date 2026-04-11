@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from backend.modules.academics.backbone.models import ClassTeacherAssignment
+from modules.academics.backbone.models import ClassTeacherAssignment
 
 
 def get_active_primary_class_teacher_assignment(class_id: str, tenant_id: str) -> Optional[ClassTeacherAssignment]:

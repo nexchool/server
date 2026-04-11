@@ -15,8 +15,8 @@ from datetime import datetime, date
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
+from core.database import db
+from core.tenant import get_tenant_id
 from .models import (
     Teacher,
     TeacherSubject,
@@ -28,8 +28,8 @@ from .models import (
     LEAVE_TYPES,
     DEFAULT_POLICY_SETTINGS,
 )
-from backend.modules.subjects.models import Subject
-from backend.modules.holidays.services import get_working_days_info_for_range
+from modules.subjects.models import Subject
+from modules.holidays.services import get_working_days_info_for_range
 
 
 # ---------------------------------------------------------------------------

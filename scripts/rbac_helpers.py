@@ -4,14 +4,14 @@ RBAC Helper Scripts
 Quick helper functions to manage RBAC system from Flask shell or scripts.
 
 Usage:
-    >>> from backend.app import create_app
+    >>> from app import create_app
     >>> app = create_app()
     >>> with app.app_context():
-    ...     from backend.scripts.rbac_helpers import *
+    ...     from scripts.rbac_helpers import *
     ...     assign_admin_role('admin@school.com')
 """
 
-from backend.modules.rbac.services import (
+from modules.rbac.services import (
     assign_role_to_user_by_email,
     get_user_permissions,
     get_user_roles,
@@ -62,7 +62,7 @@ def assign_parent_role(email: str):
 
 def show_user_permissions(email: str):
     """Display all permissions for a user by email"""
-    from backend.modules.auth.models import User
+    from modules.auth.models import User
     
     user = User.query.filter_by(email=email).first()
     if not user:
@@ -143,9 +143,9 @@ if __name__ == '__main__':
     
     print("\n" + "="*60)
     print("\nUsage from Flask shell:")
-    print("  >>> from backend.app import create_app")
+    print("  >>> from app import create_app")
     print("  >>> app = create_app()")
     print("  >>> with app.app_context():")
-    print("  ...     from backend.scripts.rbac_helpers import *")
+    print("  ...     from scripts.rbac_helpers import *")
     print("  ...     assign_admin_role('admin@school.com')")
     print("="*60 + "\n")

@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import AcademicSettings, BellSchedule, BellSchedulePeriod
+from core.database import db
+from modules.academics.backbone.models import AcademicSettings, BellSchedule, BellSchedulePeriod
 
 
 def _serialize_schedule(bs: BellSchedule, include_periods: bool = False) -> Dict[str, Any]:

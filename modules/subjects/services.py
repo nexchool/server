@@ -9,8 +9,8 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
+from core.database import db
+from core.tenant import get_tenant_id
 
 from .models import Subject
 
@@ -187,7 +187,7 @@ def delete_subject(subject_id: str, tenant_id: str) -> Dict:
     Soft-archive a subject. Hard delete is not used when the subject is referenced.
     """
     try:
-        from backend.modules.classes.models import ClassSubject
+        from modules.classes.models import ClassSubject
 
         subject = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).filter(
             Subject.deleted_at.is_(None)

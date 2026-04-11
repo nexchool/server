@@ -8,8 +8,8 @@ Multi-tenant using tenant_id. Never delete financial records.
 from datetime import datetime
 import uuid
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 
 
 class FeeInvoice(TenantBaseModel):
@@ -65,7 +65,11 @@ class FeeInvoice(TenantBaseModel):
         onupdate=datetime.utcnow,
     )
 
-    student = db.relationship("Student", backref=db.backref("fee_invoices", lazy=True))
+    student = db.relationship(
+        "Student",
+        backref=db.backref("fee_invoices", lazy=True),
+        passive_deletes=True,
+    )
     items = db.relationship(
         "FeeInvoiceItem",
         backref=db.backref("invoice", lazy=True),
@@ -182,7 +186,11 @@ class FeePayment(TenantBaseModel):
     )
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-    student = db.relationship("Student", backref=db.backref("fee_payments", lazy=True))
+    student = db.relationship(
+        "Student",
+        backref=db.backref("fee_payments", lazy=True),
+        passive_deletes=True,
+    )
     receipt = db.relationship(
         "FeeReceipt",
         backref=db.backref("payment", lazy=True),

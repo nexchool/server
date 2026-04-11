@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from backend.modules.devices.device_service import sanitize_push_data
+from modules.devices.device_service import sanitize_push_data
 
 from .base import NotificationStrategy
 
@@ -58,7 +58,7 @@ class PushStrategy(NotificationStrategy):
             data = sanitize_push_data(base_data)
             payload = json.dumps(data)
 
-            from backend.celery_app import get_celery
+            from celery_app import get_celery
 
             celery_app = get_celery()
             if not celery_app:

@@ -9,11 +9,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
-from backend.modules.students.models import Student
-from backend.modules.audit.services import log_finance_action
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
+from modules.students.models import Student
+from modules.audit.services import log_finance_action
 from .invoice_service import _recalculate_invoice_status
 
 

@@ -9,8 +9,8 @@ import logging
 from typing import Any, Dict, Optional
 
 from .base import NotificationStrategy
-from backend.modules.notifications.enums import NotificationType
-from backend.modules.notifications.template_service import (
+from modules.notifications.enums import NotificationType
+from modules.notifications.template_service import (
     get_and_render_notification_template,
     TemplateNotFoundError,
 )
@@ -34,7 +34,7 @@ class EmailStrategy(NotificationStrategy):
         async_support: Optional[bool] = kwargs.get("async_support")
 
         try:
-            from backend.modules.auth.models import User
+            from modules.auth.models import User
 
             prefetch_email = (extra_data or {}).get("_prefetch_user_email")
             prefetch_name = (extra_data or {}).get("_prefetch_user_name")
@@ -79,7 +79,7 @@ class EmailStrategy(NotificationStrategy):
 
             if async_support is not False:
                 try:
-                    from backend.celery_app import get_celery
+                    from celery_app import get_celery
 
                     celery_app = get_celery()
                     if celery_app:
@@ -96,7 +96,7 @@ class EmailStrategy(NotificationStrategy):
                 logger.warning("EmailStrategy: Celery unavailable but async_support=True")
                 return False
 
-            from backend.core.extensions import mail
+            from core.extensions import mail
             from flask_mail import Message
 
             msg = Message(subject=subject, body=body_html or "", recipients=[email])

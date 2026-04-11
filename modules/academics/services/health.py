@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import ClassSubjectTeacher, TimetableEntry, TimetableVersion
-from backend.modules.classes.models import Class, ClassSubject
+from core.database import db
+from modules.academics.backbone.models import ClassSubjectTeacher, TimetableEntry, TimetableVersion
+from modules.classes.models import Class, ClassSubject
 
-from backend.modules.attendance.session_services import attendance_pending_for_class_today
+from modules.attendance.session_services import attendance_pending_for_class_today
 
 
 def compute_health(tenant_id: str) -> Dict[str, Any]:

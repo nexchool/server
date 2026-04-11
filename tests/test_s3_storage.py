@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from flask import Flask
 
-from backend.shared.s3_utils import (
+from shared.s3_utils import (
     build_s3_key,
     get_env_prefix,
     is_external_url,

@@ -59,7 +59,7 @@ def require_permission(permission_name: str) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
             # Import here to avoid circular imports
-            from backend.modules.rbac.services import has_permission
+            from modules.rbac.services import has_permission
             
             # Check if user is authenticated (set by @auth_required decorator)
             if not hasattr(g, 'current_user') or g.current_user is None:
@@ -105,7 +105,7 @@ def require_any_permission(*permission_names: str) -> Callable:
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            from backend.modules.rbac.services import has_permission
+            from modules.rbac.services import has_permission
             
             if not hasattr(g, 'current_user') or g.current_user is None:
                 return jsonify({
@@ -148,7 +148,7 @@ def require_all_permissions(*permission_names: str) -> Callable:
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            from backend.modules.rbac.services import has_permission
+            from modules.rbac.services import has_permission
             
             if not hasattr(g, 'current_user') or g.current_user is None:
                 return jsonify({

@@ -17,9 +17,9 @@ from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.auth.models import User
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.auth.models import User
 from .models import Role, Permission, RolePermission, UserRole
 
 

@@ -3,6 +3,10 @@ set -eu
 
 cd /app
 
+# Flask CLI (migrations): app module is server/app.py on PYTHONPATH=/app.
+# Host env_file must not override with a stale package path.
+export FLASK_APP="app:create_app"
+
 log() {
   echo "[startup] $*"
 }
@@ -47,7 +51,7 @@ run_migrations() {
 
 start_api() {
   log "Starting Gunicorn..."
-  exec gunicorn -c gunicorn_conf.py "backend.app:app"
+  exec gunicorn -c gunicorn_conf.py "app:app"
 }
 
 start_api_with_embedded_celery() {

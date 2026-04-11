@@ -33,7 +33,7 @@ def paginate_query(query, page: int = 1, per_page: int = 20, max_per_page: int =
         Dict with paginated data and metadata
         
     Example:
-        >>> from backend.modules.auth.models import User
+        >>> from modules.auth.models import User
         >>> query = User.query.filter_by(email_verified=True)
         >>> result = paginate_query(query, page=1, per_page=20)
         >>> print(result['items'])  # List of users

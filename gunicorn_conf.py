@@ -2,7 +2,7 @@
 Gunicorn configuration for School ERP backend.
 
 Run from the app/ directory:
-    gunicorn -c gunicorn_conf.py "backend.app:app"
+    gunicorn -c gunicorn_conf.py "app:app"
 
 On macOS (with Conda/Anaconda), set before running:
     export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES

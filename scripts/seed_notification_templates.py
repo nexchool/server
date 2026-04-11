@@ -6,16 +6,16 @@ notification_templates table as GLOBAL templates (tenant_id = NULL).
 Does NOT delete filesystem templates.
 
 Run: flask shell
-    >>> from backend.scripts.seed_notification_templates import seed_default_notification_templates
+    >>> from scripts.seed_notification_templates import seed_default_notification_templates
     >>> seed_default_notification_templates()
 """
 
 import os
 import uuid
 
-from backend.core.database import db
-from backend.modules.notifications.models import NotificationTemplate
-from backend.modules.notifications.template_service import (
+from core.database import db
+from modules.notifications.models import NotificationTemplate
+from modules.notifications.template_service import (
     NOTIFICATION_CATEGORY_AUTH,
     NOTIFICATION_CATEGORY_STUDENT,
     NOTIFICATION_CATEGORY_PLATFORM,
@@ -183,7 +183,7 @@ def seed_default_notification_templates() -> dict:
 
 
 if __name__ == "__main__":
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
     with app.app_context():
         result = seed_default_notification_templates()

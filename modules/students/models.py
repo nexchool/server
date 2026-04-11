@@ -1,10 +1,10 @@
 import enum
 
-from backend.shared.s3_utils import profile_picture_public_url
+from shared.s3_utils import profile_picture_public_url
 from sqlalchemy import text
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 
@@ -68,7 +68,11 @@ class StudentDocument(TenantBaseModel):
         db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    student = db.relationship("Student", backref=db.backref("documents", lazy=True))
+    student = db.relationship(
+        "Student",
+        backref=db.backref("documents", lazy=True),
+        passive_deletes=True,
+    )
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id])
 
     def to_dict(self):

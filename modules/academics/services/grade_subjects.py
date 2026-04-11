@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from backend.modules.classes.models import Class
+from modules.classes.models import Class
 
 from . import class_subjects
 

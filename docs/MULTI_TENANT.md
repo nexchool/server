@@ -4,7 +4,7 @@
 
 The School ERP has been converted from single-tenant to multi-tenant. All business data is scoped by `tenant_id`. Tenant is resolved per request via subdomain or `X-Tenant-ID` header.
 
-## 1. Tenant Model (`backend/core/models.py`)
+## 1. Tenant Model (`server/core/models.py`)
 
 - **Tenant** table: `id` (UUID), `name`, `subdomain` (unique), `contact_email`, `phone`, `address`, `plan_id` (nullable), `status` (active/suspended), `created_at`, `updated_at`.
 - **TenantBaseModel**: Abstract base with `tenant_id` (FK → `tenants.id`, NOT NULL, indexed). All tenant-scoped models inherit from it.
@@ -32,7 +32,7 @@ All of these inherit `TenantBaseModel` and have `tenant_id`:
 | user_roles  | `(user_id, role_id)`     | `(user_id, role_id, tenant_id)`      |
 | role_permissions | `(role_id, permission_id)` | `(role_id, permission_id, tenant_id)` |
 
-## 4. Tenant Resolution Middleware (`backend/core/tenant.py`)
+## 4. Tenant Resolution Middleware (`server/core/tenant.py`)
 
 - **Resolution order:** Header `X-Tenant-ID` (UUID) → then subdomain from `Host` (e.g. `acme.school-erp.example.com` → subdomain `acme`).
 - For single-part host (e.g. `localhost`), a tenant with `subdomain='default'` is used if present.
@@ -41,19 +41,19 @@ All of these inherit `TenantBaseModel` and have `tenant_id`:
 
 ## 5. Automatic Tenant Filtering (No Cross-Tenant Leakage)
 
-- In `backend/core/database.py`, a SQLAlchemy `before_compile` event is registered on `Query`.
+- In `server/core/database.py`, a SQLAlchemy `before_compile` event is registered on `Query`.
 - For models with `__tenant_scoped__ = True` (i.e. inheriting `TenantBaseModel`), every query automatically adds `tenant_id == g.tenant_id` when inside a request that has set `g.tenant_id`.
 - Reads are always tenant-scoped; writes must set `tenant_id` when creating rows (e.g. from `get_tenant_id()`).
 
 ## 6. Decorator `@tenant_required`
 
-- In `backend/core/tenant.py` and re-exported from `backend/core/decorators`.
+- In `server/core/tenant.py` and re-exported from `server/core/decorators`.
 - Ensures `g.tenant_id` is set (calls `resolve_tenant()` if not). Use on routes that must run in a tenant context.
 
 Example:
 
 ```python
-from backend.core.decorators import tenant_required, auth_required
+from core.decorators import tenant_required, auth_required
 
 @bp.route('/students')
 @tenant_required
@@ -64,13 +64,13 @@ def list_students():
 
 ## 7. Migration
 
-- **File:** `backend/migrations/versions/002_multi_tenant.py`
+- **File:** `server/migrations/versions/002_multi_tenant.py`
 - **Steps:** Creates `tenants` table → inserts default tenant (`subdomain='default'`) → adds `tenant_id` to all business tables (nullable, then backfill, then NOT NULL + FK) → drops old uniques and creates tenant-scoped uniques.
 
 **Run migrations:**
 
 ```bash
-export FLASK_APP=backend.app:app
+export FLASK_APP=app:app
 flask db upgrade
 ```
 

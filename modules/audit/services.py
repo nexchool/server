@@ -1,14 +1,14 @@
 """
 Audit services for school app features.
 
-Writes to backend.core.models.AuditLog for tenant-scoped audit trail.
+Writes to core.models.AuditLog for tenant-scoped audit trail.
 Used for critical operations like fees management.
 """
 
 from typing import Any, Optional
 
-from backend.core.database import db
-from backend.core.models import AuditLog
+from core.database import db
+from core.models import AuditLog
 
 
 def log_finance_action(

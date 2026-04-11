@@ -8,10 +8,10 @@ import logging
 import re
 from typing import Dict, List, Tuple
 
-from backend.modules.devices.device_service import deactivate_tokens_by_ids
-from backend.modules.devices.models import DeviceToken
-from backend.modules.notifications.expo_push_service import send_expo_push
-from backend.modules.notifications.firebase_service import is_fcm_configured, send_fcm_v1
+from modules.devices.device_service import deactivate_tokens_by_ids
+from modules.devices.models import DeviceToken
+from modules.notifications.expo_push_service import send_expo_push
+from modules.notifications.firebase_service import is_fcm_configured, send_fcm_v1
 
 logger = logging.getLogger(__name__)
 

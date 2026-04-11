@@ -12,9 +12,9 @@ from typing import Optional, Tuple, Dict, List
 from flask import Request
 
 from .models import User, Session
-from backend.core.database import db
-from backend.core.models import Tenant
-from backend.core.models import TENANT_STATUS_ACTIVE
+from core.database import db
+from core.models import Tenant
+from core.models import TENANT_STATUS_ACTIVE
 
 
 # JWT Configuration

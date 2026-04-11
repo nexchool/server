@@ -11,17 +11,17 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import (
+from core.database import db
+from modules.academics.backbone.models import (
     AttendanceRecord,
     AttendanceSession,
     ClassTeacherAssignment,
 )
-from backend.modules.classes.models import Class
-from backend.modules.holidays.services import get_holiday_for_date
-from backend.modules.rbac.services import has_permission
-from backend.modules.students.models import Student
-from backend.modules.teachers.models import Teacher
+from modules.classes.models import Class
+from modules.holidays.services import get_holiday_for_date
+from modules.rbac.services import has_permission
+from modules.students.models import Student
+from modules.teachers.models import Teacher
 
 
 def serialize_session(s: AttendanceSession, class_name: Optional[str] = None) -> Dict[str, Any]:

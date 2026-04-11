@@ -65,10 +65,10 @@ from collections import Counter, defaultdict
 from datetime import date, time, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.classes.models import Class, ClassTeacher, SubjectLoad
-from backend.modules.teachers.models import (
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.classes.models import Class, ClassTeacher, SubjectLoad
+from modules.teachers.models import (
     Teacher,
     TeacherAvailability,
     TeacherLeave,

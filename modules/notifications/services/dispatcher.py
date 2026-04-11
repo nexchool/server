@@ -6,7 +6,7 @@ Dispatches notifications to IN_APP, EMAIL, SMS based on channel.
 
 from typing import Any, Dict, List, Optional
 
-from backend.modules.notifications.enums import NotificationChannel
+from modules.notifications.enums import NotificationChannel
 
 from .strategies import InAppStrategy, EmailStrategy, PushStrategy, SmsStrategy
 

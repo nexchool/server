@@ -6,11 +6,11 @@ Sends invoice reminders via push notification, email, and in-app notification.
 
 from typing import Any, Dict, Optional
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.fees.models import FeeInvoice
-from backend.modules.notifications.models import Notification
-from backend.modules.students.models import Student
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.fees.models import FeeInvoice
+from modules.notifications.models import Notification
+from modules.students.models import Student
 
 
 def send_invoice_reminder(invoice_id: str) -> Dict[str, Any]:

@@ -7,14 +7,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import (
+from core.database import db
+from modules.academics.backbone.models import (
     AcademicSettings,
     ClassSubjectTeacher,
     TimetableEntry,
     TimetableVersion,
 )
-from backend.modules.classes.models import ClassSubject
+from modules.classes.models import ClassSubject
 
 from .bell_schedules import get_academic_settings, get_schedule
 from .common import get_class_for_tenant

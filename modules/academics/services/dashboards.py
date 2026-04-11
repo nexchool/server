@@ -5,18 +5,18 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List
 
-from backend.core.database import db
-from backend.modules.academics.backbone.models import (
+from core.database import db
+from modules.academics.backbone.models import (
     AttendanceSession,
     ClassSubjectTeacher,
     TimetableEntry,
     TimetableVersion,
 )
-from backend.modules.classes.models import Class, ClassSubject
-from backend.modules.students.models import Student
-from backend.modules.teachers.models import Teacher
+from modules.classes.models import Class, ClassSubject
+from modules.students.models import Student
+from modules.teachers.models import Teacher
 
-from backend.modules.attendance.session_services import (
+from modules.attendance.session_services import (
     attendance_pending_for_class_today,
     student_history_v2,
 )

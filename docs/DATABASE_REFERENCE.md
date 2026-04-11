@@ -197,7 +197,7 @@ Schema reference for the School ERP backend (SQLAlchemy / Flask-SQLAlchemy). Sch
 Schema is managed by Flask-Migrate. From the **project root** with the app’s virtualenv active and `DATABASE_URL` set:
 
 ```bash
-export FLASK_APP=backend.app:app
+export FLASK_APP=app:app
 
 # Apply all pending migrations (create/update tables)
 flask db upgrade
@@ -213,6 +213,6 @@ flask db downgrade
 ```
 
 - **New deployments:** run `flask db upgrade` once to create all tables.
-- **Model changes:** run `flask db migrate -m "message"`, review the generated script in `backend/migrations/versions/`, then `flask db upgrade`.
+- **Model changes:** run `flask db migrate -m "message"`, review the generated script in `server/migrations/versions/`, then `flask db upgrade`.
 
-Legacy SQL scripts in `backend/migrations/` (e.g. `add_student_phone.sql`) are kept for reference only; the canonical schema is defined by the models and these migrations.
+Legacy SQL scripts in `server/migrations/` (e.g. `add_student_phone.sql`) are kept for reference only; the canonical schema is defined by the models and these migrations.

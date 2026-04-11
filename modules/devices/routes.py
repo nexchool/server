@@ -2,11 +2,11 @@
 
 from flask import Blueprint, g, request
 
-from backend.core.database import db
-from backend.core.decorators import auth_required, tenant_required
-from backend.core.tenant import get_tenant_id
-from backend.modules.devices import device_service
-from backend.shared.helpers import error_response, success_response, validation_error_response
+from core.database import db
+from core.decorators import auth_required, tenant_required
+from core.tenant import get_tenant_id
+from modules.devices import device_service
+from shared.helpers import error_response, success_response, validation_error_response
 
 # url_prefix is applied in app.register_blueprint(..., url_prefix="/api/devices")
 devices_bp = Blueprint("devices", __name__)

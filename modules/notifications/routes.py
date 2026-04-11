@@ -9,27 +9,27 @@ from datetime import datetime
 from flask import Blueprint, g, request
 from sqlalchemy import and_, or_
 
-from backend.core.database import db
-from backend.core.decorators import auth_required, require_plan_feature, tenant_required
-from backend.core.decorators.rbac import require_any_permission
-from backend.core.tenant import get_tenant_id
-from backend.modules.notifications.enums import (
+from core.database import db
+from core.decorators import auth_required, require_plan_feature, tenant_required
+from core.decorators.rbac import require_any_permission
+from core.tenant import get_tenant_id
+from modules.notifications.enums import (
     NotificationChannel,
     NotificationRecipientStatus,
     NotificationType,
 )
-from backend.modules.notifications.models import Notification, NotificationRecipient
-from backend.modules.notifications.notification_service import (
+from modules.notifications.models import Notification, NotificationRecipient
+from modules.notifications.notification_service import (
     create_notification,
     create_recipients,
     send_notification as enqueue_dispatch,
 )
-from backend.modules.notifications.notification_targeting_service import (
+from modules.notifications.notification_targeting_service import (
     TargetingValidationError,
     collect_user_ids_bulk_merge,
     collect_user_ids_single_mode,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     error_response,
     not_found_response,
     success_response,

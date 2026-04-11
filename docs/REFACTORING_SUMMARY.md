@@ -10,7 +10,7 @@ Your Flask School ERP backend has been **completely refactored** into a producti
 
 ### ✅ Clean Modular Structure
 ```
-backend/
+server/
 ├── config/          # Configuration management
 ├── core/            # Infrastructure (database, decorators)
 ├── modules/         # Business modules (auth, rbac, users, mailer)
@@ -56,22 +56,22 @@ backend/
 
 ### 1. Initialize Database
 ```bash
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.create_all()"
 ```
 
 ### 2. Seed RBAC
 ```bash
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 ```
 
 ### 3. Create Admin
 ```bash
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 ```
 
 ### 4. Run Server
 ```bash
-python backend/app.py
+python app.py
 ```
 
 **Server runs on:** `http://0.0.0.0:5001`
@@ -100,9 +100,9 @@ python backend/app.py
 
 ### 1. Blueprint Registration
 ```python
-# backend/app.py
-from backend.modules.auth import auth_bp
-from backend.modules.rbac import rbac_bp
+# app.py
+from modules.auth import auth_bp
+from modules.rbac import rbac_bp
 
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(rbac_bp, url_prefix='/api/rbac')
@@ -127,7 +127,7 @@ def create_student_route():
 
 ### 3. RBAC Decorators
 ```python
-from backend.core.decorators import auth_required, require_permission
+from core.decorators import auth_required, require_permission
 
 @bp.route('/protected')
 @auth_required  # Must be authenticated
@@ -143,19 +143,19 @@ def protected_route():
 
 ### Seed RBAC System
 ```bash
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 ```
 Creates 40+ permissions and 4 roles with automatic assignments.
 
 ### Create Admin User
 ```bash
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 ```
 Interactive script to create admin with email/password.
 
 ### RBAC Helpers (Flask Shell)
 ```python
-from backend.scripts.rbac_helpers import *
+from scripts.rbac_helpers import *
 
 assign_admin_role('admin@school.com')
 show_user_permissions('user@school.com')
@@ -168,7 +168,7 @@ show_all_roles()
 
 ### Structure
 ```
-backend/modules/new_module/
+server/modules/new_module/
 ├── __init__.py        # Blueprint creation
 ├── models.py          # Database models
 ├── routes.py          # API endpoints
@@ -183,7 +183,7 @@ new_module_bp = Blueprint('new_module', __name__)
 from . import routes
 
 # Register in app.py
-from backend.modules.new_module import new_module_bp
+from modules.new_module import new_module_bp
 app.register_blueprint(new_module_bp, url_prefix='/api/new-module')
 ```
 
@@ -258,9 +258,9 @@ from auth.utils.auth_guard import auth_required
 from auth.services.rbac_service import has_permission
 
 # ✅ New
-from backend.modules.auth.models import User
-from backend.core.decorators import auth_required
-from backend.modules.rbac.services import has_permission
+from modules.auth.models import User
+from core.decorators import auth_required
+from modules.rbac.services import has_permission
 ```
 
 ### App Initialization
@@ -269,7 +269,7 @@ from backend.modules.rbac.services import has_permission
 from app import app
 
 # ✅ New
-from backend.app import create_app
+from app import create_app
 app = create_app()
 ```
 
@@ -279,7 +279,7 @@ app = create_app()
 from config import get_backend_url
 
 # ✅ New
-from backend.config.settings import get_backend_url
+from config.settings import get_backend_url
 ```
 
 ---
@@ -395,16 +395,16 @@ from backend.config.settings import get_backend_url
 
 ```bash
 # Start server
-python backend/app.py
+python app.py
 
 # Initialize DB
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.create_all()"
 
 # Seed RBAC
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 
 # Create admin
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 
 # Health check
 curl http://localhost:5001/api/health

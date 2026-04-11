@@ -8,9 +8,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
-from backend.core.database import db
-from backend.modules.notifications.enums import NotificationChannel, NotificationRecipientStatus
-from backend.modules.notifications.models import Notification, NotificationRecipient
+from core.database import db
+from modules.notifications.enums import NotificationChannel, NotificationRecipientStatus
+from modules.notifications.models import Notification, NotificationRecipient
 
 
 def _channel_aggregate_label(channels: Sequence[str]) -> str:
@@ -97,7 +97,7 @@ def create_recipients(notification_id: str, user_ids: Sequence[str]) -> int:
 
 def send_notification(notification_id: str) -> bool:
     """Enqueue Celery dispatch_notification_task. Returns False if Celery unavailable."""
-    from backend.celery_app import get_celery
+    from celery_app import get_celery
 
     celery_app = get_celery()
     if not celery_app:

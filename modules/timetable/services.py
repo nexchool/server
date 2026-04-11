@@ -12,8 +12,8 @@ from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
+from core.database import db
+from core.tenant import get_tenant_id
 
 from .models import TimetableSlot, TimetableConfig, DEFAULT_BREAKS_JSON
 
@@ -52,9 +52,9 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         if not tenant_id:
             return {"success": False, "error": "Tenant context is required"}
 
-        from backend.modules.classes.models import Class
-        from backend.modules.subjects.models import Subject
-        from backend.modules.teachers.models import Teacher
+        from modules.classes.models import Class
+        from modules.subjects.models import Subject
+        from modules.teachers.models import Teacher
 
         class_id = data.get("class_id")
         subject_id = data.get("subject_id")
@@ -228,9 +228,9 @@ def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
         if not slot:
             return {"success": False, "error": "Timetable slot not found"}
 
-        from backend.modules.classes.models import Class
-        from backend.modules.subjects.models import Subject
-        from backend.modules.teachers.models import Teacher
+        from modules.classes.models import Class
+        from modules.subjects.models import Subject
+        from modules.teachers.models import Teacher
 
         if "class_id" in data and data["class_id"] is not None:
             cls = Class.query.filter_by(id=data["class_id"], tenant_id=tenant_id).first()

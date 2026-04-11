@@ -1,6 +1,6 @@
-from backend.shared.s3_utils import profile_picture_public_url
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from shared.s3_utils import profile_picture_public_url
+from core.database import db
+from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 

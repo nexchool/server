@@ -7,9 +7,9 @@ payment is recorded. PDF is generated on-the-fly for download.
 
 from typing import Optional
 
-from backend.core.tenant import get_tenant_id
-from backend.modules.fees.models import FeePayment, FeeReceipt
-from backend.modules.fees.services.pdf_service import generate_receipt_pdf
+from core.tenant import get_tenant_id
+from modules.fees.models import FeePayment, FeeReceipt
+from modules.fees.services.pdf_service import generate_receipt_pdf
 
 
 def get_receipt_pdf_bytes(payment_id: str) -> Optional[bytes]:

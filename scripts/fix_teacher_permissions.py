@@ -10,25 +10,25 @@ from logging in. Two root causes are handled:
 Usage (from the app/ directory):
 
   # Fix a specific teacher by email
-  python -m backend.scripts.fix_teacher_permissions teacher@school.com
+  python -m scripts.fix_teacher_permissions teacher@school.com
 
   # Fix all teachers with missing permissions (across every tenant)
-  python -m backend.scripts.fix_teacher_permissions --all
+  python -m scripts.fix_teacher_permissions --all
 
   # Dry-run: show what would be fixed without touching the database
-  python -m backend.scripts.fix_teacher_permissions --all --dry-run
-  python -m backend.scripts.fix_teacher_permissions teacher@school.com --dry-run
+  python -m scripts.fix_teacher_permissions --all --dry-run
+  python -m scripts.fix_teacher_permissions teacher@school.com --dry-run
 """
 
 import sys
 
-from backend.app import create_app
-from backend.core.database import db
-from backend.core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
-from backend.modules.auth.models import User
-from backend.modules.rbac.models import Role, Permission, RolePermission, UserRole
-from backend.modules.rbac.services import get_user_permissions
-from backend.modules.rbac.role_seeder import DEFAULT_ROLES
+from app import create_app
+from core.database import db
+from core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
+from modules.auth.models import User
+from modules.rbac.models import Role, Permission, RolePermission, UserRole
+from modules.rbac.services import get_user_permissions
+from modules.rbac.role_seeder import DEFAULT_ROLES
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -206,7 +206,7 @@ def fix_all_teachers(dry_run: bool = False) -> None:
 
         for tenant in tenants:
             # Find all users in this tenant who have a teacher_profile
-            from backend.modules.teachers.models import Teacher
+            from modules.teachers.models import Teacher
             teachers = Teacher.query.filter_by(tenant_id=tenant.id).all()
 
             if not teachers:

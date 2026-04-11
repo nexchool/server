@@ -12,7 +12,7 @@ Business logic for Holiday CRUD.  Handles:
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from backend.core.database import db
+from core.database import db
 from .models import Holiday, HOLIDAY_TYPES, DAY_NAMES
 
 

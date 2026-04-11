@@ -7,8 +7,8 @@ import uuid
 
 from sqlalchemy import text
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 
 
 class TransportBus(TenantBaseModel):
@@ -407,7 +407,11 @@ class TransportEnrollment(TenantBaseModel):
         onupdate=datetime.utcnow,
     )
 
-    student = db.relationship("Student", backref=db.backref("transport_enrollments", lazy=True))
+    student = db.relationship(
+        "Student",
+        backref=db.backref("transport_enrollments", lazy=True),
+        passive_deletes=True,
+    )
     bus = db.relationship("TransportBus", backref=db.backref("enrollments", lazy=True))
     route = db.relationship("TransportRoute", backref=db.backref("enrollments", lazy=True))
     academic_year = db.relationship(

@@ -29,8 +29,8 @@ def resolve_tenant_for_auth(
     Sets g.tenant_id and g.tenant on success.
     Returns None on success, or (status_code, response) on failure (caller should return that).
     """
-    from backend.core.models import Tenant
-    from backend.core.models import TENANT_STATUS_ACTIVE
+    from core.models import Tenant
+    from core.models import TENANT_STATUS_ACTIVE
 
     if getattr(g, "tenant_id", None) is not None:
         return None
@@ -116,8 +116,8 @@ def resolve_tenant():
     if getattr(g, "tenant_id", None) is not None:
         return
 
-    from backend.core.models import Tenant
-    from backend.core.models import TENANT_STATUS_ACTIVE
+    from core.models import Tenant
+    from core.models import TENANT_STATUS_ACTIVE
 
     tenant = None
     # 1. Header

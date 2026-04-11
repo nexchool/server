@@ -13,8 +13,8 @@ the current request context via get_tenant_id().
 from datetime import date, timedelta
 from typing import Dict, List, Optional
 
-from backend.core.tenant import get_tenant_id
-from backend.modules.teachers.models import (
+from core.tenant import get_tenant_id
+from modules.teachers.models import (
     TeacherAvailability,
     TeacherLeave,
     TeacherWorkloadRule,

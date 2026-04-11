@@ -9,13 +9,13 @@ Run this once against any tenant that was set up before this fix.
 Idempotent — safe to run multiple times.
 
 Usage (from the app/ directory):
-    python -m backend.scripts.backfill_teacher_leave_permissions
+    python -m scripts.backfill_teacher_leave_permissions
 """
 
-from backend.app import create_app
-from backend.core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
-from backend.modules.rbac.services import create_permission
-from backend.modules.rbac.role_seeder import seed_roles_for_tenant
+from app import create_app
+from core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
+from modules.rbac.services import create_permission
+from modules.rbac.role_seeder import seed_roles_for_tenant
 
 NEW_PERMISSIONS = [
     ("teacher.leave.apply",  "Apply for leave as a teacher"),
@@ -25,7 +25,7 @@ NEW_PERMISSIONS = [
 
 def ensure_permissions() -> int:
     """Create the two new global Permission rows if they don't exist yet."""
-    from backend.modules.rbac.models import Permission
+    from modules.rbac.models import Permission
     created = 0
     for name, description in NEW_PERMISSIONS:
         if Permission.query.filter_by(name=name).first():

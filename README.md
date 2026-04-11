@@ -6,23 +6,23 @@ Production-grade modular Flask backend with RBAC.
 
 ```bash
 # 1. Initialize database
-python -c "from backend.app import create_app; app = create_app(); app.app_context().push(); from backend.core.database import db; db.create_all()"
+python -c "from app import create_app; app = create_app(); app.app_context().push(); from core.database import db; db.create_all()"
 
 # 2. Seed RBAC system
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 
 # 3. Create admin user
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 
-# 4. Run server
-python backend/app.py
+# 4. Run server (from this `server/` directory)
+python app.py
 ```
 
 Server: `http://0.0.0.0:5001`
 
 ## Docker (full stack)
 
-From the **repository root** (parent of `app/`), PostgreSQL, Redis, this API, Celery, school admin web, and super admin panel can run with Compose. The image installs WeasyPrint’s system libraries for you.
+From the **repository root**, PostgreSQL, Redis, this API, Celery, school admin web, and super admin panel can run with Compose. The image installs WeasyPrint’s system libraries for you.
 
 ```bash
 cp docker/env/local.env.example docker/env/local.env && make docker-local
@@ -33,7 +33,7 @@ Details, mobile (Expo) notes, and production hints: [docker/README.md](../../doc
 
 ## PDF generation (WeasyPrint)
 
-Fee/finance PDFs use **WeasyPrint**, which needs **Pango and related native libraries** on the machine (in addition to `pip install -r requirements.txt` from `app/`).
+Fee/finance PDFs use **WeasyPrint**, which needs **Pango and related native libraries** on the machine (in addition to `pip install -r requirements.txt` from this directory).
 
 **Do not use `apt` on macOS** — that is for Debian/Ubuntu only. On a Mac, use Homebrew (below).
 
@@ -43,7 +43,7 @@ Fee/finance PDFs use **WeasyPrint**, which needs **Pango and related native libr
 brew install weasyprint
 ```
 
-Then confirm Python sees Pango (from your `app/` venv):
+Then confirm Python sees Pango (from your project venv):
 
 ```bash
 python -c "from weasyprint import HTML; print('ok')"
@@ -59,7 +59,7 @@ Homebrew puts `.dylib` files under `$(brew --prefix)/lib`. Your **pip-installed*
 
    ```bash
    conda deactivate   # repeat until `(base)` is gone from the prompt
-   cd app && source venv/bin/activate
+   cd server && source venv/bin/activate
    python -c "from weasyprint import HTML; print('ok')"
    ```
 
@@ -87,7 +87,7 @@ sudo apt install libffi-dev libjpeg-dev libopenjp2-7-dev
 ## 📁 Structure
 
 ```
-backend/
+server/
 ├── app.py              # Application factory (RUN THIS)
 ├── config/             # Configuration
 ├── core/               # Infrastructure
@@ -104,15 +104,15 @@ backend/
 
 ## 📚 Documentation
 
-- **`../REFACTORING_SUMMARY.md`** - Overview and quick reference
-- **`../QUICK_START.md`** - Setup and common tasks
-- **`../BACKEND_ARCHITECTURE_REFACTORING.md`** - Complete documentation
+- **`docs/REFACTORING_SUMMARY.md`** — Overview and quick reference
+- **`docs/QUICK_START.md`** — Setup and common tasks
+- **`docs/BACKEND_ARCHITECTURE_REFACTORING.md`** — Complete documentation
 
 ## 🔧 Key Concepts
 
 ### Decorators
 ```python
-from backend.core.decorators import auth_required, require_permission
+from core.decorators import auth_required, require_permission
 
 @bp.route('/endpoint')
 @auth_required
@@ -147,7 +147,7 @@ def create_item_route():
 
 **Example:**
 ```python
-from backend.modules.rbac.services import has_permission
+from modules.rbac.services import has_permission
 
 if has_permission(user_id, 'student.create'):
     # Authorized
@@ -165,13 +165,13 @@ if has_permission(user_id, 'student.create'):
 
 ```bash
 # Seed RBAC
-python -m backend.scripts.seed_rbac
+python -m scripts.seed_rbac
 
 # Create admin
-python -m backend.scripts.create_admin
+python -m scripts.create_admin
 
 # RBAC helpers (Flask shell)
-from backend.scripts.rbac_helpers import *
+from scripts.rbac_helpers import *
 assign_admin_role('admin@school.com')
 ```
 
@@ -188,8 +188,8 @@ assign_admin_role('admin@school.com')
 ## 🔄 Add New Module
 
 ```bash
-mkdir -p backend/modules/new_module
-cd backend/modules/new_module
+mkdir -p server/modules/new_module
+cd server/modules/new_module
 
 # Create files
 touch __init__.py models.py routes.py services.py
@@ -197,7 +197,7 @@ touch __init__.py models.py routes.py services.py
 
 Then register in `app.py`:
 ```python
-from backend.modules.new_module import new_module_bp
+from modules.new_module import new_module_bp
 app.register_blueprint(new_module_bp, url_prefix='/api/new-module')
 ```
 

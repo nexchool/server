@@ -8,14 +8,14 @@ and per-day override management (substitute/activity/cancel).
 from datetime import date
 from flask import g, request
 
-from backend.modules.schedule import schedule_bp
-from backend.core.decorators import (
+from modules.schedule import schedule_bp
+from core.decorators import (
     auth_required,
     tenant_required,
     require_plan_feature,
     require_permission,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     success_response,
     error_response,
     validation_error_response,

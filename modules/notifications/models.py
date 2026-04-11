@@ -9,10 +9,10 @@ NotificationRecipient for bulk / multi-user delivery tracking.
 from datetime import datetime
 import uuid
 
-from backend.core.database import db
-from backend.core.models import TenantBaseModel
+from core.database import db
+from core.models import TenantBaseModel
 
-from backend.modules.notifications.enums import NotificationRecipientStatus
+from modules.notifications.enums import NotificationRecipientStatus
 
 
 class Notification(TenantBaseModel):

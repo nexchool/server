@@ -10,8 +10,8 @@ so it can be safely imported from any service without circular-import issues.
 
 from typing import Dict
 
-from backend.core.database import db
-from backend.modules.rbac.models import Role, Permission, RolePermission
+from core.database import db
+from modules.rbac.models import Role, Permission, RolePermission
 
 
 # ---------------------------------------------------------------------------

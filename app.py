@@ -7,7 +7,7 @@ This module creates and configures the Flask application with all blueprints,
 extensions, and middleware properly initialized.
 
 Usage:
-    >>> from backend.app import create_app
+    >>> from app import create_app
     >>> app = create_app()
     >>> app.run()
 """
@@ -17,10 +17,10 @@ import logging
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from backend.config import ProductionConfig, get_config
-from backend.core.database import db, init_db
-from backend.core.extensions import init_extensions
-from backend.utils.memory_monitor import start_memory_monitor
+from config import ProductionConfig, get_config
+from core.database import db, init_db
+from core.extensions import init_extensions
+from utils.memory_monitor import start_memory_monitor
 
 
 def create_app(config_name=None):
@@ -52,7 +52,7 @@ def create_app(config_name=None):
     init_db(app)
 
     # Initialize Celery (ContextTask for db access in tasks) - deferred import to avoid circular
-    from backend.celery_app import init_celery
+    from celery_app import init_celery
     init_celery(app)
 
     # Register blueprints
@@ -84,7 +84,7 @@ def register_tenant_middleware(app: Flask):
     Auth routes resolve tenant themselves via resolve_tenant_for_auth() (body, header, subdomain, default)
     so login works on single domain / localhost without a tenant in the URL.
     """
-    from backend.core.tenant import resolve_tenant
+    from core.tenant import resolve_tenant
 
     @app.before_request
     def _ensure_tenant():
@@ -119,24 +119,24 @@ def register_blueprints(app: Flask):
         app: Flask application instance
     """
     # Import blueprints
-    from backend.modules.auth import auth_bp
-    from backend.modules.rbac import rbac_bp
-    from backend.modules.users import users_bp
-    from backend.modules.classes import classes_bp
-    from backend.modules.students import students_bp
-    from backend.modules.teachers import teachers_bp
-    from backend.modules.attendance import attendance_bp
-    from backend.modules.platform import platform_bp
-    from backend.modules.finance import finance_bp
-    from backend.modules.academics import academics_bp
-    from backend.modules.notifications import notifications_bp
-    from backend.modules.subjects import subjects_bp
-    from backend.modules.timetable import timetable_bp
-    from backend.modules.schedule import schedule_bp
-    from backend.modules.holidays import holidays_bp
-    from backend.modules.fees import fees_bp
-    from backend.modules.transport import transport_bp
-    from backend.modules.devices import devices_bp
+    from modules.auth import auth_bp
+    from modules.rbac import rbac_bp
+    from modules.users import users_bp
+    from modules.classes import classes_bp
+    from modules.students import students_bp
+    from modules.teachers import teachers_bp
+    from modules.attendance import attendance_bp
+    from modules.platform import platform_bp
+    from modules.finance import finance_bp
+    from modules.academics import academics_bp
+    from modules.notifications import notifications_bp
+    from modules.subjects import subjects_bp
+    from modules.timetable import timetable_bp
+    from modules.schedule import schedule_bp
+    from modules.holidays import holidays_bp
+    from modules.fees import fees_bp
+    from modules.transport import transport_bp
+    from modules.devices import devices_bp
 
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -332,7 +332,7 @@ if __name__ == '__main__':
     For production, use Gunicorn (run from app/ directory):
         ./run_gunicorn.sh
     Or manually:
-        cd app && gunicorn -c gunicorn_conf.py "backend.app:app"
+        cd app && gunicorn -c gunicorn_conf.py "app:app"
     On macOS with Conda, set: export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
     """
     import os

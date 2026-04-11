@@ -1,14 +1,14 @@
 import logging
 from flask import g, request
-from backend.modules.classes import classes_bp
-from backend.core.decorators import (
+from modules.classes import classes_bp
+from core.decorators import (
     require_permission,
     require_any_permission,
     auth_required,
     tenant_required,
     require_plan_feature,
 )
-from backend.shared.helpers import (
+from shared.helpers import (
     success_response,
     error_response,
     not_found_response,
@@ -93,7 +93,7 @@ def apply_subject_by_grade():
     Add a subject offering to every class section that shares the same grade (standard)
     within an academic year. Requires subject catalog entry + grade_level on classes.
     """
-    from backend.modules.academics.services.grade_subjects import apply_subject_to_grade
+    from modules.academics.services.grade_subjects import apply_subject_to_grade
 
     data = request.get_json() or {}
     ay = data.get('academic_year_id')

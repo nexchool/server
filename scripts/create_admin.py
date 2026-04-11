@@ -4,13 +4,13 @@ Create Admin User Script
 Creates an admin user and assigns the Admin role.
 
 Usage:
-    python -m backend.scripts.create_admin
+    python -m scripts.create_admin
 """
 
 import getpass
-from backend.app import create_app
-from backend.modules.auth.models import User
-from backend.modules.rbac.services import assign_role_to_user_by_email
+from app import create_app
+from modules.auth.models import User
+from modules.rbac.services import assign_role_to_user_by_email
 
 
 def create_admin_user(email: str, password: str, name: str = None, tenant_id: str = None):
@@ -27,8 +27,8 @@ def create_admin_user(email: str, password: str, name: str = None, tenant_id: st
         Boolean indicating success
     """
     try:
-        from backend.core.models import Tenant
-        from backend.core.tenant import get_tenant_id
+        from core.models import Tenant
+        from core.tenant import get_tenant_id
 
         if not tenant_id:
             tenant_id = get_tenant_id()
@@ -102,7 +102,7 @@ def main():
     # Create app and user (set tenant context so RBAC and queries are tenant-scoped)
     app = create_app()
     with app.app_context():
-        from backend.core.models import Tenant
+        from core.models import Tenant
         from flask import g
         default_tenant = Tenant.query.filter_by(subdomain="default").first()
         if not default_tenant:

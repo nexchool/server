@@ -24,7 +24,7 @@ os.chdir(app_dir)
 # Use the same Python that is running this script
 python = sys.executable
 env = os.environ.copy()
-env["FLASK_APP"] = "backend.app:create_app"
+env["FLASK_APP"] = "app:create_app"
 env["PYTHONPATH"] = app_dir
 
 print(f"Using Python: {python}")

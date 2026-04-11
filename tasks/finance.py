@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from backend.celery_app import get_celery
+from celery_app import get_celery
 
 celery_app = get_celery()
 
@@ -15,11 +15,11 @@ def process_overdue_fees_task(self):
     - Only send notification when status changes.
     Runs with Flask app context (ContextTask).
     """
-    from backend.core.database import db
-    from backend.modules.finance.models import StudentFee
-    from backend.modules.finance.enums import StudentFeeStatus
-    from backend.modules.notifications.services import notification_dispatcher
-    from backend.modules.notifications.enums import NotificationChannel, NotificationType
+    from core.database import db
+    from modules.finance.models import StudentFee
+    from modules.finance.enums import StudentFeeStatus
+    from modules.notifications.services import notification_dispatcher
+    from modules.notifications.enums import NotificationChannel, NotificationType
 
     today = date.today()
     changed_count = 0

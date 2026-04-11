@@ -11,16 +11,16 @@ from sqlalchemy import func, or_, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
-from backend.core.database import db
-from backend.core.tenant import get_tenant_id
-from backend.modules.academics.academic_year.models import AcademicYear
-from backend.modules.finance.models import FeeComponent, FeeStructure, StudentFee, StudentFeeItem
-from backend.modules.finance.services.student_fee_service import (
+from core.database import db
+from core.tenant import get_tenant_id
+from modules.academics.academic_year.models import AcademicYear
+from modules.finance.models import FeeComponent, FeeStructure, StudentFee, StudentFeeItem
+from modules.finance.services.student_fee_service import (
     assign_student_fees_for_structure,
     remove_student_fee_for_structure,
 )
-from backend.modules.rbac.services import has_permission
-from backend.modules.students.models import Student
+from modules.rbac.services import has_permission
+from modules.students.models import Student
 
 from .models import (
     TransportBus,
@@ -439,7 +439,7 @@ def viewer_can_see_student_transport(viewer_user_id: str, student_dict: Dict[str
         if student_dict.get("user_id") == viewer_user_id:
             return True
     if has_permission(viewer_user_id, "transport.info.read.class"):
-        from backend.modules.attendance.services import get_teacher_class_ids
+        from modules.attendance.services import get_teacher_class_ids
 
         cid = student_dict.get("class_id")
         if cid and cid in get_teacher_class_ids(viewer_user_id):
@@ -459,7 +459,7 @@ def _pickup_drop_labels(en: TransportEnrollment) -> Tuple[Optional[str], Optiona
 
 def build_student_transport_block(student_id: str, viewer_user_id: str) -> Optional[Dict[str, Any]]:
     """Serialized transport summary for student detail APIs; None if hidden or no active enrollment."""
-    from backend.core.plan_features import is_plan_feature_enabled
+    from core.plan_features import is_plan_feature_enabled
 
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -2757,7 +2757,7 @@ def _duty_display(total_minutes: int) -> str:
 def _is_calendar_holiday(tenant_id: str, d: date, academic_year_id: str) -> bool:
     """True if tenant has a holiday that applies to this calendar date."""
     try:
-        from backend.modules.holidays.models import Holiday
+        from modules.holidays.models import Holiday
     except ImportError:
         return False
 

@@ -1,22 +1,22 @@
 """
 Seed existing mailer templates into notification_templates table.
 
-Reads HTML from backend/modules/mailer/templates/ and inserts as GLOBAL templates.
+Reads HTML from modules/mailer/templates/ and inserts as GLOBAL templates.
 Does NOT delete filesystem templates.
 
-Run: python -m backend.scripts.seed_existing_mailer_templates_to_db
+Run: python -m scripts.seed_existing_mailer_templates_to_db
 
 Or: flask shell
-    >>> from backend.scripts.seed_existing_mailer_templates_to_db import seed_existing_mailer_templates_to_db
+    >>> from scripts.seed_existing_mailer_templates_to_db import seed_existing_mailer_templates_to_db
     >>> seed_existing_mailer_templates_to_db()
 """
 
 import os
 import uuid
 
-from backend.core.database import db
-from backend.modules.notifications.models import NotificationTemplate
-from backend.modules.notifications.template_service import (
+from core.database import db
+from modules.notifications.models import NotificationTemplate
+from modules.notifications.template_service import (
     NOTIFICATION_CATEGORY_AUTH,
     NOTIFICATION_CATEGORY_STUDENT,
     NOTIFICATION_CATEGORY_PLATFORM,
@@ -51,7 +51,7 @@ def _read_mailer_template(name: str) -> str:
 
 def seed_existing_mailer_templates_to_db() -> dict:
     """
-    Read all templates from backend/modules/mailer/templates/
+    Read all templates from modules/mailer/templates/
     Insert into notification_templates as GLOBAL (tenant_id=NULL).
     Skip if template already exists for (type, channel) global.
 
@@ -131,7 +131,7 @@ def seed_existing_mailer_templates_to_db() -> dict:
 
 
 if __name__ == "__main__":
-    from backend.app import create_app
+    from app import create_app
     app = create_app()
     with app.app_context():
         result = seed_existing_mailer_templates_to_db()

@@ -3,8 +3,8 @@ Celery application with Flask context support.
 
 Uses ContextTask pattern so tasks run with Flask app context (db, config, etc).
 
-Worker: celery -A backend.celery_app:celery worker -l info
-Beat:   celery -A backend.celery_app:celery beat -l info
+Worker: celery -A celery_app:celery worker -l info
+Beat:   celery -A celery_app:celery beat -l info
 """
 
 from celery import Celery
@@ -25,10 +25,10 @@ def make_celery(app):
         broker=broker,
         backend=backend,
         include=[
-            "backend.tasks.notifications",
-            "backend.tasks.finance",
-            "backend.tasks.notification_dispatch",
-            "backend.tasks.push_notifications",
+            "tasks.notifications",
+            "tasks.finance",
+            "tasks.notification_dispatch",
+            "tasks.push_notifications",
         ],
     )
     # Use new lowercase config keys; avoid celery.conf.update(app.config) to prevent old-key conflicts
@@ -62,5 +62,5 @@ def get_celery():
     return _celery
 
 
-# Worker entry: celery -A backend.celery_worker:celery worker -l info
+# Worker entry: celery -A celery_worker:celery worker -l info
 # (celery_worker imports create_app, calls init_celery, exports celery - no circular import)

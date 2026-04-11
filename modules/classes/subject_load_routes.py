@@ -9,9 +9,9 @@ Endpoints for managing subject weekly period loads per class:
 """
 
 from flask import request
-from backend.modules.classes import classes_bp
-from backend.core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
-from backend.shared.helpers import (
+from modules.classes import classes_bp
+from core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from shared.helpers import (
     success_response,
     error_response,
     validation_error_response,

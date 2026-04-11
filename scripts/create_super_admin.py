@@ -10,27 +10,27 @@ Use this when the DB is empty and you need one user to log into the Super Admin 
 - Creates one user with is_platform_admin=True and assigns Admin role
 
 Usage (from project root, e.g. app/ or school-ERP/):
-    python -m backend.scripts.create_super_admin
+    python -m scripts.create_super_admin
 
 Or with env vars (non-interactive):
-    SUPER_ADMIN_EMAIL=admin@example.com SUPER_ADMIN_PASSWORD=secret python -m backend.scripts.create_super_admin
+    SUPER_ADMIN_EMAIL=admin@example.com SUPER_ADMIN_PASSWORD=secret python -m scripts.create_super_admin
 """
 
 import getpass
 import os
 
-from backend.app import create_app
-from backend.core.database import db
-from backend.core.models import Tenant
-from backend.modules.auth.models import User
-from backend.modules.rbac.models import Role, UserRole
-from backend.modules.rbac.services import create_permission
-from backend.scripts.seed_rbac import PERMISSIONS
+from app import create_app
+from core.database import db
+from core.models import Tenant
+from modules.auth.models import User
+from modules.rbac.models import Role, UserRole
+from modules.rbac.services import create_permission
+from scripts.seed_rbac import PERMISSIONS
 
 
 def ensure_permissions():
     """Create global permissions if they don't exist."""
-    from backend.modules.rbac.models import Permission
+    from modules.rbac.models import Permission
     created = 0
     for name, description in PERMISSIONS:
         if Permission.query.filter_by(name=name).first():
@@ -58,7 +58,7 @@ def create_super_admin_user(email: str, password: str, name: str = None) -> bool
         tenant_id = default_tenant.id
 
         # 2. Ensure global permissions exist (needed for roles)
-        from backend.modules.rbac.role_seeder import seed_roles_for_tenant
+        from modules.rbac.role_seeder import seed_roles_for_tenant
         n = ensure_permissions()
         if n:
             print(f"✓ Created {n} global permission(s)")

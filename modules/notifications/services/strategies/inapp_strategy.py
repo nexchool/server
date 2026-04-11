@@ -7,9 +7,9 @@ Bulk sends use a parent Notification + notification_recipients (no duplicate row
 
 from typing import Any, Dict, Optional
 
-from backend.core.database import db
-from backend.modules.notifications.models import Notification
-from backend.modules.notifications.enums import NotificationChannel
+from core.database import db
+from modules.notifications.models import Notification
+from modules.notifications.enums import NotificationChannel
 
 from .base import NotificationStrategy
 
