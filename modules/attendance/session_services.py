@@ -1,7 +1,8 @@
 """
 Daily attendance sessions (AttendanceSession + AttendanceRecord).
 
-Legacy flat `attendance` table remains for old reads; new writes use sessions.
+API writes use sessions. Legacy `attendance` reads remain in services.py only as a
+fallback when no session exists for a date.
 """
 
 from __future__ import annotations

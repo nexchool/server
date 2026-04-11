@@ -8,6 +8,8 @@ from shared.helpers import (
     not_found_response,
     validation_error_response,
 )
+from modules.holidays.services import calendar_range_summary
+
 from . import services
 
 # Permissions
@@ -73,6 +75,34 @@ def mark_attendance():
     if result['success']:
         return success_response(data=result, message=result['message'])
     return error_response('AttendanceError', result['error'], 400)
+
+
+@attendance_bp.route('/calendar-holidays', methods=['GET'])
+@tenant_required
+@auth_required
+@require_plan_feature('attendance')
+@require_any_permission(
+    'holiday.read',
+    'holiday.manage',
+    'attendance.manage',
+    PERM_MARK,
+    PERM_READ_CLASS,
+    PERM_READ_ALL,
+)
+def attendance_calendar_holidays():
+    """
+    Holiday / weekly-off occurrences between two dates (inclusive), for calendar UIs.
+
+    Query: start_date=YYYY-MM-DD, end_date=YYYY-MM-DD
+    """
+    start_s = request.args.get('start_date')
+    end_s = request.args.get('end_date')
+    if not start_s or not end_s:
+        return validation_error_response('start_date and end_date are required (YYYY-MM-DD)')
+    result = calendar_range_summary(g.tenant_id, start_s, end_s)
+    if result['success']:
+        return success_response(data=result['data'])
+    return error_response('ValidationError', result['error'], 400)
 
 
 @attendance_bp.route('/class/<class_id>', methods=['GET'])

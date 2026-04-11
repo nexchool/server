@@ -244,6 +244,40 @@ def get_holiday(holiday_id: str, tenant_id: str) -> Dict:
         return {"success": False, "error": str(exc)}
 
 
+def calendar_range_summary(
+    tenant_id: str,
+    start_date_str: str,
+    end_date_str: str,
+) -> Dict:
+    """
+    Expand all holiday occurrences in [start_date, end_date] for calendar UIs.
+
+    Uses the same rules as attendance (non-recurring ranges + recurring weekly offs).
+    """
+    sd = _parse_date(start_date_str)
+    ed = _parse_date(end_date_str)
+    if not sd or not ed:
+        return {
+            "success": False,
+            "error": "start_date and end_date are required (YYYY-MM-DD)",
+        }
+    if sd > ed:
+        return {"success": False, "error": "start_date must be on or before end_date"}
+
+    total_days, working_days, occurrences = get_working_days_info_for_range(sd, ed, tenant_id)
+    return {
+        "success": True,
+        "data": {
+            "start_date": sd.isoformat(),
+            "end_date": ed.isoformat(),
+            "total_days": total_days,
+            "working_days": working_days,
+            "holiday_days": total_days - working_days,
+            "occurrences": occurrences,
+        },
+    }
+
+
 def get_upcoming_holidays(tenant_id: str, limit: int = 10) -> Dict:
     """Return upcoming non-recurring holidays starting from today."""
     try:
