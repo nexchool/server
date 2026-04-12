@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
 from core.database import db
-from modules.academics.backbone.models import AcademicSettings, BellSchedule, BellSchedulePeriod
+from modules.academics.backbone.models import (
+    AcademicSettings,
+    BellSchedule,
+    BellSchedulePeriod,
+    TimetableVersion,
+)
 
 
 def _serialize_schedule(bs: BellSchedule, include_periods: bool = False) -> Dict[str, Any]:
@@ -49,7 +54,13 @@ def list_schedules(tenant_id: str) -> Dict[str, Any]:
         .order_by(BellSchedule.name)
         .all()
     )
-    return {"success": True, "items": [_serialize_schedule(r) for r in rows]}
+    settings = AcademicSettings.query.filter_by(tenant_id=tenant_id).first()
+    tenant_default = settings.default_bell_schedule_id if settings else None
+    return {
+        "success": True,
+        "items": [_serialize_schedule(r) for r in rows],
+        "tenant_default_bell_schedule_id": tenant_default,
+    }
 
 
 def get_schedule(tenant_id: str, schedule_id: str, include_periods: bool = True) -> Dict[str, Any]:
@@ -58,7 +69,13 @@ def get_schedule(tenant_id: str, schedule_id: str, include_periods: bool = True)
     ).first()
     if not bs:
         return {"success": False, "error": "Bell schedule not found"}
-    return {"success": True, "bell_schedule": _serialize_schedule(bs, include_periods=include_periods)}
+    out = _serialize_schedule(bs, include_periods=include_periods)
+    out["timetable_versions_linked"] = (
+        TimetableVersion.query.filter_by(tenant_id=tenant_id, bell_schedule_id=bs.id)
+        .filter(TimetableVersion.status.in_(["active", "draft"]))
+        .count()
+    )
+    return {"success": True, "bell_schedule": out}
 
 
 def create_schedule(tenant_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,6 +170,35 @@ def _parse_time(val: Any):
     return dtime(h, m, sec)
 
 
+def _intervals_overlap_clock(start_a: time, end_a: time, start_b: time, end_b: time) -> bool:
+    """True if [start_a, end_a) and [start_b, end_b) overlap (touching endpoints are not overlap)."""
+    return start_a < end_b and start_b < end_a
+
+
+def _overlap_error_with_existing(
+    tenant_id: str,
+    schedule_id: str,
+    start: time,
+    end: time,
+    exclude_period_id: Optional[str] = None,
+) -> Optional[str]:
+    """Return user-facing error string if [start, end) overlaps any other period in this schedule."""
+    q = BellSchedulePeriod.query.filter_by(tenant_id=tenant_id, bell_schedule_id=schedule_id)
+    if exclude_period_id:
+        q = q.filter(BellSchedulePeriod.id != exclude_period_id)
+    for other in q.all():
+        if not other.starts_at or not other.ends_at:
+            continue
+        if _intervals_overlap_clock(start, end, other.starts_at, other.ends_at):
+            ostart = other.starts_at.strftime("%H:%M")
+            oend = other.ends_at.strftime("%H:%M")
+            return (
+                f"This time overlaps period {other.period_number} ({ostart}–{oend}). "
+                "End each period before the next begins, or adjust the other period."
+            )
+    return None
+
+
 def create_period(tenant_id: str, schedule_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     bs = BellSchedule.query.filter_by(id=schedule_id, tenant_id=tenant_id).filter(
         BellSchedule.deleted_at.is_(None)
@@ -170,6 +216,10 @@ def create_period(tenant_id: str, schedule_id: str, data: Dict[str, Any]) -> Dic
         return {"success": False, "error": "starts_at and ends_at are required (HH:MM or HH:MM:SS)"}
     if starts >= ends:
         return {"success": False, "error": "starts_at must be before ends_at"}
+
+    overlap_err = _overlap_error_with_existing(tenant_id, schedule_id, starts, ends, exclude_period_id=None)
+    if overlap_err:
+        return {"success": False, "error": overlap_err}
 
     kind = (data.get("period_kind") or "lesson").strip()
     if kind not in ("lesson", "break", "lunch", "assembly", "other"):
@@ -207,21 +257,31 @@ def update_period(
     if not p:
         return {"success": False, "error": "Period not found"}
 
+    new_start = _parse_time(data.get("starts_at")) if "starts_at" in data else p.starts_at
+    new_end = _parse_time(data.get("ends_at")) if "ends_at" in data else p.ends_at
+
+    if new_start and new_end and new_start >= new_end:
+        return {"success": False, "error": "starts_at must be before ends_at"}
+
+    if new_start and new_end:
+        overlap_err = _overlap_error_with_existing(
+            tenant_id, schedule_id, new_start, new_end, exclude_period_id=str(p.id)
+        )
+        if overlap_err:
+            return {"success": False, "error": overlap_err}
+
     if "period_number" in data:
         p.period_number = int(data["period_number"])
     if "period_kind" in data:
         p.period_kind = str(data["period_kind"]).strip()
     if "starts_at" in data:
-        p.starts_at = _parse_time(data.get("starts_at"))
+        p.starts_at = new_start
     if "ends_at" in data:
-        p.ends_at = _parse_time(data.get("ends_at"))
+        p.ends_at = new_end
     if "label" in data:
         p.label = data.get("label")
     if "sort_order" in data:
         p.sort_order = int(data["sort_order"])
-
-    if p.starts_at and p.ends_at and p.starts_at >= p.ends_at:
-        return {"success": False, "error": "starts_at must be before ends_at"}
 
     try:
         db.session.commit()
@@ -273,10 +333,6 @@ def patch_academic_settings(tenant_id: str, data: Dict[str, Any]) -> Dict[str, A
             if not bs:
                 return {"success": False, "error": "Bell schedule not found"}
         row.default_bell_schedule_id = sid
-    if "attendance_mode" in data and data["attendance_mode"]:
-        row.attendance_mode = str(data["attendance_mode"])
-    if "allow_teacher_timetable_override" in data:
-        row.allow_teacher_timetable_override = bool(data["allow_teacher_timetable_override"])
     if "allow_admin_attendance_override" in data:
         row.allow_admin_attendance_override = bool(data["allow_admin_attendance_override"])
     if "default_working_days_json" in data:
@@ -289,8 +345,6 @@ def patch_academic_settings(tenant_id: str, data: Dict[str, Any]) -> Dict[str, A
             "id": row.id,
             "current_academic_year_id": row.current_academic_year_id,
             "default_bell_schedule_id": row.default_bell_schedule_id,
-            "attendance_mode": row.attendance_mode,
-            "allow_teacher_timetable_override": row.allow_teacher_timetable_override,
             "allow_admin_attendance_override": row.allow_admin_attendance_override,
             "default_working_days_json": row.default_working_days_json,
         },
@@ -305,8 +359,6 @@ def get_academic_settings(tenant_id: str) -> Dict[str, Any]:
             "id": row.id,
             "current_academic_year_id": row.current_academic_year_id,
             "default_bell_schedule_id": row.default_bell_schedule_id,
-            "attendance_mode": row.attendance_mode,
-            "allow_teacher_timetable_override": row.allow_teacher_timetable_override,
             "allow_admin_attendance_override": row.allow_admin_attendance_override,
             "default_working_days_json": row.default_working_days_json,
         },

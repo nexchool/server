@@ -21,7 +21,12 @@ def list_bell_schedules():
     r = bell_schedules.list_schedules(g.tenant_id)
     if not r["success"]:
         return error_response("Error", r["error"], 400)
-    return success_response(data={"items": r["items"]})
+    return success_response(
+        data={
+            "items": r["items"],
+            "tenant_default_bell_schedule_id": r.get("tenant_default_bell_schedule_id"),
+        }
+    )
 
 
 @academics_bp.route("/bell-schedules", methods=["POST"])

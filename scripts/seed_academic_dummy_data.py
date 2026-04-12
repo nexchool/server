@@ -475,14 +475,12 @@ def run_seed() -> None:
         settings = AcademicSettings(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
-            attendance_mode="daily",
-            allow_teacher_timetable_override=False,
             allow_admin_attendance_override=True,
         )
         db.session.add(settings)
     settings.current_academic_year_id = ay.id
     settings.default_bell_schedule_id = bell.id
-    settings.default_working_days_json = [1, 2, 3, 4, 5]
+    settings.default_working_days_json = [1, 2, 3, 4, 5, 6]
 
     for klass in (class_a, class_b):
         db.session.add(

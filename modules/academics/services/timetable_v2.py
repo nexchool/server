@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from core.database import db
 from modules.academics.backbone.models import (
     AcademicSettings,
+    BellSchedulePeriod,
     ClassSubjectTeacher,
     TimetableEntry,
     TimetableVersion,
@@ -95,7 +96,7 @@ def _working_weekdays(tenant_id: str) -> List[int]:
     raw = row.default_working_days_json if row else None
     if isinstance(raw, list) and raw:
         days = [int(x) for x in raw if 1 <= int(x) <= 7]
-        return sorted(set(days)) if days else [1, 2, 3, 4, 5]
+        return sorted(set(days)) if days else [1, 2, 3, 4, 5, 6]
     if isinstance(raw, dict):
         iso_map = {
             "monday": 1,
@@ -107,8 +108,8 @@ def _working_weekdays(tenant_id: str) -> List[int]:
             "sunday": 7,
         }
         days = [iso_map[k] for k, v in raw.items() if k in iso_map and v]
-        return sorted(set(days)) if days else [1, 2, 3, 4, 5]
-    return [1, 2, 3, 4, 5]
+        return sorted(set(days)) if days else [1, 2, 3, 4, 5, 6]
+    return [1, 2, 3, 4, 5, 6]
 
 
 def _bell_period_map(tenant_id: str, bell_schedule_id: Optional[str]) -> Dict[int, Dict[str, Any]]:
@@ -169,10 +170,19 @@ def create_version(tenant_id: str, class_id: str, data: Dict[str, Any], user_id:
     settings = get_academic_settings(tenant_id)
     default_bell = settings["settings"].get("default_bell_schedule_id")
 
+    resolved_bell = data.get("bell_schedule_id", default_bell)
+    if resolved_bell is None or resolved_bell == "":
+        resolved_bell = default_bell
+    if not resolved_bell:
+        return {
+            "success": False,
+            "error": "bell_schedule_id is required when no default bell schedule is set in academic settings",
+        }
+
     v = TimetableVersion(
         tenant_id=tenant_id,
         class_id=class_id,
-        bell_schedule_id=data.get("bell_schedule_id", default_bell),
+        bell_schedule_id=resolved_bell,
         label=data.get("label"),
         status=str(data.get("status") or "draft").strip(),
         effective_from=_pd(data.get("effective_from")),
@@ -316,8 +326,11 @@ def clone_active_to_draft(
 
 
 def _teacher_slots_occupied(
-    tenant_id: str, exclude_entry_id: Optional[str] = None
+    tenant_id: str,
+    exclude_entry_id: Optional[str] = None,
+    exclude_class_id: Optional[str] = None,
 ) -> Set[Tuple[str, int, int]]:
+    """Return occupied (teacher_id, day, period) tuples for generator slot-avoidance."""
     q = (
         db.session.query(
             TimetableEntry.teacher_id,
@@ -334,8 +347,63 @@ def _teacher_slots_occupied(
     )
     if exclude_entry_id:
         q = q.filter(TimetableEntry.id != exclude_entry_id)
+    # Exclude all versions (active or draft) for the same class — only one version of a
+    # class will ever be live at a time, so none of its versions are real cross-class conflicts.
+    if exclude_class_id:
+        q = q.filter(TimetableVersion.class_id != exclude_class_id)
     rows = q.all()
     return {(str(r[0]), int(r[1]), int(r[2])) for r in rows}
+
+
+def _teacher_occupied_with_schedule(
+    tenant_id: str,
+    exclude_entry_id: Optional[str] = None,
+    exclude_class_id: Optional[str] = None,
+) -> List[Tuple[str, int, int, Optional[str]]]:
+    """Return occupied (teacher_id, day, period_number, bell_schedule_id) rows.
+
+    Used by time-range-aware conflict detection so we can check whether two entries
+    from *different* bell schedules actually overlap in clock time.
+    """
+    q = (
+        db.session.query(
+            TimetableEntry.teacher_id,
+            TimetableEntry.day_of_week,
+            TimetableEntry.period_number,
+            TimetableVersion.bell_schedule_id,
+        )
+        .join(TimetableVersion, TimetableEntry.timetable_version_id == TimetableVersion.id)
+        .filter(
+            TimetableEntry.tenant_id == tenant_id,
+            TimetableEntry.entry_status == "active",
+            TimetableVersion.status.in_(["active", "draft"]),
+            TimetableEntry.teacher_id.isnot(None),
+        )
+    )
+    if exclude_entry_id:
+        q = q.filter(TimetableEntry.id != exclude_entry_id)
+    if exclude_class_id:
+        q = q.filter(TimetableVersion.class_id != exclude_class_id)
+    return [(str(r[0]), int(r[1]), int(r[2]), r[3]) for r in q.all()]
+
+
+def _load_period_times(
+    tenant_id: str,
+    schedule_period_pairs: List[Tuple[Optional[str], int]],
+) -> Dict[Tuple[str, int], Tuple]:
+    """Batch-load (starts_at, ends_at) for a set of (bell_schedule_id, period_number) pairs."""
+    valid_ids = list({s for s, _ in schedule_period_pairs if s})
+    if not valid_ids:
+        return {}
+    rows = BellSchedulePeriod.query.filter(
+        BellSchedulePeriod.tenant_id == tenant_id,
+        BellSchedulePeriod.bell_schedule_id.in_(valid_ids),
+    ).all()
+    result: Dict[Tuple[str, int], Tuple] = {}
+    for r in rows:
+        if r.starts_at and r.ends_at:
+            result[(str(r.bell_schedule_id), int(r.period_number))] = (r.starts_at, r.ends_at)
+    return result
 
 
 def _teacher_conflict(
@@ -344,9 +412,66 @@ def _teacher_conflict(
     day_of_week: int,
     period_number: int,
     exclude_entry_id: Optional[str],
+    exclude_class_id: Optional[str] = None,
+    bell_schedule_id: Optional[str] = None,
 ) -> bool:
+    """Check whether a teacher is double-booked at a given day + period.
+
+    When the incoming entry and an existing entry share the same bell schedule, a matching
+    period number is an exact conflict.  When they use *different* bell schedules (e.g. a
+    teacher covers both a Play School class with its own timing and a Primary class), we
+    compare the actual clock-time ranges and flag a conflict only when those ranges overlap.
+    If period times are unavailable for either side we fall back conservatively to the
+    period-number equality check.
+    """
     tid = str(teacher_id)
-    return (tid, day_of_week, period_number) in _teacher_slots_occupied(tenant_id, exclude_entry_id)
+    occupied = _teacher_occupied_with_schedule(tenant_id, exclude_entry_id, exclude_class_id)
+
+    # Filter to same teacher + same day first to reduce work
+    candidates = [
+        (occ_pnum, occ_bs)
+        for occ_tid, occ_day, occ_pnum, occ_bs in occupied
+        if occ_tid == tid and occ_day == day_of_week
+    ]
+    if not candidates:
+        return False
+
+    # If no bell schedule context is available fall back to period-number equality
+    if bell_schedule_id is None:
+        return any(pnum == period_number for pnum, _ in candidates)
+
+    # Batch-load period times for all relevant (schedule, period) pairs in one query
+    pairs: List[Tuple[Optional[str], int]] = [(bell_schedule_id, period_number)]
+    pairs += [(bs, pnum) for pnum, bs in candidates if bs]
+    time_cache = _load_period_times(tenant_id, pairs)
+
+    new_range = time_cache.get((bell_schedule_id, period_number))
+
+    for occ_pnum, occ_bs in candidates:
+        if occ_bs == bell_schedule_id:
+            # Same bell schedule — period number equality is exact and cheap
+            if occ_pnum == period_number:
+                return True
+        elif new_range is not None and occ_bs is not None:
+            occ_range = time_cache.get((str(occ_bs), occ_pnum))
+            if occ_range is not None:
+                # Time-range overlap: conflict iff intervals [new_start, new_end) and
+                # [occ_start, occ_end) intersect — i.e. new_start < occ_end AND new_end > occ_start
+                new_start, new_end = new_range
+                occ_start, occ_end = occ_range
+                if new_start < occ_end and new_end > occ_start:
+                    return True
+                # Ranges are disjoint → no conflict; do NOT fall back to period equality
+            else:
+                # Occupied period has no time data; conservative fallback
+                if occ_pnum == period_number:
+                    return True
+        else:
+            # No time data available for either side; conservative fallback
+            if occ_pnum == period_number:
+                return True
+
+    return False
 
 
 def _ensure_draft(v: TimetableVersion) -> Optional[str]:
@@ -379,12 +504,21 @@ def _entry_conflict_flags(
     entry: TimetableEntry,
     bell_schedule_id: Optional[str],
     exclude_self: bool = True,
+    exclude_class_id: Optional[str] = None,
 ) -> List[str]:
     flags: List[str] = []
     if not entry.teacher_id:
         return ["missing_teacher"]
     ex = entry.id if exclude_self else None
-    if _teacher_conflict(tenant_id, str(entry.teacher_id), entry.day_of_week, entry.period_number, ex):
+    if _teacher_conflict(
+        tenant_id,
+        str(entry.teacher_id),
+        entry.day_of_week,
+        entry.period_number,
+        ex,
+        exclude_class_id,
+        bell_schedule_id=bell_schedule_id,
+    ):
         flags.append("teacher_double_booked")
     if not _valid_lesson_period(tenant_id, bell_schedule_id, entry.period_number):
         flags.append("period_not_in_bell_schedule")
@@ -446,9 +580,14 @@ def list_entries_for_active_or_draft(
         .all()
     )
     editable = v.status == "draft"
+    # Always exclude all versions of this class from conflict checks — whether viewing the
+    # active or a draft, no other version of the same class is a real cross-class conflict.
+    excl_class = str(v.class_id)
     items: List[Dict[str, Any]] = []
     for r in rows:
-        flags = _entry_conflict_flags(tenant_id, r, v.bell_schedule_id, exclude_self=True)
+        flags = _entry_conflict_flags(
+            tenant_id, r, v.bell_schedule_id, exclude_self=True, exclude_class_id=excl_class
+        )
         items.append(
             _serialize_entry(
                 r,
@@ -510,7 +649,7 @@ def create_entry(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[st
             "error": "period_number must match a lesson period in this version's bell schedule",
         }
 
-    if _teacher_conflict(tenant_id, teacher_id, day, period, None):
+    if _teacher_conflict(tenant_id, teacher_id, day, period, None, class_id, bell_schedule_id=v.bell_schedule_id):
         return {
             "success": False,
             "error": "Teacher is already scheduled in another class at this day and period",
@@ -534,7 +673,7 @@ def create_entry(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[st
         db.session.rollback()
         return {"success": False, "error": "This class already has a subject in this day/period slot"}
     bell_map = _bell_period_map(tenant_id, v.bell_schedule_id)
-    flags = _entry_conflict_flags(tenant_id, e, v.bell_schedule_id, exclude_self=True)
+    flags = _entry_conflict_flags(tenant_id, e, v.bell_schedule_id, exclude_self=True, exclude_class_id=class_id)
     return {
         "success": True,
         "entry": _serialize_entry(
@@ -587,7 +726,7 @@ def update_entry(
             "error": "period_number must match a lesson period in this version's bell schedule",
         }
 
-    if _teacher_conflict(tenant_id, str(teacher_id), day, period, e.id):
+    if _teacher_conflict(tenant_id, str(teacher_id), day, period, e.id, class_id, bell_schedule_id=v.bell_schedule_id):
         return {
             "success": False,
             "error": "Teacher is already scheduled in another class at this day and period",
@@ -613,7 +752,7 @@ def update_entry(
 
     bell_map = _bell_period_map(tenant_id, v.bell_schedule_id)
     db.session.refresh(e)
-    flags = _entry_conflict_flags(tenant_id, e, v.bell_schedule_id, exclude_self=True)
+    flags = _entry_conflict_flags(tenant_id, e, v.bell_schedule_id, exclude_self=True, exclude_class_id=class_id)
     return {
         "success": True,
         "entry": _serialize_entry(
@@ -682,14 +821,14 @@ def swap_entries(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[st
         return {"success": False, "error": err}
 
     da, pa = ea.day_of_week, ea.period_number
-    db, pb = eb.day_of_week, eb.period_number
+    db_, pb = eb.day_of_week, eb.period_number
 
-    if _teacher_conflict(tenant_id, str(ea.teacher_id), db, pb, ea.id):
+    if _teacher_conflict(tenant_id, str(ea.teacher_id), db_, pb, ea.id, class_id, bell_schedule_id=v.bell_schedule_id):
         return {"success": False, "error": "Cannot swap: teacher would conflict at the target slot"}
-    if _teacher_conflict(tenant_id, str(eb.teacher_id), da, pa, eb.id):
+    if _teacher_conflict(tenant_id, str(eb.teacher_id), da, pa, eb.id, class_id, bell_schedule_id=v.bell_schedule_id):
         return {"success": False, "error": "Cannot swap: teacher would conflict at the target slot"}
 
-    ea.day_of_week, ea.period_number = db, pb
+    ea.day_of_week, ea.period_number = db_, pb
     eb.day_of_week, eb.period_number = da, pa
     ea.updated_at = datetime.now(timezone.utc)
     eb.updated_at = datetime.now(timezone.utc)
@@ -710,14 +849,18 @@ def swap_entries(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[st
             bell_map,
             tenant_id=tenant_id,
             editable=True,
-            conflict_flags=_entry_conflict_flags(tenant_id, ea, v.bell_schedule_id, exclude_self=True),
+            conflict_flags=_entry_conflict_flags(
+                tenant_id, ea, v.bell_schedule_id, exclude_self=True, exclude_class_id=class_id
+            ),
         ),
         "entry_b": _serialize_entry(
             eb,
             bell_map,
             tenant_id=tenant_id,
             editable=True,
-            conflict_flags=_entry_conflict_flags(tenant_id, eb, v.bell_schedule_id, exclude_self=True),
+            conflict_flags=_entry_conflict_flags(
+                tenant_id, eb, v.bell_schedule_id, exclude_self=True, exclude_class_id=class_id
+            ),
         ),
     }
 
@@ -780,6 +923,9 @@ def generate_draft(
             return {"success": False, "error": "Generation is only allowed for draft versions"}
         TimetableEntry.query.filter_by(timetable_version_id=v.id).delete()
         db.session.flush()
+        if data.get("bell_schedule_id"):
+            v.bell_schedule_id = data["bell_schedule_id"]
+            db.session.flush()
     else:
         bell_for_new = data.get("bell_schedule_id") or default_bell
         v = TimetableVersion(
@@ -840,7 +986,9 @@ def generate_draft(
         (d, p) for d in sorted(working_days) for p in sorted(lesson_periods)
     ]
 
-    used_teacher: Set[Tuple[str, int, int]] = set(_teacher_slots_occupied(tenant_id))
+    # Exclude all versions of this class — active or other drafts — so the generator only
+    # avoids slots occupied by teachers in *other* classes.
+    used_teacher: Set[Tuple[str, int, int]] = set(_teacher_slots_occupied(tenant_id, exclude_class_id=class_id))
     used_class: Set[Tuple[int, int]] = set()
 
     placed = 0

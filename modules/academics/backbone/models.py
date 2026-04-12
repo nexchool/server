@@ -39,8 +39,6 @@ class AcademicSettings(TenantBaseModel):
         db.ForeignKey("bell_schedules.id", ondelete="SET NULL"),
         nullable=True,
     )
-    attendance_mode = db.Column(db.String(20), nullable=False, default="daily")
-    allow_teacher_timetable_override = db.Column(db.Boolean, nullable=False, default=False)
     allow_admin_attendance_override = db.Column(db.Boolean, nullable=False, default=True)
     default_working_days_json = db.Column(JSONB, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=text("now()"))
