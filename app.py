@@ -137,6 +137,7 @@ def register_blueprints(app: Flask):
     from modules.fees import fees_bp
     from modules.transport import transport_bp
     from modules.devices import devices_bp
+    from modules.dashboard import dashboard_bp
 
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -157,6 +158,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(fees_bp, url_prefix='/api/fees')
     app.register_blueprint(transport_bp, url_prefix='/api/transport')
     app.register_blueprint(devices_bp, url_prefix='/api/devices')
+    app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
 
 
 def register_error_handlers(app: Flask):
