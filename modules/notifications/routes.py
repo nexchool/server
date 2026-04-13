@@ -6,7 +6,7 @@ List, mark read, send (targeted / bulk). Requires tenant_id and RBAC.
 
 from datetime import datetime
 
-from flask import Blueprint, g, request
+from flask import Blueprint, Response, g, request, stream_with_context
 from sqlalchemy import and_, or_
 
 from core.database import db
@@ -24,10 +24,16 @@ from modules.notifications.notification_service import (
     create_recipients,
     send_notification as enqueue_dispatch,
 )
+from modules.notifications.inbox_sse import inbox_sse_events
 from modules.notifications.notification_targeting_service import (
     TargetingValidationError,
     collect_user_ids_bulk_merge,
     collect_user_ids_single_mode,
+)
+from modules.notifications.realtime_pub import (
+    InboxRealtimeEvent,
+    get_redis_url,
+    publish_inbox_event,
 )
 from shared.helpers import (
     error_response,
@@ -44,6 +50,35 @@ notifications_bp = Blueprint("notifications", __name__)
 
 def _allowed_notification_types() -> set:
     return {e.value for e in NotificationType}
+
+
+def _notifications_scope_query(tenant_id: str, user_id: str, unread_only: bool):
+    """Query for notifications visible to this user (no order/limit)."""
+    recipient_nids = db.session.query(NotificationRecipient.notification_id).filter(
+        NotificationRecipient.user_id == user_id
+    )
+    q = Notification.query.filter(
+        Notification.tenant_id == tenant_id,
+        or_(
+            Notification.user_id == user_id,
+            and_(Notification.user_id.is_(None), Notification.id.in_(recipient_nids)),
+        ),
+    )
+    if unread_only:
+        unread_recipient_nids = db.session.query(NotificationRecipient.notification_id).filter(
+            NotificationRecipient.user_id == user_id,
+            NotificationRecipient.read_at.is_(None),
+        )
+        q = q.filter(
+            or_(
+                and_(Notification.user_id == user_id, Notification.read_at.is_(None)),
+                and_(
+                    Notification.user_id.is_(None),
+                    Notification.id.in_(unread_recipient_nids),
+                ),
+            )
+        )
+    return q
 
 
 def _serialize_list_item(n: Notification, user_id: str) -> dict:
@@ -69,7 +104,9 @@ def _serialize_list_item(n: Notification, user_id: str) -> dict:
 def list_notifications():
     """
     GET /api/notifications
-    List notifications for current user. Query: unread_only, limit, offset.
+    Query: unread_only, limit (default 20, max 100), offset (default 0).
+
+    Response includes pagination: total, limit, offset, has_more.
     """
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -80,40 +117,70 @@ def list_notifications():
         return error_response("AuthError", "User not found", 401)
 
     unread_only = request.args.get("unread_only", "false").lower() == "true"
-    limit = min(int(request.args.get("limit", 50) or 50), 100)
-    offset = int(request.args.get("offset", 0) or 0)
+    limit = min(max(int(request.args.get("limit", 20) or 20), 1), 100)
+    offset = max(int(request.args.get("offset", 0) or 0), 0)
 
-    recipient_nids = db.session.query(NotificationRecipient.notification_id).filter(
-        NotificationRecipient.user_id == user_id
+    base = _notifications_scope_query(tenant_id, user_id, unread_only)
+    total = int(base.count() or 0)
+
+    rows = (
+        base.order_by(Notification.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+    data = [_serialize_list_item(n, user_id) for n in rows]
+    has_more = offset + len(data) < total
+    return success_response(
+        data={
+            "notifications": data,
+            "pagination": {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+            },
+        }
     )
 
-    q = Notification.query.filter(
-        Notification.tenant_id == tenant_id,
-        or_(
-            Notification.user_id == user_id,
-            and_(Notification.user_id.is_(None), Notification.id.in_(recipient_nids)),
-        ),
+
+@notifications_bp.route("/stream", methods=["GET"])
+@tenant_required
+@auth_required
+@require_plan_feature("notifications")
+def notification_inbox_stream():
+    """
+    SSE stream: when this user's inbox changes, server publishes on Redis and this
+    connection receives a small JSON payload so the client can refetch GET /notifications.
+    """
+    tenant_id = get_tenant_id()
+    user_id = g.current_user.id if g.current_user else None
+    if not tenant_id or not user_id:
+        return error_response("AuthError", "Context required", 400)
+
+    try:
+        import redis as redis_lib
+
+        r = redis_lib.from_url(get_redis_url(), decode_responses=True)
+        r.ping()
+        r.close()
+    except Exception:
+        return error_response(
+            "ServiceUnavailable",
+            "Realtime inbox is unavailable (Redis). Notifications still work via manual refresh.",
+            503,
+        )
+
+    headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return Response(
+        stream_with_context(inbox_sse_events(tenant_id, user_id)),
+        mimetype="text/event-stream",
+        headers=headers,
     )
-
-    if unread_only:
-        unread_recipient_nids = db.session.query(NotificationRecipient.notification_id).filter(
-            NotificationRecipient.user_id == user_id,
-            NotificationRecipient.read_at.is_(None),
-        )
-        q = q.filter(
-            or_(
-                and_(Notification.user_id == user_id, Notification.read_at.is_(None)),
-                and_(
-                    Notification.user_id.is_(None),
-                    Notification.id.in_(unread_recipient_nids),
-                ),
-            )
-        )
-
-    q = q.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
-    notifications = q.all()
-    data = [_serialize_list_item(n, user_id) for n in notifications]
-    return success_response(data={"notifications": data})
 
 
 @notifications_bp.route("/<notification_id>/read", methods=["PATCH"])
@@ -137,6 +204,12 @@ def mark_read(notification_id):
         try:
             n.read_at = now
             db.session.commit()
+            publish_inbox_event(
+                tenant_id,
+                [user_id],
+                InboxRealtimeEvent.INBOX_READ,
+                {"notification_id": notification_id},
+            )
             return success_response(data=n.to_dict())
         except Exception:
             db.session.rollback()
@@ -154,6 +227,12 @@ def mark_read(notification_id):
         if nr.status != NotificationRecipientStatus.FAILED.value:
             nr.status = NotificationRecipientStatus.READ.value
         db.session.commit()
+        publish_inbox_event(
+            tenant_id,
+            [user_id],
+            InboxRealtimeEvent.INBOX_READ,
+            {"notification_id": notification_id},
+        )
         return success_response(data=_serialize_list_item(n, user_id))
     except Exception:
         db.session.rollback()
@@ -196,6 +275,7 @@ def mark_all_read():
         )
 
         db.session.commit()
+        publish_inbox_event(tenant_id, [user_id], InboxRealtimeEvent.INBOX_READ_ALL, {})
         return success_response(data={"updated_count": legacy_updated + rec_updated})
     except Exception:
         db.session.rollback()
@@ -277,6 +357,12 @@ def send_notification_route():
         db.session.rollback()
         return error_response("CreateError", "Failed to create notification", 500)
 
+    publish_inbox_event(
+        tenant_id,
+        user_ids,
+        InboxRealtimeEvent.INBOX_CREATED,
+        {"notification_id": n.id},
+    )
     queued = enqueue_dispatch(n.id)
     return success_response(
         data={
@@ -349,6 +435,12 @@ def send_bulk_notification_route():
         db.session.rollback()
         return error_response("CreateError", "Failed to create notification", 500)
 
+    publish_inbox_event(
+        tenant_id,
+        user_ids,
+        InboxRealtimeEvent.INBOX_CREATED,
+        {"notification_id": n.id},
+    )
     queued = enqueue_dispatch(n.id)
     return success_response(
         data={
@@ -358,3 +450,34 @@ def send_bulk_notification_route():
         },
         message="Bulk notification created",
     )
+
+
+@notifications_bp.route("/<notification_id>", methods=["GET"])
+@tenant_required
+@auth_required
+@require_plan_feature("notifications")
+def get_notification(notification_id: str):
+    """
+    GET /api/notifications/<id>
+    Registered last so paths like /mark-all-read are not captured as an id.
+    """
+    tenant_id = get_tenant_id()
+    user_id = g.current_user.id if g.current_user else None
+    if not tenant_id or not user_id:
+        return error_response("AuthError", "Context required", 400)
+
+    n = Notification.query.filter_by(id=notification_id, tenant_id=tenant_id).first()
+    if not n:
+        return not_found_response("Notification")
+
+    if n.user_id == user_id:
+        return success_response(data={"notification": n.to_dict(strip_internal_extra=True)})
+
+    nr = NotificationRecipient.query.filter_by(
+        notification_id=notification_id,
+        user_id=user_id,
+    ).first()
+    if not nr:
+        return not_found_response("Notification")
+
+    return success_response(data={"notification": _serialize_list_item(n, user_id)})

@@ -119,6 +119,7 @@ def send_fcm_v1(
         "message": {
             "token": device_token,
             "notification": {"title": title[:200], "body": (body or "")[:2000]},
+            "webpush": {"headers": {"Urgency": "high"}},
         }
     }
     if data:

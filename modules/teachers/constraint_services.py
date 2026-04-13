@@ -31,6 +31,7 @@ from .models import (
 )
 from modules.subjects.models import Subject
 from modules.holidays.services import get_working_days_info_for_range
+from modules.notifications.realtime_pub import InboxRealtimeEvent, publish_inbox_event
 
 _log = logging.getLogger(__name__)
 
@@ -71,6 +72,12 @@ def _notify_leave_managers(
         )
         create_recipients(n.id, user_ids)
         db.session.commit()
+        publish_inbox_event(
+            tenant_id,
+            user_ids,
+            InboxRealtimeEvent.INBOX_CREATED,
+            {"notification_id": n.id},
+        )
         enqueue_dispatch(n.id)
     except Exception:
         _log.exception("Failed to send leave manager notification")
@@ -107,6 +114,12 @@ def _notify_single_user(
             user_id=user_id,
         )
         db.session.commit()
+        publish_inbox_event(
+            tenant_id,
+            [user_id],
+            InboxRealtimeEvent.INBOX_CREATED,
+            {"notification_id": n.id},
+        )
         enqueue_dispatch(n.id)
     except Exception:
         _log.exception("Failed to send user notification")

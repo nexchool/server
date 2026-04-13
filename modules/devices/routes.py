@@ -16,11 +16,7 @@ devices_bp = Blueprint("devices", __name__)
 @tenant_required
 @auth_required
 def list_my_devices():
-    """
-    GET /api/devices
-    List push registrations for the current user (masked token previews).
-    Use to verify that POST /api/devices/register succeeded before expecting push.
-    """
+    """GET /api/devices — push registrations for the current user (masked token previews)."""
     tenant_id = get_tenant_id()
     user_id = getattr(g, "current_user", None) and g.current_user.id
     if not tenant_id or not user_id:

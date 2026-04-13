@@ -70,8 +70,7 @@ def send_push_task(
     tokens = list_active_tokens_for_user(tenant_id, user_id)
     if not tokens:
         logger.info(
-            "send_push_task: no_tokens user_id=%s tenant_id=%s — "
-            "push only after POST /api/devices/register from that user (web or mobile)",
+            "send_push_task skipped no_tokens user=%s tenant=%s",
             user_id,
             tenant_id,
         )
