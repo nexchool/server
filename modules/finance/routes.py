@@ -412,6 +412,7 @@ def create_payment():
         reference_number=data.get("reference_number"),
         notes=data.get("notes"),
         allocations=allocations,
+        method_detail=data.get("method_detail"),
     )
     if result["success"]:
         return success_response(data=result, message="Payment recorded", status_code=201)

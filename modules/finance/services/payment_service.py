@@ -25,6 +25,7 @@ from modules.finance.enums import (
     StudentFeeStatus,
     PaymentStatus,
     PaymentMethod,
+    normalize_payment_method,
 )
 from modules.audit.services import log_finance_action
 
@@ -155,6 +156,7 @@ def create_payment(
     reference_number: Optional[str] = None,
     notes: Optional[str] = None,
     allocations: Optional[List[Dict[str, Any]]] = None,
+    method_detail: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a payment and apply it to the student fee.
@@ -169,7 +171,14 @@ def create_payment(
     Returns:
         {'success': True, 'payment': {...}} or {'success': False, 'error': '...'}
     """
-    logger.info("[create_payment] START student_fee_id=%s amount=%s method=%s", student_fee_id, amount, method)
+    normalized_method = normalize_payment_method(method) or ""
+    logger.info(
+        "[create_payment] START student_fee_id=%s amount=%s method=%s normalized=%s",
+        student_fee_id,
+        amount,
+        method,
+        normalized_method,
+    )
 
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -181,8 +190,20 @@ def create_payment(
         if amount_decimal <= 0:
             return {"success": False, "error": "Amount must be positive"}
 
-        if method not in [p.value for p in PaymentMethod]:
+        allowed = {p.value for p in PaymentMethod}
+        if normalized_method not in allowed:
             return {"success": False, "error": f"Invalid payment method: {method}"}
+
+        ref = (reference_number or "").strip()
+        if normalized_method != PaymentMethod.cash.value and not ref:
+            return {"success": False, "error": "Reference number is required for non-cash payments"}
+
+        detail = (method_detail or "").strip()
+        if normalized_method == PaymentMethod.other.value and not detail:
+            return {"success": False, "error": "Describe how payment was made (required when method is Other)"}
+
+        stored_detail = detail if normalized_method == PaymentMethod.other.value else None
+        stored_reference = ref or None
 
         with db.session.begin_nested():
             # Lock student_fee row for update to prevent race condition
@@ -222,9 +243,10 @@ def create_payment(
                 tenant_id=tenant_id,
                 student_fee_id=student_fee_id,
                 amount=amount_decimal,
-                method=method,
+                method=normalized_method,
                 status=PaymentStatus.success.value,
-                reference_number=reference_number,
+                reference_number=stored_reference,
+                method_detail=stored_detail,
                 notes=notes,
                 created_by=created_by,
             )
@@ -253,7 +275,7 @@ def create_payment(
                     "payment_id": payment.id,
                     "student_fee_id": student_fee_id,
                     "amount": str(amount_decimal),
-                    "method": method,
+                    "method": normalized_method,
                 },
             )
 

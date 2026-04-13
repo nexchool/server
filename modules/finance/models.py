@@ -14,7 +14,7 @@ from sqlalchemy import text
 from core.database import db
 from core.models import TenantBaseModel
 
-from .enums import StudentFeeStatus, PaymentStatus, PaymentMethod
+from .enums import StudentFeeStatus, PaymentStatus
 
 
 class FeeStructureClass(TenantBaseModel):
@@ -307,6 +307,7 @@ class Payment(TenantBaseModel):
     method = db.Column(db.String(20), nullable=False, index=True)
     status = db.Column(db.String(20), nullable=False, default=PaymentStatus.success.value, index=True)
     reference_number = db.Column(db.String(100), nullable=True, index=True)
+    method_detail = db.Column(db.String(200), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     created_by = db.Column(
         db.String(36),
@@ -327,6 +328,7 @@ class Payment(TenantBaseModel):
             "method": self.method,
             "status": self.status,
             "reference_number": self.reference_number,
+            "method_detail": self.method_detail,
             "notes": self.notes,
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,

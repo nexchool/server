@@ -69,7 +69,12 @@ def send_push_task(
 
     tokens = list_active_tokens_for_user(tenant_id, user_id)
     if not tokens:
-        logger.debug("send_push_task: no device tokens user=%s", user_id)
+        logger.info(
+            "send_push_task: no_tokens user_id=%s tenant_id=%s — "
+            "push only after POST /api/devices/register from that user (web or mobile)",
+            user_id,
+            tenant_id,
+        )
         return {"ok": 0, "failed": 0, "deactivated": 0, "skipped": True, "reason": "no_tokens"}
 
     plain_body = strip_html_for_push(body)

@@ -6,8 +6,9 @@ All functions take explicit tenant_id (required in Celery workers without reques
 
 from __future__ import annotations
 
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
+from sqlalchemy import select
 from sqlalchemy.orm import load_only
 
 from core.database import db
@@ -119,6 +120,34 @@ def get_all_teachers(tenant_id: str) -> List[User]:
 def user_ids_from_users(users: Sequence[User]) -> List[str]:
     """Stable de-duplicated user ids."""
     return list(dict.fromkeys(u.id for u in users if u and u.id))
+
+
+def get_leave_manager_user_ids(tenant_id: str) -> List[str]:
+    """
+    Return user IDs of all users in the tenant who hold the
+    'teacher.leave.manage' permission (i.e. admin / leave managers).
+    """
+    from modules.rbac.models import Permission, RolePermission
+
+    perm = Permission.query.filter_by(name="teacher.leave.manage").first()
+    if not perm:
+        return []
+
+    role_id_select = select(RolePermission.role_id).where(
+        RolePermission.permission_id == perm.id,
+        RolePermission.tenant_id == tenant_id,
+    )
+
+    rows = (
+        db.session.execute(
+            select(UserRole.user_id).where(
+                UserRole.tenant_id == tenant_id,
+                UserRole.role_id.in_(role_id_select),
+            )
+        )
+        .all()
+    )
+    return list(dict.fromkeys(uid for (uid,) in rows if uid))
 
 
 class TargetingValidationError(ValueError):

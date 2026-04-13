@@ -14,7 +14,7 @@ from modules.devices.models import DeviceToken
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_PLATFORMS = frozenset({"android", "ios"})
+ALLOWED_PLATFORMS = frozenset({"android", "ios", "web"})
 ALLOWED_PROVIDERS = frozenset({"expo", "fcm"})
 TOKEN_MAX_LEN = 512
 # Alphanumeric + typical Expo/FCM punctuation
@@ -52,7 +52,7 @@ def register_device_token(
 
     plat = (platform or "").strip().lower()
     if plat not in ALLOWED_PLATFORMS:
-        return None, "platform must be android or ios"
+        return None, "platform must be android, ios, or web"
 
     user = User.query.filter_by(id=user_id, tenant_id=tenant_id).first()
     if not user:
@@ -129,6 +129,36 @@ def list_active_tokens_for_user(tenant_id: str, user_id: str) -> List[DeviceToke
         .order_by(DeviceToken.last_used_at.desc())
         .all()
     )
+
+
+def summarize_tokens_for_user(tenant_id: str, user_id: str) -> List[Dict[str, Any]]:
+    """
+    All device rows for this user (active and inactive), for debugging / GET /api/devices.
+    Does not expose full device_token (preview only).
+    """
+    rows = (
+        DeviceToken.query.filter(
+            DeviceToken.tenant_id == tenant_id,
+            DeviceToken.user_id == user_id,
+        )
+        .order_by(DeviceToken.last_used_at.desc())
+        .all()
+    )
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        dt = r.device_token or ""
+        preview = f"{dt[:16]}…" if len(dt) > 16 else dt
+        out.append(
+            {
+                "id": r.id,
+                "platform": r.platform,
+                "provider": r.provider,
+                "is_active": r.is_active,
+                "device_token_preview": preview,
+                "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+            }
+        )
+    return out
 
 
 def deactivate_tokens_by_ids(token_row_ids: List[str]) -> int:

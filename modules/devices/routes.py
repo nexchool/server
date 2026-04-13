@@ -12,6 +12,24 @@ from shared.helpers import error_response, success_response, validation_error_re
 devices_bp = Blueprint("devices", __name__)
 
 
+@devices_bp.route("", methods=["GET"])
+@tenant_required
+@auth_required
+def list_my_devices():
+    """
+    GET /api/devices
+    List push registrations for the current user (masked token previews).
+    Use to verify that POST /api/devices/register succeeded before expecting push.
+    """
+    tenant_id = get_tenant_id()
+    user_id = getattr(g, "current_user", None) and g.current_user.id
+    if not tenant_id or not user_id:
+        return error_response("AuthError", "Authentication required", 401)
+
+    rows = device_service.summarize_tokens_for_user(tenant_id, user_id)
+    return success_response(data={"devices": rows, "count": len(rows)})
+
+
 @devices_bp.route("/register", methods=["POST"])
 @tenant_required
 @auth_required

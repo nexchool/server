@@ -73,6 +73,9 @@ venv
 !.env.example
 !.env.*.example
 
+# Firebase Admin SDK JSON (local dev; set FIREBASE_SERVICE_ACCOUNT_PATH in infra env/.env.local)
+secrets/firebase-service-account.json
+
 package-lock.json
 
 # logs / dumps

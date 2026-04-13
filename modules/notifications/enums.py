@@ -25,6 +25,11 @@ class NotificationType(str, enum.Enum):
     ADMIN_PASSWORD_RESET = "ADMIN_PASSWORD_RESET"
     # Bulk / school announcements (templates optional per tenant)
     ANNOUNCEMENT = "ANNOUNCEMENT"
+    # Teacher leave management
+    TEACHER_LEAVE_REQUEST = "TEACHER_LEAVE_REQUEST"
+    TEACHER_LEAVE_APPROVED = "TEACHER_LEAVE_APPROVED"
+    TEACHER_LEAVE_REJECTED = "TEACHER_LEAVE_REJECTED"
+    TEACHER_UNAVAILABILITY_ADDED = "TEACHER_UNAVAILABILITY_ADDED"
 
 
 class NotificationChannel(str, enum.Enum):

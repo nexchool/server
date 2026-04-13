@@ -10,6 +10,7 @@ Business logic for teacher management constraint features:
   - Teacher Leave Balance management
 """
 
+import logging
 from typing import Dict, List, Optional
 from datetime import datetime, date
 
@@ -30,6 +31,85 @@ from .models import (
 )
 from modules.subjects.models import Subject
 from modules.holidays.services import get_working_days_info_for_range
+
+_log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Internal notification helpers (fire-and-forget, never raise)
+# ---------------------------------------------------------------------------
+
+def _notify_leave_managers(
+    tenant_id: str,
+    notification_type: str,
+    title: str,
+    body: str,
+    extra_data: Dict,
+) -> None:
+    """Send an in-app + push notification to all admin/leave-manager users. Swallows errors."""
+    try:
+        from modules.notifications.notification_targeting_service import get_leave_manager_user_ids
+        from modules.notifications.notification_service import (
+            create_notification,
+            create_recipients,
+            send_notification as enqueue_dispatch,
+        )
+        from modules.notifications.enums import NotificationChannel, NotificationType
+
+        user_ids = get_leave_manager_user_ids(tenant_id)
+        if not user_ids:
+            return
+
+        channels = [NotificationChannel.IN_APP.value, NotificationChannel.PUSH.value]
+        n = create_notification(
+            tenant_id=tenant_id,
+            notification_type=notification_type,
+            title=title,
+            body=body,
+            extra_data=extra_data,
+            channels=channels,
+        )
+        create_recipients(n.id, user_ids)
+        db.session.commit()
+        enqueue_dispatch(n.id)
+    except Exception:
+        _log.exception("Failed to send leave manager notification")
+
+
+def _notify_single_user(
+    tenant_id: str,
+    user_id: str,
+    notification_type: str,
+    title: str,
+    body: str,
+    extra_data: Dict,
+) -> None:
+    """Send an in-app + push + email notification to a single user. Swallows errors."""
+    try:
+        from modules.notifications.notification_service import (
+            create_notification,
+            send_notification as enqueue_dispatch,
+        )
+        from modules.notifications.enums import NotificationChannel
+
+        channels = [
+            NotificationChannel.IN_APP.value,
+            NotificationChannel.PUSH.value,
+            NotificationChannel.EMAIL.value,
+        ]
+        n = create_notification(
+            tenant_id=tenant_id,
+            notification_type=notification_type,
+            title=title,
+            body=body,
+            extra_data=extra_data,
+            channels=channels,
+            user_id=user_id,
+        )
+        db.session.commit()
+        enqueue_dispatch(n.id)
+    except Exception:
+        _log.exception("Failed to send user notification")
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +209,29 @@ def create_availability(teacher_id: str, day_of_week: int, period_number: int, a
             available=available,
         )
         slot.save()
+
+        # Notify admins when a teacher marks themselves as unavailable
+        if not available:
+            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            day_name = days[day_of_week - 1] if 1 <= day_of_week <= 7 else f"Day {day_of_week}"
+            teacher_name = (teacher.user.name if teacher.user and teacher.user.name else None) or "A teacher"
+            _notify_leave_managers(
+                tenant_id=tenant_id,
+                notification_type="TEACHER_UNAVAILABILITY_ADDED",
+                title=f"Unavailability: {teacher_name}",
+                body=(
+                    f"{teacher_name} has marked themselves as unavailable on "
+                    f"{day_name}, period {period_number}."
+                ),
+                extra_data={
+                    "teacher_id": teacher_id,
+                    "teacher_name": teacher_name,
+                    "day_of_week": day_of_week,
+                    "period_number": period_number,
+                    "screen": "teacher_leaves",
+                },
+            )
+
         return {"success": True, "availability": slot.to_dict()}
 
     except Exception as e:
@@ -484,6 +587,28 @@ def create_leave(
         db.session.add(leave)
         db.session.commit()
 
+        # Notify admins about the new leave request
+        teacher_name = (teacher.user.name if teacher.user and teacher.user.name else None) or "A teacher"
+        _notify_leave_managers(
+            tenant_id=tenant_id,
+            notification_type="TEACHER_LEAVE_REQUEST",
+            title=f"Leave Request: {teacher_name}",
+            body=(
+                f"{teacher_name} has applied for {leave_type} leave "
+                f"from {start_date} to {end_date} ({working_days} working day(s))."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+            extra_data={
+                "teacher_id": teacher_id,
+                "teacher_name": teacher_name,
+                "leave_id": leave.id,
+                "leave_type": leave_type,
+                "start_date": start_date,
+                "end_date": end_date,
+                "screen": "teacher_leaves",
+            },
+        )
+
         result = leave.to_dict()
         holiday_days = total_days - working_days
         if holiday_days > 0:
@@ -541,6 +666,28 @@ def approve_leave(leave_id: str) -> Dict:
 
         leave.status = TeacherLeave.STATUS_APPROVED
         db.session.commit()
+
+        # Notify the teacher
+        teacher = Teacher.query.filter_by(id=leave.teacher_id, tenant_id=tenant_id).first()
+        if teacher and teacher.user_id:
+            _notify_single_user(
+                tenant_id=tenant_id,
+                user_id=teacher.user_id,
+                notification_type="TEACHER_LEAVE_APPROVED",
+                title="Leave Request Approved",
+                body=(
+                    f"Your {leave.leave_type} leave from {leave.start_date} to {leave.end_date} "
+                    f"({leave.working_days} working day(s)) has been approved."
+                ),
+                extra_data={
+                    "leave_id": leave.id,
+                    "leave_type": leave.leave_type,
+                    "start_date": str(leave.start_date),
+                    "end_date": str(leave.end_date),
+                    "screen": "my_leaves",
+                },
+            )
+
         return {"success": True, "leave": leave.to_dict()}
     except Exception as e:
         db.session.rollback()
@@ -573,6 +720,28 @@ def reject_leave(leave_id: str) -> Dict:
 
         leave.status = TeacherLeave.STATUS_REJECTED
         db.session.commit()
+
+        # Notify the teacher
+        teacher = Teacher.query.filter_by(id=leave.teacher_id, tenant_id=tenant_id).first()
+        if teacher and teacher.user_id:
+            _notify_single_user(
+                tenant_id=tenant_id,
+                user_id=teacher.user_id,
+                notification_type="TEACHER_LEAVE_REJECTED",
+                title="Leave Request Rejected",
+                body=(
+                    f"Your {leave.leave_type} leave from {leave.start_date} to {leave.end_date} "
+                    f"({leave.working_days} working day(s)) has been rejected."
+                ),
+                extra_data={
+                    "leave_id": leave.id,
+                    "leave_type": leave.leave_type,
+                    "start_date": str(leave.start_date),
+                    "end_date": str(leave.end_date),
+                    "screen": "my_leaves",
+                },
+            )
+
         return {"success": True, "leave": leave.to_dict()}
     except Exception as e:
         db.session.rollback()

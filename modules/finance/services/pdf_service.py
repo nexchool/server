@@ -138,6 +138,24 @@ def _fmt(amount) -> str:
         return "0"
 
 
+def _payment_method_display(method: Optional[str], method_detail: Optional[str] = None) -> str:
+    """Human-readable payment method for PDF/HTML (canonical `method` + optional other detail)."""
+    if not method:
+        return "—"
+    labels = {
+        "cash": "Cash",
+        "upi": "UPI",
+        "bank_transfer": "Bank transfer",
+        "cheque": "Cheque",
+        "other": "Other",
+        "online": "Online",
+    }
+    base = labels.get(method, method.replace("_", " ").title())
+    if method == "other" and method_detail:
+        return f"{base} — {method_detail}"
+    return base
+
+
 # ---------------------------------------------------------------------------
 # Receipt data preparation
 # ---------------------------------------------------------------------------
@@ -177,7 +195,10 @@ def _build_receipt_context(payment_id: str, show_note: bool = True) -> Optional[
         "division": student_ctx["section"],
         "academic_year": sf.get("academic_year") or "—",
         "fee_structure_name": sf.get("fee_structure_name") or "—",
-        "payment_method": data.get("method") or "Cash",
+        "payment_method": _payment_method_display(
+            data.get("method"),
+            data.get("method_detail"),
+        ),
         "payment_reference": data.get("reference_number") or "—",
         "notes": data.get("notes") or "",
         "old_balance": _fmt(0),
@@ -221,7 +242,7 @@ def _build_invoice_context(student_fee_id: str, show_note: bool = True) -> Optio
         payments.append({
             "date": created[:10] if isinstance(created, str) and len(created) >= 10 else "—",
             "reference": p.get("reference_number") or "—",
-            "method": (p.get("method") or "—").upper(),
+            "method": _payment_method_display(p.get("method"), p.get("method_detail")),
             "amount": float(p.get("amount") or 0),
         })
 
