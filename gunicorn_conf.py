@@ -16,7 +16,8 @@ bind = os.getenv("GUNICORN_BIND", f"0.0.0.0:{_port}")
 # Low-resource hosts: WEB_CONCURRENCY / GUNICORN_WORKERS (default 4 for local dev)
 _workers = os.getenv("GUNICORN_WORKERS") or os.getenv("WEB_CONCURRENCY")
 workers = int(_workers) if _workers else 4
-threads = int(os.getenv("GUNICORN_THREADS", "1"))
+# Default to a threaded worker so long-lived SSE requests do not monopolize sync workers.
+threads = int(os.getenv("GUNICORN_THREADS", "2"))
 timeout = int(os.getenv("GUNICORN_TIMEOUT", "120"))
 # Use gthread when threads>1 so --threads is honored (sync worker ignores threads)
 worker_class = "gthread" if threads > 1 else "sync"

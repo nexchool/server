@@ -20,6 +20,10 @@ from modules.notifications.template_service import (
     NOTIFICATION_CATEGORY_STUDENT,
     NOTIFICATION_CATEGORY_PLATFORM,
     NOTIFICATION_CATEGORY_FINANCE,
+    NOTIFICATION_CATEGORY_SYSTEM,
+)
+from modules.notifications.teacher_leave_email_defaults import (
+    teacher_leave_email_template_rows,
 )
 
 # Base path for mailer templates (for reading content)
@@ -145,6 +149,18 @@ def seed_default_notification_templates() -> dict:
             "is_system": True,
         },
     ]
+
+    for row in teacher_leave_email_template_rows():
+        templates_to_seed.append(
+            {
+                "type": row["type"],
+                "channel": row["channel"],
+                "category": row.get("category") or NOTIFICATION_CATEGORY_SYSTEM,
+                "subject_template": row["subject_template"],
+                "body_template": row["body_template"],
+                "is_system": bool(row.get("is_system", True)),
+            }
+        )
 
     for t in templates_to_seed:
         try:

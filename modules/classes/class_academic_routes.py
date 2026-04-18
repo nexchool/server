@@ -96,6 +96,19 @@ def list_subject_teachers(class_id):
     return success_response(data={"items": r["items"]})
 
 
+@classes_bp.route("/<class_id>/subject-teacher-candidates", methods=["GET"])
+@tenant_required
+@auth_required
+@require_plan_feature("timetable")
+@require_any_permission(PERM_CS_READ, PERM_CS_MANAGE, "class.manage")
+def list_subject_teacher_candidates(class_id):
+    """Active tenant teachers for subject-assignment pickers (not homeroom eligibility)."""
+    r = class_subject_teachers.list_assignment_candidates(g.tenant_id, class_id)
+    if not r["success"]:
+        return error_response("Error", r["error"], 400)
+    return success_response(data={"items": r["items"]})
+
+
 @classes_bp.route("/<class_id>/subject-teachers", methods=["POST"])
 @tenant_required
 @auth_required

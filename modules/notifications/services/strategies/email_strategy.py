@@ -71,6 +71,15 @@ class EmailStrategy(NotificationStrategy):
                 if notification_type == NotificationType.ANNOUNCEMENT.value and title:
                     subject = title
                     body_html = body or f"<p>{title}</p>"
+                elif notification_type in (
+                    NotificationType.TEACHER_LEAVE_REQUEST.value,
+                    NotificationType.TEACHER_LEAVE_APPROVED.value,
+                    NotificationType.TEACHER_LEAVE_REJECTED.value,
+                ):
+                    # System events: prefer delivery over strict templating.
+                    subject = title or "Teacher leave update"
+                    safe_body = (body or "").strip()
+                    body_html = safe_body if safe_body else f"<p>{subject}</p>"
                 else:
                     logger.warning(
                         "EmailStrategy: no template for type=%s", notification_type

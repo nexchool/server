@@ -95,10 +95,38 @@ def create_recipients(notification_id: str, user_ids: Sequence[str]) -> int:
     return len(mappings)
 
 
+def ensure_dispatch_recipients(notification: Notification) -> int:
+    """
+    Ensure a notification has recipient rows before Celery dispatch.
+
+    Bulk notifications already create recipients explicitly. For legacy single-user
+    notifications (`user_id` set on the notification row), we create a matching
+    recipient row on demand so they can flow through the same durable worker path.
+    """
+    if not notification or not notification.id or not notification.user_id:
+        return 0
+    return create_recipients(notification.id, [notification.user_id])
+
+
 def send_notification(notification_id: str) -> bool:
-    """Enqueue Celery dispatch_notification_task. Returns False if Celery unavailable."""
+    """
+    Enqueue Celery dispatch_notification_task.
+
+    Returns False only if Celery is unavailable or the notification cannot be loaded.
+    """
     from celery_app import get_celery
 
+    notification = Notification.query.get(notification_id)
+    if not notification:
+        return False
+
+    try:
+        created = ensure_dispatch_recipients(notification)
+        if created:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return False
     celery_app = get_celery()
     if not celery_app:
         return False

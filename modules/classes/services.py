@@ -11,6 +11,36 @@ logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
+def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> str | None:
+    """
+    `classes.teacher_id` points to `users.id`, but many client screens deal in `teachers.id`.
+    Accept either:
+    - a `users.id` (teacher user's id)
+    - a `teachers.id` (teacher profile id)
+
+    Returns the resolved `users.id` to store in `classes.teacher_id`, or None.
+    Raises ValueError if the provided id cannot be resolved for this tenant.
+    """
+    if not teacher_id:
+        return None
+
+    # Try interpreting as Teacher.id first (most common client payload)
+    from modules.teachers.models import Teacher
+
+    teacher = Teacher.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
+    if teacher:
+        return teacher.user_id
+
+    # Otherwise treat as User.id; validate that it's a teacher user in this tenant.
+    # (At minimum validate existence; role validation may vary by deployment.)
+    from modules.auth.models import User
+
+    user = User.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
+    if user:
+        return user.id
+
+    raise ValueError("Invalid teacher.")
+
 
 def create_class(
     name: str,
@@ -39,6 +69,13 @@ def create_class(
 
         # Normalize: empty string -> None for optional fields
         teacher_id = teacher_id if teacher_id else None
+        try:
+            teacher_id = _resolve_class_teacher_user_id(tenant_id, teacher_id)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Invalid academic year or teacher. Please ensure the academic year exists and the teacher (if selected) is valid.',
+            }
 
         # Check teacher is not already class teacher of another class (one teacher = one class)
         if teacher_id:
@@ -206,6 +243,12 @@ def update_class(
                 return {'success': False, 'error': 'Invalid academic year.'}
 
         # Check teacher is not already class teacher of another class (one teacher = one class)
+        if teacher_id is not None:
+            try:
+                teacher_id = _resolve_class_teacher_user_id(tenant_id, teacher_id if teacher_id else None)
+            except ValueError:
+                return {'success': False, 'error': 'Invalid academic year or teacher.'}
+
         new_teacher_id = teacher_id if teacher_id else None
         if teacher_id is not None and new_teacher_id:
             existing_teacher_class = Class.query.filter(

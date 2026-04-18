@@ -893,6 +893,23 @@ def _primary_teacher_id(tenant_id: str, cs: ClassSubject) -> Optional[str]:
 def generate_draft(
     tenant_id: str, class_id: str, user_id: Optional[str], data: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
+    """Generate a balanced weekly draft timetable for a class.
+
+    This is the outer "DB layer" — it owns transaction management and the
+    :class:`TimetableVersion` / :class:`TimetableEntry` rows.  The actual
+    scheduling is delegated to
+    :func:`modules.academics.services.timetable_generator.generate_timetable`,
+    which implements the constraint-based algorithm.
+
+    ``data`` accepted keys:
+        * ``timetable_version_id`` — reuse an existing draft (wipes its entries)
+        * ``bell_schedule_id`` — override bell schedule for the version
+        * ``label`` — label for a brand-new draft version
+        * ``seed`` — deterministic generator seed (useful for tests)
+        * ``max_attempts`` — multi-start budget (default 40)
+    """
+    from .timetable_generator import generate_timetable as _run_generator
+
     data = data or {}
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
@@ -901,17 +918,22 @@ def generate_draft(
     settings = get_academic_settings(tenant_id)
     default_bell = settings["settings"].get("default_bell_schedule_id")
 
-    offerings = (
+    offerings_exist = (
         ClassSubject.query.filter_by(tenant_id=tenant_id, class_id=class_id)
         .filter(ClassSubject.deleted_at.is_(None), ClassSubject.status == "active")
-        .all()
+        .first()
     )
-    if not offerings:
+    if not offerings_exist:
         return {"success": False, "error": "No active class subjects to schedule"}
 
     working_days = _working_weekdays(tenant_id)
     target_vid = data.get("timetable_version_id")
 
+    # --- Version handling -------------------------------------------------
+    # Either reuse an existing draft (wiping its entries) or create a new
+    # draft.  We do NOT commit the version alone — it's only committed once
+    # the generated entries are persisted together, so a failed generation
+    # never leaves an empty draft behind.
     v: Optional[TimetableVersion] = None
     if target_vid:
         v = TimetableVersion.query.filter_by(
@@ -943,100 +965,150 @@ def generate_draft(
     bell_id = v.bell_schedule_id or default_bell
     if not bell_id:
         db.session.rollback()
-        return {"success": False, "error": "Set a default bell schedule in academic settings or pick one for this version"}
-
+        return {
+            "success": False,
+            "error": "Set a default bell schedule in academic settings or pick one for this version",
+        }
     if not v.bell_schedule_id:
         v.bell_schedule_id = bell_id
 
-    gr = get_schedule(tenant_id, bell_id, include_periods=True)
-    if not gr.get("success"):
-        db.session.rollback()
-        return {"success": False, "error": "Bell schedule not found"}
-
-    lesson_periods = _lesson_period_numbers(tenant_id, bell_id)
-    if not lesson_periods:
-        db.session.rollback()
-        return {"success": False, "error": "Bell schedule has no lesson periods"}
-
-    work: List[Tuple[str, str]] = []
-    warnings: List[str] = []
-
-    for cs in offerings:
-        tid = _primary_teacher_id(tenant_id, cs)
-        if not tid:
-            warnings.append(
-                f"No teacher assigned for subject {cs.subject_ref.name if cs.subject_ref else cs.id}"
-            )
-            continue
-        for _ in range(int(cs.weekly_periods or 0)):
-            work.append((cs.id, tid))
-
-    if not work:
+    # --- Run the scheduler ------------------------------------------------
+    gen = _run_generator(
+        tenant_id,
+        class_id,
+        bell_schedule_id=bell_id,
+        working_days=working_days,
+        class_teacher_user_id=str(cls.teacher_id) if cls.teacher_id else None,
+        exclude_class_id=class_id,
+        seed=data.get("seed"),
+        max_attempts=int(data.get("max_attempts") or 40),
+    )
+    if not gen.get("success"):
         db.session.rollback()
         return {
             "success": False,
-            "error": "No schedulable subjects (assign teachers to class subjects)",
-            "warnings": warnings,
+            "error": gen.get("error") or "Generation failed",
+            "warnings": gen.get("warnings", []),
         }
 
-    # Stable order: group periods of the same subject together, then fill days in calendar order
-    # using the earliest free lesson slot each time — keeps lessons contiguous within each day when possible.
-    work.sort(key=lambda x: x[0])
-    slots_ordered: List[Tuple[int, int]] = [
-        (d, p) for d in sorted(working_days) for p in sorted(lesson_periods)
-    ]
-
-    # Exclude all versions of this class — active or other drafts — so the generator only
-    # avoids slots occupied by teachers in *other* classes.
-    used_teacher: Set[Tuple[str, int, int]] = set(_teacher_slots_occupied(tenant_id, exclude_class_id=class_id))
-    used_class: Set[Tuple[int, int]] = set()
-
-    placed = 0
-    for cs_id, tid in work:
-        chosen: Optional[Tuple[int, int]] = None
-        for day, period in slots_ordered:
-            if (day, period) in used_class:
-                continue
-            key = (str(tid), day, period)
-            if key in used_teacher:
-                continue
-            chosen = (day, period)
-            break
-
-        if chosen is None:
-            subj = ClassSubject.query.filter_by(id=cs_id, tenant_id=tenant_id).first()
-            name = subj.subject_ref.name if subj and subj.subject_ref else cs_id
-            warnings.append(f"Could not place all periods for {name} — grid full or teacher conflicts")
-            continue
-
-        day, period = chosen
-        e = TimetableEntry(
+    # --- Persist placements as TimetableEntry rows ------------------------
+    placements = gen["placements"]
+    for p in placements:
+        entry = TimetableEntry(
             tenant_id=tenant_id,
             timetable_version_id=v.id,
-            class_subject_id=cs_id,
-            teacher_id=tid,
-            day_of_week=day,
-            period_number=period,
+            class_subject_id=p["class_subject_id"],
+            teacher_id=p["teacher_id"],
+            day_of_week=int(p["day_of_week"]),
+            period_number=int(p["period_number"]),
             entry_status="active",
         )
-        db.session.add(e)
-        used_class.add((day, period))
-        used_teacher.add((str(tid), day, period))
-        placed += 1
+        db.session.add(entry)
 
     try:
         db.session.commit()
     except IntegrityError as err:
         db.session.rollback()
-        return {"success": False, "error": str(err), "warnings": warnings}
+        return {
+            "success": False,
+            "error": str(err),
+            "warnings": gen.get("warnings", []),
+        }
 
-    unplaced = len(work) - placed
+    total_needed = len(placements) + len(gen.get("unplaced", []))
     return {
         "success": True,
         "timetable_version": _serialize_version(v),
-        "entries_placed": placed,
-        "total_required": len(work),
-        "unplaced_periods": unplaced,
-        "warnings": warnings,
-        "conflicts": [w for w in warnings if "conflict" in w.lower() or "Could not place" in w],
+        "entries_placed": len(placements),
+        "total_required": total_needed,
+        "unplaced_periods": len(gen.get("unplaced", [])),
+        "warnings": gen.get("warnings", []),
+        "conflicts": gen.get("unplaced", []),
+        "quality_score": gen.get("quality_score"),
+        "draft_quality": gen.get("draft_quality"),
+        "timetable": gen.get("timetable", {}),
+        "debug": gen.get("debug", []),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Today's schedule — read-time overlay of teacher availability / leave
+# ---------------------------------------------------------------------------
+#
+# The weekly generator deliberately ignores ``TeacherAvailability`` and
+# approved ``TeacherLeave`` because those states change daily.  Instead,
+# they are overlayed at read time: the timetable entry still exists, but
+# we annotate it with ``availability_status`` (available | unavailable |
+# on_leave) and ``substitute_needed`` so the UI can surface the info.
+
+def get_today_schedule(
+    tenant_id: str, class_id: str, on_date: Optional[date] = None
+) -> Dict[str, Any]:
+    """Return the active timetable for ``class_id`` on ``on_date`` with
+    teacher availability overlayed onto each entry.
+
+    Defaults to today (``date.today()``).  If the day is not a working
+    day or no active timetable exists, ``items`` is an empty list.
+    """
+    from .timetable_generator import overlay_daily_schedule
+
+    cls = get_class_for_tenant(class_id, tenant_id)
+    if not cls:
+        return {"success": False, "error": "Class not found"}
+
+    d = on_date or date.today()
+    # ISO 1=Mon … 7=Sun (matches _working_weekdays / TimetableEntry.day_of_week)
+    iso_day = d.isoweekday()
+
+    if iso_day not in _working_weekdays(tenant_id):
+        return {
+            "success": True,
+            "timetable_version": None,
+            "date": d.isoformat(),
+            "day_of_week": iso_day,
+            "items": [],
+            "bell_schedule": None,
+            "message": "Not a working day for this school",
+        }
+
+    active = (
+        TimetableVersion.query.filter_by(tenant_id=tenant_id, class_id=class_id)
+        .filter(TimetableVersion.status == "active")
+        .order_by(TimetableVersion.created_at.desc())
+        .first()
+    )
+    if not active:
+        return {
+            "success": True,
+            "timetable_version": None,
+            "date": d.isoformat(),
+            "day_of_week": iso_day,
+            "items": [],
+            "bell_schedule": None,
+            "message": "No active timetable for this class yet",
+        }
+
+    bell_map = _bell_period_map(tenant_id, active.bell_schedule_id)
+    rows = (
+        TimetableEntry.query.filter_by(
+            tenant_id=tenant_id, timetable_version_id=active.id, day_of_week=iso_day
+        )
+        .order_by(TimetableEntry.period_number)
+        .all()
+    )
+    base_items = [
+        _serialize_entry(r, bell_map, tenant_id=tenant_id, editable=False)
+        for r in rows
+    ]
+    # Overlay availability / leave.  Each base item already contains
+    # teacher_id and period_number, which overlay_daily_schedule reads.
+    enriched = overlay_daily_schedule(tenant_id, base_items, d)
+
+    return {
+        "success": True,
+        "timetable_version": _serialize_version(active),
+        "date": d.isoformat(),
+        "day_of_week": iso_day,
+        "items": enriched,
+        "bell_schedule": _bell_schedule_envelope(tenant_id, active.bell_schedule_id),
     }

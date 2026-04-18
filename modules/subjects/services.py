@@ -34,14 +34,6 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         if not name:
             return {"success": False, "error": "name is required"}
 
-        existing = Subject.query.filter(
-            Subject.tenant_id == tenant_id,
-            Subject.name == name,
-            Subject.deleted_at.is_(None),
-        ).first()
-        if existing:
-            return {"success": False, "error": "Subject with this name already exists"}
-
         code = (data.get("code") or "").strip() or None
         if code:
             dup = Subject.query.filter(
@@ -70,8 +62,14 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
     except IntegrityError as e:
         db.session.rollback()
         error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
-        if "uq_subjects_name_tenant" in error_msg or "unique" in error_msg.lower():
-            return {"success": False, "error": "Subject with this name already exists"}
+        if (
+            "uq_subjects_tenant_code_active" in error_msg
+            or "uq_subjects_code_tenant" in error_msg
+            or "subjects" in error_msg.lower()
+            and "code" in error_msg.lower()
+            and "unique" in error_msg.lower()
+        ):
+            return {"success": False, "error": "Subject with this code already exists"}
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
@@ -136,15 +134,6 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
             name = (data["name"] or "").strip()
             if not name:
                 return {"success": False, "error": "name cannot be empty"}
-            # Check unique when changing name
-            existing = Subject.query.filter(
-                Subject.tenant_id == tenant_id,
-                Subject.name == name,
-                Subject.id != subject_id,
-                Subject.deleted_at.is_(None),
-            ).first()
-            if existing:
-                return {"success": False, "error": "Subject with this name already exists"}
             subject.name = name
 
         if "code" in data:
@@ -174,8 +163,14 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
     except IntegrityError as e:
         db.session.rollback()
         error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
-        if "uq_subjects_name_tenant" in error_msg or "unique" in error_msg.lower():
-            return {"success": False, "error": "Subject with this name already exists"}
+        if (
+            "uq_subjects_tenant_code_active" in error_msg
+            or "uq_subjects_code_tenant" in error_msg
+            or "subjects" in error_msg.lower()
+            and "code" in error_msg.lower()
+            and "unique" in error_msg.lower()
+        ):
+            return {"success": False, "error": "Subject with this code already exists"}
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()

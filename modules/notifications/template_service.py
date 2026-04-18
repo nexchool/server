@@ -144,6 +144,16 @@ PREVIEW_CONTEXT = {
     "admin_email": "admin@school.com",
     "total_amount": "₹5,000",
     "message": "This is a preview.",
+    # Teacher leave emails (super-admin preview / test-send)
+    "teacher_name": "Ramesh Patel",
+    "teacher_id": "00000000-0000-4000-8000-000000000001",
+    "leave_id": "00000000-0000-4000-8000-000000000002",
+    "leave_type": "casual",
+    "start_date": "2026-04-20",
+    "end_date": "2026-04-22",
+    "screen": "teacher_leaves",
+    "title": "Leave Request Approved",
+    "body": "Your casual leave from 2026-04-20 to 2026-04-22 (2 working day(s)) has been approved.",
 }
 
 

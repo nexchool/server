@@ -7,8 +7,8 @@ Uses only the new backbone (no legacy timetable_slots / SubjectLoad seeding).
 Usage (from repo ``server/`` with PYTHONPATH including the server root):
     PYTHONPATH=. python scripts/seed_academic_dummy_data.py
 
-With Docker Compose (from ``school-erp-infra/docker``, stack running):
-    docker compose -f docker-compose.local.yml exec api python scripts/seed_academic_dummy_data.py
+With Docker Compose (from ``school-erp-infra/``, production stack running):
+    docker compose --env-file .env.production exec api python scripts/seed_academic_dummy_data.py
 
 Requires: migrations applied, default tenant, RBAC roles (Admin, Teacher, Student).
 """

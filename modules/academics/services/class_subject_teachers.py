@@ -62,6 +62,22 @@ def list_for_class(tenant_id: str, class_id: str) -> Dict[str, Any]:
     return {"success": True, "items": [_serialize(r) for r in rows]}
 
 
+def list_assignment_candidates(tenant_id: str, class_id: str) -> Dict[str, Any]:
+    """
+    Active teachers in the tenant for assigning to class_subject rows.
+
+    Not the same as "available class teachers" (homeroom / class-teacher rules).
+    """
+    cls = get_class_for_tenant(class_id, tenant_id)
+    if not cls:
+        return {"success": False, "error": "Class not found"}
+
+    from modules.teachers.services import list_teachers
+
+    items = list_teachers(search=None, status="active")
+    return {"success": True, "items": items}
+
+
 def create_assignment(
     tenant_id: str, class_id: str, data: Dict[str, Any], user_id: Optional[str] = None
 ) -> Dict[str, Any]:

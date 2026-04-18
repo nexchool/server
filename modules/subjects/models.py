@@ -20,13 +20,12 @@ class Subject(TenantBaseModel):
     Subject Model
 
     Represents an academic subject (e.g., Mathematics, Science).
-    Scoped by tenant. Unique (name, tenant_id).
-    Optional unique (tenant_id, code) when code is set and row is not soft-deleted.
+    Scoped by tenant.
+    Unique (tenant_id, code) when code is set and row is not soft-deleted.
     """
     __tablename__ = "subjects"
 
     __table_args__ = (
-        db.UniqueConstraint("name", "tenant_id", name="uq_subjects_name_tenant"),
         Index(
             "uq_subjects_tenant_code_active",
             "tenant_id",

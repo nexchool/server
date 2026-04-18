@@ -84,8 +84,6 @@ def _notifications_scope_query(tenant_id: str, user_id: str, unread_only: bool):
 def _serialize_list_item(n: Notification, user_id: str) -> dict:
     """Merge legacy per-user row with bulk parent + recipient read state."""
     data = n.to_dict(strip_internal_extra=True)
-    if n.user_id == user_id:
-        return data
     nr = NotificationRecipient.query.filter_by(
         notification_id=n.id,
         user_id=user_id,
@@ -203,6 +201,14 @@ def mark_read(notification_id):
     if n.user_id == user_id:
         try:
             n.read_at = now
+            nr = NotificationRecipient.query.filter_by(
+                notification_id=notification_id,
+                user_id=user_id,
+            ).first()
+            if nr:
+                nr.read_at = now
+                if nr.status != NotificationRecipientStatus.FAILED.value:
+                    nr.status = NotificationRecipientStatus.READ.value
             db.session.commit()
             publish_inbox_event(
                 tenant_id,
@@ -258,14 +264,12 @@ def mark_all_read():
             .update({Notification.read_at: now}, synchronize_session=False)
         )
 
-        bulk_parent_ids = db.session.query(Notification.id).filter(
-            Notification.tenant_id == tenant_id,
-            Notification.user_id.is_(None),
-        )
         rec_updated = NotificationRecipient.query.filter(
             NotificationRecipient.user_id == user_id,
             NotificationRecipient.read_at.is_(None),
-            NotificationRecipient.notification_id.in_(bulk_parent_ids),
+            NotificationRecipient.notification_id.in_(
+                db.session.query(Notification.id).filter(Notification.tenant_id == tenant_id)
+            ),
         ).update(
             {
                 NotificationRecipient.read_at: now,

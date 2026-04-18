@@ -47,7 +47,7 @@ def _notify_leave_managers(
     body: str,
     extra_data: Dict,
 ) -> None:
-    """Send an in-app + push notification to all admin/leave-manager users. Swallows errors."""
+    """Send an in-app + push + email notification to all admin/leave-manager users. Swallows errors."""
     try:
         from modules.notifications.notification_targeting_service import get_leave_manager_user_ids
         from modules.notifications.notification_service import (
@@ -61,7 +61,11 @@ def _notify_leave_managers(
         if not user_ids:
             return
 
-        channels = [NotificationChannel.IN_APP.value, NotificationChannel.PUSH.value]
+        channels = [
+            NotificationChannel.IN_APP.value,
+            NotificationChannel.PUSH.value,
+            NotificationChannel.EMAIL.value,
+        ]
         n = create_notification(
             tenant_id=tenant_id,
             notification_type=notification_type,
