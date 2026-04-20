@@ -185,6 +185,11 @@ def tenant_required(fn):
     """
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        # CORS preflight: browsers send OPTIONS without custom headers (e.g. X-Tenant-ID).
+        # Global middleware already skips tenant for OPTIONS; pass through so inner decorators
+        # (e.g. auth_required) can return 204 without failing resolve_tenant() on api.* hosts.
+        if request.method == "OPTIONS":
+            return fn(*args, **kwargs)
         if getattr(g, "tenant_id", None) is None:
             result = resolve_tenant()
             if result is not None:
