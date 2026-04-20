@@ -1,4 +1,4 @@
-name: Build & push API image, deploy to EC2 (production)
+name: Deploy server to EC2
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
 
     env:
       AWS_REGION: ap-south-1
-      ECR_REPO: ${{ secrets.ECR_REPO_API_PROD }}
+      ECR_REPO: ${{ secrets.ECR_REPO_SERVER }}
 
     steps:
       - uses: actions/checkout@v4
@@ -23,45 +23,39 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_PROD }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
 
       - name: Build and push image
         id: image
         run: |
           IMAGE_URI="${ECR_REPO}:${GITHUB_SHA}"
-
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform linux/amd64 \
+            --cache-from type=registry,ref="${ECR_REPO}:latest" \
+            --cache-to type=inline \
             -t "$IMAGE_URI" \
             -t "${ECR_REPO}:latest" \
             --push .
+          echo "registry=$(echo "$ECR_REPO" | cut -d'/' -f1)" >> "$GITHUB_OUTPUT"
 
-          REGISTRY=$(echo "$ECR_REPO" | cut -d'/' -f1)
-          echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy on EC2 (docker compose pull)
+      - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST_PROD }}
+          host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           script_stop: true
           script: |
-            REGISTRY="${{ steps.image.outputs.registry }}"
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin "$REGISTRY"
-            cd /home/ec2-user/app
-            sudo docker compose pull
-            sudo docker compose up -d
-            sudo docker system prune -af --volumes || true
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+              | sudo docker login --username AWS --password-stdin "${{ steps.image.outputs.registry }}"
+            cd /home/ec2-user
+            sudo docker compose -f docker-compose.prod.yml --env-file .env.prod pull api celery-worker celery-beat
+            sudo docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans
+            sudo docker image prune -f
