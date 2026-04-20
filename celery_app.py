@@ -7,6 +7,8 @@ Worker: celery -A celery_app:celery worker -l info
 Beat:   celery -A celery_app:celery beat -l info
 """
 
+import os
+
 from celery import Celery
 
 _celery = None
@@ -38,6 +40,11 @@ def make_celery(app):
             "schedule": 86400.0,  # 24 hours
         },
     }
+    # Default cwd is /app (owned by app) but a root-owned celerybeat-schedule from an old run breaks beat.
+    # /tmp is always writable for the container user. Override with CELERY_BEAT_SCHEDULE_FILENAME if needed.
+    celery.conf.beat_schedule_filename = os.environ.get(
+        "CELERY_BEAT_SCHEDULE_FILENAME", "/tmp/celerybeat-schedule"
+    )
 
     class ContextTask(celery.Task):
         """Run task with Flask application context."""
