@@ -47,6 +47,8 @@ def make_celery(app):
                 return self.run(*args, **kwargs)
 
     celery.Task = ContextTask
+    # Celery 6: startup retries no longer follow broker_connection_retry; keep current behavior.
+    celery.conf.broker_connection_retry_on_startup = True
     return celery
 
 
