@@ -100,15 +100,17 @@ class Teacher(TenantBaseModel):
         db.session.delete(self)
         db.session.commit()
 
-    def to_dict(self, include_subjects: bool = False):
+    def to_dict(self, include_subjects: bool = False, include_profile_picture: bool = True):
         data = {
             "id": self.id,
             "user_id": self.user_id,
             "name": self.user.name if self.user else None,
             "email": self.user.email if self.user else None,
-            "profile_picture": profile_picture_public_url(self.user.profile_picture_url)
-            if self.user
-            else None,
+            "profile_picture": (
+                profile_picture_public_url(self.user.profile_picture_url)
+                if self.user and include_profile_picture
+                else None
+            ),
             "employee_id": self.employee_id,
             "designation": self.designation,
             "department": self.department,

@@ -17,17 +17,76 @@ PERM_UPDATE = 'teacher.update'
 PERM_DELETE = 'teacher.delete'
 
 
+def _parse_int_param(raw, default=None, minimum=None, maximum=None):
+    if raw is None or raw == '':
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and val < minimum:
+        val = minimum
+    if maximum is not None and val > maximum:
+        val = maximum
+    return val
+
+
 @teachers_bp.route('/', methods=['GET'], strict_slashes=False)
 @tenant_required
 @auth_required
 @require_plan_feature('teacher_management')
 @require_permission(PERM_READ)
 def list_teachers():
-    """List all teachers with optional search/filter."""
+    """
+    Paginated, filterable, sortable list of teachers.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
+    """
+    # Search
     search = request.args.get('search')
+    search_field = request.args.get('search_field', 'all')
+    if search_field not in services.SEARCH_FIELDS:
+        return validation_error_response({
+            'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
+        })
+
+    # Filters
     status = request.args.get('status')
-    teachers = services.list_teachers(search=search, status=status)
-    return success_response(data=teachers)
+    department = request.args.get('department')
+    designation = request.args.get('designation')
+    date_of_joining_from = request.args.get('date_of_joining_from')
+    date_of_joining_to = request.args.get('date_of_joining_to')
+
+    # Sorting
+    sort_by = request.args.get('sort_by', 'employee_id')
+    sort_dir = request.args.get('sort_dir', 'asc')
+    if sort_by not in services.SORTABLE_COLUMNS:
+        return validation_error_response({
+            'sort_by': f"must be one of: {', '.join(sorted(services.SORTABLE_COLUMNS))}"
+        })
+    if sort_dir not in ('asc', 'desc'):
+        return validation_error_response({'sort_dir': "must be 'asc' or 'desc'"})
+
+    # Pagination
+    page = _parse_int_param(request.args.get('page'), default=None, minimum=1)
+    per_page = _parse_int_param(
+        request.args.get('per_page'), default=None, minimum=1, maximum=100
+    )
+
+    result = services.list_teachers(
+        search=search,
+        search_field=search_field,
+        status=status,
+        department=department,
+        designation=designation,
+        date_of_joining_from=date_of_joining_from,
+        date_of_joining_to=date_of_joining_to,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        page=page,
+        per_page=per_page,
+    )
+    return success_response(data=result)
 
 
 @teachers_bp.route('/', methods=['POST'], strict_slashes=False)

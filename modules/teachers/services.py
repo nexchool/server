@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import secrets
@@ -10,6 +10,21 @@ from modules.auth.models import User
 from modules.rbac.services import assign_role_to_user_by_email
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from .models import Teacher
+
+# Columns the client may sort by.
+SORTABLE_COLUMNS = {"employee_id", "name", "designation", "department", "date_of_joining"}
+
+# Fields the client may pick in the "search within" dropdown.
+SEARCH_FIELDS = {"all", "name", "employee_id", "email", "phone"}
+
+
+def _parse_date(value: Optional[str]) -> Optional[Any]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
 
 
 def _check_teacher_plan_limit(tenant_id: str) -> tuple:
@@ -184,26 +199,133 @@ def create_teacher(
         return {'success': False, 'error': f'Failed to create teacher: {str(e)}'}
 
 
-def list_teachers(search: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
-    """List teachers with optional filters."""
+def list_teachers(
+    search: Optional[str] = None,
+    search_field: str = "all",
+    status: Optional[str] = None,
+    department: Optional[str] = None,
+    designation: Optional[str] = None,
+    date_of_joining_from: Optional[str] = None,
+    date_of_joining_to: Optional[str] = None,
+    sort_by: str = "employee_id",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    List teachers with filtering, searching, sorting and pagination.
+
+    Returns an envelope: {items, total, page, per_page, total_pages}.
+    When `page` and `per_page` are not provided all matching rows are returned
+    (total_pages = 1) so callers that don't paginate still work.
+    """
     query = Teacher.query.join(User)
 
     if status:
-        query = query.filter(Teacher.status == status)
-
-    if search:
-        pattern = f'%{search}%'
         query = query.filter(
-            db.or_(
-                User.name.ilike(pattern),
-                User.email.ilike(pattern),
-                Teacher.employee_id.ilike(pattern),
-                Teacher.department.ilike(pattern),
-            )
+            db.func.lower(Teacher.status) == status.strip().lower()
         )
 
-    query = query.order_by(User.name)
-    return [t.to_dict() for t in query.all()]
+    if department:
+        query = query.filter(Teacher.department.ilike(f"%{department.strip()}%"))
+
+    if designation:
+        query = query.filter(Teacher.designation.ilike(f"%{designation.strip()}%"))
+
+    date_from = _parse_date(date_of_joining_from)
+    if date_from:
+        query = query.filter(Teacher.date_of_joining >= date_from)
+    date_to = _parse_date(date_of_joining_to)
+    if date_to:
+        query = query.filter(Teacher.date_of_joining <= date_to)
+
+    if search:
+        term = search.strip()
+        if term:
+            pattern = f"%{term}%"
+            field = search_field if search_field in SEARCH_FIELDS else "all"
+            if field == "name":
+                query = query.filter(User.name.ilike(pattern))
+            elif field == "employee_id":
+                query = query.filter(Teacher.employee_id.ilike(pattern))
+            elif field == "email":
+                query = query.filter(User.email.ilike(pattern))
+            elif field == "phone":
+                query = query.filter(Teacher.phone.ilike(pattern))
+            else:
+                query = query.filter(
+                    db.or_(
+                        User.name.ilike(pattern),
+                        User.email.ilike(pattern),
+                        Teacher.employee_id.ilike(pattern),
+                        Teacher.department.ilike(pattern),
+                        Teacher.phone.ilike(pattern),
+                    )
+                )
+
+    sort_key = sort_by if sort_by in SORTABLE_COLUMNS else "employee_id"
+    is_desc = str(sort_dir).lower() == "desc"
+
+    def _ordered(col, nulls_last: bool = False):
+        expr = col.desc() if is_desc else col.asc()
+        return expr.nulls_last() if nulls_last else expr
+
+    if sort_key == "name":
+        order_cols = [_ordered(User.name)]
+    elif sort_key == "designation":
+        order_cols = [_ordered(Teacher.designation, nulls_last=True)]
+    elif sort_key == "department":
+        order_cols = [_ordered(Teacher.department, nulls_last=True)]
+    elif sort_key == "date_of_joining":
+        order_cols = [_ordered(Teacher.date_of_joining, nulls_last=True)]
+    else:  # employee_id (default)
+        order_cols = [_ordered(Teacher.employee_id)]
+
+    if sort_key != "employee_id":
+        order_cols.append(Teacher.employee_id.asc())
+
+    query = query.order_by(*order_cols)
+
+    total = query.count()
+    if page is not None and per_page is not None and per_page > 0:
+        page = max(1, int(page))
+        per_page = max(1, min(int(per_page), 100))
+        teachers = query.limit(per_page).offset((page - 1) * per_page).all()
+        total_pages = max(1, (total + per_page - 1) // per_page)
+    else:
+        teachers = query.all()
+        page = 1
+        per_page = len(teachers) or 0
+        total_pages = 1
+
+    # Unique, sorted department / designation values across ALL tenant teachers
+    # (not the filtered subset) so filter dropdowns are always fully populated.
+    from sqlalchemy import distinct as _distinct
+
+    all_departments = [
+        r[0]
+        for r in Teacher.query.with_entities(_distinct(Teacher.department))
+        .filter(Teacher.department.isnot(None), Teacher.department != "")
+        .order_by(Teacher.department)
+        .all()
+    ]
+    all_designations = [
+        r[0]
+        for r in Teacher.query.with_entities(_distinct(Teacher.designation))
+        .filter(Teacher.designation.isnot(None), Teacher.designation != "")
+        .order_by(Teacher.designation)
+        .all()
+    ]
+
+    return {
+        "items": [t.to_dict(include_profile_picture=False) for t in teachers],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "departments": all_departments,
+        "designations": all_designations,
+    }
 
 
 def get_teacher_by_id(teacher_id: str) -> Optional[Dict]:
