@@ -45,50 +45,124 @@ def student_me_dashboard():
     return success_response(data=r)
 
 
+_TRUTHY = ('1', 'true', 'yes', 'on')
+_FALSY = ('0', 'false', 'no', 'off')
+
+
+def _parse_bool_param(raw):
+    if raw is None:
+        return None
+    v = raw.strip().lower()
+    if v in _TRUTHY:
+        return True
+    if v in _FALSY:
+        return False
+    return None
+
+
+def _parse_int_param(raw, default=None, minimum=None, maximum=None):
+    if raw is None or raw == '':
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and val < minimum:
+        val = minimum
+    if maximum is not None and val > maximum:
+        val = maximum
+    return val
+
+
 @students_bp.route('/', methods=['GET'], strict_slashes=False)
 @tenant_required
 @auth_required
 @require_plan_feature('student_management')
 def list_students():
     """
-    List students based on permissions.
+    Paginated, filterable, sortable list of students.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
     """
     user_id = g.current_user.id
     from modules.rbac.services import has_permission
-    
+
+    # Filters
     class_id = request.args.get('class_id')
     class_ids_param = request.args.get('class_ids')
-    class_ids = [c.strip() for c in class_ids_param.split(',') if c.strip()] if class_ids_param else None
+    class_ids = (
+        [c.strip() for c in class_ids_param.split(',') if c.strip()]
+        if class_ids_param
+        else None
+    )
     academic_year_id = request.args.get('academic_year_id')
+    gender = request.args.get('gender')
+    student_status = request.args.get('student_status')
+    is_transport_opted = _parse_bool_param(request.args.get('is_transport_opted'))
+    admission_date_from = request.args.get('admission_date_from')
+    admission_date_to = request.args.get('admission_date_to')
+
+    # Search
     search = request.args.get('search')
-    include_transport_summary = request.args.get('include_transport_summary', '').lower() in (
-        '1',
-        'true',
-        'yes',
+    search_field = request.args.get('search_field', 'all')
+    if search_field not in services.SEARCH_FIELDS:
+        return validation_error_response({
+            'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
+        })
+
+    # Sorting
+    sort_by = request.args.get('sort_by', 'admission_number')
+    sort_dir = request.args.get('sort_dir', 'asc')
+    if sort_by not in services.SORTABLE_COLUMNS:
+        return validation_error_response({
+            'sort_by': f"must be one of: {', '.join(sorted(services.SORTABLE_COLUMNS))}"
+        })
+    if sort_dir not in ('asc', 'desc'):
+        return validation_error_response({'sort_dir': "must be 'asc' or 'desc'"})
+
+    # Pagination
+    page = _parse_int_param(request.args.get('page'), default=None, minimum=1)
+    per_page = _parse_int_param(
+        request.args.get('per_page'), default=None, minimum=1, maximum=100
     )
 
-    # Check permissions
+    include_transport_summary = request.args.get('include_transport_summary', '').lower() in _TRUTHY
+
+    common_kwargs = dict(
+        academic_year_id=academic_year_id,
+        search=search,
+        search_field=search_field,
+        gender=gender,
+        student_status=student_status,
+        is_transport_opted=is_transport_opted,
+        admission_date_from=admission_date_from,
+        admission_date_to=admission_date_to,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        page=page,
+        per_page=per_page,
+        include_transport_summary=include_transport_summary,
+    )
+
     if has_permission(user_id, PERM_READ_ALL):
-        students = services.list_students(
+        result = services.list_students(
             class_id=class_id if not class_ids else None,
             class_ids=class_ids,
-            academic_year_id=academic_year_id,
-            search=search,
-            include_transport_summary=include_transport_summary,
+            **common_kwargs,
         )
-        return success_response(data=students)
+        return success_response(data=result)
 
     if has_permission(user_id, PERM_READ_CLASS):
         from modules.attendance.services import get_teacher_class_ids
         teacher_class_ids = get_teacher_class_ids(user_id)
-        students = services.list_students_by_class_ids(
-            teacher_class_ids,
-            academic_year_id=academic_year_id,
-            search=search,
-            include_transport_summary=include_transport_summary,
+        result = services.list_students(
+            class_id=class_id if not class_ids else None,
+            class_ids=class_ids,
+            _restrict_class_ids=teacher_class_ids,
+            **common_kwargs,
         )
-        return success_response(data=students)
-        
+        return success_response(data=result)
+
     return unauthorized_response()
 
 @students_bp.route('/', methods=['POST'], strict_slashes=False)

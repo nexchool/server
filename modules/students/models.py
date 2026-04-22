@@ -248,15 +248,19 @@ class Student(TenantBaseModel):
         db.session.delete(self)
         db.session.commit()
     
-    def to_dict(self):
+    def to_dict(self, include_profile_picture: bool = True):
         return {
             "id": self.id,
             "user_id": self.user_id,
             "name": self.user.name if self.user else None,
             "email": self.user.email if self.user else None,
-            "profile_picture": profile_picture_public_url(self.user.profile_picture_url)
-            if self.user
-            else None,
+            # `profile_picture` resolves to a presigned S3 URL, which is
+            # expensive to generate in bulk. Skip it on list endpoints.
+            "profile_picture": (
+                profile_picture_public_url(self.user.profile_picture_url)
+                if (include_profile_picture and self.user)
+                else None
+            ),
             "admission_number": self.admission_number,
             "roll_number": self.roll_number,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else self.academic_year,

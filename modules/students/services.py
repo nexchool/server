@@ -483,92 +483,185 @@ def create_student(
         db.session.rollback()
         return {'success': False, 'error': f'Failed to create student: {str(e)}'}
 
+# Columns the client may sort by. The actual ordering expression is built in
+# `_build_sort_order` below so `class` can use natural (grade_level) order
+# rather than a lexicographic sort on the class name.
+SORTABLE_COLUMNS = {"admission_number", "name", "class", "roll_number"}
+
+# Fields the client may pick in the "search within" dropdown.
+SEARCH_FIELDS = {"all", "name", "admission_number", "email", "guardian_phone"}
+
+
+def _parse_date(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _attach_transport_summary(rows: List[Dict], academic_year_id: Optional[str]) -> None:
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return
+    from core.plan_features import is_plan_feature_enabled
+    if not is_plan_feature_enabled(tenant_id, "transport"):
+        return
+    from modules.transport.services import transport_summaries_for_students
+
+    summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
+    for r in rows:
+        extra = summ.get(r.get("id"))
+        if extra:
+            r.update(extra)
+
+
 def list_students(
     class_id: str = None,
     class_ids: List[str] = None,
     academic_year_id: str = None,
     search: str = None,
+    search_field: str = "all",
+    gender: str = None,
+    student_status: str = None,
+    is_transport_opted: Optional[bool] = None,
+    admission_date_from: str = None,
+    admission_date_to: str = None,
+    sort_by: str = "admission_number",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
     include_transport_summary: bool = False,
-) -> List[Dict]:
-    """List students with optional filters."""
+    _restrict_class_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    List students with filtering, searching, sorting and pagination.
+
+    Returns an envelope: {items, total, page, per_page, total_pages}.
+    When `page` and `per_page` are not provided all matching rows are returned
+    (total_pages = 1) so callers that don't paginate still work.
+
+    `_restrict_class_ids` is an internal hard-scope used by the teacher code path
+    to limit results to classes the teacher owns; it's AND-ed with any client
+    class filters.
+    """
     query = Student.query.join(User)
 
+    # Teacher scope: hard ceiling on which classes are visible at all.
+    if _restrict_class_ids is not None:
+        if not _restrict_class_ids:
+            return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
+        query = query.filter(Student.class_id.in_(_restrict_class_ids))
+
+    # Client-supplied class scoping (AND-ed with the teacher ceiling above).
     if class_ids:
         query = query.filter(Student.class_id.in_(class_ids))
     elif class_id:
         query = query.filter(Student.class_id == class_id)
+
     if academic_year_id:
         query = query.filter(Student.academic_year_id == academic_year_id)
 
-    if search:
-        search_pattern = f'%{search}%'
+    if gender:
+        query = query.filter(db.func.lower(Student.gender) == gender.strip().lower())
+
+    if student_status:
         query = query.filter(
-            db.or_(
-                User.name.ilike(search_pattern),
-                User.email.ilike(search_pattern),
-                Student.admission_number.ilike(search_pattern)
-            )
-        )
-        
-    # Order by class, then name
-    query = query.order_by(Student.class_id, User.name)
-    
-    students = query.all()
-    rows = [s.to_dict() for s in students]
-    if include_transport_summary:
-        tenant_id = get_tenant_id()
-        if tenant_id:
-            from core.plan_features import is_plan_feature_enabled
-            if is_plan_feature_enabled(tenant_id, "transport"):
-                from modules.transport.services import transport_summaries_for_students
-
-                summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
-                for r in rows:
-                    extra = summ.get(r.get("id"))
-                    if extra:
-                        r.update(extra)
-    return rows
-
-def list_students_by_class_ids(
-    class_ids: List[str],
-    academic_year_id: str = None,
-    search: str = None,
-    include_transport_summary: bool = False,
-) -> List[Dict]:
-    """List students filtered to specific class IDs (for teacher scoping)."""
-    if not class_ids:
-        return []
-
-    query = Student.query.join(User).filter(Student.class_id.in_(class_ids))
-    if academic_year_id:
-        query = query.filter(Student.academic_year_id == academic_year_id)
-
-    if search:
-        search_pattern = f'%{search}%'
-        query = query.filter(
-            db.or_(
-                User.name.ilike(search_pattern),
-                User.email.ilike(search_pattern),
-                Student.admission_number.ilike(search_pattern)
-            )
+            db.func.lower(Student.student_status) == student_status.strip().lower()
         )
 
-    query = query.order_by(Student.class_id, User.name)
-    students = query.all()
-    rows = [s.to_dict() for s in students]
-    if include_transport_summary:
-        tenant_id = get_tenant_id()
-        if tenant_id:
-            from core.plan_features import is_plan_feature_enabled
-            if is_plan_feature_enabled(tenant_id, "transport"):
-                from modules.transport.services import transport_summaries_for_students
+    if is_transport_opted is not None:
+        query = query.filter(Student.is_transport_opted == bool(is_transport_opted))
 
-                summ = transport_summaries_for_students(rows, academic_year_id=academic_year_id)
-                for r in rows:
-                    extra = summ.get(r.get("id"))
-                    if extra:
-                        r.update(extra)
-    return rows
+    date_from = _parse_date(admission_date_from)
+    if date_from:
+        query = query.filter(Student.admission_date >= date_from)
+    date_to = _parse_date(admission_date_to)
+    if date_to:
+        query = query.filter(Student.admission_date <= date_to)
+
+    if search:
+        term = search.strip()
+        if term:
+            pattern = f"%{term}%"
+            field = search_field if search_field in SEARCH_FIELDS else "all"
+            if field == "name":
+                query = query.filter(User.name.ilike(pattern))
+            elif field == "admission_number":
+                query = query.filter(Student.admission_number.ilike(pattern))
+            elif field == "email":
+                query = query.filter(User.email.ilike(pattern))
+            elif field == "guardian_phone":
+                query = query.filter(Student.guardian_phone.ilike(pattern))
+            else:
+                query = query.filter(
+                    db.or_(
+                        User.name.ilike(pattern),
+                        User.email.ilike(pattern),
+                        Student.admission_number.ilike(pattern),
+                        Student.guardian_phone.ilike(pattern),
+                    )
+                )
+
+    # Sorting. Class sort uses the natural grade_level order (not a lex sort on
+    # name, which would put "10" before "2"). Outer-join so students without a
+    # class still appear at the end. Admission_number is always the tie-breaker.
+    sort_key = sort_by if sort_by in SORTABLE_COLUMNS else "admission_number"
+    is_desc = str(sort_dir).lower() == "desc"
+
+    def _ordered(col, nulls_last: bool = False):
+        expr = col.desc() if is_desc else col.asc()
+        # NULLS LAST keeps rows with NULL in the sort key at the bottom in both
+        # directions (default PG behaviour puts NULLS first in DESC).
+        return expr.nulls_last() if nulls_last else expr
+
+    if sort_key == "class":
+        query = query.outerjoin(Class, Student.class_id == Class.id)
+        order_cols = [
+            _ordered(Class.grade_level, nulls_last=True),
+            _ordered(Class.name, nulls_last=True),
+            _ordered(Class.section, nulls_last=True),
+        ]
+    elif sort_key == "name":
+        order_cols = [_ordered(User.name)]
+    elif sort_key == "roll_number":
+        order_cols = [_ordered(Student.roll_number, nulls_last=True)]
+    else:  # admission_number (default)
+        order_cols = [_ordered(Student.admission_number)]
+
+    if sort_key != "admission_number":
+        order_cols.append(Student.admission_number.asc())
+
+    query = query.order_by(*order_cols)
+
+    # Pagination. If the caller doesn't ask for a page, return everything
+    # (keeps non-paginating callers like the mobile app working).
+    total = query.count()
+    if page is not None and per_page is not None and per_page > 0:
+        page = max(1, int(page))
+        per_page = max(1, min(int(per_page), 100))
+        students = query.limit(per_page).offset((page - 1) * per_page).all()
+        total_pages = max(1, (total + per_page - 1) // per_page)
+    else:
+        students = query.all()
+        page = 1
+        per_page = len(students) or 0
+        total_pages = 1
+
+    # Skip the profile_picture URL on list responses — each value is a
+    # presigned S3 URL and generating hundreds per page is pure overhead.
+    items = [s.to_dict(include_profile_picture=False) for s in students]
+    if include_transport_summary:
+        _attach_transport_summary(items, academic_year_id)
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    }
 
 
 def get_student_by_id(student_id: str) -> Optional[Dict]:
