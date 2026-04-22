@@ -1,11 +1,104 @@
-<html>
-<body>
-    <p>Thank you for joining our platform. Here is your current plan:</p>
-    <h2>Your Features:</h2>
-    <ul>
-        {% for feature in features %}
-            <li>{{ feature }}</li>
-        {% endfor %}
-    </ul>
+<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>Welcome to Nexchool</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+
+  <!-- Preheader text -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#f1f5f9;line-height:1px;">Your Nexchool account is ready. Here's everything included in your plan. &#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;</div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f1f5f9">
+    <tr>
+      <td align="center" style="padding:48px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;">
+
+          <!-- Brand Header -->
+          <tr>
+            <td align="center" style="background-color:#0f172a;border-radius:12px 12px 0 0;padding:28px 40px 24px;">
+              <p style="margin:0;font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;line-height:1;">Nexchool</p>
+              <p style="margin:4px 0 0;font-size:11px;font-weight:500;color:#64748b;letter-spacing:1.5px;text-transform:uppercase;">School Management Platform</p>
+            </td>
+          </tr>
+
+          <!-- Hero Section -->
+          <tr>
+            <td style="background-color:#2563eb;padding:32px 48px;border-left:1px solid #1d4ed8;border-right:1px solid #1d4ed8;">
+              <h1 style="margin:0 0 8px;font-size:28px;font-weight:700;color:#ffffff;line-height:1.25;letter-spacing:-0.5px;">Welcome aboard!</h1>
+              <p style="margin:0;font-size:15px;color:#bfdbfe;line-height:1.6;">Your Nexchool account has been activated. You're all set to start managing your school smarter.</p>
+            </td>
+          </tr>
+
+          <!-- Main Card -->
+          <tr>
+            <td style="background-color:#ffffff;padding:36px 48px 32px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">
+
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#2563eb;letter-spacing:1px;text-transform:uppercase;">Your plan includes</p>
+              <h2 style="margin:0 0 20px;font-size:18px;font-weight:600;color:#0f172a;line-height:1.4;">Features available to you</h2>
+
+              <!-- Features list -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+                {% for feature in features %}
+                <tr>
+                  <td style="padding:10px 0;border-bottom:1px solid #f1f5f9;">
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td style="width:24px;vertical-align:top;padding-top:1px;">
+                          <div style="width:20px;height:20px;background-color:#dcfce7;border-radius:50%;text-align:center;line-height:20px;font-size:11px;color:#16a34a;font-weight:700;">&#10003;</div>
+                        </td>
+                        <td style="padding-left:12px;font-size:14px;color:#374151;line-height:1.5;font-weight:500;">{{ feature }}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                {% endfor %}
+              </table>
+
+              <!-- Divider -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 24px;">
+                <tr>
+                  <td style="border-top:1px solid #f1f5f9;"></td>
+                </tr>
+              </table>
+
+              <!-- Info box -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 18px;">
+                    <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#1e40af;">Getting started</p>
+                    <p style="margin:0;font-size:13px;color:#3b82f6;line-height:1.6;">
+                      Log in to your admin dashboard to configure your school settings, add staff, and onboard students. Your team is ready when you are.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:24px 48px;">
+              <p style="margin:0 0 6px;font-size:12px;color:#94a3b8;text-align:center;line-height:1.6;">
+                Need help? Contact your platform administrator or reach out to Nexchool support.
+              </p>
+              <p style="margin:0;font-size:12px;color:#cbd5e1;text-align:center;">
+                &copy; Nexchool &mdash; School Management Platform
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
 </body>
 </html>

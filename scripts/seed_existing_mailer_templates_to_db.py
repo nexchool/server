@@ -92,7 +92,7 @@ def seed_existing_mailer_templates_to_db() -> dict:
         except Exception as e:
             errors.append(f"{filename}: {e}")
 
-    # Also seed ADMIN_PASSWORD_RESET (same body as admin credentials, different subject)
+    # Also seed ADMIN_PASSWORD_RESET with its own dedicated template
     try:
         existing = NotificationTemplate.query.filter(
             NotificationTemplate.tenant_id.is_(None),
@@ -100,10 +100,10 @@ def seed_existing_mailer_templates_to_db() -> dict:
             NotificationTemplate.channel == "EMAIL",
         ).first()
         if not existing:
-            body = _read_mailer_template("school_admin_credentials.html") or (
+            body = _read_mailer_template("school_admin_password_reset.html") or (
                 "<html><body><p>Hello {{ admin_name }}, "
-                "School: {{ tenant_name }}, Login: {{ login_url }}, "
-                "Email: {{ admin_email }}, Password: {{ password }}</p></body></html>"
+                "your password for {{ tenant_name }} has been reset. "
+                "Email: {{ admin_email }}, Temporary password: {{ password }}</p></body></html>"
             )
             nt = NotificationTemplate(
                 id=str(uuid.uuid4()),
@@ -112,7 +112,7 @@ def seed_existing_mailer_templates_to_db() -> dict:
                 channel="EMAIL",
                 category=NOTIFICATION_CATEGORY_PLATFORM,
                 is_system=True,
-                subject_template="Your School Admin Password Has Been Reset",
+                subject_template="Your admin password for {{ tenant_name }} has been reset",
                 body_template=body,
             )
             db.session.add(nt)
