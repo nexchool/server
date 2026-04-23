@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import secrets
@@ -44,30 +44,30 @@ def _check_teacher_plan_limit(tenant_id: str) -> tuple:
     return True, None
 
 
-def generate_employee_id() -> str:
+def generate_employee_id(
+    tenant_id: Optional[str] = None, *, reserved: Optional[Set[str]] = None
+) -> str:
     """
-    Generate a unique employee ID for a teacher.
-
-    Format: TCH{YEAR}{SEQUENCE}
-    Example: TCH2026001, TCH2026002
+    Allocate the next unique employee id for a teacher (tenant pattern or TCH{YEAR}{SEQ:3}).
     """
-    current_year = datetime.utcnow().year
-    prefix = f"TCH{current_year}"
+    from shared.id_pattern import (
+        MAX_TEACHER_ID_LEN,
+        allocate_next_id,
+        get_teacher_employee_pattern,
+    )
 
-    latest = Teacher.query.filter(
-        Teacher.employee_id.like(f"{prefix}%")
-    ).order_by(Teacher.employee_id.desc()).first()
-
-    if latest:
-        try:
-            last_seq = int(latest.employee_id[len(prefix):])
-            new_seq = last_seq + 1
-        except ValueError:
-            new_seq = 1
-    else:
-        new_seq = 1
-
-    return f"{prefix}{new_seq:03d}"
+    tid = tenant_id or get_tenant_id()
+    if not tid:
+        raise ValueError("Tenant context is required to generate a teacher id")
+    pattern = get_teacher_employee_pattern(tid)
+    return allocate_next_id(
+        tenant_id=tid,
+        model=Teacher,
+        col_name="employee_id",
+        pattern=pattern,
+        reserved=reserved,
+        max_len=MAX_TEACHER_ID_LEN,
+    )
 
 
 def generate_teacher_password(name: str) -> str:
@@ -111,15 +111,18 @@ def create_teacher(
         Dict with success, teacher data, and login credentials
     """
     try:
-        employee_id = generate_employee_id()
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {'success': False, 'error': 'Tenant context is required'}
+
+        try:
+            employee_id = generate_employee_id(tenant_id)
+        except (RuntimeError, ValueError) as e:
+            return {"success": False, "error": str(e)}
 
         # Generate email if not provided (use employee_id based)
         actual_email = email if email else f"{employee_id.lower()}@teacher.school"
         temp_password = generate_teacher_password(name)
-
-        tenant_id = get_tenant_id()
-        if not tenant_id:
-            return {'success': False, 'error': 'Tenant context is required'}
 
         # Plan enforcement: do not allow creating teachers beyond plan limit
         allowed, limit_msg = _check_teacher_plan_limit(tenant_id)

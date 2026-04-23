@@ -182,7 +182,6 @@ def create_student():
         - guardian_phone: Guardian's phone number
         
     Optional fields:
-        - admission_number: Unique admission number (auto-generated if not provided)
         - email: Student's email (creates login credentials if provided)
         - phone: Student's phone number
         - date_of_birth: Date in YYYY-MM-DD format
@@ -217,7 +216,6 @@ def create_student():
         guardian_name=data['guardian_name'],
         guardian_relationship=data['guardian_relationship'],
         guardian_phone=data['guardian_phone'],
-        admission_number=data.get('admission_number'),
         email=data.get('email'),
         phone=data.get('phone'),
         date_of_birth=data.get('date_of_birth'),

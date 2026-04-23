@@ -22,6 +22,7 @@ from modules.students.utils.excel_parser import parse_xlsx_to_rows
 from modules.teachers.models import Teacher
 from modules.teachers.services import (
     _check_teacher_plan_limit,
+    generate_employee_id,
     generate_teacher_password,
 )
 from modules.teachers.utils.bulk_validation import (
@@ -54,9 +55,7 @@ def _validate_and_coerce_row(
     row_number: int,
     *,
     db_emails_lower: Set[str],
-    db_employee_ids: Set[str],
     file_emails: Set[str],
-    file_employee_ids: Set[str],
 ) -> Tuple[bool, Dict[str, Any], List[str], List[str], Optional[Dict[str, Any]]]:
     errors: List[str] = []
     warnings: List[str] = []
@@ -71,9 +70,10 @@ def _validate_and_coerce_row(
         errors.append("name: max 120 characters")
 
     email_raw = str(row.get("email")).strip() if not is_blank(row.get("email")) else None
-    emp_raw = str(row.get("employee_id")).strip() if not is_blank(row.get("employee_id")) else None
-    if emp_raw and len(emp_raw) > 20:
-        errors.append("employee_id: max 20 characters")
+    if not is_blank(row.get("employee_id")):
+        warnings.append(
+            "employee_id column is ignored; employee IDs are assigned automatically"
+        )
 
     if email_raw:
         if not validate_email_format(email_raw):
@@ -83,12 +83,6 @@ def _validate_and_coerce_row(
             errors.append("Email already exists")
         elif el in file_emails:
             errors.append("Duplicate email in file")
-
-    if emp_raw:
-        if emp_raw in db_employee_ids:
-            errors.append("Employee ID already exists")
-        elif emp_raw in file_employee_ids:
-            errors.append("Duplicate employee ID in file")
 
     date_errs: List[str] = []
     coerced = coerce_teacher_row(row, warnings, date_errs)
@@ -106,18 +100,13 @@ def _validate_and_coerce_row(
 
     if email_raw:
         file_emails.add(email_raw.lower())
-    if emp_raw:
-        file_employee_ids.add(emp_raw)
 
     coerced["name"] = name
     if email_raw:
         coerced["email"] = email_raw
     else:
         coerced.pop("email", None)
-    if emp_raw:
-        coerced["employee_id"] = emp_raw
-    else:
-        coerced.pop("employee_id", None)
+    coerced.pop("employee_id", None)
 
     if "status" not in coerced or is_blank(coerced.get("status")):
         coerced["status"] = "active"
@@ -131,10 +120,8 @@ def validate_teacher_workbook_rows(
     tenant_id: str,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     db_emails = _tenant_emails_lower(tenant_id)
-    db_emp = _tenant_employee_ids(tenant_id)
 
     file_emails: Set[str] = set()
-    file_emp: Set[str] = set()
 
     preview: List[Dict[str, Any]] = []
     valid_n = 0
@@ -145,9 +132,7 @@ def validate_teacher_workbook_rows(
             raw,
             rn,
             db_emails_lower=db_emails,
-            db_employee_ids=db_emp,
             file_emails=file_emails,
-            file_employee_ids=file_emp,
         )
         if ok:
             valid_n += 1
@@ -170,41 +155,12 @@ def _preassign_employee_ids(
     validated: List[Tuple[int, Dict[str, Any]]],
     tenant_id: str,
 ) -> None:
-    """Fill missing employee_id with TCH{year}NNN values without colliding with DB or file."""
-    year = datetime.utcnow().year
-    prefix = f"TCH{year}"
-
-    latest = (
-        Teacher.query.filter(
-            Teacher.tenant_id == tenant_id,
-            Teacher.employee_id.like(f"{prefix}%"),
-        )
-        .order_by(Teacher.employee_id.desc())
-        .first()
-    )
-    seq = 0
-    if latest and latest.employee_id.startswith(prefix):
-        try:
-            seq = int(latest.employee_id[len(prefix) :])
-        except ValueError:
-            seq = 0
-
+    """Assign each row a new employee_id using the tenant (or product default) format."""
     used: Set[str] = set(_tenant_employee_ids(tenant_id))
     for _rn, coerced in validated:
-        eid = coerced.get("employee_id")
-        if eid:
-            used.add(eid)
-
-    for _rn, coerced in validated:
-        if coerced.get("employee_id"):
-            continue
-        while True:
-            seq += 1
-            cand = f"{prefix}{seq:03d}"
-            if cand not in used:
-                coerced["employee_id"] = cand
-                used.add(cand)
-                break
+        eid = generate_employee_id(tenant_id, reserved=used)
+        coerced["employee_id"] = eid
+        used.add(eid)
 
 
 def _teacher_kwargs_from_coerced(coerced: Dict[str, Any]) -> Dict[str, Any]:
@@ -276,22 +232,18 @@ def import_teachers_from_rows(
         }
 
     db_emails = _tenant_emails_lower(tenant_id)
-    db_emp = _tenant_employee_ids(tenant_id)
 
     validated: List[Tuple[int, Dict[str, Any]]] = []
     failed_rows: List[Dict[str, Any]] = []
 
     file_emails: Set[str] = set()
-    file_emp: Set[str] = set()
 
     for raw, rn in zip(rows, row_numbers):
         ok, _disp, errs, _warns, coerced = _validate_and_coerce_row(
             raw,
             rn,
             db_emails_lower=db_emails,
-            db_employee_ids=db_emp,
             file_emails=file_emails,
-            file_employee_ids=file_emp,
         )
         if ok and coerced:
             validated.append((rn, coerced))

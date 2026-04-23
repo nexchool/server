@@ -26,6 +26,7 @@ from modules.students.services import (
     _clean_decimal,
     _clean_int,
     _clean_str,
+    generate_admission_number,
 )
 from modules.students.utils.bulk_validation import (
     REQUIRED_FIELDS,
@@ -89,9 +90,7 @@ def _validate_and_coerce_row(
     *,
     class_map: Dict[Tuple[str, str], str],
     db_emails_lower: Set[str],
-    db_admissions: Set[str],
     file_emails: Set[str],
-    file_admissions: Set[str],
 ) -> Tuple[bool, Dict[str, Any], List[str], List[str], Optional[Dict[str, Any]]]:
     """
     Returns (valid, display_values, hard_errors, warnings, coerced_or_none).
@@ -105,11 +104,10 @@ def _validate_and_coerce_row(
             errors.append(f"Missing {req}")
 
     email = (str(row.get("email")).strip() if not is_blank(row.get("email")) else None)
-    admission = (
-        str(row.get("admission_number")).strip()
-        if not is_blank(row.get("admission_number"))
-        else None
-    )
+    if not is_blank(row.get("admission_number")):
+        warnings.append(
+            "admission_number column is ignored; admission numbers are assigned automatically"
+        )
 
     if email:
         if not validate_email_format(email):
@@ -119,11 +117,6 @@ def _validate_and_coerce_row(
             errors.append("Email already exists")
         elif el in file_emails:
             errors.append("Duplicate email in file")
-    if admission:
-        if admission in db_admissions:
-            errors.append("Admission number already exists")
-        elif admission in file_admissions:
-            errors.append("Duplicate admission number in file")
 
     class_name = (
         str(row.get("class_name")).strip() if not is_blank(row.get("class_name")) else None
@@ -157,14 +150,12 @@ def _validate_and_coerce_row(
     if errors:
         return False, display, errors, warnings, None
 
-    if not email or not admission or not class_id:
+    if not email or not class_id:
         return False, display, errors or ["Invalid row"], warnings, None
 
     file_emails.add(email.lower())
-    file_admissions.add(admission)
 
     coerced["email"] = email
-    coerced["admission_number"] = admission
     coerced["name"] = str(row["name"]).strip()
     coerced["class_id"] = class_id
     coerced["class_name"] = class_name
@@ -196,10 +187,8 @@ def validate_workbook_rows(
 
     class_map = _class_map_for_year(tenant_id, academic_year_id)
     db_emails = _tenant_emails_lower(tenant_id)
-    db_admissions = _tenant_admission_numbers(tenant_id)
 
     file_emails: Set[str] = set()
-    file_admissions: Set[str] = set()
 
     preview: List[Dict[str, Any]] = []
     valid_n = 0
@@ -211,9 +200,7 @@ def validate_workbook_rows(
             rn,
             class_map=class_map,
             db_emails_lower=db_emails,
-            db_admissions=db_admissions,
             file_emails=file_emails,
-            file_admissions=file_admissions,
         )
         if ok:
             valid_n += 1
@@ -347,6 +334,18 @@ def _post_create_fees(student_id: str) -> None:
         logger.exception("bulk_import: auto_assign_fees failed for %s", student_id)
 
 
+def _preassign_admission_numbers(
+    validated: List[Tuple[int, Dict[str, Any]]],
+    tenant_id: str,
+) -> None:
+    """Set coerced['admission_number'] for each row using the tenant format + DB sequence."""
+    used: Set[str] = set(_tenant_admission_numbers(tenant_id))
+    for _rn, coerced in validated:
+        adm = generate_admission_number(tenant_id, reserved=used)
+        coerced["admission_number"] = adm
+        used.add(adm)
+
+
 def import_students_from_rows(
     rows: List[Dict[str, Any]],
     row_numbers: List[int],
@@ -383,13 +382,11 @@ def import_students_from_rows(
 
     class_map = _class_map_for_year(tenant_id, academic_year_id)
     db_emails = _tenant_emails_lower(tenant_id)
-    db_admissions = _tenant_admission_numbers(tenant_id)
 
     validated: List[Tuple[int, Dict[str, Any]]] = []
     failed_rows: List[Dict[str, Any]] = []
 
     file_emails: Set[str] = set()
-    file_admissions: Set[str] = set()
 
     for raw, rn in zip(rows, row_numbers):
         ok, _disp, errs, _warns, coerced = _validate_and_coerce_row(
@@ -397,9 +394,7 @@ def import_students_from_rows(
             rn,
             class_map=class_map,
             db_emails_lower=db_emails,
-            db_admissions=db_admissions,
             file_emails=file_emails,
-            file_admissions=file_admissions,
         )
         if ok and coerced:
             validated.append((rn, coerced))
@@ -460,6 +455,8 @@ def import_students_from_rows(
                 ],
                 "error": "Student plan limit",
             }
+
+    _preassign_admission_numbers(validated, tenant_id)
 
     success_count = 0
     skwargs = _student_kwargs_from_row
@@ -545,7 +542,6 @@ def import_students_from_rows(
             _dispatch_welcome(user_id, tenant_id, send_email)
             _post_create_fees(student_id)
             db_emails.add(coerced["email"].lower())
-            db_admissions.add(coerced["admission_number"])
 
     return {
         "total": total,

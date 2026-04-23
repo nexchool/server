@@ -41,6 +41,9 @@ class AcademicSettings(TenantBaseModel):
     )
     allow_admin_attendance_override = db.Column(db.Boolean, nullable=False, default=True)
     default_working_days_json = db.Column(JSONB, nullable=True)
+    # Optional per-tenant patterns; null/empty → product default (see shared.id_pattern).
+    admission_number_format = db.Column(db.String(120), nullable=True)
+    teacher_employee_id_format = db.Column(db.String(120), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at = db.Column(
         db.DateTime(timezone=True),

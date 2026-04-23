@@ -12,10 +12,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_FIELDS = ("name", "email", "admission_number", "class_name", "section")
+REQUIRED_FIELDS = ("name", "email", "class_name", "section")
 
 # Optional columns that map to Student / User (ignored if absent)
 OPTIONAL_STUDENT_FIELDS: Set[str] = {
+    "admission_number",  # legacy column; ignored with a warning (server assigns)
     "roll_number",
     "gender",
     "date_of_birth",

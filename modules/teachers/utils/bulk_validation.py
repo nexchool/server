@@ -23,7 +23,7 @@ REQUIRED_TEACHER_FIELDS = ("name",)
 # Columns accepted from Excel (extras are ignored). Includes User + Teacher profile fields.
 OPTIONAL_TEACHER_FIELDS: Set[str] = {
     "email",
-    "employee_id",
+    "employee_id",  # legacy; ignored (server assigns)
     "phone",
     "designation",
     "department",
@@ -74,8 +74,5 @@ def coerce_teacher_row(
             out["status"] = "active"
     elif "status" in out:
         out["status"] = "active"
-
-    if "employee_id" in out and not is_blank(out.get("employee_id")):
-        out["employee_id"] = str(out["employee_id"]).strip()[:20]
 
     return out

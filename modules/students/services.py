@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import logging
@@ -95,36 +95,33 @@ def _check_student_plan_limit(tenant_id: str) -> tuple:
     return True, None
 
 
-def generate_admission_number() -> str:
+def generate_admission_number(
+    tenant_id: Optional[str] = None, *, reserved: Optional[Set[str]] = None
+) -> str:
     """
-    Generate a unique admission number.
-    
-    Format: ADM{YEAR}{SEQUENCE}
-    Example: ADM2026001, ADM2026002, etc.
-    
-    Returns:
-        Generated admission number string
+    Allocate the next unique admission number for the tenant.
+
+    Format comes from academic_settings.admission_number_format or the product
+    default (ADM{YEAR}{SEQ:3}). See shared.id_pattern.
     """
-    current_year = datetime.utcnow().year
-    
-    # Find the latest admission number for this year
-    prefix = f"ADM{current_year}"
-    latest_student = Student.query.filter(
-        Student.admission_number.like(f"{prefix}%")
-    ).order_by(Student.admission_number.desc()).first()
-    
-    if latest_student:
-        # Extract sequence number and increment
-        try:
-            last_sequence = int(latest_student.admission_number[len(prefix):])
-            new_sequence = last_sequence + 1
-        except ValueError:
-            new_sequence = 1
-    else:
-        new_sequence = 1
-    
-    # Format with leading zeros (3 digits)
-    return f"{prefix}{new_sequence:03d}"
+    from shared.id_pattern import (
+        MAX_STUDENT_ID_LEN,
+        allocate_next_id,
+        get_student_admission_pattern,
+    )
+
+    tid = tenant_id or get_tenant_id()
+    if not tid:
+        raise ValueError("Tenant context is required to generate an admission number")
+    pattern = get_student_admission_pattern(tid)
+    return allocate_next_id(
+        tenant_id=tid,
+        model=Student,
+        col_name="admission_number",
+        pattern=pattern,
+        reserved=reserved,
+        max_len=MAX_STUDENT_ID_LEN,
+    )
 
 
 def generate_student_password(name: str, date_of_birth: Optional[str]) -> str:
@@ -168,7 +165,6 @@ def create_student(
     guardian_name: str = None,
     guardian_relationship: str = None,
     guardian_phone: str = None,
-    admission_number: Optional[str] = None,
     email: Optional[str] = None,
     phone: Optional[str] = None,
     date_of_birth: Optional[str] = None,
@@ -245,7 +241,7 @@ def create_student(
     Create a new student with optional login credentials.
     
     Workflow:
-    1. Auto-generate admission number if not provided
+    1. Auto-generate admission number (not accepted from the client)
     2. Validate admission number uniqueness
     3. If email provided: create User with auto-generated credentials
     4. Create Student profile
@@ -257,7 +253,6 @@ def create_student(
         guardian_name: Guardian's full name (required)
         guardian_relationship: Relationship to student (required)
         guardian_phone: Guardian's phone number (required)
-        admission_number: Unique admission number (optional - auto-generated if not provided)
         email: Student's email (optional - creates login credentials if provided)
         phone: Student's phone number (optional)
         date_of_birth: Date of birth in YYYY-MM-DD format (optional)
@@ -282,13 +277,14 @@ def create_student(
         }
     """
     try:
-        # Auto-generate admission number if not provided
-        if not admission_number:
-            admission_number = generate_admission_number()
-        
         tenant_id = get_tenant_id()
         if not tenant_id:
             return {'success': False, 'error': 'Tenant context is required'}
+
+        try:
+            admission_number = generate_admission_number(tenant_id)
+        except (RuntimeError, ValueError) as e:
+            return {'success': False, 'error': str(e)}
 
         # Plan enforcement: do not allow creating students beyond plan limit
         allowed, limit_msg = _check_student_plan_limit(tenant_id)

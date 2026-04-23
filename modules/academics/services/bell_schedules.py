@@ -8,6 +8,11 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.exc import IntegrityError
 
 from core.database import db
+from shared.id_pattern import (
+    MAX_STUDENT_ID_LEN,
+    MAX_TEACHER_ID_LEN,
+    validate_id_pattern,
+)
 from modules.academics.backbone.models import (
     AcademicSettings,
     BellSchedule,
@@ -337,6 +342,26 @@ def patch_academic_settings(tenant_id: str, data: Dict[str, Any]) -> Dict[str, A
         row.allow_admin_attendance_override = bool(data["allow_admin_attendance_override"])
     if "default_working_days_json" in data:
         row.default_working_days_json = data.get("default_working_days_json")
+    if "admission_number_format" in data:
+        raw = data.get("admission_number_format")
+        s = (str(raw).strip() if raw is not None and str(raw).strip() else None)
+        if s:
+            err = validate_id_pattern(s, max_len=MAX_STUDENT_ID_LEN)
+            if err:
+                return {"success": False, "error": f"admission_number_format: {err}"}
+            row.admission_number_format = s
+        else:
+            row.admission_number_format = None
+    if "teacher_employee_id_format" in data:
+        raw = data.get("teacher_employee_id_format")
+        s = (str(raw).strip() if raw is not None and str(raw).strip() else None)
+        if s:
+            err = validate_id_pattern(s, max_len=MAX_TEACHER_ID_LEN)
+            if err:
+                return {"success": False, "error": f"teacher_employee_id_format: {err}"}
+            row.teacher_employee_id_format = s
+        else:
+            row.teacher_employee_id_format = None
     row.updated_at = datetime.now(timezone.utc)
     db.session.commit()
     return {
@@ -347,6 +372,8 @@ def patch_academic_settings(tenant_id: str, data: Dict[str, Any]) -> Dict[str, A
             "default_bell_schedule_id": row.default_bell_schedule_id,
             "allow_admin_attendance_override": row.allow_admin_attendance_override,
             "default_working_days_json": row.default_working_days_json,
+            "admission_number_format": row.admission_number_format,
+            "teacher_employee_id_format": row.teacher_employee_id_format,
         },
     }
 
@@ -361,5 +388,59 @@ def get_academic_settings(tenant_id: str) -> Dict[str, Any]:
             "default_bell_schedule_id": row.default_bell_schedule_id,
             "allow_admin_attendance_override": row.allow_admin_attendance_override,
             "default_working_days_json": row.default_working_days_json,
+            "admission_number_format": row.admission_number_format,
+            "teacher_employee_id_format": row.teacher_employee_id_format,
         },
     }
+
+
+def preview_next_id(
+    tenant_id: str, *, kind: str, pattern_override: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Return the next ID that would be generated for the tenant with an optional
+    pattern override (for unsaved form previews). Does not create rows.
+    """
+    from modules.students.models import Student
+    from modules.teachers.models import Teacher
+    from shared.id_pattern import (
+        MAX_STUDENT_ID_LEN,
+        MAX_TEACHER_ID_LEN,
+        get_student_admission_pattern,
+        get_teacher_employee_pattern,
+        max_seq_for_tenant,
+        render_id,
+        validate_id_pattern,
+    )
+
+    k = (kind or "student").strip().lower()
+    if k not in ("student", "teacher"):
+        return {"success": False, "error": "type must be student or teacher"}
+
+    if k == "student":
+        model = Student
+        col = "admission_number"
+        max_len = MAX_STUDENT_ID_LEN
+        get_pat = get_student_admission_pattern
+    else:
+        model = Teacher
+        col = "employee_id"
+        max_len = MAX_TEACHER_ID_LEN
+        get_pat = get_teacher_employee_pattern
+
+    raw = (pattern_override or "").strip()
+    if raw:
+        err = validate_id_pattern(raw, max_len=max_len)
+        if err:
+            return {"success": False, "error": err}
+        p = raw
+    else:
+        p = get_pat(tenant_id)
+
+    y = datetime.now(timezone.utc).year
+    n = max_seq_for_tenant(tenant_id, model, col, p) + 1
+    try:
+        preview = render_id(p, y, n)
+    except ValueError as e:
+        return {"success": False, "error": str(e) or "Invalid pattern"}
+    return {"success": True, "preview": preview}

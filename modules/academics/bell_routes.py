@@ -145,3 +145,23 @@ def patch_academic_settings_route():
     if not r["success"]:
         return error_response("Error", r["error"], 400)
     return success_response(data=r["settings"])
+
+
+@academics_bp.route("/id-preview", methods=["GET"])
+@tenant_required
+@auth_required
+@require_plan_feature("class_management")
+@require_any_permission(PERM_READ, PERM_MANAGE, "class.manage")
+def get_id_preview_route():
+    """
+    Query: type=student|teacher, optional pattern= (URL-encoded) for form preview
+    while editing before save.
+    """
+    kind = request.args.get("type", "student")
+    pattern_override = request.args.get("pattern")
+    r = bell_schedules.preview_next_id(
+        g.tenant_id, kind=kind, pattern_override=pattern_override
+    )
+    if not r["success"]:
+        return error_response("Error", r.get("error", "Failed"), 400)
+    return success_response(data={"preview": r["preview"]})
