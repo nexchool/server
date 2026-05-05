@@ -64,7 +64,7 @@ def init_db(app):
         from core.models import Tenant, Plan, AuditLog, PlatformSetting
         from modules.auth.models import User, Session
         from modules.rbac.models import Role, Permission, RolePermission, UserRole
-        from modules.students.models import Student, StudentDocument
+        from modules.students.models import Student, StudentDocument, StudentPromotionBatch
         from modules.academics.academic_year.models import AcademicYear
         from modules.subjects.models import Subject
         from modules.teachers.models import Teacher

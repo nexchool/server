@@ -8,7 +8,7 @@ from core.decorators import (
     auth_required,
     require_permission,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from modules.teachers import teachers_bp
 from modules.teachers.bulk_teacher_import_service import run_import, run_preview
@@ -38,7 +38,7 @@ def _read_xlsx_bytes():
 )
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_CREATE)
 def bulk_import_preview():
     """Validate Excel only; no inserts."""
@@ -62,7 +62,7 @@ def bulk_import_preview():
 )
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_CREATE)
 def bulk_import_execute():
     """Import validated rows from Excel."""

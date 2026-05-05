@@ -139,6 +139,18 @@ def register_blueprints(app: Flask):
     from modules.devices import devices_bp
     from modules.dashboard import dashboard_bp
 
+    # Multi-school structure (Phase 2): real blueprints.
+    from modules.school_units import school_units_bp
+    from modules.academic_programmes import academic_programmes_bp
+    from modules.grades import grades_bp
+    from modules.religions import religions_bp
+    from modules.class_subjects import class_subjects_bp
+    from modules.school_setup import school_setup_bp
+    from modules.subject_contexts import subject_contexts_bp
+    from modules.mediums import mediums_bp
+    # Subscription / billing (Phase 5).
+    from modules.subscription import subscription_bp
+
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(platform_bp, url_prefix='/api/platform')
@@ -159,6 +171,17 @@ def register_blueprints(app: Flask):
     app.register_blueprint(transport_bp, url_prefix='/api/transport')
     app.register_blueprint(devices_bp, url_prefix='/api/devices')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
+
+    # Multi-school structure
+    app.register_blueprint(school_units_bp, url_prefix='/api/school-units')
+    app.register_blueprint(academic_programmes_bp, url_prefix='/api/programmes')
+    app.register_blueprint(grades_bp, url_prefix='/api/grades')
+    app.register_blueprint(religions_bp, url_prefix='/api/religions')
+    app.register_blueprint(class_subjects_bp, url_prefix='/api/class-subjects')
+    app.register_blueprint(school_setup_bp, url_prefix='/api/school-setup')
+    app.register_blueprint(subject_contexts_bp, url_prefix='/api/subject-contexts')
+    app.register_blueprint(mediums_bp, url_prefix='/api/mediums')
+    app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
 
 
 def register_error_handlers(app: Flask):

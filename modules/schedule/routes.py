@@ -12,7 +12,7 @@ from modules.schedule import schedule_bp
 from core.decorators import (
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
     require_permission,
 )
 from shared.helpers import (
@@ -27,7 +27,7 @@ from . import services
 @schedule_bp.route("/today", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 def get_todays_schedule():
     """
     GET /api/schedule/today
@@ -45,7 +45,7 @@ def get_todays_schedule():
 @schedule_bp.route("/today/all", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission("timetable.manage")
 def get_all_slots_today():
     """
@@ -63,7 +63,7 @@ def get_all_slots_today():
 @schedule_bp.route("/override", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission("timetable.manage")
 def upsert_override():
     """
@@ -117,7 +117,7 @@ def upsert_override():
 @schedule_bp.route("/override", methods=["DELETE"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission("timetable.manage")
 def delete_override():
     """

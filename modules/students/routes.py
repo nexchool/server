@@ -6,7 +6,9 @@ from core.decorators import (
     require_any_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
+    require_setup_complete,
+    require_active_subscription,
 )
 from shared.helpers import (
     success_response,
@@ -33,7 +35,7 @@ PERM_MANAGE = 'student.manage'
 @students_bp.route('/me/dashboard', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('timetable')
+@require_feature('timetable')
 @require_any_permission(PERM_READ_SELF, PERM_MANAGE, 'academics.read')
 def student_me_dashboard():
     """Student home: today's slots, weekly preview, attendance summary (v2 sessions)."""
@@ -77,7 +79,7 @@ def _parse_int_param(raw, default=None, minimum=None, maximum=None):
 @students_bp.route('/', methods=['GET'], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 def list_students():
     """
     Paginated, filterable, sortable list of students.
@@ -128,6 +130,11 @@ def list_students():
 
     include_transport_summary = request.args.get('include_transport_summary', '').lower() in _TRUTHY
 
+    # Multi-school filters (resolved through the student's current class).
+    school_unit_id = request.args.get('school_unit_id') or None
+    programme_id = request.args.get('programme_id') or None
+    grade_id = request.args.get('grade_id') or None
+
     common_kwargs = dict(
         academic_year_id=academic_year_id,
         search=search,
@@ -142,6 +149,9 @@ def list_students():
         page=page,
         per_page=per_page,
         include_transport_summary=include_transport_summary,
+        school_unit_id=school_unit_id,
+        programme_id=programme_id,
+        grade_id=grade_id,
     )
 
     if has_permission(user_id, PERM_READ_ALL):
@@ -168,7 +178,9 @@ def list_students():
 @students_bp.route('/', methods=['POST'], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_CREATE)
 def create_student():
     """
@@ -329,12 +341,186 @@ def create_student():
         return forbidden_response(result["error"])
     return error_response('CreationError', result['error'], 400)
 
+
+@students_bp.route("/promotion/preview", methods=["POST"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature("student_management")
+@require_permission(PERM_UPDATE)
+def promotion_preview():
+    """
+    Preview academic-year promotion: counts promoted, repeated, skipped, graduated, unmapped, blocked.
+    Body: {
+      from_year_id, to_year_id,
+      class_mapping: { [class_id]: next_class_id | "GRADUATED" },
+      exclude_leaving?: bool (default false),
+      include_failed?: bool (default true; when false, skip students with academic_result fail)
+    }
+    """
+    data = request.get_json() or {}
+    from_year_id = (data.get("from_year_id") or "").strip()
+    to_year_id = (data.get("to_year_id") or "").strip()
+    class_mapping = data.get("class_mapping")
+    if not from_year_id or not to_year_id:
+        return validation_error_response("from_year_id and to_year_id are required")
+    if not isinstance(class_mapping, dict):
+        return validation_error_response("class_mapping must be an object")
+
+    from . import promotion_service
+
+    ex_leave, inc_fail = promotion_service.parse_promotion_filters(data)
+    result = promotion_service.preview_promotion(
+        from_year_id,
+        to_year_id,
+        class_mapping,
+        exclude_leaving=ex_leave,
+        include_failed=inc_fail,
+    )
+    if not result.get("success"):
+        return error_response("PromotionPreviewError", result.get("error", "Preview failed"), 400)
+    payload = {k: v for k, v in result.items() if k != "success"}
+    return success_response(data=payload)
+
+
+@students_bp.route("/promote", methods=["POST"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature("student_management")
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def promotion_execute():
+    """
+    Execute promotion in one transaction. Returns promotion_batch_id for audit logs.
+    Optional body: exclude_leaving, include_failed (same as preview).
+    """
+    data = request.get_json() or {}
+    from_year_id = (data.get("from_year_id") or "").strip()
+    to_year_id = (data.get("to_year_id") or "").strip()
+    class_mapping = data.get("class_mapping")
+    if not from_year_id or not to_year_id:
+        return validation_error_response("from_year_id and to_year_id are required")
+    if not isinstance(class_mapping, dict):
+        return validation_error_response("class_mapping must be an object")
+
+    from . import promotion_service
+
+    ex_leave, inc_fail = promotion_service.parse_promotion_filters(data)
+    result = promotion_service.execute_promotion(
+        from_year_id,
+        to_year_id,
+        class_mapping,
+        user_id=g.current_user.id,
+        exclude_leaving=ex_leave,
+        include_failed=inc_fail,
+    )
+    if not result.get("success"):
+        err_details = None
+        if result.get("promotion_batch_id") or result.get("summary"):
+            err_details = {
+                "promotion_batch_id": result.get("promotion_batch_id"),
+                "summary": result.get("summary"),
+                "filters": result.get("filters"),
+            }
+        return error_response(
+            "PromotionError",
+            result.get("error", "Promotion failed"),
+            400,
+            details=err_details,
+        )
+    return success_response(
+        data={
+            "promotion_batch_id": result["promotion_batch_id"],
+            "summary": result["summary"],
+            "batch": result.get("batch"),
+            "filters": result.get("filters"),
+        },
+        message="Promotion completed",
+    )
+
+
+@students_bp.route("/promotion/history", methods=["GET"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature("student_management")
+@require_any_permission(PERM_READ_ALL, PERM_UPDATE, PERM_MANAGE)
+def promotion_history():
+    """Paginated list of past StudentPromotionBatch rows for the tenant."""
+    from .models import StudentPromotionBatch
+    from modules.academics.academic_year.models import AcademicYear
+
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = max(1, min(100, int(request.args.get("page_size", 20))))
+    except (TypeError, ValueError):
+        page_size = 20
+
+    q = StudentPromotionBatch.query.filter_by(tenant_id=g.tenant_id)
+    from_filter = (request.args.get("from_year_id") or "").strip()
+    to_filter = (request.args.get("to_year_id") or "").strip()
+    if from_filter:
+        q = q.filter(StudentPromotionBatch.from_academic_year_id == from_filter)
+    if to_filter:
+        q = q.filter(StudentPromotionBatch.to_academic_year_id == to_filter)
+
+    total = q.count()
+    rows = (
+        q.order_by(StudentPromotionBatch.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    year_ids = {r.from_academic_year_id for r in rows} | {
+        r.to_academic_year_id for r in rows
+    }
+    year_ids.discard(None)
+    name_by_year = {}
+    if year_ids:
+        for ay in AcademicYear.query.filter(
+            AcademicYear.tenant_id == g.tenant_id,
+            AcademicYear.id.in_(list(year_ids)),
+        ).all():
+            name_by_year[ay.id] = ay.name
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "id": r.id,
+                "from_academic_year_id": r.from_academic_year_id,
+                "from_academic_year_name": name_by_year.get(r.from_academic_year_id),
+                "to_academic_year_id": r.to_academic_year_id,
+                "to_academic_year_name": name_by_year.get(r.to_academic_year_id),
+                "status": r.status,
+                "summary": r.summary,
+                "created_by_user_id": r.created_by_user_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+        )
+
+    return success_response(
+        data={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size if total else 0,
+            },
+        }
+    )
+
+
 # --- Document routes: more specific paths, register before /<student_id> ---
 
 @students_bp.route('/<student_id>/documents', methods=['GET'], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 def list_student_documents(student_id):
     """List all documents for a student. Uses same permission logic as get_student."""
     user_id = g.current_user.id
@@ -370,7 +556,7 @@ def list_student_documents(student_id):
 @students_bp.route('/<student_id>/documents', methods=['POST'], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 @require_permission(PERM_MANAGE)
 def create_student_document(student_id):
     """Upload a document for a student. multipart/form-data: file, document_type."""
@@ -422,7 +608,7 @@ def create_student_document(student_id):
 )
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 def get_student_document_file(student_id, document_id):
     """
     Stream document bytes from S3. Requires same read access as listing documents.
@@ -472,7 +658,7 @@ def get_student_document_file(student_id, document_id):
 @students_bp.route('/<student_id>/documents/<document_id>', methods=['DELETE'], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 @require_permission(PERM_MANAGE)
 def delete_student_document(student_id, document_id):
     """Delete a document for a student."""
@@ -488,7 +674,7 @@ def delete_student_document(student_id, document_id):
 @students_bp.route('/<student_id>', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 def get_student(student_id):
     """Get student details"""
     user_id = g.current_user.id
@@ -524,7 +710,7 @@ def get_student(student_id):
 @students_bp.route('/me', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
 def get_my_student_profile():
     """Get current user's student profile"""
     user_id = g.current_user.id
@@ -538,7 +724,9 @@ def get_my_student_profile():
 @students_bp.route('/<student_id>', methods=['PUT'])
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_UPDATE)
 def update_student(student_id):
     """
@@ -568,8 +756,6 @@ def update_student(student_id):
     result = services.update_student(
         student_id,
         name=data.get('name'),
-        academic_year_id=data.get('academic_year_id'),
-        class_id=data.get('class_id'),
         roll_number=data.get('roll_number'),
         date_of_birth=data.get('date_of_birth'),
         gender=data.get('gender'),
@@ -642,6 +828,11 @@ def update_student(student_id):
         tc_number=data.get("tc_number"),
         house_name=data.get("house_name"),
         student_status=data.get("student_status"),
+        academic_result=data.get("academic_result"),
+        class_id=data["class_id"] if "class_id" in data else services.PLACEMENT_UNSET,
+        academic_year_id=(
+            data["academic_year_id"] if "academic_year_id" in data else services.PLACEMENT_UNSET
+        ),
     )
     
     if result['success']:
@@ -651,7 +842,9 @@ def update_student(student_id):
 @students_bp.route('/<student_id>', methods=['DELETE'])
 @tenant_required
 @auth_required
-@require_plan_feature('student_management')
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_DELETE)
 def delete_student(student_id):
     """Delete student"""

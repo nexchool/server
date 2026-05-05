@@ -15,7 +15,7 @@ from sqlalchemy import cast, func, Date
 
 from core.database import db
 from core.tenant import get_tenant_id
-from core.plan_features import is_plan_feature_enabled
+from core.feature_flags import is_feature_enabled
 from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import (
     AttendanceSession,
@@ -139,51 +139,56 @@ def _today_ops(tenant_id: str) -> Dict[str, Any]:
     }
 
 
-def _alerts(tenant_id: str, transport_enabled: bool) -> Dict[str, Any]:
-    # Timetable conflicts: same teacher, same dow, same period in two active timetables
-    conflict_rows = (
-        db.session.query(
-            TimetableEntry.teacher_id,
-            TimetableEntry.day_of_week,
-            TimetableEntry.period_number,
-            func.count(TimetableEntry.id).label("cnt"),
-        )
-        .join(
-            TimetableVersion,
-            TimetableEntry.timetable_version_id == TimetableVersion.id,
-        )
-        .filter(
-            TimetableEntry.tenant_id == tenant_id,
-            TimetableVersion.status == "active",
-            TimetableEntry.entry_status == "active",
-            TimetableEntry.teacher_id.isnot(None),
-        )
-        .group_by(
-            TimetableEntry.teacher_id,
-            TimetableEntry.day_of_week,
-            TimetableEntry.period_number,
-        )
-        .having(func.count(TimetableEntry.id) > 1)
-        .all()
-    )
-    timetable_conflicts = len(conflict_rows)
+def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = True) -> Dict[str, Any]:
+    timetable_enabled = is_feature_enabled(tenant_id, "timetable")
 
-    # Classes without active timetable
-    all_class_ids = [
-        c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
-    ]
-    classes_with_timetable = {
-        row[0]
-        for row in db.session.query(TimetableVersion.class_id)
-        .filter(
-            TimetableVersion.tenant_id == tenant_id,
-            TimetableVersion.status == "active",
+    # Timetable conflicts: same teacher, same dow, same period in two active timetables.
+    # Skipped entirely when timetable is off — disabled feature shouldn't surface alerts.
+    timetable_conflicts = 0
+    classes_without_timetable = 0
+    if timetable_enabled:
+        conflict_rows = (
+            db.session.query(
+                TimetableEntry.teacher_id,
+                TimetableEntry.day_of_week,
+                TimetableEntry.period_number,
+                func.count(TimetableEntry.id).label("cnt"),
+            )
+            .join(
+                TimetableVersion,
+                TimetableEntry.timetable_version_id == TimetableVersion.id,
+            )
+            .filter(
+                TimetableEntry.tenant_id == tenant_id,
+                TimetableVersion.status == "active",
+                TimetableEntry.entry_status == "active",
+                TimetableEntry.teacher_id.isnot(None),
+            )
+            .group_by(
+                TimetableEntry.teacher_id,
+                TimetableEntry.day_of_week,
+                TimetableEntry.period_number,
+            )
+            .having(func.count(TimetableEntry.id) > 1)
+            .all()
         )
-        .all()
-    }
-    classes_without_timetable = sum(
-        1 for cid in all_class_ids if cid not in classes_with_timetable
-    )
+        timetable_conflicts = len(conflict_rows)
+
+        all_class_ids = [
+            c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
+        ]
+        classes_with_timetable = {
+            row[0]
+            for row in db.session.query(TimetableVersion.class_id)
+            .filter(
+                TimetableVersion.tenant_id == tenant_id,
+                TimetableVersion.status == "active",
+            )
+            .all()
+        }
+        classes_without_timetable = sum(
+            1 for cid in all_class_ids if cid not in classes_with_timetable
+        )
 
     # Class subjects without primary teacher
     active_subject_ids = [
@@ -232,16 +237,18 @@ def _alerts(tenant_id: str, transport_enabled: bool) -> Dict[str, Any]:
         Student.class_id.is_(None),
     ).count()
 
-    # Overdue fee students
-    overdue_fees_students = (
-        db.session.query(func.count(StudentFee.id))
-        .filter(
-            StudentFee.tenant_id == tenant_id,
-            StudentFee.status == StudentFeeStatus.overdue.value,
+    # Overdue fee students — only counted when finance is enabled.
+    overdue_fees_students = 0
+    if finance_enabled:
+        overdue_fees_students = (
+            db.session.query(func.count(StudentFee.id))
+            .filter(
+                StudentFee.tenant_id == tenant_id,
+                StudentFee.status == StudentFeeStatus.overdue.value,
+            )
+            .scalar()
+            or 0
         )
-        .scalar()
-        or 0
-    )
 
     # Transport issues
     transport_issues = 0
@@ -504,17 +511,18 @@ def build_dashboard() -> Dict[str, Any]:
     if not tenant_id:
         return {"error": "Tenant context required"}
 
-    transport_enabled = is_plan_feature_enabled(tenant_id, "transport_management")
+    # Feature gates — disabled features return a {enabled: False} stub so the
+    # dashboard renders cleanly without that section. The feature key matches
+    # the OPTIONAL_FEATURES registry exactly (typo'd keys default to enabled).
+    transport_enabled = is_feature_enabled(tenant_id, "transport")
+    attendance_enabled = is_feature_enabled(tenant_id, "attendance")
+    finance_enabled = is_feature_enabled(tenant_id, "fees_management")
 
     overview = _overview(tenant_id)
-    today_ops = _today_ops(tenant_id)
-    alerts = _alerts(tenant_id, transport_enabled)
-    finance = _finance(tenant_id)
-    transport = (
-        _transport(tenant_id)
-        if transport_enabled
-        else {"enabled": False}
-    )
+    today_ops = _today_ops(tenant_id) if attendance_enabled else {"enabled": False}
+    alerts = _alerts(tenant_id, transport_enabled, finance_enabled=finance_enabled)
+    finance = _finance(tenant_id) if finance_enabled else {"enabled": False}
+    transport = _transport(tenant_id) if transport_enabled else {"enabled": False}
     actions = _actions(tenant_id)
 
     health_score = _health_score(alerts, today_ops)
@@ -527,6 +535,11 @@ def build_dashboard() -> Dict[str, Any]:
         "transport": transport,
         "actions": actions,
         "health_score": health_score,
+        "feature_flags": {
+            "attendance": attendance_enabled,
+            "fees_management": finance_enabled,
+            "transport": transport_enabled,
+        },
     }
 
 

@@ -108,9 +108,21 @@ def list_student_fees(
     if not tenant_id:
         return []
 
+    from core.feature_flags import is_feature_enabled
+
+    transport_off = not is_feature_enabled(tenant_id, "transport")
     query = StudentFee.query.filter_by(tenant_id=tenant_id).join(
         Student, StudentFee.student_id == Student.id
     )
+    # Exclude transport-only fees when transport is disabled. We use a
+    # subquery filter instead of a join to avoid duplicate-join conflicts
+    # later in this function (academic_year_id also joins FeeStructure).
+    if transport_off:
+        transport_fs_ids = db.session.query(FeeStructure.id).filter(
+            FeeStructure.tenant_id == tenant_id,
+            FeeStructure.is_transport_only.is_(True),
+        )
+        query = query.filter(~StudentFee.fee_structure_id.in_(transport_fs_ids))
     if student_id:
         query = query.filter(StudentFee.student_id == student_id)
     if fee_structure_id:

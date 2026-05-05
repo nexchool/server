@@ -40,11 +40,44 @@ else:
 PY
 }
 
+widen_alembic_version() {
+  # Alembic ships `alembic_version.version_num` as VARCHAR(32). Some of our
+  # revision IDs are >32 chars and Postgres rejects the post-upgrade UPDATE
+  # with StringDataRightTruncation. Widening to VARCHAR(255) is the standard
+  # fix and is idempotent (no-op if already wider). Skipped on a fresh DB
+  # where the table doesn't exist yet — `flask db upgrade` will create it.
+  python - <<'PY'
+import os
+import psycopg2
+
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
+try:
+    cur = conn.cursor()
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'alembic_version'
+            ) THEN
+                ALTER TABLE alembic_version
+                    ALTER COLUMN version_num TYPE VARCHAR(255);
+            END IF;
+        END $$;
+    """)
+    conn.commit()
+    print("[startup] alembic_version.version_num ensured >= VARCHAR(255)")
+finally:
+    conn.close()
+PY
+}
+
 run_migrations() {
   if [ "${SKIP_DB_MIGRATE:-0}" = "1" ]; then
     log "Skipping migrations (SKIP_DB_MIGRATE=1)"
     return 0
   fi
+  widen_alembic_version
   log "Running database migrations..."
   flask db upgrade
 }

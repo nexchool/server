@@ -8,7 +8,7 @@ from core.decorators import (
     require_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from core.decorators.rbac import require_any_permission
 from shared.helpers import (
@@ -38,7 +38,7 @@ def list_academic_years():
 @academics_bp.route("/academic-years", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def create_academic_year():
     """POST /api/academics/academic-years"""
@@ -70,7 +70,7 @@ def create_academic_year():
 @academics_bp.route("/academic-years/<year_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_academic_year(year_id):
     """GET /api/academics/academic-years/<id>"""
@@ -83,7 +83,7 @@ def get_academic_year(year_id):
 @academics_bp.route("/academic-years/<year_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def update_academic_year(year_id):
     """PUT /api/academics/academic-years/<id>"""
@@ -106,7 +106,7 @@ def update_academic_year(year_id):
 @academics_bp.route("/academic-years/<year_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def delete_academic_year(year_id):
     """DELETE /api/academics/academic-years/<id>"""

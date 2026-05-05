@@ -13,7 +13,7 @@ from core.decorators import (
     require_any_permission,
     require_permission,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from shared.helpers import success_response, error_response
 from modules.academics.services import (
@@ -36,7 +36,7 @@ PERM_TT_MANAGE = "timetable.manage"
 @classes_bp.route("/<class_id>/subjects", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CS_READ, PERM_CS_MANAGE, "class.manage")
 def list_class_subjects(class_id):
     r = class_subjects.list_for_class(g.tenant_id, class_id)
@@ -48,7 +48,7 @@ def list_class_subjects(class_id):
 @classes_bp.route("/<class_id>/subjects", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CS_MANAGE, "class.manage")
 def create_class_subject(class_id):
     r = class_subjects.create_offering(g.tenant_id, class_id, request.get_json() or {})
@@ -60,7 +60,7 @@ def create_class_subject(class_id):
 @classes_bp.route("/<class_id>/subjects/<cs_id>", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CS_MANAGE, "class.manage")
 def patch_class_subject(class_id, cs_id):
     r = class_subjects.update_offering(g.tenant_id, class_id, cs_id, request.get_json() or {})
@@ -72,7 +72,7 @@ def patch_class_subject(class_id, cs_id):
 @classes_bp.route("/<class_id>/subjects/<cs_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CS_MANAGE, "class.manage")
 def delete_class_subject(class_id, cs_id):
     r = class_subjects.delete_offering(g.tenant_id, class_id, cs_id)
@@ -87,7 +87,7 @@ def delete_class_subject(class_id, cs_id):
 @classes_bp.route("/<class_id>/subject-teachers", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_CS_READ, PERM_CS_MANAGE, "class.manage")
 def list_subject_teachers(class_id):
     r = class_subject_teachers.list_for_class(g.tenant_id, class_id)
@@ -99,7 +99,7 @@ def list_subject_teachers(class_id):
 @classes_bp.route("/<class_id>/subject-teacher-candidates", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_CS_READ, PERM_CS_MANAGE, "class.manage")
 def list_subject_teacher_candidates(class_id):
     """Active tenant teachers for subject-assignment pickers (not homeroom eligibility)."""
@@ -112,7 +112,7 @@ def list_subject_teacher_candidates(class_id):
 @classes_bp.route("/<class_id>/subject-teachers", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_CS_MANAGE, "class.manage")
 def create_subject_teacher(class_id):
     r = class_subject_teachers.create_assignment(
@@ -126,7 +126,7 @@ def create_subject_teacher(class_id):
 @classes_bp.route("/<class_id>/subject-teachers/<aid>", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_CS_MANAGE, "class.manage")
 def patch_subject_teacher(class_id, aid):
     r = class_subject_teachers.update_assignment(
@@ -140,7 +140,7 @@ def patch_subject_teacher(class_id, aid):
 @classes_bp.route("/<class_id>/subject-teachers/<aid>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_CS_MANAGE, "class.manage")
 def delete_subject_teacher(class_id, aid):
     r = class_subject_teachers.delete_assignment(g.tenant_id, class_id, aid)
@@ -155,7 +155,7 @@ def delete_subject_teacher(class_id, aid):
 @classes_bp.route("/<class_id>/class-teachers", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CT_MANAGE, "class.read", "class.manage")
 def list_class_teachers(class_id):
     r = class_teacher_assignments.list_for_class(g.tenant_id, class_id)
@@ -167,7 +167,7 @@ def list_class_teachers(class_id):
 @classes_bp.route("/<class_id>/class-teachers", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CT_MANAGE, "class.manage")
 def create_class_teacher_assignment(class_id):
     r = class_teacher_assignments.create_assignment(
@@ -181,7 +181,7 @@ def create_class_teacher_assignment(class_id):
 @classes_bp.route("/<class_id>/class-teachers/<aid>", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CT_MANAGE, "class.manage")
 def patch_class_teacher_assignment(class_id, aid):
     r = class_teacher_assignments.update_assignment(
@@ -195,7 +195,7 @@ def patch_class_teacher_assignment(class_id, aid):
 @classes_bp.route("/<class_id>/class-teachers/<aid>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_CT_MANAGE, "class.manage")
 def delete_class_teacher_assignment(class_id, aid):
     r = class_teacher_assignments.delete_assignment(g.tenant_id, class_id, aid)
@@ -210,7 +210,7 @@ def delete_class_teacher_assignment(class_id, aid):
 @classes_bp.route("/<class_id>/timetable/versions", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_TT_READ, PERM_TT_MANAGE)
 def list_timetable_versions(class_id):
     include_drafts = has_permission(g.current_user.id, PERM_TT_MANAGE)
@@ -223,7 +223,7 @@ def list_timetable_versions(class_id):
 @classes_bp.route("/<class_id>/timetable/versions", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def create_timetable_version(class_id):
     r = timetable_v2.create_version(g.tenant_id, class_id, request.get_json() or {}, g.current_user.id)
@@ -235,7 +235,7 @@ def create_timetable_version(class_id):
 @classes_bp.route("/<class_id>/timetable/versions/clone", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def clone_timetable_version_route(class_id):
     r = timetable_v2.clone_active_to_draft(g.tenant_id, class_id, g.current_user.id, request.get_json() or {})
@@ -247,7 +247,7 @@ def clone_timetable_version_route(class_id):
 @classes_bp.route("/<class_id>/timetable/versions/<vid>", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def patch_timetable_version(class_id, vid):
     r = timetable_v2.update_version(g.tenant_id, class_id, vid, request.get_json() or {})
@@ -259,7 +259,7 @@ def patch_timetable_version(class_id, vid):
 @classes_bp.route("/<class_id>/timetable/versions/<vid>/activate", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def activate_timetable_version_route(class_id, vid):
     r = timetable_v2.activate_version(g.tenant_id, class_id, vid)
@@ -271,7 +271,7 @@ def activate_timetable_version_route(class_id, vid):
 @classes_bp.route("/<class_id>/timetable/versions/<vid>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def delete_timetable_version_route(class_id, vid):
     r = timetable_v2.delete_version(g.tenant_id, class_id, vid)
@@ -283,7 +283,7 @@ def delete_timetable_version_route(class_id, vid):
 @classes_bp.route("/<class_id>/timetable", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_any_permission(PERM_TT_READ, PERM_TT_MANAGE)
 def get_class_timetable(class_id):
     vid = request.args.get("version_id")
@@ -307,7 +307,7 @@ def get_class_timetable(class_id):
 @classes_bp.route("/<class_id>/timetable/entries", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def create_timetable_entry(class_id):
     r = timetable_v2.create_entry(g.tenant_id, class_id, request.get_json() or {})
@@ -319,7 +319,7 @@ def create_timetable_entry(class_id):
 @classes_bp.route("/<class_id>/timetable/entries/swap", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def swap_timetable_entries(class_id):
     r = timetable_v2.swap_entries(g.tenant_id, class_id, request.get_json() or {})
@@ -331,7 +331,7 @@ def swap_timetable_entries(class_id):
 @classes_bp.route("/<class_id>/timetable/entries/<eid>", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def patch_timetable_entry(class_id, eid):
     r = timetable_v2.update_entry(g.tenant_id, class_id, eid, request.get_json() or {})
@@ -343,7 +343,7 @@ def patch_timetable_entry(class_id, eid):
 @classes_bp.route("/<class_id>/timetable/entries/<eid>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def delete_timetable_entry(class_id, eid):
     r = timetable_v2.delete_entry(g.tenant_id, class_id, eid)
@@ -355,7 +355,7 @@ def delete_timetable_entry(class_id, eid):
 @classes_bp.route("/<class_id>/timetable/entries/<eid>/move", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def move_timetable_entry(class_id, eid):
     r = timetable_v2.move_entry(g.tenant_id, class_id, eid, request.get_json() or {})
@@ -367,7 +367,7 @@ def move_timetable_entry(class_id, eid):
 @classes_bp.route("/<class_id>/timetable/generate", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_TT_MANAGE)
 def generate_class_timetable(class_id):
     r = timetable_v2.generate_draft(g.tenant_id, class_id, g.current_user.id, request.get_json() or {})

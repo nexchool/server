@@ -16,7 +16,7 @@ Endpoints for:
 
 from flask import request, g
 from modules.teachers import teachers_bp
-from core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from core.decorators import require_permission, auth_required, tenant_required, require_feature
 from shared.helpers import (
     success_response,
     error_response,
@@ -38,7 +38,7 @@ PERM_LEAVE_MANAGE = "teacher.leave.manage"
 @teachers_bp.route("/<teacher_id>/subjects", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_MANAGE)
 def list_teacher_subjects(teacher_id):
     """List all subjects a teacher is qualified to teach."""
@@ -49,7 +49,7 @@ def list_teacher_subjects(teacher_id):
 @teachers_bp.route("/<teacher_id>/subjects", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_MANAGE)
 def add_teacher_subject(teacher_id):
     """Assign a subject to a teacher."""
@@ -67,7 +67,7 @@ def add_teacher_subject(teacher_id):
 @teachers_bp.route("/<teacher_id>/subjects/<subject_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_MANAGE)
 def remove_teacher_subject(teacher_id, subject_id):
     """Remove a subject from a teacher."""
@@ -84,7 +84,7 @@ def remove_teacher_subject(teacher_id, subject_id):
 @teachers_bp.route("/<teacher_id>/availability", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def list_teacher_availability(teacher_id):
     """List availability records for a teacher."""
@@ -95,7 +95,7 @@ def list_teacher_availability(teacher_id):
 @teachers_bp.route("/<teacher_id>/availability", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def create_teacher_availability(teacher_id):
     """Create an availability record for a teacher."""
@@ -116,7 +116,7 @@ def create_teacher_availability(teacher_id):
 @teachers_bp.route("/<teacher_id>/availability/<availability_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def update_teacher_availability(teacher_id, availability_id):
     """Update an availability record."""
@@ -134,7 +134,7 @@ def update_teacher_availability(teacher_id, availability_id):
 @teachers_bp.route("/<teacher_id>/availability/<availability_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def delete_teacher_availability(teacher_id, availability_id):
     """Delete an availability record."""
@@ -151,7 +151,7 @@ def delete_teacher_availability(teacher_id, availability_id):
 @teachers_bp.route("/leaves", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_APPLY)
 def create_teacher_leave():
     """Submit a leave request. teacher_id is derived from the authenticated user."""
@@ -178,7 +178,7 @@ def create_teacher_leave():
 @teachers_bp.route("/leaves/my", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_APPLY)
 def list_my_leaves():
     """List leave requests for the authenticated teacher. Supports ?status filter."""
@@ -194,7 +194,7 @@ def list_my_leaves():
 @teachers_bp.route("/leaves", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_MANAGE)
 def list_teacher_leaves():
     """List all leave requests (admin view). Supports ?teacher_id and ?status filters."""
@@ -207,7 +207,7 @@ def list_teacher_leaves():
 @teachers_bp.route("/leaves/<leave_id>/cancel", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_APPLY)
 def cancel_teacher_leave(leave_id):
     """Cancel a pending leave request (teacher cancels their own leave)."""
@@ -224,7 +224,7 @@ def cancel_teacher_leave(leave_id):
 @teachers_bp.route("/leaves/<leave_id>/approve", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_MANAGE)
 def approve_teacher_leave(leave_id):
     """Approve a teacher leave request."""
@@ -237,7 +237,7 @@ def approve_teacher_leave(leave_id):
 @teachers_bp.route("/leaves/<leave_id>/reject", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_MANAGE)
 def reject_teacher_leave(leave_id):
     """Reject a teacher leave request."""
@@ -254,7 +254,7 @@ def reject_teacher_leave(leave_id):
 @teachers_bp.route("/leave-balances/my", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_APPLY)
 def get_my_leave_balances():
     """Return leave balances for the authenticated teacher (current academic year)."""
@@ -270,7 +270,7 @@ def get_my_leave_balances():
 @teachers_bp.route("/<teacher_id>/leave-balances", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_MANAGE)
 def get_teacher_leave_balances(teacher_id):
     """Admin: return leave balances for a specific teacher."""
@@ -282,7 +282,7 @@ def get_teacher_leave_balances(teacher_id):
 @teachers_bp.route("/<teacher_id>/leave-balances/<leave_type>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_MANAGE)
 def adjust_teacher_leave_balance(teacher_id, leave_type):
     """Admin: override the allocated leave days for a teacher and leave type."""
@@ -310,7 +310,7 @@ def adjust_teacher_leave_balance(teacher_id, leave_type):
 @teachers_bp.route("/leave-policy", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_APPLY)
 def get_leave_policy():
     """Return leave policies for all leave types for this tenant."""
@@ -321,7 +321,7 @@ def get_leave_policy():
 @teachers_bp.route("/leave-policy/<leave_type>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("teacher_management")
+@require_feature("teacher_management")
 @require_permission(PERM_LEAVE_MANAGE)
 def update_leave_policy(leave_type):
     """Admin: create or update the leave policy for a specific leave type."""
@@ -347,7 +347,7 @@ def update_leave_policy(leave_type):
 @teachers_bp.route("/<teacher_id>/workload", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def get_teacher_workload(teacher_id):
     """Get workload rule for a teacher."""
@@ -360,7 +360,7 @@ def get_teacher_workload(teacher_id):
 @teachers_bp.route("/<teacher_id>/workload", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def create_teacher_workload(teacher_id):
     """Create a workload rule for a teacher."""
@@ -380,7 +380,7 @@ def create_teacher_workload(teacher_id):
 @teachers_bp.route("/<teacher_id>/workload", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def update_teacher_workload(teacher_id):
     """Update (or upsert) the workload rule for a teacher."""

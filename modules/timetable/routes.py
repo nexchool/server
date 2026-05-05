@@ -11,7 +11,9 @@ from core.decorators import (
     require_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
+    require_setup_complete,
+    require_active_subscription,
 )
 from shared.helpers import (
     success_response,
@@ -33,7 +35,9 @@ PERM_MANAGE = "timetable.manage"
 @timetable_bp.route("/generate", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_MANAGE)
 def generate_timetable():
     """
@@ -88,7 +92,7 @@ def _generation_message(result: dict) -> str:
 @timetable_bp.route("/config", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def get_config():
     """Get timetable configuration (duration, breaks, etc.) for this school."""
@@ -100,7 +104,7 @@ def get_config():
 @timetable_bp.route("/config", methods=["PUT"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def update_config():
     """Update timetable configuration. Persisted per school."""
@@ -113,7 +117,7 @@ def update_config():
 @timetable_bp.route("/check-conflicts", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def check_conflicts():
     """
@@ -157,7 +161,7 @@ def check_conflicts():
 @timetable_bp.route("/slots/<slot_id>/move", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_UPDATE)
 def move_slot(slot_id):
     """
@@ -200,7 +204,7 @@ def move_slot(slot_id):
 @timetable_bp.route("/slots/swap", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_UPDATE)
 def swap_slots():
     """
@@ -243,7 +247,7 @@ def swap_slots():
 @timetable_bp.route("/slots/<slot_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_DELETE)
 def remove_slot(slot_id):
     """Delete a single timetable slot (drag-and-drop editing context)."""
@@ -264,7 +268,9 @@ def remove_slot(slot_id):
 @timetable_bp.route("/", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_CREATE)
 def create_slot():
     """Create a new timetable slot."""
@@ -289,7 +295,7 @@ def create_slot():
 @timetable_bp.route("/class/<class_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_READ)
 def get_slots_by_class(class_id):
     """Get all timetable slots for a class."""
@@ -301,7 +307,9 @@ def get_slots_by_class(class_id):
 @timetable_bp.route("/<slot_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_UPDATE)
 def update_slot(slot_id):
     """Update a timetable slot."""
@@ -322,7 +330,7 @@ def update_slot(slot_id):
 @timetable_bp.route("/<slot_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_DELETE)
 def delete_slot(slot_id):
     """Delete a timetable slot."""

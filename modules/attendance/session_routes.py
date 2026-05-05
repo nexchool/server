@@ -5,7 +5,7 @@ from datetime import date
 from flask import g, request
 
 from modules.attendance import attendance_bp
-from core.decorators import auth_required, require_any_permission, tenant_required, require_plan_feature
+from core.decorators import auth_required, require_any_permission, tenant_required, require_feature
 from shared.helpers import error_response, success_response, validation_error_response
 
 from modules.rbac.services import has_permission
@@ -22,7 +22,7 @@ PERM_MANAGE = "attendance.manage"
 @attendance_bp.route("/eligible-classes", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_MANAGE)
 def eligible_classes():
     d = date.today()
@@ -38,7 +38,7 @@ def eligible_classes():
 @attendance_bp.route("/class/<class_id>/session", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_READ_CLASS, PERM_READ_ALL, PERM_MANAGE)
 def get_class_attendance_session(class_id):
     ds = request.args.get("date") or date.today().isoformat()
@@ -67,7 +67,7 @@ def get_class_attendance_session(class_id):
 @attendance_bp.route("/class/<class_id>/session", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_MANAGE)
 def create_class_attendance_session(class_id):
     body = request.get_json() or {}
@@ -96,7 +96,7 @@ def create_class_attendance_session(class_id):
 @attendance_bp.route("/sessions/<session_id>/records", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_MANAGE)
 def post_session_records(session_id):
     body = request.get_json() or {}
@@ -113,7 +113,7 @@ def post_session_records(session_id):
 @attendance_bp.route("/sessions/<session_id>/finalize", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_MANAGE)
 def finalize_session(session_id):
     r = svc.finalize_session(g.tenant_id, session_id, g.current_user.id)
@@ -125,7 +125,7 @@ def finalize_session(session_id):
 @attendance_bp.route("/class/<class_id>/history", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_READ_CLASS, PERM_READ_ALL, PERM_MANAGE)
 def class_attendance_history(class_id):
     r = svc.class_history(g.tenant_id, class_id)
@@ -137,7 +137,7 @@ def class_attendance_history(class_id):
 @attendance_bp.route("/student/<student_id>/v2", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_READ_SELF, PERM_READ_CLASS, PERM_READ_ALL, PERM_MANAGE)
 def student_attendance_v2(student_id):
     user_id = g.current_user.id
@@ -159,7 +159,7 @@ def student_attendance_v2(student_id):
 @attendance_bp.route("/me/v2", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("attendance")
+@require_feature("attendance")
 @require_any_permission(PERM_READ_SELF, PERM_MANAGE)
 def my_attendance_v2():
     month = request.args.get("month")

@@ -13,7 +13,7 @@ from core.decorators import (
     require_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from core.decorators.rbac import require_any_permission
 from shared.helpers import (
@@ -39,7 +39,7 @@ from .services.payment_service import list_recent_payments
 @finance_bp.route("/structures/available-classes", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_available_classes_for_structure():
     """GET /api/finance/structures/available-classes - Classes not yet in another fee structure."""
@@ -57,7 +57,7 @@ def get_available_classes_for_structure():
 @finance_bp.route("/structures", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def list_structures():
     """GET /api/finance/structures"""
@@ -73,7 +73,7 @@ def list_structures():
 @finance_bp.route("/structures", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_MANAGE)
 def create_structure():
     """POST /api/finance/structures"""
@@ -133,7 +133,7 @@ def create_structure():
 @finance_bp.route("/structures/<structure_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_structure(structure_id):
     """GET /api/finance/structures/<id>"""
@@ -146,7 +146,7 @@ def get_structure(structure_id):
 @finance_bp.route("/structures/<structure_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_MANAGE)
 def update_structure(structure_id):
     """PUT /api/finance/structures/<id>"""
@@ -211,7 +211,7 @@ def update_structure(structure_id):
 @finance_bp.route("/structures/<structure_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_MANAGE)
 def delete_structure(structure_id):
     """DELETE /api/finance/structures/<id>"""
@@ -231,7 +231,7 @@ def delete_structure(structure_id):
 @finance_bp.route("/summary", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def get_finance_summary():
     """GET /api/finance/summary - Aggregated stats. Add include_recent_payments=N to also get recent payments (dashboard)."""
@@ -259,7 +259,7 @@ def get_finance_summary():
 @finance_bp.route("/student-fees", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def list_student_fees():
     """GET /api/finance/student-fees"""
@@ -285,7 +285,7 @@ def list_student_fees():
 @finance_bp.route("/recent-payments", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def get_recent_payments():
     """GET /api/finance/recent-payments - Last 10 payments for dashboard."""
@@ -297,7 +297,7 @@ def get_recent_payments():
 @finance_bp.route("/student-fees/<fee_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def get_student_fee(fee_id):
     """GET /api/finance/student-fees/<id>"""
@@ -310,7 +310,7 @@ def get_student_fee(fee_id):
 @finance_bp.route("/student-fees/<fee_id>/download-invoice", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def download_student_fee_invoice(fee_id):
     """GET /api/finance/student-fees/<id>/download-invoice - Generate and download invoice PDF."""
@@ -337,7 +337,7 @@ def download_student_fee_invoice(fee_id):
 @finance_bp.route("/payments/<payment_id>/download-receipt", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def download_payment_receipt(payment_id):
     """GET /api/finance/payments/<id>/download-receipt - Generate and download receipt PDF."""
@@ -369,7 +369,7 @@ def download_payment_receipt(payment_id):
 @finance_bp.route("/student-fees/<fee_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_MANAGE)
 def delete_student_fee(fee_id):
     """DELETE /api/finance/student-fees/<id> - Remove a student's fee assignment if no payments."""
@@ -393,7 +393,7 @@ def delete_student_fee(fee_id):
 @finance_bp.route("/payments", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_COLLECT, PERM_MANAGE)
 def create_payment():
     """POST /api/finance/payments"""
@@ -422,7 +422,7 @@ def create_payment():
 @finance_bp.route("/payments/<payment_id>/refund", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_REFUND)
 def refund_payment(payment_id):
     """POST /api/finance/payments/<id>/refund"""
@@ -444,7 +444,7 @@ def refund_payment(payment_id):
 @finance_bp.route("/student-fees/<fee_id>/print-invoice", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def print_student_fee_invoice(fee_id):
     """GET /api/finance/student-fees/<id>/print-invoice - Return HTML for browser print (dual-copy layout)."""
@@ -465,7 +465,7 @@ def print_student_fee_invoice(fee_id):
 @finance_bp.route("/payments/<payment_id>/print-receipt", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def print_payment_receipt(payment_id):
     """GET /api/finance/payments/<id>/print-receipt - Return HTML for browser print (dual-copy layout)."""
@@ -493,6 +493,7 @@ def print_payment_receipt(payment_id):
 @finance_bp.route("/tenant-profile", methods=["GET"])
 @tenant_required
 @auth_required
+@require_feature("fees_management")
 def get_tenant_profile():
     """GET /api/finance/tenant-profile - Get current tenant's profile for school admin."""
     from core.models import Tenant
@@ -519,6 +520,7 @@ def get_tenant_profile():
 @finance_bp.route("/tenant-profile", methods=["PATCH"])
 @tenant_required
 @auth_required
+@require_feature("fees_management")
 @require_permission("finance.manage")
 def update_tenant_profile():
     """PATCH /api/finance/tenant-profile - Update school branding details (admin only)."""
@@ -549,3 +551,47 @@ def update_tenant_profile():
         "address": tenant.address,
         "contact_email": tenant.contact_email,
     })
+
+
+# ---------- Year Transition / Rollover ----------
+
+
+@finance_bp.route("/rollover", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("fees_management")
+@require_permission(PERM_MANAGE)
+def finance_rollover():
+    """
+    Clone fee structures + components + class links from from_year_id to to_year_id.
+
+    Body:
+        from_year_id (string, required)
+        to_year_id   (string, required)
+        class_mapping (object, optional) — { old_class_id: new_class_id }
+
+    Idempotent: structures with the same name in to_year_id are reused (their
+    components are not modified). Does not create StudentFee rows.
+    """
+    data = request.get_json(silent=True) or {}
+    from_year_id = (data.get("from_year_id") or "").strip()
+    to_year_id = (data.get("to_year_id") or "").strip()
+    if not from_year_id or not to_year_id:
+        return validation_error_response("from_year_id and to_year_id are required")
+
+    result = services.rollover.rollover_fee_structures(
+        from_year_id, to_year_id, data.get("class_mapping")
+    )
+    if not result.get("success"):
+        return error_response("Error", result.get("error", "Rollover failed"), 400)
+
+    return success_response(
+        data={
+            "structures_created": result["structures_created"],
+            "structures_reused": result["structures_reused"],
+            "components_created": result["components_created"],
+            "class_links_created": result["class_links_created"],
+            "class_links_skipped_unmapped": result["class_links_skipped_unmapped"],
+            "class_links_skipped_conflict": result["class_links_skipped_conflict"],
+        }
+    )

@@ -2,29 +2,37 @@
 Platform Admin Services
 
 Business logic for platform (super admin) operations: dashboard, tenant CRUD,
-school admin creation, plan changes, audit. All operations are platform-scoped
-(no g.tenant_id); tenant_id is passed explicitly where needed.
+school admin creation, audit, per-tenant pricing & feature flags. All
+operations are platform-scoped (no g.tenant_id); tenant_id is passed
+explicitly where needed.
 """
 
 import logging
 import secrets
 import string
-from datetime import datetime
-from decimal import Decimal
+from datetime import datetime, date
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Any
 
 from core.database import db
 from core.models import (
     Tenant,
-    Plan,
     AuditLog,
     PlatformSetting,
     TENANT_STATUS_ACTIVE,
+    TENANT_STATUS_TRIAL,
     TENANT_STATUS_SUSPENDED,
     TENANT_STATUS_DELETED,
 )
+from core.feature_flags import (
+    OPTIONAL_FEATURES,
+    CORE_FEATURES,
+    FEATURE_LABELS,
+    default_feature_flags,
+    get_tenant_feature_flags,
+)
 from modules.auth.models import User
-from modules.rbac.models import Role, Permission, RolePermission, UserRole
+from modules.rbac.models import Role, UserRole
 from modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noqa: F401 (re-exported)
 from modules.students.models import Student
 from modules.teachers.models import Teacher
@@ -39,39 +47,92 @@ def _generate_strong_password(length: int = 16) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def _to_decimal(value: Any) -> Optional[Decimal]:
+    """Coerce to Decimal or return None for empty/invalid input."""
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"Invalid numeric value: {value}")
+
+
+def _to_date(value: Any) -> Optional[date]:
+    """Parse YYYY-MM-DD string or pass through date."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(f"Invalid date (expected YYYY-MM-DD): {value}")
+
+
+def _serialize_tenant(tenant: Tenant) -> Dict[str, Any]:
+    """Common tenant serializer used by detail and list endpoints."""
+    student_count = Student.query.filter_by(tenant_id=tenant.id).count()
+    teacher_count = Teacher.query.filter_by(tenant_id=tenant.id).count()
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "subdomain": tenant.subdomain,
+        "contact_email": tenant.contact_email,
+        "phone": tenant.phone,
+        "address": tenant.address,
+        "logo_url": tenant.logo_url,
+        "tagline": tenant.tagline,
+        "board_affiliation": tenant.board_affiliation,
+        "status": tenant.status,
+        "price_per_student_per_year": (
+            float(tenant.price_per_student_per_year)
+            if tenant.price_per_student_per_year is not None else None
+        ),
+        "discount_percentage": (
+            float(tenant.discount_percentage)
+            if tenant.discount_percentage is not None else None
+        ),
+        "discount_start_date": tenant.discount_start_date.isoformat() if tenant.discount_start_date else None,
+        "discount_end_date": tenant.discount_end_date.isoformat() if tenant.discount_end_date else None,
+        "trial_ends_at": tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None,
+        "billing_cycle": tenant.billing_cycle,
+        "feature_flags": get_tenant_feature_flags(tenant.id),
+        "student_count": student_count,
+        "teacher_count": teacher_count,
+        "created_at": tenant.created_at.isoformat() if tenant.created_at else None,
+    }
+
+
 def get_dashboard_stats() -> Dict[str, Any]:
-    """Aggregate stats for platform dashboard."""
+    """Aggregate stats for platform dashboard. Revenue is a yearly projection
+    summed across active tenants based on their per-student pricing."""
     from sqlalchemy import func
 
-    # Exclude deleted tenants from all counts
-    tenants = Tenant.query.filter(
-        Tenant.status.in_([TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED])
-    ).all()
+    tenants = Tenant.query.filter(Tenant.status != TENANT_STATUS_DELETED).all()
     total_tenants = len(tenants)
-    active_tenants = sum(1 for t in tenants if t.status == TENANT_STATUS_ACTIVE)
+    active_tenants = sum(
+        1 for t in tenants if t.status in (TENANT_STATUS_ACTIVE, TENANT_STATUS_TRIAL)
+    )
     suspended_tenants = sum(1 for t in tenants if t.status == TENANT_STATUS_SUSPENDED)
 
     total_students = db.session.query(Student).count()
     total_teachers = db.session.query(Teacher).count()
 
-    revenue_row = (
-        db.session.query(func.coalesce(func.sum(Plan.price_monthly), 0))
-        .select_from(Tenant)
-        .join(Plan, Tenant.plan_id == Plan.id)
-        .filter(Tenant.status == TENANT_STATUS_ACTIVE)
-        .scalar()
-    )
-    revenue_monthly = revenue_row if revenue_row is not None else Decimal("0")
+    revenue_yearly = Decimal("0")
+    today = date.today()
+    for t in tenants:
+        if t.status != TENANT_STATUS_ACTIVE:
+            continue
+        billing = calculate_tenant_billing(t.id, on_date=today)
+        if billing.get("success"):
+            revenue_yearly += Decimal(str(billing["total"]))
 
-    # Tenant growth by month (created_at); exclude deleted
     growth_q = (
         db.session.query(
             func.date_trunc("month", Tenant.created_at).label("month"),
             func.count(Tenant.id).label("count"),
         )
-        .filter(
-            Tenant.status.in_([TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED])
-        )
+        .filter(Tenant.status != TENANT_STATUS_DELETED)
         .group_by(func.date_trunc("month", Tenant.created_at))
         .order_by(func.date_trunc("month", Tenant.created_at))
         .all()
@@ -87,7 +148,8 @@ def get_dashboard_stats() -> Dict[str, Any]:
         "suspended_tenants": suspended_tenants,
         "total_students": total_students,
         "total_teachers": total_teachers,
-        "revenue_monthly": float(revenue_monthly),
+        "revenue_yearly": float(revenue_yearly),
+        "revenue_monthly": float(revenue_yearly / 12) if revenue_yearly else 0.0,
         "tenant_growth_by_month": tenant_growth_by_month,
     }
 
@@ -98,33 +160,50 @@ def create_tenant(
     contact_email: Optional[str],
     phone: Optional[str],
     address: Optional[str],
-    plan_id: str,
     admin_email: str,
     admin_name: str,
     platform_admin_id: str,
+    price_per_student_per_year: Optional[Any] = None,
+    discount_percentage: Optional[Any] = None,
+    discount_start_date: Optional[Any] = None,
+    discount_end_date: Optional[Any] = None,
+    feature_flags: Optional[Dict[str, bool]] = None,
     login_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Create tenant, seed roles, create school admin user, assign Admin role,
-    send credentials email, and log audit.
+    Create tenant with per-tenant pricing and feature flags, seed roles,
+    create school admin user, send credentials email, log audit.
     """
     subdomain = subdomain.strip().lower()
     if Tenant.query.filter_by(subdomain=subdomain).first():
         return {"success": False, "error": "Subdomain already exists"}
 
-    plan = Plan.query.get(plan_id)
-    if not plan:
-        return {"success": False, "error": "Plan not found"}
+    try:
+        price = _to_decimal(price_per_student_per_year)
+        discount = _to_decimal(discount_percentage)
+        d_start = _to_date(discount_start_date)
+        d_end = _to_date(discount_end_date)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
-    # School admin email must be unique within the new tenant; we create tenant first so no conflict yet
+    flags = default_feature_flags()
+    if isinstance(feature_flags, dict):
+        for key, value in feature_flags.items():
+            if key in OPTIONAL_FEATURES:
+                flags[key] = bool(value)
+
     tenant = Tenant(
         name=name,
         subdomain=subdomain,
         contact_email=contact_email,
         phone=phone,
         address=address,
-        plan_id=plan_id,
         status=TENANT_STATUS_ACTIVE,
+        price_per_student_per_year=price,
+        discount_percentage=discount,
+        discount_start_date=d_start,
+        discount_end_date=d_end,
+        feature_flags=flags,
     )
     db.session.add(tenant)
     db.session.flush()
@@ -181,7 +260,6 @@ def create_tenant(
                     admin_email,
                 )
     except Exception as e:
-        # Log but do not fail tenant creation (missing template, SMTP, Celery worker, etc.)
         logger.warning(
             "Failed to send ADMIN_CREDENTIALS email for tenant %s admin %s: %s",
             tenant_id,
@@ -199,13 +277,7 @@ def create_tenant(
 
     return {
         "success": True,
-        "tenant": {
-            "id": tenant.id,
-            "name": tenant.name,
-            "subdomain": tenant.subdomain,
-            "status": tenant.status,
-            "plan_id": tenant.plan_id,
-        },
+        "tenant": _serialize_tenant(tenant),
         "admin_user_id": user.id,
     }
 
@@ -242,24 +314,320 @@ def activate_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     return {"success": True, "tenant": {"id": tenant.id, "status": tenant.status}}
 
 
-def change_tenant_plan(tenant_id: str, plan_id: str, platform_admin_id: str) -> Dict[str, Any]:
+def update_tenant_pricing(
+    tenant_id: str,
+    platform_admin_id: str,
+    price_per_student_per_year: Optional[Any] = None,
+    discount_percentage: Optional[Any] = None,
+    discount_start_date: Optional[Any] = None,
+    discount_end_date: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Patch a tenant's pricing & discount window. None means "leave unchanged";
+    explicit empty string clears the field.
+    """
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
-    plan = Plan.query.get(plan_id)
-    if not plan:
-        return {"success": False, "error": "Plan not found"}
-    old_plan_id = tenant.plan_id
-    tenant.plan_id = plan_id
+
+    try:
+        if price_per_student_per_year is not None:
+            tenant.price_per_student_per_year = _to_decimal(price_per_student_per_year)
+        if discount_percentage is not None:
+            disc = _to_decimal(discount_percentage)
+            if disc is not None and (disc < 0 or disc > 100):
+                return {"success": False, "error": "discount_percentage must be between 0 and 100"}
+            tenant.discount_percentage = disc
+        if discount_start_date is not None:
+            tenant.discount_start_date = _to_date(discount_start_date)
+        if discount_end_date is not None:
+            tenant.discount_end_date = _to_date(discount_end_date)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    if (
+        tenant.discount_start_date and tenant.discount_end_date
+        and tenant.discount_start_date > tenant.discount_end_date
+    ):
+        return {"success": False, "error": "discount_start_date must be on or before discount_end_date"}
+
     tenant.updated_at = datetime.utcnow()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
-        action="plan.changed",
+        action="tenant.pricing.updated",
         tenant_id=tenant_id,
-        metadata={"old_plan_id": old_plan_id, "new_plan_id": plan_id},
+        metadata={
+            "price_per_student_per_year": (
+                float(tenant.price_per_student_per_year)
+                if tenant.price_per_student_per_year is not None else None
+            ),
+            "discount_percentage": (
+                float(tenant.discount_percentage)
+                if tenant.discount_percentage is not None else None
+            ),
+        },
     )
-    return {"success": True, "tenant": {"id": tenant.id, "plan_id": tenant.plan_id}}
+    return {"success": True, "tenant": _serialize_tenant(tenant)}
+
+
+def get_tenant_subscription(tenant_id: str) -> Dict[str, Any]:
+    """Read-only view of a tenant's subscription state for the panel."""
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+    return {
+        "success": True,
+        "subscription": {
+            "tenant_id": tenant.id,
+            "status": tenant.status,
+            "trial_ends_at": (
+                tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None
+            ),
+            "billing_cycle": tenant.billing_cycle,
+            "price_per_student_per_year": (
+                float(tenant.price_per_student_per_year)
+                if tenant.price_per_student_per_year is not None
+                else None
+            ),
+            "discount_percentage": (
+                float(tenant.discount_percentage)
+                if tenant.discount_percentage is not None
+                else None
+            ),
+            "discount_start_date": (
+                tenant.discount_start_date.isoformat()
+                if tenant.discount_start_date
+                else None
+            ),
+            "discount_end_date": (
+                tenant.discount_end_date.isoformat()
+                if tenant.discount_end_date
+                else None
+            ),
+        },
+    }
+
+
+def update_tenant_subscription(
+    tenant_id: str,
+    platform_admin_id: str,
+    status: Optional[str] = None,
+    trial_ends_at: Optional[Any] = None,
+    billing_cycle: Optional[str] = None,
+    price_per_student_per_year: Optional[Any] = None,
+    discount_percentage: Optional[Any] = None,
+    discount_start_date: Optional[Any] = None,
+    discount_end_date: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Single PATCH that covers everything the super-admin panel needs to
+    change about a tenant's subscription: lifecycle (status, trial_ends_at),
+    cycle (billing_cycle) and the existing pricing fields. Field omitted ->
+    leave unchanged. Field set to "" -> clear (where nullable).
+    """
+    from core.models import TENANT_STATUSES, BILLING_CYCLES
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+
+    try:
+        if status is not None:
+            if status not in TENANT_STATUSES:
+                return {
+                    "success": False,
+                    "error": f"status must be one of {TENANT_STATUSES}",
+                }
+            tenant.status = status
+
+        if trial_ends_at is not None:
+            if trial_ends_at == "":
+                tenant.trial_ends_at = None
+            else:
+                # Accept "YYYY-MM-DD" or full ISO datetime.
+                from datetime import datetime as _dt
+
+                raw = str(trial_ends_at)
+                try:
+                    if "T" in raw:
+                        tenant.trial_ends_at = _dt.fromisoformat(
+                            raw.replace("Z", "+00:00")
+                        ).replace(tzinfo=None)
+                    else:
+                        tenant.trial_ends_at = _dt.strptime(raw, "%Y-%m-%d")
+                except ValueError:
+                    return {
+                        "success": False,
+                        "error": "trial_ends_at must be YYYY-MM-DD or an ISO datetime",
+                    }
+
+        if billing_cycle is not None:
+            if billing_cycle not in BILLING_CYCLES:
+                return {
+                    "success": False,
+                    "error": f"billing_cycle must be one of {BILLING_CYCLES}",
+                }
+            tenant.billing_cycle = billing_cycle
+
+        # Reuse the existing pricing field handling for consistency.
+        if price_per_student_per_year is not None:
+            tenant.price_per_student_per_year = _to_decimal(
+                price_per_student_per_year
+            )
+        if discount_percentage is not None:
+            disc = _to_decimal(discount_percentage)
+            if disc is not None and (disc < 0 or disc > 100):
+                return {
+                    "success": False,
+                    "error": "discount_percentage must be between 0 and 100",
+                }
+            tenant.discount_percentage = disc
+        if discount_start_date is not None:
+            tenant.discount_start_date = _to_date(discount_start_date)
+        if discount_end_date is not None:
+            tenant.discount_end_date = _to_date(discount_end_date)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    if (
+        tenant.discount_start_date
+        and tenant.discount_end_date
+        and tenant.discount_start_date > tenant.discount_end_date
+    ):
+        return {
+            "success": False,
+            "error": "discount_start_date must be on or before discount_end_date",
+        }
+
+    tenant.updated_at = datetime.utcnow()
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="tenant.subscription.updated",
+        tenant_id=tenant_id,
+        metadata={
+            "status": tenant.status,
+            "trial_ends_at": (
+                tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None
+            ),
+            "billing_cycle": tenant.billing_cycle,
+        },
+    )
+    return get_tenant_subscription(tenant_id)
+
+
+def update_tenant_feature_flags(
+    tenant_id: str,
+    platform_admin_id: str,
+    flags: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Replace tenant.feature_flags with the supplied map. Core features
+    can never be disabled — keys for those are silently dropped. Unknown
+    keys are dropped to keep storage clean."""
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+    if not isinstance(flags, dict):
+        return {"success": False, "error": "flags must be an object"}
+
+    current = dict(tenant.feature_flags) if isinstance(tenant.feature_flags, dict) else {}
+    for key, value in flags.items():
+        if key in OPTIONAL_FEATURES:
+            current[key] = bool(value)
+        # Silently ignore CORE_FEATURES and unknown keys.
+    tenant.feature_flags = current
+    tenant.updated_at = datetime.utcnow()
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="tenant.features.updated",
+        tenant_id=tenant_id,
+        metadata={"flags": current},
+    )
+    return {
+        "success": True,
+        "tenant_id": tenant_id,
+        "feature_flags": get_tenant_feature_flags(tenant_id),
+    }
+
+
+def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> Dict[str, Any]:
+    """
+    Dynamic billing: active_students × price_per_student_per_year, with
+    discount applied if on_date is within the discount window.
+
+    Active = student status not 'inactive'/'withdrawn'/'graduated'/'transferred'.
+    Falls back to "any student row" if status is unset.
+    """
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+
+    on_date = on_date or date.today()
+    inactive_statuses = ("inactive", "withdrawn", "graduated", "transferred")
+    active_students = (
+        db.session.query(Student)
+        .filter(Student.tenant_id == tenant_id)
+        .filter(
+            (Student.student_status.is_(None))
+            | (~Student.student_status.in_(inactive_statuses))
+        )
+        .count()
+    )
+
+    price = tenant.price_per_student_per_year or Decimal("0")
+    base = (price * Decimal(active_students)).quantize(Decimal("0.01"))
+
+    discount_active = False
+    discount_amount = Decimal("0")
+    discount_pct = tenant.discount_percentage or Decimal("0")
+    if discount_pct > 0:
+        start_ok = (tenant.discount_start_date is None) or (on_date >= tenant.discount_start_date)
+        end_ok = (tenant.discount_end_date is None) or (on_date <= tenant.discount_end_date)
+        if start_ok and end_ok:
+            discount_active = True
+            discount_amount = (base * discount_pct / Decimal("100")).quantize(Decimal("0.01"))
+
+    total = (base - discount_amount).quantize(Decimal("0.01"))
+
+    return {
+        "success": True,
+        "tenant_id": tenant_id,
+        "on_date": on_date.isoformat(),
+        "active_students": active_students,
+        "price_per_student_per_year": float(price),
+        "base_amount": float(base),
+        "discount_percentage": float(discount_pct) if discount_pct else 0.0,
+        "discount_active": discount_active,
+        "discount_window": {
+            "start": tenant.discount_start_date.isoformat() if tenant.discount_start_date else None,
+            "end": tenant.discount_end_date.isoformat() if tenant.discount_end_date else None,
+        },
+        "discount_amount": float(discount_amount),
+        "total": float(total),
+        "currency": "INR",
+    }
+
+
+def list_feature_catalog() -> List[Dict[str, Any]]:
+    """Catalog used by the super-admin Features tab to render checkboxes."""
+    items = []
+    for key in CORE_FEATURES:
+        items.append({
+            "key": key,
+            "label": FEATURE_LABELS.get(key, key),
+            "category": "core",
+            "toggleable": False,
+        })
+    for key in OPTIONAL_FEATURES:
+        items.append({
+            "key": key,
+            "label": FEATURE_LABELS.get(key, key),
+            "category": "optional",
+            "toggleable": True,
+        })
+    return items
 
 
 def get_school_admin_user_for_tenant(tenant_id: str) -> Optional[User]:
@@ -274,10 +642,6 @@ def get_school_admin_user_for_tenant(tenant_id: str) -> Optional[User]:
 
 
 def reset_tenant_admin(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
-    """
-    Generate new password for school admin, set force_password_reset=True,
-    send email, log audit.
-    """
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
@@ -339,7 +703,7 @@ def list_tenants(
     per_page: int = 20,
     status: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Paginated list of tenants with plan name, student count, teacher count, status."""
+    """Paginated list of tenants with pricing summary and counts."""
     query = Tenant.query
     if status:
         query = query.filter(Tenant.status == status)
@@ -347,7 +711,6 @@ def list_tenants(
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     items = []
     for t in pagination.items:
-        plan_name = t.plan.name if t.plan else None
         student_count = Student.query.filter_by(tenant_id=t.id).count()
         teacher_count = Teacher.query.filter_by(tenant_id=t.id).count()
         items.append({
@@ -356,8 +719,14 @@ def list_tenants(
             "subdomain": t.subdomain,
             "contact_email": t.contact_email,
             "status": t.status,
-            "plan_id": t.plan_id,
-            "plan_name": plan_name,
+            "price_per_student_per_year": (
+                float(t.price_per_student_per_year)
+                if t.price_per_student_per_year is not None else None
+            ),
+            "discount_percentage": (
+                float(t.discount_percentage)
+                if t.discount_percentage is not None else None
+            ),
             "student_count": student_count,
             "teacher_count": teacher_count,
             "created_at": t.created_at.isoformat() if t.created_at else None,
@@ -378,26 +747,7 @@ def get_tenant_by_id(tenant_id: str) -> Dict[str, Any]:
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
-    student_count = Student.query.filter_by(tenant_id=tenant_id).count()
-    teacher_count = Teacher.query.filter_by(tenant_id=tenant_id).count()
-    tenant_data = {
-        "id": tenant.id,
-        "name": tenant.name,
-        "subdomain": tenant.subdomain,
-        "contact_email": tenant.contact_email,
-        "phone": tenant.phone,
-        "address": tenant.address,
-        "logo_url": tenant.logo_url,
-        "tagline": tenant.tagline,
-        "board_affiliation": tenant.board_affiliation,
-        "status": tenant.status,
-        "plan_id": tenant.plan_id,
-        "plan_name": tenant.plan.name if tenant.plan else None,
-        "created_at": tenant.created_at.isoformat() if tenant.created_at else None,
-        "student_count": student_count,
-        "teacher_count": teacher_count,
-    }
-    return {"success": True, "tenant": tenant_data}
+    return {"success": True, "tenant": _serialize_tenant(tenant)}
 
 
 def update_tenant(
@@ -452,105 +802,6 @@ def delete_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
         tenant_id=tenant_id,
         metadata={"subdomain": tenant.subdomain},
     )
-    return {"success": True}
-
-def list_plans() -> List[Dict[str, Any]]:
-    """List all plans for dropdowns (e.g. tenant creation)."""
-    plans = Plan.query.order_by(Plan.price_monthly).all()
-    return [
-        {
-            "id": p.id,
-            "name": p.name,
-            "price_monthly": float(p.price_monthly),
-            "max_students": p.max_students,
-            "max_teachers": p.max_teachers,
-            "features_json": p.features_json,
-        }
-        for p in plans
-    ]
-
-
-def create_plan(
-    name: str,
-    price_monthly: float,
-    max_students: int,
-    max_teachers: int,
-    features_json: Optional[dict] = None,
-    platform_admin_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    if Plan.query.filter_by(name=name).first():
-        return {"success": False, "error": "Plan name already exists"}
-    plan = Plan(
-        name=name,
-        price_monthly=Decimal(str(price_monthly)),
-        max_students=max_students,
-        max_teachers=max_teachers,
-        features_json=features_json,
-    )
-    db.session.add(plan)
-    db.session.commit()
-    if platform_admin_id:
-        log_platform_action(
-            platform_admin_id=platform_admin_id,
-            action="plan.created",
-            tenant_id=None,
-            metadata={"plan_id": plan.id, "name": plan.name},
-        )
-    return {"success": True, "plan": {"id": plan.id, "name": plan.name}}
-
-
-def update_plan(
-    plan_id: str,
-    platform_admin_id: Optional[str],
-    name: Optional[str] = None,
-    price_monthly: Optional[float] = None,
-    max_students: Optional[int] = None,
-    max_teachers: Optional[int] = None,
-    features_json: Optional[dict] = None,
-) -> Dict[str, Any]:
-    plan = Plan.query.get(plan_id)
-    if not plan:
-        return {"success": False, "error": "Plan not found"}
-    if name is not None:
-        existing = Plan.query.filter_by(name=name).first()
-        if existing and existing.id != plan_id:
-            return {"success": False, "error": "Plan name already exists"}
-        plan.name = name
-    if price_monthly is not None:
-        plan.price_monthly = Decimal(str(price_monthly))
-    if max_students is not None:
-        plan.max_students = max_students
-    if max_teachers is not None:
-        plan.max_teachers = max_teachers
-    if features_json is not None:
-        plan.features_json = features_json
-    plan.updated_at = datetime.utcnow()
-    db.session.commit()
-    if platform_admin_id:
-        log_platform_action(
-            platform_admin_id=platform_admin_id,
-            action="plan.updated",
-            tenant_id=None,
-            metadata={"plan_id": plan_id},
-        )
-    return {"success": True, "plan": {"id": plan.id}}
-
-
-def delete_plan(plan_id: str, platform_admin_id: Optional[str] = None) -> Dict[str, Any]:
-    plan = Plan.query.get(plan_id)
-    if not plan:
-        return {"success": False, "error": "Plan not found"}
-    if Tenant.query.filter_by(plan_id=plan_id).first():
-        return {"success": False, "error": "Cannot delete plan: tenants are using it"}
-    db.session.delete(plan)
-    db.session.commit()
-    if platform_admin_id:
-        log_platform_action(
-            platform_admin_id=platform_admin_id,
-            action="plan.deleted",
-            tenant_id=None,
-            metadata={"plan_id": plan_id, "name": plan.name},
-        )
     return {"success": True}
 
 
@@ -959,7 +1210,6 @@ def create_notification_template(
     if not valid:
         return {"success": False, "error": f"Invalid template syntax: {err}"}
 
-    # Default template content for new types when not provided
     DEFAULT_SUBJECT_TEMPLATE = "{{ school_name }} Notification"
     DEFAULT_BODY_TEMPLATE = "<p>Hello {{ user_name }},</p><p>{{ message }}</p>"
     if not subject_template or not subject_template.strip():
@@ -1077,7 +1327,7 @@ def preview_notification_template(
     subject_template: Optional[str] = None,
     body_template: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Render template with dummy context. Either template_id or (subject_template, body_template) required."""
+    """Render template with dummy context."""
     from modules.notifications.models import NotificationTemplate
     from modules.notifications.template_service import (
         render_notification_template,
@@ -1107,7 +1357,7 @@ def preview_notification_template(
 
 
 def test_send_notification_template(template_id: str, to_email: str) -> Dict[str, Any]:
-    """Render template and send to given email. Used for test-send to super admin."""
+    """Render template and send to given email."""
     from modules.notifications.models import NotificationTemplate
     from modules.notifications.template_service import (
         render_notification_template,

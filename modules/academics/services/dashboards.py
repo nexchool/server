@@ -54,13 +54,19 @@ def teacher_today_schedule(tenant_id: str, user_id: str) -> Dict[str, Any]:
         .all()
     )
 
+    from core.feature_flags import is_feature_enabled
+    attendance_on = is_feature_enabled(tenant_id, "attendance")
+
     lectures: List[Dict[str, Any]] = []
     for e, ver, cls in entries:
         bell_map = _bell_period_map(tenant_id, ver.bell_schedule_id)
         slot = _serialize_entry(e, bell_map)
         slot["class_id"] = cls.id
         slot["class_name"] = class_display_name(cls)
-        slot["attendance_pending_today"] = attendance_pending_for_class_today(tenant_id, cls.id, today)
+        slot["attendance_pending_today"] = (
+            attendance_pending_for_class_today(tenant_id, cls.id, today)
+            if attendance_on else False
+        )
         lectures.append(slot)
 
     next_lecture = lectures[0] if lectures else None
@@ -105,8 +111,19 @@ def student_dashboard(tenant_id: str, user_id: str) -> Dict[str, Any]:
                 if e.day_of_week == dow:
                     today_schedule.append(item)
 
-    hist = student_history_v2(tenant_id, st.id, month=None)
-    att = hist.get("data", {}) if hist.get("success") else {}
+    from core.feature_flags import is_feature_enabled
+
+    if is_feature_enabled(tenant_id, "attendance"):
+        hist = student_history_v2(tenant_id, st.id, month=None)
+        att = hist.get("data", {}) if hist.get("success") else {}
+        attendance_summary = {
+            "total_days": att.get("total_days", 0),
+            "present": att.get("present", 0),
+            "percentage": att.get("percentage", 0),
+            "source": att.get("source", "sessions_v2"),
+        }
+    else:
+        attendance_summary = None
 
     return {
         "success": True,
@@ -115,12 +132,7 @@ def student_dashboard(tenant_id: str, user_id: str) -> Dict[str, Any]:
         "class_name": class_display_name(cls) if cls else None,
         "today_schedule": today_schedule,
         "weekly_timetable_preview": week_preview,
-        "attendance_summary": {
-            "total_days": att.get("total_days", 0),
-            "present": att.get("present", 0),
-            "percentage": att.get("percentage", 0),
-            "source": att.get("source", "sessions_v2"),
-        },
+        "attendance_summary": attendance_summary,
     }
 
 
@@ -142,14 +154,17 @@ def admin_academic_dashboard(tenant_id: str) -> Dict[str, Any]:
         .count()
     )
 
-    pending_sessions = (
-        AttendanceSession.query.filter(
-            AttendanceSession.tenant_id == tenant_id,
-            AttendanceSession.session_date == today,
-            AttendanceSession.status != "finalized",
-            AttendanceSession.deleted_at.is_(None),
-        ).count()
-    )
+    from core.feature_flags import is_feature_enabled
+    pending_sessions = 0
+    if is_feature_enabled(tenant_id, "attendance"):
+        pending_sessions = (
+            AttendanceSession.query.filter(
+                AttendanceSession.tenant_id == tenant_id,
+                AttendanceSession.session_date == today,
+                AttendanceSession.status != "finalized",
+                AttendanceSession.deleted_at.is_(None),
+            ).count()
+        )
 
     classes_without_timetable = 0
     for c in Class.query.filter_by(tenant_id=tenant_id).all():

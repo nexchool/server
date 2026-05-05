@@ -211,6 +211,8 @@ class Student(TenantBaseModel):
     tc_number = db.Column(db.String(50), nullable=True)
     house_name = db.Column(db.String(50), nullable=True)
     student_status = db.Column(db.String(30), nullable=True)
+    # Year-end / promotion eligibility (e.g. pass, fail); optional.
+    academic_result = db.Column(db.String(20), nullable=True)
 
     is_transport_opted = db.Column(
         db.Boolean,
@@ -338,9 +340,51 @@ class Student(TenantBaseModel):
             "tc_number": self.tc_number,
             "house_name": self.house_name,
             "student_status": self.student_status,
+            "academic_result": self.academic_result,
             "is_transport_opted": bool(self.is_transport_opted),
             "created_at": self.created_at.isoformat()
         }
 
     def __repr__(self):
         return f"<Student {self.admission_number}>"
+
+
+class StudentPromotionBatch(TenantBaseModel):
+    """Audit row for an academic-year promotion run (batch log)."""
+
+    __tablename__ = "student_promotion_batches"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    from_academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="SET NULL"),
+        nullable=False,
+        index=True,
+    )
+    to_academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="SET NULL"),
+        nullable=False,
+        index=True,
+    )
+    status = db.Column(db.String(20), nullable=False)  # completed | failed
+    summary = db.Column(db.JSON, nullable=True)
+    class_mapping_snapshot = db.Column(db.JSON, nullable=True)
+    created_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "from_academic_year_id": self.from_academic_year_id,
+            "to_academic_year_id": self.to_academic_year_id,
+            "status": self.status,
+            "summary": self.summary,
+            "created_by_user_id": self.created_by_user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

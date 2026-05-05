@@ -269,6 +269,15 @@ def login():
             status_code=401
         )
 
+    # Backfill tenant role permissions when DEFAULT_ROLES gains new entries
+    # (idempotent). Ensures admins keep parity with seed_rbac after upgrades.
+    if not getattr(user, "is_platform_admin", False) and getattr(
+        user, "tenant_id", None
+    ):
+        from modules.rbac.role_seeder import seed_roles_for_tenant
+
+        seed_roles_for_tenant(user.tenant_id)
+
     from modules.rbac.services import get_user_permissions
     permissions = get_user_permissions(user.id)
     if not permissions or len(permissions) == 0:
@@ -298,7 +307,7 @@ def login():
     access_token = generate_access_token(user, access_minutes=access_minutes)
     session = create_session(user, request)
 
-    from core.plan_features import get_tenant_enabled_features
+    from core.feature_flags import get_tenant_enabled_features
     enabled_features = get_tenant_enabled_features(tenant.id) if tenant else []
 
     response, status_code = success_response(
@@ -602,7 +611,7 @@ def get_enabled_features():
     if not user or not user.tenant_id:
         return success_response(data={'enabled_features': []}, status_code=200)
 
-    from core.plan_features import get_tenant_enabled_features
+    from core.feature_flags import get_tenant_enabled_features
     enabled_features = get_tenant_enabled_features(user.tenant_id)
     return success_response(data={'enabled_features': enabled_features}, status_code=200)
 
@@ -619,7 +628,7 @@ def get_profile():
 
     user = g.current_user
 
-    from core.plan_features import get_tenant_enabled_features
+    from core.feature_flags import get_tenant_enabled_features
     from modules.rbac.services import get_user_permissions, get_user_roles
     permissions = get_user_permissions(user.id)
     roles = get_user_roles(user.id)

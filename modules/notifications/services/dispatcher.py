@@ -2,13 +2,19 @@
 Notification Dispatcher (Strategy Pattern).
 
 Dispatches notifications to IN_APP, EMAIL, SMS based on channel.
+Silently no-ops when the tenant has the `notifications` feature disabled
+(super-admin toggle) — callers don't need to wrap dispatch calls in feature
+checks; the dispatcher absorbs them.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from modules.notifications.enums import NotificationChannel
 
 from .strategies import InAppStrategy, EmailStrategy, PushStrategy, SmsStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationDispatcher:
@@ -57,6 +63,16 @@ class NotificationDispatcher:
         Returns:
             Dict mapping channel -> success (True/False).
         """
+        from core.feature_flags import is_feature_enabled
+
+        if tenant_id and not is_feature_enabled(tenant_id, "notifications"):
+            logger.debug(
+                "Notifications disabled for tenant %s; skipping dispatch (type=%s)",
+                tenant_id,
+                notification_type,
+            )
+            return {ch: False for ch in channels}
+
         results = {}
         strategy_extra = dict(extra_data) if extra_data else {}
         push_ch = NotificationChannel.PUSH.value
