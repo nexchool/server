@@ -10,6 +10,7 @@ class SetupModuleEvent(db.Model):
     """Records when a setup module is completed or regresses."""
 
     __tablename__ = "setup_module_events"
+    __tenant_scoped__ = True
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = db.Column(
@@ -20,12 +21,13 @@ class SetupModuleEvent(db.Model):
     )
     module = db.Column(db.String(50), nullable=False)
     event = db.Column(db.String(50), nullable=False)  # 'completed', 'regressed', 'setup_complete', 'setup_reconfirmed'
-    actor_id = db.Column(
+    actor_user_id = db.Column(
         db.String(36),
         db.ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
-    ts = db.Column(
+    created_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
@@ -40,6 +42,7 @@ class DataPurgeLog(db.Model):
     """Counts-only audit trail for data retention deletion jobs."""
 
     __tablename__ = "data_purge_logs"
+    __tenant_scoped__ = True
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = db.Column(

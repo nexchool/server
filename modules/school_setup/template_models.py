@@ -69,5 +69,16 @@ class SubjectTemplateItem(db.Model):
     periods_per_week = db.Column(db.Integer, nullable=True, default=5)
     is_elective = db.Column(db.Boolean, nullable=False, default=False)
     sort_order = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     group = db.relationship("SubjectTemplateGroup", back_populates="items")
