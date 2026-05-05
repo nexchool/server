@@ -131,6 +131,17 @@ class Tenant(db.Model):
     )
     setup_reconfirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
+    # Offboarding lifecycle
+    offboarding_started_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    purge_scheduled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    # Setup metadata
+    setup_template_used = db.Column(
+        db.String(50),
+        nullable=True,
+        comment="board_code of template used at setup: cbse, icse, gujarat_state_board, ib, custom",
+    )
+
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,

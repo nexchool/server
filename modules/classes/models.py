@@ -28,6 +28,12 @@ class Class(TenantBaseModel):
     # Optional display label, e.g. "Grade 10" or "10 - CBSE English". Identity now lives on the FKs below.
     name = db.Column(db.String(50), nullable=True)
     section = db.Column(db.String(10), nullable=False)  # e.g. "A"
+    stream = db.Column(
+        db.String(32),
+        nullable=True,
+        index=True,
+        comment="Grade 11-12 stream: Science, Commerce, Arts, Vocational. NULL for Grade 1-10.",
+    )
     academic_year_id = db.Column(
         db.String(36),
         db.ForeignKey("academic_years.id", ondelete="RESTRICT"),
@@ -124,6 +130,7 @@ class Class(TenantBaseModel):
             "id": self.id,
             "name": self.name,
             "section": self.section,
+            "stream": self.stream,
             "grade_level": self.grade_level,
             "school_unit_id": self.school_unit_id,
             "school_unit_name": self.school_unit.name if self.school_unit else None,
