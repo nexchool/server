@@ -142,6 +142,14 @@ class Tenant(db.Model):
         comment="board_code of template used at setup: cbse, icse, gujarat_state_board, ib, custom",
     )
 
+    __table_args__ = (
+        db.CheckConstraint(
+            "setup_template_used IS NULL OR setup_template_used IN "
+            "('cbse', 'icse', 'gujarat_state_board', 'ib', 'custom')",
+            name="ck_tenants_setup_template_used",
+        ),
+    )
+
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,

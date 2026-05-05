@@ -93,6 +93,11 @@ class Class(TenantBaseModel):
             "teacher_id", "tenant_id",
             name="uq_classes_teacher_id_tenant",
         ),
+        db.CheckConstraint(
+            "stream IS NULL OR stream IN "
+            "('Science', 'Commerce', 'Arts', 'Vocational')",
+            name="ck_classes_stream",
+        ),
     )
 
     # Relationships
