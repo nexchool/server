@@ -158,6 +158,42 @@ def delete_user_route(user_id):
         return error_response('DeleteError', result['error'], status_code)
 
 
+@users_bp.route('/me/default-unit', methods=['PATCH'], strict_slashes=False)
+@tenant_required
+@auth_required
+def patch_default_unit():
+    """Set or clear the calling user's preferred default school unit."""
+    from modules.school_units.models import SchoolUnit
+    from modules.auth.models import User
+    from core.database import db
+
+    payload = request.get_json() or {}
+    unit_id = payload.get("default_unit_id")
+
+    if unit_id is not None:
+        unit = SchoolUnit.query.filter_by(
+            id=unit_id, tenant_id=g.tenant_id
+        ).filter(SchoolUnit.deleted_at.is_(None)).first()
+        if not unit:
+            return error_response(
+                "ValidationError",
+                "Invalid default_unit_id for this tenant",
+                400,
+            )
+
+    user = User.query.filter_by(id=g.current_user.id, tenant_id=g.tenant_id).first()
+    if not user:
+        return error_response("NotFound", "User not found", 404)
+
+    user.default_unit_id = unit_id
+    db.session.commit()
+
+    return success_response(
+        data={"default_unit_id": user.default_unit_id},
+        message="Default unit updated.",
+    )
+
+
 @users_bp.route('/<user_id>/verify-email', methods=['POST'])
 @tenant_required
 @auth_required
