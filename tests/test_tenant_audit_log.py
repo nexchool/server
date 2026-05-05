@@ -9,6 +9,10 @@ SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
+from tests._model_loader import load_all_models  # noqa: E402
+
+load_all_models()
+
 
 def test_log_tenant_action_calls_db_session_add(monkeypatch):
     """log_tenant_action must call db.session.add with a TenantAuditLog instance."""

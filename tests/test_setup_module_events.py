@@ -9,6 +9,10 @@ SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
+from tests._model_loader import load_all_models  # noqa: E402
+
+load_all_models()
+
 
 def test_setup_module_event_can_be_constructed():
     """Smoke: the model can be instantiated with the expected fields."""

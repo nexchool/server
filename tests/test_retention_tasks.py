@@ -10,6 +10,10 @@ SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
+from tests._model_loader import load_all_models  # noqa: E402
+
+load_all_models()
+
 
 # --- Module-level smoke ---
 
@@ -74,6 +78,43 @@ def test_purge_notification_logs_handles_exception(monkeypatch):
     # Must not raise
     rt.purge_notification_logs()
     fake_session.rollback.assert_called()
+
+
+def test_purge_notification_logs_logs_when_rows_deleted(monkeypatch):
+    """When .delete() returns > 0, the success path runs logger.info + commit."""
+    from modules.school_setup import retention_tasks as rt
+
+    fake_query = MagicMock()
+    fake_query.filter.return_value = fake_query
+    fake_query.delete.return_value = 7  # non-zero → enters `if deleted:` branch
+
+    fake_session = MagicMock()
+    fake_session.query.return_value = fake_query
+    monkeypatch.setattr(rt.db, "session", fake_session)
+
+    rt.purge_notification_logs()
+
+    fake_query.delete.assert_called_once_with(synchronize_session=False)
+    fake_session.commit.assert_called_once()
+    fake_session.rollback.assert_not_called()
+
+
+def test_purge_notification_logs_skips_log_when_no_rows_deleted(monkeypatch):
+    """When .delete() returns 0, the `if deleted:` branch is skipped (still commits)."""
+    from modules.school_setup import retention_tasks as rt
+
+    fake_query = MagicMock()
+    fake_query.filter.return_value = fake_query
+    fake_query.delete.return_value = 0  # falsy → branch falls through
+
+    fake_session = MagicMock()
+    fake_session.query.return_value = fake_query
+    monkeypatch.setattr(rt.db, "session", fake_session)
+
+    rt.purge_notification_logs()
+
+    fake_session.commit.assert_called_once()
+    fake_session.rollback.assert_not_called()
 
 
 # --- purge_audit_logs ---

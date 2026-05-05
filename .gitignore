@@ -86,3 +86,8 @@ celerybeat-schedule-shm
 celerybeat-schedule-wal
 
 celerybeat-schedule
+
+# coverage
+.coverage
+coverage_html/
+htmlcov/

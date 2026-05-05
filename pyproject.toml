@@ -1,0 +1,25 @@
+[tool.coverage.run]
+branch = true
+include = [
+    "modules/audit/models.py",
+    "modules/school_setup/models.py",
+    "modules/school_setup/template_models.py",
+    "modules/school_setup/bulk_generator_service.py",
+    "modules/school_setup/retention_tasks.py",
+    "scripts/seed_subject_templates.py",
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.html]
+directory = "coverage_html"
