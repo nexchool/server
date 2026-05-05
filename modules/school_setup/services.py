@@ -405,6 +405,20 @@ def run_complete_setup(
             if not first_completion:
                 tenant.setup_reconfirmed_at = now
         db.session.commit()
+        try:
+            from modules.school_setup.models import SetupModuleEvent
+            event_type = "setup_complete" if first_completion else "setup_reconfirmed"
+            event = SetupModuleEvent(
+                tenant_id=tenant_id,
+                module="overall",
+                event=event_type,
+                actor_user_id=actor_user_id,
+            )
+            db.session.add(event)
+            db.session.commit()
+        except Exception:
+            logger.warning("school_setup.event_log.failed", extra={"tenant_id": tenant_id})
+            # Non-fatal — do not surface to caller
         logger.info(
             "school_setup.complete.success",
             extra={
