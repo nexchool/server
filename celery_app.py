@@ -31,6 +31,7 @@ def make_celery(app):
             "tasks.finance",
             "tasks.notification_dispatch",
             "tasks.push_notifications",
+            "modules.school_setup.retention_tasks",
         ],
     )
     # Use new lowercase config keys; avoid celery.conf.update(app.config) to prevent old-key conflicts
@@ -38,6 +39,18 @@ def make_celery(app):
         "process-overdue-fees-daily": {
             "task": "process_overdue_fees_task",
             "schedule": 86400.0,  # 24 hours
+        },
+        "retention-purge-notification-logs": {
+            "task": "retention.purge_notification_logs",
+            "schedule": 86400,
+        },
+        "retention-purge-audit-logs": {
+            "task": "retention.purge_audit_logs",
+            "schedule": 604800,
+        },
+        "retention-advance-offboarding": {
+            "task": "retention.advance_offboarding_stage",
+            "schedule": 604800,
         },
     }
     # Default cwd is /app (owned by app) but a root-owned celerybeat-schedule from an old run breaks beat.
