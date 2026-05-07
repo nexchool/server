@@ -642,6 +642,7 @@ def get_profile():
                 'name': user.name,
                 'email_verified': user.email_verified,
                 'profile_picture_url': profile_picture_public_url(user.profile_picture_url),
+                'default_unit_id': user.default_unit_id,
                 'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
                 'created_at': user.created_at.isoformat(),
             },
