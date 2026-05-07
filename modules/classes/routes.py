@@ -86,6 +86,11 @@ def create_class():
         start_date=data.get('start_date'),
         end_date=data.get('end_date'),
         grade_level=gl,
+        grade_id=data.get('grade_id') or None,
+        programme_id=data.get('programme_id') or None,
+        school_unit_id=data.get('school_unit_id') or None,
+        medium_id=data.get('medium_id') or None,
+        stream=data.get('stream') or None,
     )
 
     if result['success']:
@@ -209,6 +214,10 @@ def update_class(class_id):
                 kw['grade_level'] = int(gv)
             except (TypeError, ValueError):
                 return validation_error_response({'message': 'grade_level must be an integer'})
+    # Structural fields (optional)
+    for field in ('grade_id', 'programme_id', 'school_unit_id', 'medium_id', 'stream'):
+        if field in data:
+            kw[field] = data.get(field) or None
 
     result = services.update_class(class_id, **kw)
 

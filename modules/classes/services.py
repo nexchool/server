@@ -51,11 +51,16 @@ def create_class(
     start_date: str = None,
     end_date: str = None,
     grade_level: Optional[int] = None,
+    grade_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    medium_id: Optional[str] = None,
+    stream: Optional[str] = None,
 ) -> Dict:
     """Create a new class (tenant-scoped). academic_year_id is required."""
     logger.warning(
-        "[create_class] called: name=%r, section=%r, academic_year_id=%r, teacher_id=%r, start_date=%r, end_date=%r",
-        name, section, academic_year_id, teacher_id, start_date, end_date,
+        "[create_class] called: name=%r, section=%r, academic_year_id=%r, teacher_id=%r, start_date=%r, end_date=%r, grade_id=%r, programme_id=%r, school_unit_id=%r",
+        name, section, academic_year_id, teacher_id, start_date, end_date, grade_id, programme_id, school_unit_id,
     )
     try:
         tenant_id = get_tenant_id()
@@ -115,6 +120,9 @@ def create_class(
             start_date=datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None,
             end_date=datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None,
             grade_level=grade_level,
+            grade_id=grade_id or None,
+            programme_id=programme_id or None,
+            school_unit_id=school_unit_id or None,
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
@@ -241,6 +249,11 @@ def update_class(
     start_date: str = None,
     end_date: str = None,
     grade_level=_MISSING,
+    grade_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    medium_id: Optional[str] = None,
+    stream: Optional[str] = None,
 ) -> Dict:
     """Update class details."""
     try:
@@ -306,6 +319,12 @@ def update_class(
             cls.end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
         if grade_level is not _MISSING:
             cls.grade_level = grade_level
+        if grade_id is not None:
+            cls.grade_id = grade_id or None
+        if programme_id is not None:
+            cls.programme_id = programme_id or None
+        if school_unit_id is not None:
+            cls.school_unit_id = school_unit_id or None
 
         cls.save()
         return {'success': True, 'class': cls.to_dict()}
