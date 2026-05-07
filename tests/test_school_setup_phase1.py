@@ -55,12 +55,16 @@ def test_import_csv_response_keys_contract():
 
     A real success path requires DB. We assert the key set we expect by
     inspecting the source — this guards against future drift renaming the
-    keys back."""
+    keys back.
+
+    import_csv is now a thin alias for import_excel, so we inspect
+    import_excel (which holds the actual implementation)."""
     import inspect
 
     from modules.school_setup import import_service
 
-    src = inspect.getsource(import_service.import_csv)
+    # The contract lives in import_excel; import_csv is a backward-compat alias.
+    src = inspect.getsource(import_service.import_excel)
     # Required new keys in the success return dict
     for key in (
         '"created":',
@@ -70,7 +74,7 @@ def test_import_csv_response_keys_contract():
         '"skipped_count":',
         '"failed_count":',
     ):
-        assert key in src, f"missing key in import_csv success return: {key}"
+        assert key in src, f"missing key in import_excel success return: {key}"
     # Internal accumulator names
     for name in ("created_rows", "skipped_rows", "error_rows"):
         assert name in src, f"missing accumulator: {name}"

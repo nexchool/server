@@ -1,10 +1,10 @@
 """
-CSV Import Service
+Excel Import Service
 
-Accepts a CSV with the columns:
+Accepts an .xlsx file with the columns:
     unit_code, programme_code, grade, section, subject?, periods?
 
-Per-row validation: invalid rows are reported in `errors[]` with their
+Per-row validation: invalid rows are reported in `failed[]` with their
 row number; valid rows are inserted, skipping duplicates via the same
 structural unique index used by bulk_create_classes. Each row insert is
 wrapped in a savepoint so a single bad row never poisons the batch.
@@ -16,10 +16,10 @@ or the value in the `periods` column when present).
 
 from __future__ import annotations
 
-import csv
-import io
-from typing import Any, Dict, List, Optional, Tuple
+from io import BytesIO
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
+from openpyxl import load_workbook
 from sqlalchemy.exc import IntegrityError
 
 from core.database import db
@@ -31,26 +31,102 @@ from modules.school_units.models import SchoolUnit
 from modules.subjects.models import Subject
 
 
+MAX_IMPORT_ROWS = 10_000  # excludes header
+
 REQUIRED_HEADERS = ("unit_code", "programme_code", "grade", "section")
 OPTIONAL_HEADERS = ("subject", "periods")
 
+DEFAULT_EXCEL_MAPPING: Dict[str, str] = {
+    "unit_code": "unit_code",
+    "programme_code": "programme_code",
+    "grade": "grade",
+    "section": "section",
+    "subject": "subject",
+    "periods": "periods",
+}
 
-def _parse_csv(file_storage) -> Tuple[Optional[List[Dict[str, str]]], Optional[str]]:
-    try:
-        raw = file_storage.read()
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(raw))
-        if not reader.fieldnames:
-            return None, "CSV is empty"
-        missing = [h for h in REQUIRED_HEADERS if h not in reader.fieldnames]
-        if missing:
-            return None, f"Missing required columns: {', '.join(missing)}"
-        return [dict(row) for row in reader], None
-    except UnicodeDecodeError:
-        return None, "CSV must be UTF-8 encoded"
-    except Exception as e:
-        return None, f"Could not parse CSV: {e}"
+_REQUIRED_MAPPING_FIELDS = ("unit_code", "programme_code", "grade", "section")
+
+
+class UnsupportedFileType(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Low-level workbook helpers
+# ---------------------------------------------------------------------------
+
+
+def _open_workbook(stream: BinaryIO, filename: str):
+    name = (filename or "").lower()
+    if not name.endswith(".xlsx"):
+        raise UnsupportedFileType(
+            f"Unsupported file type: {filename}. Use .xlsx"
+        )
+    stream.seek(0)
+    return load_workbook(stream, read_only=True, data_only=True)
+
+
+def parse_headers(stream: BinaryIO, filename: str) -> list[str]:
+    """Return the first-row cell values as a list of strings."""
+    wb = _open_workbook(stream, filename)
+    ws = wb.active
+    for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
+        return [str(c).strip() if c is not None else "" for c in row]
+    return []
+
+
+def parse_workbook(
+    stream: BinaryIO, filename: str, mapping: Dict[str, str]
+) -> list[dict]:
+    """
+    mapping: {expected_field_name: excel_column_header}
+    Returns: list of dicts keyed by expected_field_name.
+    Raises UnsupportedFileType for non-.xlsx files.
+    Raises ValueError when row count exceeds MAX_IMPORT_ROWS.
+    """
+    wb = _open_workbook(stream, filename)
+    ws = wb.active
+    headers: Optional[list[str]] = None
+    header_index: Dict[str, int] = {}
+    out: list[dict] = []
+    count = 0
+    for row in ws.iter_rows(values_only=True):
+        if headers is None:
+            headers = [str(c).strip() if c is not None else "" for c in row]
+            header_index = {h: i for i, h in enumerate(headers)}
+            continue
+        if all(c is None or str(c).strip() == "" for c in row):
+            continue
+        record: dict = {}
+        for field, col in mapping.items():
+            idx = header_index.get(col)
+            if idx is None or idx >= len(row):
+                record[field] = None
+            else:
+                cell = row[idx]
+                record[field] = str(cell).strip() if cell is not None else None
+        out.append(record)
+        count += 1
+        if count > MAX_IMPORT_ROWS:
+            raise ValueError(
+                f"Import exceeds maximum of {MAX_IMPORT_ROWS} rows. "
+                "Split the file and re-import."
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_mapping(mapping: Dict[str, str]) -> Optional[str]:
+    """Return an error message if the mapping is missing required fields."""
+    for field in _REQUIRED_MAPPING_FIELDS:
+        if not mapping.get(field, "").strip():
+            return f"Mapping must include a non-empty column target for '{field}'"
+    return None
 
 
 def _coerce_periods(value: Any, default: int = 5) -> int:
@@ -65,12 +141,32 @@ def _coerce_periods(value: Any, default: int = 5) -> int:
     return n
 
 
-def import_csv(
+# ---------------------------------------------------------------------------
+# High-level orchestration
+# ---------------------------------------------------------------------------
+
+
+def import_excel(
     tenant_id: str,
     file_storage,
     *,
     academic_year_id: Optional[str],
+    mapping: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
+    """
+    Import classes (and optional subject links) from an .xlsx file.
+
+    mapping defaults to DEFAULT_EXCEL_MAPPING.  When a custom mapping is
+    supplied (from the column-mapper UI), it must contain non-empty targets
+    for all four required fields.
+
+    Returns the same shape as the legacy import_csv:
+        {
+            success, created, skipped, failed,
+            created_count, skipped_count, failed_count,
+            subject_links_created, subject_links_skipped,
+        }
+    """
     if not tenant_id:
         return {"success": False, "error": "Tenant context is required"}
     if not academic_year_id:
@@ -78,9 +174,29 @@ def import_csv(
     if not AcademicYear.query.filter_by(id=academic_year_id, tenant_id=tenant_id).first():
         return {"success": False, "error": "Invalid academic_year_id for this tenant"}
 
-    rows, parse_err = _parse_csv(file_storage)
-    if parse_err is not None:
-        return {"success": False, "error": parse_err}
+    effective_mapping = mapping if mapping is not None else DEFAULT_EXCEL_MAPPING
+    mapping_error = _validate_mapping(effective_mapping)
+    if mapping_error:
+        return {"success": False, "error": mapping_error}
+
+    try:
+        rows = parse_workbook(file_storage.stream, file_storage.filename or "", effective_mapping)
+    except UnsupportedFileType as e:
+        return {"success": False, "error": str(e)}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": f"Could not parse file: {e}"}
+
+    if not rows:
+        return {"success": False, "error": "File is empty or contains only a header row"}
+
+    # Check that the mapped required columns actually exist in the file
+    # (parse_workbook sets field to None if the header wasn't found)
+    first = rows[0]
+    for field in _REQUIRED_MAPPING_FIELDS:
+        if field not in first:
+            return {"success": False, "error": f"Missing required column mapping: {field}"}
 
     units = {
         u.code.strip().lower(): u
@@ -250,3 +366,22 @@ def import_csv(
         "subject_links_created": subject_links_created,
         "subject_links_skipped": subject_links_skipped,
     }
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat alias
+# import_csv referenced by test_school_setup_phase1.py — keep until cleanup
+# TODO(school-setup-redesign): remove alias after test_school_setup_phase1 is updated
+# ---------------------------------------------------------------------------
+def import_csv(
+    tenant_id: str,
+    file_storage,
+    *,
+    academic_year_id: Optional[str],
+) -> Dict[str, Any]:
+    """Thin alias for import_excel using the default mapping.
+
+    Kept for backward compatibility with existing tests and any callers that
+    haven't migrated yet.  New callers should use import_excel directly.
+    """
+    return import_excel(tenant_id, file_storage, academic_year_id=academic_year_id)

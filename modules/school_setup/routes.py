@@ -5,8 +5,11 @@ School Setup Routes
   POST /api/school-setup/complete            — mark tenant.is_setup_complete
   POST /api/school-setup/duplicate-structure — clone unit→unit / programme→programme
   POST /api/school-setup/promote-year        — clone classes into target year
-  POST /api/school-setup/import              — CSV bulk import
+  POST /api/school-setup/import              — Excel (.xlsx) bulk import
+  POST /api/school-setup/import/parse-headers — return column headers from uploaded .xlsx
 """
+
+import json
 
 from flask import g, request
 
@@ -22,7 +25,7 @@ from shared.helpers import error_response, success_response
 from . import school_setup_bp
 from .bulk_generator_service import bulk_generate_classes
 from .duplicate_service import duplicate_structure
-from .import_service import import_csv
+from . import import_service
 from .promote_service import promote_year
 from .services import (
     get_status_payload,
@@ -157,12 +160,28 @@ def post_promote_year():
     return error_response("PromoteYearError", result.get("error", "promote failed"), 400)
 
 
+@school_setup_bp.route("/import/parse-headers", methods=["POST"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_permission(PERM_MANAGE)
+def parse_import_headers():
+    """Return the column headers from an uploaded .xlsx file."""
+    file = request.files.get("file")
+    if not file:
+        return error_response("ValidationError", "No file uploaded", 400)
+    try:
+        headers = import_service.parse_headers(file.stream, file.filename or "")
+    except import_service.UnsupportedFileType as e:
+        return error_response("UnsupportedFileType", str(e), 400)
+    return success_response(data={"headers": headers})
+
+
 @school_setup_bp.route("/import", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
 @require_feature("class_management")
 @require_permission(PERM_MANAGE)
-def post_import_csv():
+def post_import_excel():
     file_storage = request.files.get("file")
     if file_storage is None:
         return error_response("ValidationError", "file is required (multipart/form-data field 'file')", 400)
@@ -170,8 +189,15 @@ def post_import_csv():
         request.form.get("academic_year_id")
         or request.args.get("academic_year_id")
     )
-    result = import_csv(
-        g.tenant_id, file_storage, academic_year_id=academic_year_id
+    mapping = None
+    raw_mapping = request.form.get("mapping")
+    if raw_mapping:
+        try:
+            mapping = json.loads(raw_mapping)
+        except (ValueError, TypeError):
+            return error_response("ValidationError", "mapping must be a valid JSON object", 400)
+    result = import_service.import_excel(
+        g.tenant_id, file_storage, academic_year_id=academic_year_id, mapping=mapping
     )
     if result.get("success"):
         return success_response(
@@ -191,4 +217,4 @@ def post_import_csv():
             ),
             status_code=201,
         )
-    return error_response("CsvImportError", result.get("error", "import failed"), 400)
+    return error_response("ExcelImportError", result.get("error", "import failed"), 400)
