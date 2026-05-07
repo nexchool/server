@@ -281,7 +281,10 @@ class ClassSubject(TenantBaseModel):
     )
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
-    class_ref = db.relationship("Class", backref=db.backref("class_subjects", lazy=True))
+    class_ref = db.relationship(
+        "Class",
+        backref=db.backref("class_subjects", lazy=True, passive_deletes=True),
+    )
     subject_ref = db.relationship("Subject", foreign_keys=[subject_id], lazy=True)
     assigned_teachers = db.relationship(
         "ClassSubjectTeacher",
@@ -313,7 +316,10 @@ class SubjectLoad(TenantBaseModel):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    class_ref = db.relationship("Class", backref=db.backref("subject_loads", lazy=True))
+    class_ref = db.relationship(
+        "Class",
+        backref=db.backref("subject_loads", lazy=True, passive_deletes=True),
+    )
     subject_ref = db.relationship("Subject", backref=db.backref("class_loads", lazy=True))
 
     def save(self):

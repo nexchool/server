@@ -438,7 +438,7 @@ def copy_classes_between_years(from_year_id: str, to_year_id: str) -> Dict:
 
 
 def delete_class(class_id: str) -> Dict:
-    """Delete a class"""
+    """Delete a class (and its subject offerings via DB-level CASCADE)."""
     tenant_id = None
     try:
         cls = Class.query.get(class_id)
@@ -448,9 +448,18 @@ def delete_class(class_id: str) -> Dict:
         tenant_id = cls.tenant_id
         db.session.delete(cls)
         db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return {
+            'success': False,
+            'error': (
+                'Class cannot be deleted because data is still attached '
+                '(students, attendance, fees, etc.). Remove or reassign that data first.'
+            ),
+        }
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': f'Failed to delete class: {e}'}
 
     if tenant_id:
         try:
