@@ -367,21 +367,3 @@ def import_excel(
         "subject_links_skipped": subject_links_skipped,
     }
 
-
-# ---------------------------------------------------------------------------
-# Backward-compat alias
-# import_csv referenced by test_school_setup_phase1.py — keep until cleanup
-# TODO(school-setup-redesign): remove alias after test_school_setup_phase1 is updated
-# ---------------------------------------------------------------------------
-def import_csv(
-    tenant_id: str,
-    file_storage,
-    *,
-    academic_year_id: Optional[str],
-) -> Dict[str, Any]:
-    """Thin alias for import_excel using the default mapping.
-
-    Kept for backward compatibility with existing tests and any callers that
-    haven't migrated yet.  New callers should use import_excel directly.
-    """
-    return import_excel(tenant_id, file_storage, academic_year_id=academic_year_id)

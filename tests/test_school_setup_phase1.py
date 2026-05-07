@@ -26,44 +26,40 @@ def test_import_service_module_imports_clean():
     """Smoke: the module still imports after the response-shape change."""
     from modules.school_setup import import_service
 
-    assert callable(getattr(import_service, "import_csv", None))
+    assert callable(getattr(import_service, "import_excel", None))
 
 
-def test_import_csv_returns_new_keys_on_validation_error_paths(monkeypatch):
+def test_import_excel_returns_new_keys_on_validation_error_paths(monkeypatch):
     """When tenant context is missing, response is the legacy
     {"success": False, "error": ...} shape — verifies the early-exit branch
     still works after the rename."""
     from modules.school_setup import import_service
 
-    res = import_service.import_csv("", MagicMock(), academic_year_id="y1")
+    res = import_service.import_excel("", MagicMock(), academic_year_id="y1")
     assert res == {"success": False, "error": "Tenant context is required"}
 
-    res = import_service.import_csv("t1", MagicMock(), academic_year_id=None)
+    res = import_service.import_excel("t1", MagicMock(), academic_year_id=None)
     assert res == {"success": False, "error": "academic_year_id is required"}
 
 
-def test_import_csv_empty_csv_returns_failure():
+def test_import_excel_empty_returns_failure():
     pass  # noqa: TODO Task 14 — DB-integration test deferred to coverage gate
     # The real success-branch test would need an app context to bind
     # AcademicYear.query (Flask-SQLAlchemy descriptor), which is beyond
     # this file's pure-Python scope. The response-shape contract is
-    # already locked by `test_import_csv_response_keys_contract`.
+    # already locked by `test_import_excel_response_keys_contract`.
 
 
-def test_import_csv_response_keys_contract():
+def test_import_excel_response_keys_contract():
     """Locks the documented response-shape contract for the success branch.
 
     A real success path requires DB. We assert the key set we expect by
     inspecting the source — this guards against future drift renaming the
-    keys back.
-
-    import_csv is now a thin alias for import_excel, so we inspect
-    import_excel (which holds the actual implementation)."""
+    keys back."""
     import inspect
 
     from modules.school_setup import import_service
 
-    # The contract lives in import_excel; import_csv is a backward-compat alias.
     src = inspect.getsource(import_service.import_excel)
     # Required new keys in the success return dict
     for key in (
