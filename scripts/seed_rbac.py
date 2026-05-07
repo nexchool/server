@@ -185,6 +185,9 @@ PERMISSIONS = [
     # School setup flow
     ('school_setup.read', 'View school setup state and validation'),
     ('school_setup.manage', 'Run school setup and mark it complete'),
+
+    # Audit log
+    ('audit_log.view', 'View tenant audit log'),
 ]
 
 
@@ -228,6 +231,8 @@ ROLES = {
             'religion.manage',
             'academic_term.manage',
             'school_setup.manage',
+            # Audit log
+            'audit_log.view',
         ]
     },
     'Teacher': {

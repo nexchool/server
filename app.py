@@ -150,6 +150,8 @@ def register_blueprints(app: Flask):
     from modules.mediums import mediums_bp
     # Subscription / billing (Phase 5).
     from modules.subscription import subscription_bp
+    # Audit log
+    from modules.audit.routes import audit_bp
 
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -182,6 +184,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(subject_contexts_bp, url_prefix='/api/subject-contexts')
     app.register_blueprint(mediums_bp, url_prefix='/api/mediums')
     app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
+    app.register_blueprint(audit_bp)
 
 
 def register_error_handlers(app: Flask):
