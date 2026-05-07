@@ -62,6 +62,12 @@ class Class(TenantBaseModel):
         nullable=True,
         index=True,
     )
+    medium_id = db.Column(
+        db.String(36),
+        db.ForeignKey("mediums.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Academic year date bounds
     start_date = db.Column(db.Date, nullable=True)  # e.g. 2025-06-01
@@ -125,6 +131,11 @@ class Class(TenantBaseModel):
         back_populates="class_records",
         lazy=True,
     )
+    medium = db.relationship(
+        "Medium",
+        foreign_keys=[medium_id],
+        lazy=True,
+    )
 
     def save(self):
         db.session.add(self)
@@ -143,6 +154,8 @@ class Class(TenantBaseModel):
             "programme_name": self.programme.name if self.programme else None,
             "grade_id": self.grade_id,
             "grade_name": self.grade.name if self.grade else None,
+            "medium_id": self.medium_id,
+            "medium_name": self.medium.name if self.medium else None,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else None,
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,

@@ -123,6 +123,8 @@ def create_class(
             grade_id=grade_id or None,
             programme_id=programme_id or None,
             school_unit_id=school_unit_id or None,
+            medium_id=medium_id or None,
+            stream=stream or None,
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
@@ -325,6 +327,10 @@ def update_class(
             cls.programme_id = programme_id or None
         if school_unit_id is not None:
             cls.school_unit_id = school_unit_id or None
+        if medium_id is not None:
+            cls.medium_id = medium_id or None
+        if stream is not None:
+            cls.stream = stream if stream else None
 
         cls.save()
         return {'success': True, 'class': cls.to_dict()}
