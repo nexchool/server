@@ -39,6 +39,9 @@ def _call_get_profile_inner(routes, fake_user):
     # Access the underlying function via __wrapped__ to skip @auth_required
     inner_fn = routes.get_profile.__wrapped__
 
+    fake_tenant_cls = MagicMock()
+    fake_tenant_cls.query.get.return_value = None  # tenant lookup returns nothing → tenant_name stays None
+
     with (
         patch.object(routes, "resolve_tenant_for_auth", return_value=None),
         patch.object(routes, "g", fake_g),
@@ -47,6 +50,7 @@ def _call_get_profile_inner(routes, fake_user):
         patch("modules.rbac.services.get_user_roles", return_value=[]),
         patch("core.feature_flags.get_tenant_enabled_features", return_value=[]),
         patch.object(routes, "profile_picture_public_url", return_value=None),
+        patch("core.models.Tenant", fake_tenant_cls),
     ):
         inner_fn()
 
