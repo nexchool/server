@@ -82,3 +82,16 @@ class SubjectTemplateItem(db.Model):
     )
 
     group = db.relationship("SubjectTemplateGroup", back_populates="items")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "template_group_id": self.template_group_id,
+            "grade_number": self.grade_number,
+            "stream": self.stream,
+            "subject_name": self.subject_name,
+            "subject_code": self.subject_code,
+            "periods_per_week": self.periods_per_week,
+            "is_elective": self.is_elective,
+            "sort_order": self.sort_order,
+        }

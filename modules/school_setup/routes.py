@@ -31,6 +31,8 @@ from .services import (
     get_status_payload,
     run_complete_setup,
 )
+from .template_models import SubjectTemplateGroup, SubjectTemplateItem
+from . import apply_subjects_service
 
 
 PERM_READ = "school_setup.read"
@@ -218,3 +220,56 @@ def post_import_excel():
             status_code=201,
         )
     return error_response("ExcelImportError", result.get("error", "import failed"), 400)
+
+
+@school_setup_bp.route("/templates/", methods=["GET"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_permission(PERM_MANAGE)
+def list_templates():
+    """List active SubjectTemplateGroup rows (board templates)."""
+    groups = (
+        SubjectTemplateGroup.query
+        .filter_by(is_active=True)
+        .order_by(SubjectTemplateGroup.name)
+        .all()
+    )
+    return success_response(data=[g.to_dict() for g in groups])
+
+
+@school_setup_bp.route(
+    "/templates/<group_id>/items/", methods=["GET"], strict_slashes=False
+)
+@tenant_required
+@auth_required
+@require_permission(PERM_MANAGE)
+def list_template_items(group_id):
+    """List SubjectTemplateItem rows for a given template group."""
+    group = SubjectTemplateGroup.query.get(group_id)
+    if not group:
+        return error_response("NotFound", "Template not found", 404)
+    items = (
+        SubjectTemplateItem.query
+        .filter_by(template_group_id=group_id)
+        .order_by(SubjectTemplateItem.grade_number, SubjectTemplateItem.sort_order)
+        .all()
+    )
+    return success_response(data=[i.to_dict() for i in items])
+
+
+@school_setup_bp.route(
+    "/apply-subject-offerings", methods=["POST"], strict_slashes=False
+)
+@tenant_required
+@auth_required
+@require_permission(PERM_MANAGE)
+def apply_subject_offerings_route():
+    """Seed class_subjects for every active Subject × Class in the given academic year."""
+    payload = request.get_json(silent=True) or {}
+    academic_year_id = payload.get("academic_year_id")
+    if not academic_year_id:
+        return error_response("ValidationError", "academic_year_id required", 400)
+    result = apply_subjects_service.apply_subject_offerings(
+        tenant_id=g.tenant_id, academic_year_id=academic_year_id
+    )
+    return success_response(data=result)
