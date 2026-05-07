@@ -162,6 +162,33 @@ def post_promote_year():
     return error_response("PromoteYearError", result.get("error", "promote failed"), 400)
 
 
+@school_setup_bp.route("/import/template", methods=["GET"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_permission(PERM_MANAGE)
+def download_import_template():
+    """Return a pre-formatted xlsx skeleton with the import column headers."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from flask import send_file
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Classes"
+    ws.append(["unit_code", "programme_code", "grade", "section", "subject", "periods"])
+    # one example row to clarify format
+    ws.append(["MN", "CBSE-ENG", "Grade 1", "A", "", ""])
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return send_file(
+        bio,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name="class-import-template.xlsx",
+    )
+
+
 @school_setup_bp.route("/import/parse-headers", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
