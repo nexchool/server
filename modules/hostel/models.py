@@ -82,6 +82,11 @@ class HostelRoom(TenantBaseModel):
         index=True,
     )
     room_number = db.Column(db.String(50), nullable=False, index=True)
+    # Used to group rooms on the rooms grid (e.g. "Ground Floor", "1st Floor").
+    floor = db.Column(
+        db.String(50), nullable=False, default="Ground Floor",
+        server_default="Ground Floor",
+    )
     capacity = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -117,6 +122,7 @@ class HostelRoom(TenantBaseModel):
             "id": self.id,
             "hostel_id": self.hostel_id,
             "room_number": self.room_number,
+            "floor": self.floor,
             "capacity": self.capacity,
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,

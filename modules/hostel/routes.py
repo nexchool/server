@@ -301,6 +301,7 @@ def create_room():
         tenant_id=_tenant_id(),
         hostel_id=hostel_id,
         room_number=room_number,
+        floor=(payload.get("floor") or "Ground Floor").strip() or "Ground Floor",
         capacity=capacity,
         status=payload.get("status", "active"),
     )
@@ -331,6 +332,8 @@ def update_room(room_id: str):
     payload = request.get_json() or {}
     if "room_number" in payload:
         room.room_number = payload["room_number"]
+    if "floor" in payload:
+        room.floor = (payload["floor"] or "").strip() or "Ground Floor"
     if "status" in payload:
         room.status = payload["status"]
     if "capacity" in payload:
