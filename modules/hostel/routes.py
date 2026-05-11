@@ -234,7 +234,12 @@ def list_rooms(hostel_id: str):
 @require_feature("hostel")
 @require_any_permission(HOSTEL_READ, HOSTEL_MANAGE)
 def get_room(room_id: str):
-    """GET /api/hostel/rooms/:id — includes beds and current occupants."""
+    """GET /api/hostel/rooms/:id — includes beds and current occupants.
+
+    Each bed in the response is enriched with `occupant` (name +
+    admission number from the linked Student/User) so the frontend's
+    room-detail view can render the bed layout in one round trip.
+    """
     room = (
         db.session.query(HostelRoom)
         .filter(
@@ -254,10 +259,40 @@ def get_room(room_id: str):
         .all()
     )
 
+    # Batch-load student + user info for occupied beds so we avoid N+1.
+    from modules.auth.models import User
+    from modules.students.models import Student
+
+    student_ids = [b.allocated_to_student_id for b in beds if b.allocated_to_student_id]
+    occupant_by_student_id: dict[str, dict] = {}
+    if student_ids:
+        rows = (
+            db.session.query(Student, User)
+            .join(User, Student.user_id == User.id)
+            .filter(Student.id.in_(student_ids))
+            .all()
+        )
+        for student, user in rows:
+            occupant_by_student_id[student.id] = {
+                "student_id": student.id,
+                "name": user.name or user.email,
+                "admission_number": student.admission_number,
+            }
+
+    enriched_beds = []
+    for bed in beds:
+        bed_dict = bed.to_dict()
+        bed_dict["occupant"] = (
+            occupant_by_student_id.get(bed.allocated_to_student_id)
+            if bed.allocated_to_student_id
+            else None
+        )
+        enriched_beds.append(bed_dict)
+
     return success_response(
         data={
             "room": room.to_dict(),
-            "beds": [b.to_dict() for b in beds],
+            "beds": enriched_beds,
         }
     )
 
