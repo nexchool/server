@@ -2,9 +2,10 @@
 
 Strategy
 --------
-* test_templates_constant_has_four_boards — uses AST to extract the
-  TEMPLATES dict keys without importing the module (avoids the
-  module-level `from app import create_app` that requires python-dotenv).
+* test_templates_constant_has_four_boards — load the script via stubs and
+  check TEMPLATES.keys() at runtime. TEMPLATES is built by combining
+  board_subjects.json (cbse, gujarat_state_board) with hardcoded entries
+  (icse, ib), so a literal-AST check is no longer possible.
 
 * test_seed_skips_when_template_already_exists
 * test_seed_creates_when_no_template_exists
@@ -14,7 +15,6 @@ Strategy
 """
 from __future__ import annotations
 
-import ast
 import importlib
 import sys
 import types
@@ -30,33 +30,71 @@ for _p in (SERVER_DIR, SCRIPTS_DIR):
         sys.path.insert(0, str(_p))
 
 
-# ---------------------------------------------------------------------------
-# AST helper — read TEMPLATES keys without importing the script
-# ---------------------------------------------------------------------------
-
-def _extract_template_keys() -> set:
-    """Parse seed_subject_templates.py with AST and return TEMPLATES top-level keys."""
-    source = SEED_FILE.read_text()
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "TEMPLATES":
-                    if isinstance(node.value, ast.Dict):
-                        return {
-                            k.value
-                            for k in node.value.keys
-                            if isinstance(k, ast.Constant)
-                        }
-    return set()
-
-
-def test_templates_constant_has_four_boards():
-    """Sanity check on the data table — 4 boards expected."""
-    keys = _extract_template_keys()
-    assert keys == {"cbse", "gujarat_state_board", "icse", "ib"}, (
-        f"Expected 4 boards, got: {keys}"
+def test_templates_has_three_gujarat_boards():
+    """Three Gujarat-scoped boards: cbse, gseb_english, gseb_gujarati. ICSE/IB removed."""
+    sst = _load_seed_module()
+    keys = set(sst.TEMPLATES.keys())
+    assert keys == {"cbse", "gseb_english", "gseb_gujarati"}, (
+        f"Expected 3 Gujarat boards, got: {keys}"
     )
+
+
+def test_cbse_template_loaded_from_json():
+    """cbse items should derive from board_subjects.json — verify Std 1 known subjects."""
+    sst = _load_seed_module()
+    cbse_items = sst.TEMPLATES["cbse"]["items"]
+    grade_1 = next(row for row in cbse_items if row["grade"] == 1 and row["stream"] is None)
+    subject_names = {s["subject_name"] for s in grade_1["subjects"]}
+    assert "English" in subject_names
+    assert "The World Around Us" in subject_names
+
+
+def test_language_scope_is_gujarat_only():
+    """No subject should reference foreign or non-Gujarat regional languages."""
+    sst = _load_seed_module()
+    forbidden = {"Tamil", "Telugu", "Marathi", "Bengali", "Odia", "Kannada", "Malayalam",
+                 "Punjabi", "Urdu", "Arabic", "Persian", "Prakrit", "French", "German",
+                 "Spanish", "Russian", "Chinese", "Japanese", "Tibetan", "Mizo", "Nepali",
+                 "Manipuri", "Bahasa Melayu", "Assamese", "Sindhi"}
+    seen = set()
+    for tpl in sst.TEMPLATES.values():
+        for row in tpl["items"]:
+            for s in row["subjects"]:
+                seen.add(s["subject_name"])
+    leaked = {n for n in seen if any(b in n for b in forbidden)}
+    assert not leaked, f"Forbidden languages leaked into template: {leaked}"
+
+
+def test_gseb_gujarati_first_language_is_gujarati():
+    """In gseb_gujarati template, FL at every grade is Gujarati."""
+    sst = _load_seed_module()
+    items = sst.TEMPLATES["gseb_gujarati"]["items"]
+    fl_per_grade = {}
+    for row in items:
+        for s in row["subjects"]:
+            if s.get("role") == "first_language":
+                fl_per_grade.setdefault(row["grade"], set()).add(s["subject_name"])
+    for grade, langs in fl_per_grade.items():
+        assert "Gujarati" in langs, f"Grade {grade} guj-medium FL not Gujarati: {langs}"
+
+
+def test_g11_science_has_pick_one_track():
+    """Std 11 Science must carry elective_group_key on Math vs Biology rows."""
+    sst = _load_seed_module()
+    cbse = sst.TEMPLATES["cbse"]["items"]
+    sci11 = next(r for r in cbse if r["grade"] == 11 and r["stream"] == "Science")
+    track_keys = {s["elective_group_key"] for s in sci11["subjects"]
+                  if s["subject_name"] in ("Mathematics", "Biology")}
+    assert track_keys == {"g11_sci_track"}
+
+
+def test_vocational_stream_present_at_g11_g12():
+    """Each board must define Vocational stream at Std 11 and 12."""
+    sst = _load_seed_module()
+    for board_code in ("cbse", "gseb_english", "gseb_gujarati"):
+        items = sst.TEMPLATES[board_code]["items"]
+        voc_grades = {r["grade"] for r in items if r["stream"] == "Vocational"}
+        assert voc_grades == {11, 12}, f"{board_code}: vocational grades {voc_grades}"
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +193,7 @@ def test_seed_skips_when_template_already_exists(capsys):
 
     captured = capsys.readouterr()
     assert "SKIP cbse" in captured.out
-    assert "Done: 0 seeded, 4 skipped" in captured.out
+    assert "Done: 0 seeded, 0 replaced, 3 skipped" in captured.out
 
 
 def test_seed_creates_when_no_template_exists(capsys):
@@ -188,8 +226,8 @@ def test_seed_creates_when_no_template_exists(capsys):
 
     sst.seed()
 
-    # 4 commits expected (one per board)
-    assert fake_session.commit.call_count == 4
+    # 3 commits expected (one per Gujarat board)
+    assert fake_session.commit.call_count == 3
     captured = capsys.readouterr()
     assert "SEED cbse" in captured.out
-    assert "Done: 4 seeded, 0 skipped" in captured.out
+    assert "Done: 3 seeded, 0 replaced, 0 skipped" in captured.out

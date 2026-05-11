@@ -68,6 +68,21 @@ class SubjectTemplateItem(db.Model):
     subject_code = db.Column(db.String(20), nullable=True)
     periods_per_week = db.Column(db.Integer, nullable=True, default=5)
     is_elective = db.Column(db.Boolean, nullable=False, default=False)
+    role = db.Column(
+        db.String(32),
+        nullable=True,
+        comment="first_language | second_language | third_language | core | elective | co_curricular",
+    )
+    medium = db.Column(
+        db.String(16),
+        nullable=True,
+        comment="english | gujarati — default medium implied by the template's board (informational on the item).",
+    )
+    elective_group_key = db.Column(
+        db.String(80),
+        nullable=True,
+        comment="Items sharing this key are pick-one alternatives (e.g. Hindi vs Sanskrit at Std 9 third language).",
+    )
     sort_order = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(
         db.DateTime(timezone=True),
@@ -93,5 +108,8 @@ class SubjectTemplateItem(db.Model):
             "subject_code": self.subject_code,
             "periods_per_week": self.periods_per_week,
             "is_elective": self.is_elective,
+            "role": self.role,
+            "medium": self.medium,
+            "elective_group_key": self.elective_group_key,
             "sort_order": self.sort_order,
         }

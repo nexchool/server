@@ -1,12 +1,20 @@
 """
 Seed default subject templates for the school setup wizard.
 
-Run once: python scripts/seed_subject_templates.py
-Idempotent: skips existing board_codes.
+Run:
+    python -m scripts.seed_subject_templates            # idempotent (skip existing)
+    python -m scripts.seed_subject_templates --reseed   # delete+recreate listed boards
+
+All template content is derived from board_subjects.json (sibling file).
+Boards: cbse, gseb_english, gseb_gujarati. Languages restricted to
+{Gujarati, English, Hindi, Sanskrit}. ICSE / IB are out of scope.
 """
 
-import sys
+import argparse
+import json
 import os
+import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,235 +22,112 @@ from app import create_app
 from core.database import db
 from modules.school_setup.template_models import SubjectTemplateGroup, SubjectTemplateItem
 
-TEMPLATES = {
-    "cbse": {
-        "name": "CBSE Standard Template",
-        "items": [
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English", "ENG", 6, False),
-                ("Hindi", "HIN", 5, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Environmental Studies", "EVS", 4, False),
-            ]} for g in range(1, 3)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English", "ENG", 6, False),
-                ("Hindi", "HIN", 5, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Environmental Studies", "EVS", 4, False),
-            ]} for g in range(3, 6)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English", "ENG", 6, False),
-                ("Hindi", "HIN", 5, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Science", "SCI", 6, False),
-                ("Social Science", "SST", 5, False),
-                ("Sanskrit", "SAN", 4, True),
-            ]} for g in range(6, 9)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English Language & Literature", "ENG", 6, False),
-                ("Hindi", "HIN", 5, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Science", "SCI", 6, False),
-                ("Social Science", "SST", 5, False),
-                ("IT / Computer Applications", "IT", 4, True),
-            ]} for g in range(9, 11)],
-            *[{"grade": g, "stream": "Science", "subjects": [
-                ("English Core", "ENG", 5, False),
-                ("Physics", "PHY", 6, False),
-                ("Chemistry", "CHEM", 6, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Biology", "BIO", 6, True),
-                ("Computer Science", "CS", 4, True),
-                ("Physical Education", "PE", 2, True),
-            ]} for g in range(11, 13)],
-            *[{"grade": g, "stream": "Commerce", "subjects": [
-                ("English Core", "ENG", 5, False),
-                ("Accountancy", "ACC", 6, False),
-                ("Business Studies", "BST", 6, False),
-                ("Economics", "ECO", 6, False),
-                ("Mathematics", "MATH", 6, True),
-                ("Physical Education", "PE", 2, True),
-            ]} for g in range(11, 13)],
-            *[{"grade": g, "stream": "Arts", "subjects": [
-                ("English Core", "ENG", 5, False),
-                ("History", "HIST", 6, False),
-                ("Political Science", "POL", 6, False),
-                ("Geography", "GEO", 5, False),
-                ("Economics", "ECO", 5, True),
-                ("Sociology", "SOC", 5, True),
-                ("Physical Education", "PE", 2, True),
-            ]} for g in range(11, 13)],
-        ],
-    },
-    "gujarat_state_board": {
-        "name": "Gujarat State Board (GSEB) Template",
-        "items": [
-            *[{"grade": g, "stream": None, "subjects": [
-                ("Gujarati", "GUJ", 6, False),
-                ("English", "ENG", 5, False),
-                ("Hindi", "HIN", 4, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Paryavaran (EVS)", "EVS", 4, False),
-            ]} for g in range(1, 6)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("Gujarati", "GUJ", 6, False),
-                ("English", "ENG", 5, False),
-                ("Hindi", "HIN", 4, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Science & Technology", "SCI", 6, False),
-                ("Social Science", "SST", 5, False),
-                ("Sanskrit", "SAN", 3, True),
-            ]} for g in range(6, 9)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("Gujarati", "GUJ", 6, False),
-                ("English (FL)", "ENG", 5, False),
-                ("Hindi (SL)", "HIN", 4, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Science & Technology", "SCI", 6, False),
-                ("Social Science", "SST", 5, False),
-            ]} for g in range(9, 11)],
-            *[{"grade": g, "stream": "Science", "subjects": [
-                ("English", "ENG", 4, False),
-                ("Gujarati", "GUJ", 3, False),
-                ("Physics", "PHY", 6, False),
-                ("Chemistry", "CHEM", 6, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Biology", "BIO", 6, True),
-            ]} for g in range(11, 13)],
-            *[{"grade": g, "stream": "Commerce", "subjects": [
-                ("English", "ENG", 4, False),
-                ("Gujarati", "GUJ", 3, False),
-                ("Accountancy & Auditing", "ACC", 6, False),
-                ("Organisation of Commerce", "ORG", 5, False),
-                ("Economics", "ECO", 5, False),
-                ("Statistics", "STAT", 5, True),
-            ]} for g in range(11, 13)],
-            *[{"grade": g, "stream": "Arts", "subjects": [
-                ("English", "ENG", 4, False),
-                ("Gujarati", "GUJ", 4, False),
-                ("History", "HIST", 5, False),
-                ("Geography", "GEO", 5, False),
-                ("Economics", "ECO", 5, False),
-                ("Psychology", "PSY", 5, True),
-                ("Sociology", "SOC", 5, True),
-            ]} for g in range(11, 13)],
-        ],
-    },
-    "icse": {
-        "name": "ICSE / ISC Template",
-        "items": [
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English Language", "ENG", 7, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Environmental Education", "EVS", 4, False),
-                ("Second Language (Hindi/Regional)", "L2", 4, False),
-            ]} for g in range(1, 6)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English Language", "ENGL", 6, False),
-                ("English Literature", "ENGLIT", 4, False),
-                ("Mathematics", "MATH", 6, False),
-                ("History & Civics", "HIST", 4, False),
-                ("Geography", "GEO", 4, False),
-                ("Science (Physics/Chemistry/Biology)", "SCI", 6, False),
-                ("Second Language (Hindi)", "HIN", 4, False),
-                ("Computer Applications", "COMP", 3, True),
-            ]} for g in range(6, 9)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("English Language", "ENGL", 6, False),
-                ("English Literature", "ENGLIT", 4, False),
-                ("Mathematics", "MATH", 6, False),
-                ("History & Civics", "HIST", 4, False),
-                ("Geography", "GEO", 4, False),
-                ("Physics", "PHY", 5, False),
-                ("Chemistry", "CHEM", 5, False),
-                ("Biology", "BIO", 5, False),
-                ("Second Language (Hindi)", "HIN", 4, False),
-            ]} for g in range(9, 11)],
-            *[{"grade": g, "stream": "Science", "subjects": [
-                ("English", "ENG", 5, False),
-                ("Physics", "PHY", 6, False),
-                ("Chemistry", "CHEM", 6, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Biology", "BIO", 6, True),
-                ("Computer Science", "CS", 4, True),
-            ]} for g in range(11, 13)],
-            *[{"grade": g, "stream": "Commerce", "subjects": [
-                ("English", "ENG", 5, False),
-                ("Accounts", "ACC", 6, False),
-                ("Commerce", "COM", 6, False),
-                ("Economics", "ECO", 6, False),
-                ("Mathematics", "MATH", 5, True),
-            ]} for g in range(11, 13)],
-        ],
-    },
-    "ib": {
-        "name": "IB (PYP/MYP/DP) Template",
-        "items": [
-            *[{"grade": g, "stream": None, "subjects": [
-                ("Language A (English)", "LANG_A", 6, False),
-                ("Language B (Hindi/Gujarati)", "LANG_B", 4, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Science", "SCI", 4, False),
-                ("Social Studies", "SS", 4, False),
-                ("Arts", "ARTS", 3, False),
-                ("Physical Education", "PE", 2, False),
-            ]} for g in range(1, 6)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("Language & Literature (English)", "LANG_LIT", 5, False),
-                ("Language Acquisition (Hindi/French)", "LANG_ACQ", 4, False),
-                ("Individuals & Societies", "I_S", 5, False),
-                ("Sciences", "SCI", 5, False),
-                ("Mathematics", "MATH", 6, False),
-                ("Arts", "ARTS", 3, False),
-                ("Physical & Health Education", "PHE", 2, False),
-                ("Design", "DESIGN", 3, False),
-            ]} for g in range(6, 11)],
-            *[{"grade": g, "stream": None, "subjects": [
-                ("Theory of Knowledge", "TOK", 2, False),
-                ("Language A: Literature (English)", "LANG_A", 5, False),
-                ("Language B (Hindi/French)", "LANG_B", 4, False),
-                ("Group 3: History / Economics / Geography", "G3", 5, False),
-                ("Group 4: Biology / Chemistry / Physics", "G4", 5, False),
-                ("Group 5: Mathematics (AA or AI)", "G5", 5, False),
-                ("Group 6: Visual Arts / Music (elective)", "G6", 3, True),
-            ]} for g in range(11, 13)],
-        ],
-    },
-}
+_BOARD_SUBJECTS_PATH = Path(__file__).resolve().parent / "board_subjects.json"
+
+_NAME_MAX = 100
+_CODE_MAX = 20
+_STREAM_MAX = 32
+_ROLE_MAX = 32
+_MEDIUM_MAX = 16
+_GROUP_KEY_MAX = 80
 
 
-def seed():
+def _truncate(value, limit):
+    if value is None:
+        return None
+    s = str(value)
+    return s[:limit]
+
+
+def _row(entry: dict, default_medium: str | None) -> dict:
+    """Convert one JSON subject entry into kwargs for SubjectTemplateItem.
+
+    Pick-one groups (`elective_group_key`) are passed through verbatim — the
+    apply-template service decides whether to surface them as electives or
+    keep all alternatives in the curriculum.
+    """
+    return {
+        "subject_name": _truncate(entry.get("name", "Unknown"), _NAME_MAX),
+        "subject_code": _truncate(entry.get("code"), _CODE_MAX),
+        "periods_per_week": entry.get("default_periods", 5),
+        "is_elective": not entry.get("compulsory", True)
+            or "elective" in (entry.get("role") or "").lower(),
+        "role": _truncate(entry.get("role"), _ROLE_MAX),
+        "medium": _truncate(entry.get("medium") or default_medium, _MEDIUM_MAX),
+        "elective_group_key": _truncate(entry.get("elective_group_key"), _GROUP_KEY_MAX),
+    }
+
+
+def _load_templates() -> dict:
+    """Read board_subjects.json and shape it for the seeder."""
+    with open(_BOARD_SUBJECTS_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    result = {}
+    for board_code, board in data.get("boards", {}).items():
+        display_name = board.get("display_name", board_code.upper())
+        default_medium = board.get("default_medium")
+
+        items = []
+        for grade_str, grade_data in board.get("standards", {}).items():
+            try:
+                grade = int(grade_str)
+            except (TypeError, ValueError):
+                continue
+
+            if "subjects" in grade_data:
+                rows = [_row(e, default_medium) for e in grade_data["subjects"]]
+                if rows:
+                    items.append({"grade": grade, "stream": None, "subjects": rows})
+
+            for stream_key, stream_data in grade_data.get("streams", {}).items():
+                stream = _truncate(stream_key, _STREAM_MAX)
+                rows = [_row(e, default_medium) for e in stream_data.get("subjects", [])]
+                if rows:
+                    items.append({"grade": grade, "stream": stream, "subjects": rows})
+
+        result[board_code] = {"name": display_name, "items": items}
+    return result
+
+
+TEMPLATES = _load_templates()
+
+
+def seed(reseed: bool = False):
     app = create_app()
     with app.app_context():
         seeded = 0
         skipped = 0
+        replaced = 0
         for board_code, data in TEMPLATES.items():
             existing = SubjectTemplateGroup.query.filter_by(board_code=board_code).first()
             if existing:
-                print(f"  SKIP {board_code} — already exists (id={existing.id})")
-                skipped += 1
-                continue
+                if not reseed:
+                    print(f"  SKIP {board_code} — already exists (id={existing.id})")
+                    skipped += 1
+                    continue
+                db.session.delete(existing)
+                db.session.commit()
+                print(f"  DROP {board_code} — old group {existing.id} removed")
+                replaced += 1
 
             group = SubjectTemplateGroup(name=data["name"], board_code=board_code)
             db.session.add(group)
-            db.session.flush()  # get group.id
+            db.session.flush()
 
             sort_counters = {}
             for row in data["items"]:
                 grade = row["grade"]
                 stream = row["stream"]
-                for sort_i, (subj_name, subj_code, periods, is_elective) in enumerate(row["subjects"]):
-                    key = (grade, stream)
+                key = (grade, stream)
+                for subj in row["subjects"]:
                     sort_counters[key] = sort_counters.get(key, 0)
                     item = SubjectTemplateItem(
                         template_group_id=group.id,
                         grade_number=grade,
                         stream=stream,
-                        subject_name=subj_name,
-                        subject_code=subj_code,
-                        periods_per_week=periods,
-                        is_elective=is_elective,
                         sort_order=sort_counters[key],
+                        **subj,
                     )
                     sort_counters[key] += 1
                     db.session.add(item)
@@ -252,8 +137,15 @@ def seed():
             print(f"  SEED {board_code} — {item_count} subject items created")
             seeded += 1
 
-        print(f"\nDone: {seeded} seeded, {skipped} skipped")
+        print(f"\nDone: {seeded} seeded, {replaced} replaced, {skipped} skipped")
 
 
 if __name__ == "__main__":
-    seed()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--reseed",
+        action="store_true",
+        help="Delete existing template groups for these board codes and recreate them.",
+    )
+    args = parser.parse_args()
+    seed(reseed=args.reseed)

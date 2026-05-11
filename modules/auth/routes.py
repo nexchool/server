@@ -616,6 +616,32 @@ def get_enabled_features():
     return success_response(data={'enabled_features': enabled_features}, status_code=200)
 
 
+# ==================== TENANT BRANDING (public) ====================
+
+@auth_bp.route('/tenant-branding', methods=['GET'])
+def get_tenant_branding():
+    """
+    Public: school display name for the tenant resolved from Host / X-Tenant-ID / default.
+    Used by the login page before authentication.
+    """
+    err = resolve_tenant_for_auth({})
+    if err:
+        return err[1], err[0]
+
+    tenant = getattr(g, 'tenant', None)
+    if not tenant:
+        return error_response(
+            error='TenantError',
+            message='No tenant context',
+            status_code=400,
+        )
+
+    return success_response(
+        data={'name': tenant.name or ''},
+        status_code=200,
+    )
+
+
 # ==================== PROFILE ====================
 
 @auth_bp.route('/profile', methods=['GET'])
@@ -628,11 +654,18 @@ def get_profile():
 
     user = g.current_user
 
+    from core.models import Tenant
     from core.feature_flags import get_tenant_enabled_features
     from modules.rbac.services import get_user_permissions, get_user_roles
     permissions = get_user_permissions(user.id)
     roles = get_user_roles(user.id)
     enabled_features = get_tenant_enabled_features(user.tenant_id) if user.tenant_id else []
+
+    tenant_name = None
+    if user.tenant_id:
+        t = Tenant.query.get(user.tenant_id)
+        if t:
+            tenant_name = t.name
 
     return success_response(
         data={
@@ -646,6 +679,7 @@ def get_profile():
                 'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
                 'created_at': user.created_at.isoformat(),
             },
+            'tenant_name': tenant_name,
             'roles': roles,
             'permissions': permissions,
             'enabled_features': enabled_features,
