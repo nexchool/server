@@ -82,6 +82,39 @@ run_migrations() {
   flask db upgrade
 }
 
+# -----------------------------------------------------------------------------
+# Seeds — every script invoked here must be idempotent (skip existing rows).
+# Set SKIP_DB_SEED=1 to bypass entirely (used in CI and production where a
+# separate one-off job seeds the database).
+# -----------------------------------------------------------------------------
+run_seeds() {
+  if [ "${SKIP_DB_SEED:-0}" = "1" ]; then
+    log "Skipping seeds (SKIP_DB_SEED=1)"
+    return 0
+  fi
+
+  # The full list — each line is one idempotent seed module.
+  #
+  # NOTE: scripts.seed_subject_templates is NOT yet idempotent (it errors
+  # on UNIQUE-violation when run twice). It's intentionally left off the
+  # auto-run list — invoke it manually for new tenants via `make seed-subjects`
+  # below or `python -m scripts.seed_subject_templates` until upserts land.
+  seeds="
+    scripts.seed_rbac
+    scripts.seed_holiday_permissions
+    scripts.grant_hostel_permissions
+  "
+
+  for seed in $seeds; do
+    log "Seeding: $seed"
+    if ! python -m "$seed"; then
+      # Don't kill the API container if a single seed errors — log loudly
+      # and continue. Production runs seeds via a separate one-off job.
+      log "WARN: seed $seed failed; continuing."
+    fi
+  done
+}
+
 start_api() {
   log "Starting Gunicorn..."
   exec gunicorn -c gunicorn_conf.py "app:app"
@@ -94,6 +127,7 @@ start_api_with_embedded_celery() {
 
 wait_for_db
 run_migrations
+run_seeds
 
 if [ "${RUN_EMBEDDED_CELERY:-0}" = "1" ]; then
   start_api_with_embedded_celery
