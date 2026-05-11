@@ -188,6 +188,19 @@ PERMISSIONS = [
 
     # Audit log
     ('audit_log.view', 'View tenant audit log'),
+
+    # Hostel module
+    ('hostel.read', 'View hostels, rooms, and beds'),
+    ('hostel.manage', 'Create / update / delete hostels, rooms, and beds'),
+    ('hostel.allocations.read', 'View hostel allocations'),
+    ('hostel.allocations.manage', 'Allocate students to beds / check out'),
+    ('hostel.visitors.read', 'View hostel visitor logs'),
+    ('hostel.visitors.manage', 'Check hostel visitors in / out'),
+    ('hostel.gatepass.create', 'Create hostel gatepass requests'),
+    ('hostel.gatepass.approve', 'Approve or reject hostel gatepasses (warden)'),
+    ('hostel.gatepass.gatekeeper', 'Mark gatepass checkout / checkin at the gate'),
+    ('hostel.gatepass.read', 'View hostel gatepasses'),
+    ('hostel.reports.read', 'View hostel occupancy reports and dashboard'),
 ]
 
 
@@ -233,6 +246,18 @@ ROLES = {
             'school_setup.manage',
             # Audit log
             'audit_log.view',
+            # Hostel
+            'hostel.read',
+            'hostel.manage',
+            'hostel.allocations.read',
+            'hostel.allocations.manage',
+            'hostel.visitors.read',
+            'hostel.visitors.manage',
+            'hostel.gatepass.create',
+            'hostel.gatepass.approve',
+            'hostel.gatepass.gatekeeper',
+            'hostel.gatepass.read',
+            'hostel.reports.read',
         ]
     },
     'Teacher': {

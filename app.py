@@ -138,6 +138,7 @@ def register_blueprints(app: Flask):
     from modules.transport import transport_bp
     from modules.devices import devices_bp
     from modules.dashboard import dashboard_bp
+    from modules.hostel import hostel_bp
 
     # Multi-school structure (Phase 2): real blueprints.
     from modules.school_units import school_units_bp
@@ -173,6 +174,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(transport_bp, url_prefix='/api/transport')
     app.register_blueprint(devices_bp, url_prefix='/api/devices')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
+    app.register_blueprint(hostel_bp, url_prefix='/api/hostel')
 
     # Multi-school structure
     app.register_blueprint(school_units_bp, url_prefix='/api/school-units')
