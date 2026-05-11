@@ -193,3 +193,101 @@ class HostelBed(TenantBaseModel):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
+
+
+class HostelAllocation(TenantBaseModel):
+    """Student → Bed allocation record (current + historical)."""
+
+    __tablename__ = "hostel_allocations"
+
+    # Status values
+    STATUS_ACTIVE = "active"
+    STATUS_COMPLETED = "completed"
+    STATUS_MOVED = "moved"
+    STATUS_VALUES = (STATUS_ACTIVE, STATUS_COMPLETED, STATUS_MOVED)
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    student_id = db.Column(
+        db.String(36),
+        db.ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    hostel_id = db.Column(
+        db.String(36),
+        db.ForeignKey("hostels.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    room_id = db.Column(
+        db.String(36),
+        db.ForeignKey("hostel_rooms.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    bed_id = db.Column(
+        db.String(36),
+        db.ForeignKey("hostel_beds.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    check_in_at = db.Column(db.DateTime, nullable=False)
+    check_out_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(
+        db.String(20),
+        nullable=False,
+        default="active",
+        server_default="active",
+    )
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+    student = db.relationship(
+        "Student",
+        foreign_keys=[student_id],
+        backref=db.backref("hostel_allocations", lazy=True),
+    )
+    hostel = db.relationship("Hostel", foreign_keys=[hostel_id])
+    room = db.relationship("HostelRoom", foreign_keys=[room_id])
+    bed = db.relationship("HostelBed", foreign_keys=[bed_id])
+
+    def __init__(self, **kwargs):
+        """Initialize with Python-level defaults so transient objects expose them."""
+        if "status" not in kwargs:
+            kwargs["status"] = "active"
+        super().__init__(**kwargs)
+
+    @property
+    def is_active(self) -> bool:
+        """True if allocation is currently active (not checked out)."""
+        return self.status == "active" and self.check_out_at is None and self.deleted_at is None
+
+    def to_dict(self) -> dict:
+        """Serialize allocation for API response."""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "student_id": self.student_id,
+            "hostel_id": self.hostel_id,
+            "room_id": self.room_id,
+            "bed_id": self.bed_id,
+            "academic_year_id": self.academic_year_id,
+            "check_in_at": self.check_in_at.isoformat() if self.check_in_at else None,
+            "check_out_at": self.check_out_at.isoformat() if self.check_out_at else None,
+            "status": self.status,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
+        }
