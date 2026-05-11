@@ -116,6 +116,11 @@ def init_db(app):
             TransportStaff,
             TransportStop,
         )
+        from modules.hostel.models import (
+            Hostel,
+            HostelRoom,
+            HostelBed,
+        )
 
 
 def reset_db(app):
