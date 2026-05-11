@@ -412,3 +412,246 @@ class HostelVisitorLog(TenantBaseModel):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
         }
+
+
+class HostelGatepass(TenantBaseModel):
+    """Student night/day-out gatepass with state machine."""
+
+    __tablename__ = "hostel_gatepasses"
+
+    # Gatepass types
+    TYPE_DAY_OUT = "day_out"
+    TYPE_NIGHT_OUT = "night_out"
+    TYPE_VALUES = (TYPE_DAY_OUT, TYPE_NIGHT_OUT)
+
+    # Status state machine
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_ACTIVE = "active"
+    STATUS_CLOSED = "closed"
+    STATUS_REJECTED = "rejected"
+    STATUS_OVERDUE = "overdue"
+    STATUS_VALUES = (
+        STATUS_PENDING,
+        STATUS_APPROVED,
+        STATUS_ACTIVE,
+        STATUS_CLOSED,
+        STATUS_REJECTED,
+        STATUS_OVERDUE,
+    )
+
+    # Parent consent status (informational only in v1; security guard calls directly)
+    CONSENT_NOT_REQUIRED = "not_required"
+    CONSENT_PENDING = "pending"
+    CONSENT_GIVEN = "given"
+    CONSENT_REJECTED = "rejected"
+    CONSENT_VALUES = (
+        CONSENT_NOT_REQUIRED,
+        CONSENT_PENDING,
+        CONSENT_GIVEN,
+        CONSENT_REJECTED,
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    student_id = db.Column(
+        db.String(36),
+        db.ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    hostel_id = db.Column(
+        db.String(36),
+        db.ForeignKey("hostels.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    type = db.Column(db.String(20), nullable=False)
+    status = db.Column(
+        db.String(20),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    actual_out_at = db.Column(db.DateTime, nullable=True)
+    actual_in_at = db.Column(db.DateTime, nullable=True)
+    departure_datetime = db.Column(db.DateTime, nullable=False)
+    expected_return_datetime = db.Column(db.DateTime, nullable=False)
+    reason = db.Column(db.String(500), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    parent_phone = db.Column(db.String(20), nullable=False)
+    parent_consent_status = db.Column(
+        db.String(20),
+        nullable=False,
+        default="not_required",
+        server_default="not_required",
+    )
+    parent_consent_notified_at = db.Column(db.DateTime, nullable=True)
+    parent_notification_type = db.Column(db.String(50), nullable=True)
+    approved_by_user_id = db.Column(db.String(36), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
+    student = db.relationship("Student", foreign_keys=[student_id])
+    hostel = db.relationship("Hostel", foreign_keys=[hostel_id])
+    audit_logs = db.relationship(
+        "HostelGatepassAudit",
+        back_populates="gatepass",
+        cascade="all, delete-orphan",
+        lazy=True,
+        order_by="HostelGatepassAudit.created_at",
+    )
+
+    def __init__(self, **kwargs):
+        """Initialize with Python-level defaults so transient objects expose them."""
+        if "status" not in kwargs:
+            kwargs["status"] = "pending"
+        if "parent_consent_status" not in kwargs:
+            kwargs["parent_consent_status"] = "not_required"
+        super().__init__(**kwargs)
+
+    @property
+    def is_overdue(self) -> bool:
+        """True if active gatepass has passed its expected return time.
+
+        Note: This is a Python-side check used at read time. The
+        background job is responsible for transitioning status to 'overdue'.
+        Grace period is applied by the job, not here.
+        """
+        if self.status != self.STATUS_ACTIVE:
+            return False
+        if self.expected_return_datetime is None:
+            return False
+        return datetime.utcnow() > self.expected_return_datetime
+
+    def can_transition_to(self, new_status: str) -> bool:
+        """Check whether a state transition is legal.
+
+        Allowed transitions:
+          pending  -> approved | rejected
+          approved -> active   (gatekeeper checkout)
+          active   -> closed   (gatekeeper checkin)
+          active   -> overdue  (system job)
+        """
+        allowed = {
+            self.STATUS_PENDING: {self.STATUS_APPROVED, self.STATUS_REJECTED},
+            self.STATUS_APPROVED: {self.STATUS_ACTIVE},
+            self.STATUS_ACTIVE: {self.STATUS_CLOSED, self.STATUS_OVERDUE},
+            self.STATUS_CLOSED: set(),
+            self.STATUS_REJECTED: set(),
+            self.STATUS_OVERDUE: {self.STATUS_CLOSED},  # late return still allowed
+        }
+        return new_status in allowed.get(self.status, set())
+
+    def to_dict(self) -> dict:
+        """Serialize gatepass for API response."""
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "student_id": self.student_id,
+            "hostel_id": self.hostel_id,
+            "type": self.type,
+            "status": self.status,
+            "requested_at": self.requested_at.isoformat() if self.requested_at else None,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+            "actual_out_at": self.actual_out_at.isoformat() if self.actual_out_at else None,
+            "actual_in_at": self.actual_in_at.isoformat() if self.actual_in_at else None,
+            "departure_datetime": (
+                self.departure_datetime.isoformat() if self.departure_datetime else None
+            ),
+            "expected_return_datetime": (
+                self.expected_return_datetime.isoformat()
+                if self.expected_return_datetime
+                else None
+            ),
+            "reason": self.reason,
+            "notes": self.notes,
+            "parent_phone": self.parent_phone,
+            "parent_consent_status": self.parent_consent_status,
+            "parent_consent_notified_at": (
+                self.parent_consent_notified_at.isoformat()
+                if self.parent_consent_notified_at
+                else None
+            ),
+            "parent_notification_type": self.parent_notification_type,
+            "approved_by_user_id": self.approved_by_user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
+        }
+
+
+class HostelGatepassAudit(db.Model):
+    """Append-only audit log for every gatepass state change.
+
+    Not tenant-scoped directly; tenant is inferred via gatepass_id.
+    Never deleted; preserved for compliance.
+    """
+
+    __tablename__ = "hostel_gatepass_audit"
+
+    # Action types
+    ACTION_CREATED = "created"
+    ACTION_APPROVED = "approved"
+    ACTION_REJECTED = "rejected"
+    ACTION_CHECKOUT = "checkout"
+    ACTION_CHECKIN = "checkin"
+    ACTION_MARKED_OVERDUE = "marked_overdue"
+    ACTION_VALUES = (
+        ACTION_CREATED,
+        ACTION_APPROVED,
+        ACTION_REJECTED,
+        ACTION_CHECKOUT,
+        ACTION_CHECKIN,
+        ACTION_MARKED_OVERDUE,
+    )
+
+    # Actor types
+    ACTOR_STUDENT = "student"
+    ACTOR_WARDEN = "warden"
+    ACTOR_GATEKEEPER = "gatekeeper"
+    ACTOR_SYSTEM = "system"
+    ACTOR_VALUES = (
+        ACTOR_STUDENT,
+        ACTOR_WARDEN,
+        ACTOR_GATEKEEPER,
+        ACTOR_SYSTEM,
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    gatepass_id = db.Column(
+        db.String(36),
+        db.ForeignKey("hostel_gatepasses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action = db.Column(db.String(50), nullable=False)
+    actor_type = db.Column(db.String(20), nullable=False)
+    actor_id = db.Column(db.String(36), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    gatepass = db.relationship(
+        "HostelGatepass",
+        back_populates="audit_logs",
+        foreign_keys=[gatepass_id],
+    )
+
+    def to_dict(self) -> dict:
+        """Serialize audit entry for API response."""
+        return {
+            "id": self.id,
+            "gatepass_id": self.gatepass_id,
+            "action": self.action,
+            "actor_type": self.actor_type,
+            "actor_id": self.actor_id,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
