@@ -50,11 +50,21 @@ def resolve_tenant_for_auth(
                 status=TENANT_STATUS_ACTIVE,
             ).first()
 
-    # 2. Header
+    # 2. Header — X-Tenant-ID (UUID) or X-Tenant-Subdomain (slug)
     if tenant is None:
         tenant_id_header = (request.headers.get("X-Tenant-ID") or "").strip()
         if tenant_id_header:
+            # PK lookup intentionally skips status filter here;
+            # the status check below (line ~102) blocks inactive tenants.
             tenant = Tenant.query.get(tenant_id_header)
+
+    if tenant is None:
+        subdomain_header = (request.headers.get("X-Tenant-Subdomain") or "").strip().lower()
+        if subdomain_header:
+            tenant = Tenant.query.filter_by(
+                subdomain=subdomain_header,
+                status=TENANT_STATUS_ACTIVE,
+            ).first()
 
     # 3. Subdomain from Host
     if tenant is None and request.host:
@@ -120,10 +130,20 @@ def resolve_tenant():
     from core.models import TENANT_STATUS_ACTIVE
 
     tenant = None
-    # 1. Header
+    # 1. Header — X-Tenant-ID (UUID) or X-Tenant-Subdomain (slug)
     tenant_id_header = request.headers.get("X-Tenant-ID", "").strip()
     if tenant_id_header:
+        # PK lookup intentionally skips status filter here;
+        # the status check below blocks inactive tenants.
         tenant = Tenant.query.get(tenant_id_header)
+
+    if tenant is None:
+        subdomain_header = (request.headers.get("X-Tenant-Subdomain") or "").strip().lower()
+        if subdomain_header:
+            tenant = Tenant.query.filter_by(
+                subdomain=subdomain_header,
+                status=TENANT_STATUS_ACTIVE,
+            ).first()
     # 2. Subdomain
     if tenant is None and request.host:
         parts = request.host.lower().split(".")
