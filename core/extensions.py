@@ -28,7 +28,7 @@ def init_extensions(app):
     cors_config = {
         'origins': app.config.get('CORS_ORIGINS', ['*']),
         'methods': app.config.get('CORS_METHODS', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
-        'allow_headers': app.config.get('CORS_ALLOW_HEADERS', ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID']),
+        'allow_headers': app.config.get('CORS_ALLOW_HEADERS', ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain']),
         'expose_headers': app.config.get('CORS_EXPOSE_HEADERS', ['X-New-Access-Token']),
         'supports_credentials': app.config.get('CORS_SUPPORTS_CREDENTIALS', True)
     }
