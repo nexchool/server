@@ -12,9 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from core.database import db
 from .models import (
     SchoolUnit,
-    SCHOOL_UNIT_TYPES,
     SCHOOL_UNIT_STATUSES,
-    SCHOOL_UNIT_TYPE_OTHER,
+    SCHOOL_UNIT_TYPE_CAMPUS,
     SCHOOL_UNIT_STATUS_ACTIVE,
 )
 
@@ -70,10 +69,6 @@ def create_school_unit(data: Dict, tenant_id: str) -> Dict:
     if not code:
         return {"success": False, "error": "code is required"}
 
-    unit_type = _clean(data.get("type")) or SCHOOL_UNIT_TYPE_OTHER
-    if unit_type not in SCHOOL_UNIT_TYPES:
-        return {"success": False, "error": f"type must be one of {SCHOOL_UNIT_TYPES}"}
-
     status = _clean(data.get("status")) or SCHOOL_UNIT_STATUS_ACTIVE
     if status not in SCHOOL_UNIT_STATUSES:
         return {"success": False, "error": f"status must be one of {SCHOOL_UNIT_STATUSES}"}
@@ -83,7 +78,7 @@ def create_school_unit(data: Dict, tenant_id: str) -> Dict:
             tenant_id=tenant_id,
             name=name,
             code=code,
-            type=unit_type,
+            type=SCHOOL_UNIT_TYPE_CAMPUS,
             dise_no=_clean(data.get("dise_no")),
             index_no=_clean(data.get("index_no")),
             recognition_no=_clean(data.get("recognition_no")),
@@ -121,8 +116,8 @@ def update_school_unit(unit_id: str, data: Dict, tenant_id: str) -> Dict:
             if field not in data:
                 continue
             value = _clean(data[field])
-            if field == "type" and value not in SCHOOL_UNIT_TYPES:
-                return {"success": False, "error": f"type must be one of {SCHOOL_UNIT_TYPES}"}
+            if field == "type":
+                continue  # type is always 'campus'; ignore client-supplied values
             if field == "status" and value not in SCHOOL_UNIT_STATUSES:
                 return {"success": False, "error": f"status must be one of {SCHOOL_UNIT_STATUSES}"}
             if field in ("name", "code") and not value:

@@ -1,10 +1,11 @@
 """
 SchoolUnit Model
 
-A SchoolUnit is a logical sub-school / campus inside a tenant. A tenant can
-operate many units (e.g. "Modi Primary School", "Modi Higher Secondary
-School") that share the same tenant subscription but have their own DISE
-number, recognition, principal, branding and class hierarchy.
+A SchoolUnit is a campus / branch of the school organisation inside a tenant.
+A tenant can operate many units (e.g. "North Campus", "South Campus") that
+share the same tenant subscription but have their own DISE number, recognition,
+principal, branding and class hierarchy. Each campus can have multiple academic
+programmes configured within it.
 
 Tenant-scoped. Identified per-tenant by a short `code`.
 """
@@ -18,19 +19,8 @@ from core.database import db
 from core.models import TenantBaseModel
 
 
-SCHOOL_UNIT_TYPE_NURSERY = "nursery"
-SCHOOL_UNIT_TYPE_PRIMARY = "primary"
-SCHOOL_UNIT_TYPE_SECONDARY = "secondary"
-SCHOOL_UNIT_TYPE_HIGHER_SECONDARY = "higher_secondary"
-SCHOOL_UNIT_TYPE_OTHER = "other"
-
-SCHOOL_UNIT_TYPES = (
-    SCHOOL_UNIT_TYPE_NURSERY,
-    SCHOOL_UNIT_TYPE_PRIMARY,
-    SCHOOL_UNIT_TYPE_SECONDARY,
-    SCHOOL_UNIT_TYPE_HIGHER_SECONDARY,
-    SCHOOL_UNIT_TYPE_OTHER,
-)
+SCHOOL_UNIT_TYPE_CAMPUS = "campus"
+SCHOOL_UNIT_TYPES = (SCHOOL_UNIT_TYPE_CAMPUS,)
 
 SCHOOL_UNIT_STATUS_ACTIVE = "active"
 SCHOOL_UNIT_STATUS_INACTIVE = "inactive"
@@ -52,7 +42,7 @@ class SchoolUnit(TenantBaseModel):
             postgresql_where=text("deleted_at IS NULL"),
         ),
         CheckConstraint(
-            "type IN ('nursery','primary','secondary','higher_secondary','other')",
+            "type IN ('campus')",
             name="ck_school_units_type",
         ),
         CheckConstraint(
@@ -68,7 +58,7 @@ class SchoolUnit(TenantBaseModel):
     type = db.Column(
         db.String(20),
         nullable=False,
-        default=SCHOOL_UNIT_TYPE_OTHER,
+        default=SCHOOL_UNIT_TYPE_CAMPUS,
     )
 
     # Government / regulatory identifiers — optional, vary by board/region.
@@ -132,4 +122,4 @@ class SchoolUnit(TenantBaseModel):
         }
 
     def __repr__(self):
-        return f"<SchoolUnit {self.code} ({self.type})>"
+        return f"<SchoolUnit {self.code}>"
