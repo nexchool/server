@@ -9,7 +9,7 @@ from core.decorators import (
     require_any_permission,
     require_permission,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from shared.helpers import (
     error_response,
@@ -81,7 +81,7 @@ def _csv_response(csv_text: str, filename: str):
 @transport_bp.route("/buses", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_BUSES_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -98,7 +98,7 @@ def list_buses():
 @transport_bp.route("/buses/<bus_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_BUSES_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -114,7 +114,7 @@ def get_bus(bus_id):
 @transport_bp.route("/buses/<bus_id>/details", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_BUSES_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -140,7 +140,7 @@ def get_bus_details(bus_id):
 @transport_bp.route("/buses/<bus_id>/export/students", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_EXPORTS_READ)
 def export_bus_students(bus_id):
     ay = request.args.get("academic_year_id") or None
@@ -153,7 +153,7 @@ def export_bus_students(bus_id):
 @transport_bp.route("/buses", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_BUSES_CREATE)
 def create_bus():
     payload, err = schemas.validate_bus_payload(request.get_json() or {}, is_update=False)
@@ -168,7 +168,7 @@ def create_bus():
 @transport_bp.route("/buses/<bus_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_BUSES_UPDATE)
 def update_bus(bus_id):
     raw = request.get_json() or {}
@@ -185,7 +185,7 @@ def update_bus(bus_id):
 @transport_bp.route("/buses/<bus_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_BUSES_DELETE)
 def delete_bus(bus_id):
     ok, err = services.delete_bus(bus_id)
@@ -202,7 +202,7 @@ def delete_bus(bus_id):
 @transport_bp.route("/drivers", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_DRIVERS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -216,7 +216,7 @@ def list_drivers():
 @transport_bp.route("/drivers/<driver_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(TRANSPORT_DRIVERS_READ, TRANSPORT_ASSIGNMENTS_READ)
 def get_driver(driver_id):
     d = services.driver_crud_get(driver_id)
@@ -228,7 +228,7 @@ def get_driver(driver_id):
 @transport_bp.route("/drivers", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DRIVERS_CREATE)
 def create_driver():
     payload, err = schemas.validate_driver_payload(request.get_json() or {}, is_update=False)
@@ -243,7 +243,7 @@ def create_driver():
 @transport_bp.route("/drivers/<driver_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DRIVERS_UPDATE)
 def update_driver(driver_id):
     raw = request.get_json() or {}
@@ -260,7 +260,7 @@ def update_driver(driver_id):
 @transport_bp.route("/drivers/<driver_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DRIVERS_DELETE)
 def delete_driver(driver_id):
     ok, err = services.delete_driver(driver_id)
@@ -277,7 +277,7 @@ def delete_driver(driver_id):
 @transport_bp.route("/staff", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_DRIVERS_READ,
     TRANSPORT_ASSIGNMENTS_READ,
@@ -291,7 +291,7 @@ def list_transport_staff():
 @transport_bp.route("/staff", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DRIVERS_CREATE)
 def create_transport_staff():
     payload, err = schemas.validate_staff_payload(request.get_json() or {}, is_update=False)
@@ -306,7 +306,7 @@ def create_transport_staff():
 @transport_bp.route("/staff/<staff_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DRIVERS_UPDATE)
 def update_transport_staff(staff_id):
     raw = request.get_json() or {}
@@ -323,7 +323,7 @@ def update_transport_staff(staff_id):
 @transport_bp.route("/staff/<staff_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DRIVERS_DELETE)
 def delete_transport_staff(staff_id):
     ok, err = services.deactivate_staff_member(staff_id)
@@ -335,7 +335,7 @@ def delete_transport_staff(staff_id):
 @transport_bp.route("/staff/<staff_id>/workload", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ASSIGNMENTS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -368,7 +368,7 @@ def get_transport_staff_workload(staff_id):
 @transport_bp.route("/routes", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ROUTES_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -382,7 +382,7 @@ def list_routes():
 @transport_bp.route("/routes/<route_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ROUTES_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -399,7 +399,7 @@ def get_route(route_id):
 @transport_bp.route("/routes/<route_id>/buses", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(TRANSPORT_ROUTES_READ, TRANSPORT_ENROLLMENT_READ, TRANSPORT_ENROLLMENT_CREATE)
 def list_buses_for_route(route_id):
     on = request.args.get("on_date")
@@ -423,7 +423,7 @@ def list_buses_for_route(route_id):
 @transport_bp.route("/stops", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_STOPS_READ,
     TRANSPORT_ROUTES_READ,
@@ -448,7 +448,7 @@ def list_global_stops():
 @transport_bp.route("/stops", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_STOPS_CREATE)
 def create_global_stop():
     raw = request.get_json() or {}
@@ -470,7 +470,7 @@ def create_global_stop():
 @transport_bp.route("/stops/<stop_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_STOPS_READ,
     TRANSPORT_ROUTES_READ,
@@ -487,7 +487,7 @@ def get_global_stop(stop_id):
 @transport_bp.route("/routes/<route_id>/stops", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_STOPS_READ,
     TRANSPORT_ROUTES_READ,
@@ -502,7 +502,7 @@ def list_route_stops(route_id):
 @transport_bp.route("/routes/<route_id>/stops", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_STOPS_CREATE)
 def create_route_stop(route_id):
     payload, err = schemas.validate_stop_payload(request.get_json() or {}, is_update=False)
@@ -517,7 +517,7 @@ def create_route_stop(route_id):
 @transport_bp.route("/stops/<stop_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_STOPS_UPDATE)
 def update_route_stop(stop_id):
     raw = request.get_json() or {}
@@ -540,7 +540,7 @@ def update_route_stop(stop_id):
 @transport_bp.route("/stops/<stop_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_STOPS_DELETE)
 def delete_transport_stop(stop_id):
     ok, err = services.delete_global_stop(stop_id)
@@ -558,7 +558,7 @@ def delete_transport_stop(stop_id):
 @transport_bp.route("/routes/<route_id>/stops/reorder", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_STOPS_UPDATE)
 def reorder_route_stops(route_id):
     body = request.get_json() or {}
@@ -576,7 +576,7 @@ def reorder_route_stops(route_id):
 @transport_bp.route("/routes/<route_id>/stops/sync", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_STOPS_UPDATE)
 def sync_route_stops_route(route_id):
     rows, err = schemas.validate_sync_route_stops_payload(request.get_json() or {})
@@ -591,7 +591,7 @@ def sync_route_stops_route(route_id):
 @transport_bp.route("/routes", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ROUTES_CREATE)
 def create_route():
     payload, err = schemas.validate_route_payload(request.get_json() or {}, is_update=False)
@@ -606,7 +606,7 @@ def create_route():
 @transport_bp.route("/routes/<route_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ROUTES_UPDATE)
 def update_route(route_id):
     raw = request.get_json() or {}
@@ -623,7 +623,7 @@ def update_route(route_id):
 @transport_bp.route("/routes/<route_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ROUTES_DELETE)
 def delete_route(route_id):
     ok, err, details = services.delete_route(route_id)
@@ -641,7 +641,7 @@ def delete_route(route_id):
 @transport_bp.route("/routes/<route_id>/export/students", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_EXPORTS_READ)
 def export_route_students(route_id):
     ay = request.args.get("academic_year_id") or None
@@ -659,7 +659,7 @@ def export_route_students(route_id):
 @transport_bp.route("/schedules", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ASSIGNMENTS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -689,7 +689,7 @@ def list_schedules_route():
 @transport_bp.route("/schedules/exceptions", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ASSIGNMENTS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -720,7 +720,7 @@ def list_schedule_exceptions_route():
 @transport_bp.route("/schedules/exceptions", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ASSIGNMENTS_CREATE)
 def create_schedule_exception_route():
     payload, err = schemas.validate_exception_payload(request.get_json() or {})
@@ -737,7 +737,7 @@ def create_schedule_exception_route():
 @transport_bp.route("/schedules/exceptions/<exception_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ASSIGNMENTS_DELETE)
 def delete_schedule_exception_route(exception_id):
     ok, serr = services.delete_schedule_exception(exception_id)
@@ -749,7 +749,7 @@ def delete_schedule_exception_route(exception_id):
 @transport_bp.route("/schedules/conflict-check", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ASSIGNMENTS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -767,7 +767,7 @@ def schedule_conflict_check():
 @transport_bp.route("/schedules", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ASSIGNMENTS_CREATE)
 def create_schedule_route():
     payload, err = schemas.validate_schedule_payload(request.get_json() or {}, is_update=False)
@@ -784,7 +784,7 @@ def create_schedule_route():
 @transport_bp.route("/schedules/<schedule_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ASSIGNMENTS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -800,7 +800,7 @@ def get_schedule_route(schedule_id):
 @transport_bp.route("/schedules/<schedule_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ASSIGNMENTS_UPDATE)
 def update_schedule_route(schedule_id):
     raw = request.get_json() or {}
@@ -819,7 +819,7 @@ def update_schedule_route(schedule_id):
 @transport_bp.route("/schedules/<schedule_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ASSIGNMENTS_DELETE)
 def delete_schedule_route(schedule_id):
     ok, serr = services.deactivate_schedule(schedule_id)
@@ -836,7 +836,7 @@ def delete_schedule_route(schedule_id):
 @transport_bp.route("/bus-assignments", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_ASSIGNMENTS_READ,
     TRANSPORT_ENROLLMENT_READ,
@@ -849,7 +849,7 @@ def list_assignments():
 @transport_bp.route("/bus-assignments", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ASSIGNMENTS_CREATE)
 def create_assignment():
     payload, err = schemas.validate_assignment_payload(request.get_json() or {})
@@ -869,7 +869,7 @@ def create_assignment():
 @transport_bp.route("/enrollments", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ENROLLMENT_READ)
 def list_enrollments():
     ay = request.args.get("academic_year_id") or None
@@ -879,7 +879,7 @@ def list_enrollments():
 @transport_bp.route("/enroll", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ENROLLMENT_CREATE)
 def enroll():
     payload, err = schemas.validate_enroll_payload(request.get_json() or {}, is_update=False)
@@ -894,7 +894,7 @@ def enroll():
 @transport_bp.route("/enroll/<enrollment_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ENROLLMENT_UPDATE)
 def update_enroll(enrollment_id):
     raw = request.get_json() or {}
@@ -911,7 +911,7 @@ def update_enroll(enrollment_id):
 @transport_bp.route("/enroll/<enrollment_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_ENROLLMENT_DELETE)
 def delete_enroll(enrollment_id):
     ok, err = services.deactivate_enrollment(enrollment_id)
@@ -928,7 +928,7 @@ def delete_enroll(enrollment_id):
 @transport_bp.route("/dashboard", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_DASHBOARD_READ)
 def dashboard():
     ay = request.args.get("academic_year_id") or None
@@ -938,7 +938,7 @@ def dashboard():
 @transport_bp.route("/fee-plans", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_any_permission(
     TRANSPORT_FEE_PLANS_READ,
     TRANSPORT_FEE_PLANS_MANAGE,
@@ -953,7 +953,7 @@ def list_fee_plans():
 @transport_bp.route("/fee-plans", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_FEE_PLANS_MANAGE)
 def create_fee_plan():
     payload, err = schemas.validate_fee_plan_payload(request.get_json() or {})
@@ -972,7 +972,7 @@ def create_fee_plan():
 @transport_bp.route("/export/contact-sheet", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("transport")
+@require_feature("transport")
 @require_permission(TRANSPORT_EXPORTS_READ)
 def export_contact_sheet():
     ay = request.args.get("academic_year_id") or None
@@ -980,3 +980,49 @@ def export_contact_sheet():
     if err:
         return _err(err or "Export failed", 400)
     return _csv_response(csv_text, "transport-contact-sheet.csv")
+
+
+# ---------------------------------------------------------------------------
+# Year transition / Rollover
+# ---------------------------------------------------------------------------
+
+
+@transport_bp.route("/rollover", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("transport")
+@require_any_permission(TRANSPORT_FEE_PLANS_MANAGE, TRANSPORT_ENROLLMENT_UPDATE, "transport.manage")
+def transport_rollover():
+    """
+    Clone TransportFeePlan and active TransportEnrollment rows from from_year_id
+    to to_year_id. Idempotent. Only carries over enrollments for students who
+    have an `is_current=true` StudentClassEnrollment in the target year.
+    """
+    from . import services_rollover
+
+    data = request.get_json(silent=True) or {}
+    from_year_id = (data.get("from_year_id") or "").strip()
+    to_year_id = (data.get("to_year_id") or "").strip()
+    if not from_year_id or not to_year_id:
+        return validation_error_response({"message": "from_year_id and to_year_id are required"})
+
+    copy_fee_plans = bool(data.get("copy_fee_plans", True))
+    copy_enrollments = bool(data.get("copy_enrollments", True))
+
+    result = services_rollover.rollover_transport(
+        from_year_id,
+        to_year_id,
+        copy_fee_plans=copy_fee_plans,
+        copy_enrollments=copy_enrollments,
+    )
+    if not result.get("success"):
+        return _err(result.get("error", "Rollover failed"))
+    return success_response(
+        data={
+            "fee_plans_created": result["fee_plans_created"],
+            "fee_plans_reused": result["fee_plans_reused"],
+            "enrollments_created": result["enrollments_created"],
+            "enrollments_skipped_graduated": result["enrollments_skipped_graduated"],
+            "enrollments_skipped_existing": result["enrollments_skipped_existing"],
+        }
+    )

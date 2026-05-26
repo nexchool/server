@@ -12,14 +12,25 @@ from core.database import db
 
 
 # Status values for Tenant
+TENANT_STATUS_TRIAL = "trial"      # Pre-paid trial; writes allowed until trial_ends_at.
 TENANT_STATUS_ACTIVE = "active"
 TENANT_STATUS_SUSPENDED = "suspended"
 TENANT_STATUS_DELETED = "deleted"  # Soft delete; login and API access blocked
+TENANT_STATUSES = (
+    TENANT_STATUS_TRIAL,
+    TENANT_STATUS_ACTIVE,
+    TENANT_STATUS_SUSPENDED,
+    TENANT_STATUS_DELETED,
+)
+
+# Billing cycles. We only model 'yearly' today; the column exists so we
+# can add 'monthly' / 'termly' without another migration when we need it.
+BILLING_CYCLE_YEARLY = "yearly"
+BILLING_CYCLES = (BILLING_CYCLE_YEARLY,)
 
 # Default keys for platform settings (stored in platform_settings table)
 PLATFORM_SETTING_KEYS = [
     "platform_name",
-    "default_plan_id",
     "maintenance_mode",
     "session_timeout_minutes",
     "max_login_attempts",
@@ -84,6 +95,61 @@ class Tenant(db.Model):
         default=TENANT_STATUS_ACTIVE,
         index=True
     )  # active | suspended
+
+    # Per-tenant subscription model (replaces shared Plan).
+    price_per_student_per_year = db.Column(db.Numeric(12, 2), nullable=True)
+    discount_percentage = db.Column(db.Numeric(5, 2), nullable=True)
+    discount_start_date = db.Column(db.Date, nullable=True)
+    discount_end_date = db.Column(db.Date, nullable=True)
+    feature_flags = db.Column(db.JSON, nullable=False, default=dict)
+
+    # Subscription state (Phase 5).
+    # The pricing columns above already capture price/discount; the new
+    # columns track lifecycle. `status` carries trial/active/suspended/
+    # deleted (see TENANT_STATUSES); a dedicated TenantSubscription table
+    # would duplicate the pricing columns we already have.
+    trial_ends_at = db.Column(db.DateTime, nullable=True)
+    billing_cycle = db.Column(
+        db.String(20),
+        nullable=False,
+        default=BILLING_CYCLE_YEARLY,
+        server_default=BILLING_CYCLE_YEARLY,
+    )
+
+    # School-setup wizard completion gate. False until POST /school-setup/complete.
+    is_setup_complete = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
+    setup_completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    setup_completed_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    setup_reconfirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    # Offboarding lifecycle
+    offboarding_started_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    purge_scheduled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    # Setup metadata
+    setup_template_used = db.Column(
+        db.String(50),
+        nullable=True,
+        comment="board_code of template used at setup: cbse, icse, gujarat_state_board, ib, custom",
+    )
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "setup_template_used IS NULL OR setup_template_used IN "
+            "('cbse', 'icse', 'gujarat_state_board', 'ib', 'custom')",
+            name="ck_tenants_setup_template_used",
+        ),
+    )
+
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,
@@ -126,6 +192,45 @@ class AuditLog(db.Model):
 
     def __repr__(self):
         return f"<AuditLog {self.action} {self.created_at}>"
+
+
+class TenantUsage(db.Model):
+    """
+    TenantUsage
+
+    One row per tenant. Tracks the metrics that drive billing — currently
+    just `active_students_count`, snapshotted whenever the student
+    lifecycle changes. Read by the billing service and surfaced to the
+    super-admin panel.
+
+    Not a TenantBaseModel because the row is platform-managed: it is
+    written by service hooks rather than by tenant-scoped business logic,
+    and queries always go through `tenant_id` explicitly.
+    """
+
+    __tablename__ = "tenant_usage"
+    __tenant_scoped__ = False
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id = db.Column(
+        db.String(36),
+        db.ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    active_students_count = db.Column(
+        db.Integer, nullable=False, default=0, server_default="0"
+    )
+    last_updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    def __repr__(self):
+        return f"<TenantUsage tenant={self.tenant_id} students={self.active_students_count}>"
 
 
 class PlatformSetting(db.Model):

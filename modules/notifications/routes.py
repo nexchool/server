@@ -10,7 +10,7 @@ from flask import Blueprint, Response, g, request, stream_with_context
 from sqlalchemy import and_, or_
 
 from core.database import db
-from core.decorators import auth_required, require_plan_feature, tenant_required
+from core.decorators import auth_required, require_feature, tenant_required
 from core.decorators.rbac import require_any_permission
 from core.tenant import get_tenant_id
 from modules.notifications.enums import (
@@ -98,7 +98,7 @@ def _serialize_list_item(n: Notification, user_id: str) -> dict:
 @notifications_bp.route("", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 def list_notifications():
     """
     GET /api/notifications
@@ -145,7 +145,7 @@ def list_notifications():
 @notifications_bp.route("/stream", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 def notification_inbox_stream():
     """
     SSE stream: when this user's inbox changes, server publishes on Redis and this
@@ -184,7 +184,7 @@ def notification_inbox_stream():
 @notifications_bp.route("/<notification_id>/read", methods=["PATCH"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 def mark_read(notification_id):
     """PATCH /api/notifications/<id>/read"""
     tenant_id = get_tenant_id()
@@ -248,7 +248,7 @@ def mark_read(notification_id):
 @notifications_bp.route("/mark-all-read", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 def mark_all_read():
     """POST /api/notifications/mark-all-read"""
     tenant_id = get_tenant_id()
@@ -299,7 +299,7 @@ def _parse_channels(raw) -> list:
 @notifications_bp.route("/send", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 @require_any_permission(PERM_MANAGE)
 def send_notification_route():
     """
@@ -381,7 +381,7 @@ def send_notification_route():
 @notifications_bp.route("/send-bulk", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 @require_any_permission(PERM_MANAGE)
 def send_bulk_notification_route():
     """
@@ -459,7 +459,7 @@ def send_bulk_notification_route():
 @notifications_bp.route("/<notification_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("notifications")
+@require_feature("notifications")
 def get_notification(notification_id: str):
     """
     GET /api/notifications/<id>

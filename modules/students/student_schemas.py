@@ -139,6 +139,7 @@ def validate_student_payload(data: dict, *, is_update: bool) -> str | None:
         "tc_number": 50,
         "house_name": 50,
         "student_status": 30,
+        "academic_result": 20,
     }
     for k, m in max_len.items():
         v = data.get(k)

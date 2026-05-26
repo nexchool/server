@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import func, or_, tuple_
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
@@ -363,10 +366,24 @@ def _sync_student_transport_fee_amounts(student_fee: StudentFee, monthly_fee: De
 
 
 def sync_transport_fee_for_enrollment(enrollment: TransportEnrollment, monthly_fee: Decimal) -> Tuple[bool, Optional[str]]:
-    """Create or update finance StudentFee line for transport."""
+    """Create or update finance StudentFee line for transport.
+
+    Silently no-ops when the `finance` feature is disabled for this tenant —
+    transport enrollment still succeeds, but no billing rows are created.
+    Once finance is re-enabled, a fresh enrollment write will pick up here.
+    """
+    from core.feature_flags import is_feature_enabled
+
     tenant_id = get_tenant_id()
     if not tenant_id:
         return False, "Tenant context is required"
+    if not is_feature_enabled(tenant_id, "fees_management"):
+        logger.info(
+            "Transport-fee sync skipped: finance feature disabled (tenant=%s, enrollment=%s)",
+            tenant_id,
+            getattr(enrollment, "id", None),
+        )
+        return True, None
 
     student = Student.query.filter_by(id=enrollment.student_id, tenant_id=tenant_id).first()
     if not student:
@@ -407,9 +424,14 @@ def sync_transport_fee_for_enrollment(enrollment: TransportEnrollment, monthly_f
 
 
 def remove_transport_fee_for_enrollment(enrollment: TransportEnrollment) -> Tuple[bool, Optional[str]]:
+    """No-op when finance is disabled — there's no billing row to maintain."""
+    from core.feature_flags import is_feature_enabled
+
     tenant_id = get_tenant_id()
     if not tenant_id:
         return False, "Tenant context is required"
+    if not is_feature_enabled(tenant_id, "fees_management"):
+        return True, None
     if not enrollment.student_fee_id:
         return True, None
     sf = StudentFee.query.filter_by(id=enrollment.student_fee_id, tenant_id=tenant_id).first()
@@ -459,12 +481,12 @@ def _pickup_drop_labels(en: TransportEnrollment) -> Tuple[Optional[str], Optiona
 
 def build_student_transport_block(student_id: str, viewer_user_id: str) -> Optional[Dict[str, Any]]:
     """Serialized transport summary for student detail APIs; None if hidden or no active enrollment."""
-    from core.plan_features import is_plan_feature_enabled
+    from core.feature_flags import is_feature_enabled
 
     tenant_id = get_tenant_id()
     if not tenant_id:
         return None
-    if not is_plan_feature_enabled(tenant_id, "transport"):
+    if not is_feature_enabled(tenant_id, "transport"):
         return None
 
     st = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()

@@ -31,6 +31,8 @@ def make_celery(app):
             "tasks.finance",
             "tasks.notification_dispatch",
             "tasks.push_notifications",
+            "tasks.hostel",
+            "modules.school_setup.retention_tasks",
         ],
     )
     # Use new lowercase config keys; avoid celery.conf.update(app.config) to prevent old-key conflicts
@@ -38,6 +40,25 @@ def make_celery(app):
         "process-overdue-fees-daily": {
             "task": "process_overdue_fees_task",
             "schedule": 86400.0,  # 24 hours
+        },
+        "retention-purge-notification-logs": {
+            "task": "retention.purge_notification_logs",
+            "schedule": 86400,
+        },
+        "retention-purge-audit-logs": {
+            "task": "retention.purge_audit_logs",
+            "schedule": 604800,
+        },
+        "retention-advance-offboarding": {
+            "task": "retention.advance_offboarding_stage",
+            "schedule": 604800,
+        },
+        # Hostel: detect gatepasses past expected return + grace period.
+        # Every 5 minutes is responsive enough for warden alerts without
+        # hammering the DB.
+        "hostel-mark-overdue-gatepasses": {
+            "task": "hostel.mark_overdue_gatepasses",
+            "schedule": 300.0,  # 5 minutes
         },
     }
     # Default cwd is /app (owned by app) but a root-owned celerybeat-schedule from an old run breaks beat.

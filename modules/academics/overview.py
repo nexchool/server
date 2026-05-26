@@ -1,7 +1,7 @@
 """Academics overview API - GET /api/academics/overview."""
 
 from modules.academics import academics_bp
-from core.decorators import auth_required, tenant_required, require_plan_feature, require_permission
+from core.decorators import auth_required, tenant_required, require_feature, require_permission
 from core.tenant import get_tenant_id
 from modules.classes.models import Class
 from modules.subjects.models import Subject
@@ -11,7 +11,7 @@ from shared.helpers import success_response
 @academics_bp.route("/overview", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission("class.read")
 def get_academics_overview():
     """GET /api/academics/overview - Returns total_classes and total_subjects."""

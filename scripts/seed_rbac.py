@@ -169,6 +169,38 @@ PERMISSIONS = [
     ('holiday.update', 'Update holiday details'),
     ('holiday.delete', 'Delete holidays'),
     ('holiday.manage', 'Full holiday management access'),
+
+    # Multi-school structural masters
+    ('school_unit.read', 'View school units (campuses)'),
+    ('school_unit.manage', 'Manage school units (campuses)'),
+    ('programme.read', 'View academic programmes (board + medium)'),
+    ('programme.manage', 'Manage academic programmes'),
+    ('grade.read', 'View grades / standards master'),
+    ('grade.manage', 'Manage grades / standards master'),
+    ('religion.read', 'View religion master'),
+    ('religion.manage', 'Manage religion master'),
+    ('academic_term.read', 'View academic terms'),
+    ('academic_term.manage', 'Manage academic terms'),
+
+    # School setup flow
+    ('school_setup.read', 'View school setup state and validation'),
+    ('school_setup.manage', 'Run school setup and mark it complete'),
+
+    # Audit log
+    ('audit_log.view', 'View tenant audit log'),
+
+    # Hostel module
+    ('hostel.read', 'View hostels, rooms, and beds'),
+    ('hostel.manage', 'Create / update / delete hostels, rooms, and beds'),
+    ('hostel.allocations.read', 'View hostel allocations'),
+    ('hostel.allocations.manage', 'Allocate students to beds / check out'),
+    ('hostel.visitors.read', 'View hostel visitor logs'),
+    ('hostel.visitors.manage', 'Check hostel visitors in / out'),
+    ('hostel.gatepass.create', 'Create hostel gatepass requests'),
+    ('hostel.gatepass.approve', 'Approve or reject hostel gatepasses (warden)'),
+    ('hostel.gatepass.gatekeeper', 'Mark gatepass checkout / checkin at the gate'),
+    ('hostel.gatepass.read', 'View hostel gatepasses'),
+    ('hostel.reports.read', 'View hostel occupancy reports and dashboard'),
 ]
 
 
@@ -205,6 +237,27 @@ ROLES = {
             'academics.read',
             'academics.manage',
             'transport.manage',
+            # Multi-school structural masters + setup flow
+            'school_unit.manage',
+            'programme.manage',
+            'grade.manage',
+            'religion.manage',
+            'academic_term.manage',
+            'school_setup.manage',
+            # Audit log
+            'audit_log.view',
+            # Hostel
+            'hostel.read',
+            'hostel.manage',
+            'hostel.allocations.read',
+            'hostel.allocations.manage',
+            'hostel.visitors.read',
+            'hostel.visitors.manage',
+            'hostel.gatepass.create',
+            'hostel.gatepass.approve',
+            'hostel.gatepass.gatekeeper',
+            'hostel.gatepass.read',
+            'hostel.reports.read',
         ]
     },
     'Teacher': {
@@ -225,6 +278,11 @@ ROLES = {
             'class_subject.read',
             'academics.read',
             'transport.info.read.class',
+            'school_unit.read',
+            'programme.read',
+            'grade.read',
+            'academic_term.read',
+            'school_setup.read',
         ]
     },
     'Student': {

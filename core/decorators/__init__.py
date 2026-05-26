@@ -32,8 +32,12 @@ Usage:
 from .auth import auth_required
 from .rbac import require_permission, require_any_permission, require_all_permissions
 from .platform import platform_admin_required
+from .setup import require_setup_complete
+from .subscription import require_active_subscription, get_subscription_state
 from core.tenant import tenant_required
-from core.plan_features import require_plan_feature
+from core.feature_flags import require_feature
+# Back-compat alias; new code should import require_feature directly.
+require_plan_feature = require_feature
 
 __all__ = [
     'auth_required',
@@ -42,5 +46,9 @@ __all__ = [
     'require_all_permissions',
     'tenant_required',
     'platform_admin_required',
+    'require_feature',
     'require_plan_feature',
+    'require_setup_complete',
+    'require_active_subscription',
+    'get_subscription_state',
 ]

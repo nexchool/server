@@ -53,6 +53,13 @@ class User(TenantBaseModel):
 
     # Metadata
     last_login_at = db.Column(db.DateTime, nullable=True)
+    default_unit_id = db.Column(
+        db.String(36),
+        db.ForeignKey("school_units.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Preferred campus for this admin. NULL = show all units. UI filter only, not a permission gate.",
+    )
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,

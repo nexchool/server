@@ -60,7 +60,15 @@ def get_holiday_for_date(check_date: date, tenant_id: str) -> Optional[Dict]:
     """
     Check if a specific date is a holiday (non-recurring range OR recurring weekly-off).
     Returns the first matching holiday dict, or None if the date is a working day.
+
+    When the tenant has `holiday_management` disabled, this returns None
+    unconditionally — existing holiday rows are ignored so attendance/leave
+    treat every day as a working day.
     """
+    from core.feature_flags import is_feature_enabled
+
+    if not is_feature_enabled(tenant_id, "holiday_management"):
+        return None
     try:
         # Non-recurring: date falls within [start_date, end_date]
         holiday = (
@@ -100,7 +108,15 @@ def get_working_days_info_for_range(
 
     holiday_occurrences is a list of dicts, each being a holiday.to_dict() enriched
     with an `occurrence_date` field (YYYY-MM-DD) for the specific date that is a holiday.
+
+    Returns "all working days, no holidays" when `holiday_management` is off.
     """
+    from core.feature_flags import is_feature_enabled
+
+    if not is_feature_enabled(tenant_id, "holiday_management"):
+        total = (end_date - start_date).days + 1
+        return total, total, []
+
     try:
         total_days = (end_date - start_date).days + 1
         holiday_dates: set = set()
@@ -253,7 +269,10 @@ def calendar_range_summary(
     Expand all holiday occurrences in [start_date, end_date] for calendar UIs.
 
     Uses the same rules as attendance (non-recurring ranges + recurring weekly offs).
+    Returns an empty occurrences list when `holiday_management` is disabled.
     """
+    from core.feature_flags import is_feature_enabled
+
     sd = _parse_date(start_date_str)
     ed = _parse_date(end_date_str)
     if not sd or not ed:
@@ -263,6 +282,19 @@ def calendar_range_summary(
         }
     if sd > ed:
         return {"success": False, "error": "start_date must be on or before end_date"}
+
+    if not is_feature_enabled(tenant_id, "holiday_management"):
+        total = (ed - sd).days + 1
+        return {
+            "success": True,
+            "data": {
+                "start_date": start_date_str,
+                "end_date": end_date_str,
+                "total_days": total,
+                "working_days": total,
+                "occurrences": [],
+            },
+        }
 
     total_days, working_days, occurrences = get_working_days_info_for_range(sd, ed, tenant_id)
     return {

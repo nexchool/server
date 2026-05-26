@@ -40,13 +40,79 @@ else:
 PY
 }
 
+widen_alembic_version() {
+  # Alembic ships `alembic_version.version_num` as VARCHAR(32). Some of our
+  # revision IDs are >32 chars and Postgres rejects the post-upgrade UPDATE
+  # with StringDataRightTruncation. Widening to VARCHAR(255) is the standard
+  # fix and is idempotent (no-op if already wider). Skipped on a fresh DB
+  # where the table doesn't exist yet — `flask db upgrade` will create it.
+  python - <<'PY'
+import os
+import psycopg2
+
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
+try:
+    cur = conn.cursor()
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'alembic_version'
+            ) THEN
+                ALTER TABLE alembic_version
+                    ALTER COLUMN version_num TYPE VARCHAR(255);
+            END IF;
+        END $$;
+    """)
+    conn.commit()
+    print("[startup] alembic_version.version_num ensured >= VARCHAR(255)")
+finally:
+    conn.close()
+PY
+}
+
 run_migrations() {
   if [ "${SKIP_DB_MIGRATE:-0}" = "1" ]; then
     log "Skipping migrations (SKIP_DB_MIGRATE=1)"
     return 0
   fi
+  widen_alembic_version
   log "Running database migrations..."
   flask db upgrade
+}
+
+# -----------------------------------------------------------------------------
+# Seeds — every script invoked here must be idempotent (skip existing rows).
+# Set SKIP_DB_SEED=1 to bypass entirely (used in CI and production where a
+# separate one-off job seeds the database).
+# -----------------------------------------------------------------------------
+run_seeds() {
+  if [ "${SKIP_DB_SEED:-0}" = "1" ]; then
+    log "Skipping seeds (SKIP_DB_SEED=1)"
+    return 0
+  fi
+
+  # The full list — each line is one idempotent seed module.
+  #
+  # NOTE: scripts.seed_subject_templates is NOT yet idempotent (it errors
+  # on UNIQUE-violation when run twice). It's intentionally left off the
+  # auto-run list — invoke it manually for new tenants via `make seed-subjects`
+  # below or `python -m scripts.seed_subject_templates` until upserts land.
+  seeds="
+    scripts.seed_rbac
+    scripts.seed_holiday_permissions
+    scripts.grant_hostel_permissions
+  "
+
+  for seed in $seeds; do
+    log "Seeding: $seed"
+    if ! python -m "$seed"; then
+      # Don't kill the API container if a single seed errors — log loudly
+      # and continue. Production runs seeds via a separate one-off job.
+      log "WARN: seed $seed failed; continuing."
+    fi
+  done
 }
 
 start_api() {
@@ -61,6 +127,7 @@ start_api_with_embedded_celery() {
 
 wait_for_db
 run_migrations
+run_seeds
 
 if [ "${RUN_EMBEDDED_CELERY:-0}" = "1" ]; then
   start_api_with_embedded_celery

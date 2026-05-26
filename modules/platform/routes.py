@@ -17,28 +17,13 @@ from modules.platform import services
 PLATFORM_LIMIT = "30 per minute"
 
 
-@platform_bp.route("/plan-features", methods=["GET"])
+@platform_bp.route("/feature-catalog", methods=["GET"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required
 @platform_admin_required
-def list_plan_features():
-    """GET /platform/plan-features - List all plan feature keys and labels (for plan config UI)."""
-    from core.plan_features import PLAN_FEATURE_KEYS, PLAN_FEATURE_LABELS
-    data = [
-        {"key": k, "label": PLAN_FEATURE_LABELS.get(k, k.replace("_", " ").title())}
-        for k in PLAN_FEATURE_KEYS
-    ]
-    return success_response(data=data)
-
-
-@platform_bp.route("/plans", methods=["GET"])
-@limiter.limit(PLATFORM_LIMIT)
-@auth_required
-@platform_admin_required
-def list_plans():
-    """GET /platform/plans - List all plans (for tenant creation form)."""
-    data = services.list_plans()
-    return success_response(data=data)
+def list_feature_catalog():
+    """GET /platform/feature-catalog - All feature keys grouped by core/optional."""
+    return success_response(data=services.list_feature_catalog())
 
 
 @platform_bp.route("/dashboard", methods=["GET"])
@@ -46,11 +31,7 @@ def list_plans():
 @auth_required
 @platform_admin_required
 def dashboard():
-    """
-    GET /platform/dashboard
-    Returns: total_tenants, active_tenants, suspended_tenants, total_students,
-             total_teachers, revenue_monthly, tenant_growth_by_month
-    """
+    """GET /platform/dashboard - aggregate platform metrics."""
     data = services.get_dashboard_stats()
     return success_response(data=data)
 
@@ -62,10 +43,12 @@ def dashboard():
 def create_tenant():
     """
     POST /platform/tenants
-    Body: name, subdomain, contact_email?, phone?, address?, plan_id, admin_email, admin_name?
+    Body: name, subdomain, contact_email?, phone?, address?, admin_email,
+          admin_name?, price_per_student_per_year?, discount_percentage?,
+          discount_start_date?, discount_end_date?, feature_flags?
     """
     data = request.get_json() or {}
-    required = ["name", "subdomain", "plan_id", "admin_email"]
+    required = ["name", "subdomain", "admin_email"]
     missing = [k for k in required if not data.get(k)]
     if missing:
         return validation_error_response({k: "Required" for k in missing})
@@ -76,9 +59,13 @@ def create_tenant():
         contact_email=data.get("contact_email"),
         phone=data.get("phone"),
         address=data.get("address"),
-        plan_id=data["plan_id"],
         admin_email=data["admin_email"],
         admin_name=data.get("admin_name"),
+        price_per_student_per_year=data.get("price_per_student_per_year"),
+        discount_percentage=data.get("discount_percentage"),
+        discount_start_date=data.get("discount_start_date"),
+        discount_end_date=data.get("discount_end_date"),
+        feature_flags=data.get("feature_flags"),
         platform_admin_id=g.current_user.id,
         login_url=data.get("login_url"),
     )
@@ -111,26 +98,159 @@ def activate_tenant(tenant_id):
     return success_response(data=result["tenant"], message="Tenant activated")
 
 
-@platform_bp.route("/tenants/<tenant_id>/change-plan", methods=["PATCH"])
+@platform_bp.route("/tenants/<tenant_id>/pricing", methods=["PATCH"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required
 @platform_admin_required
-def change_plan(tenant_id):
-    """PATCH /platform/tenants/<id>/change-plan   Body: { plan_id }"""
+def update_tenant_pricing(tenant_id):
+    """
+    PATCH /platform/tenants/<id>/pricing
+    Body: price_per_student_per_year?, discount_percentage?,
+          discount_start_date?, discount_end_date?
+    Field omitted -> unchanged. Field set to "" -> cleared.
+    """
     data = request.get_json() or {}
-    plan_id = data.get("plan_id")
-    if not plan_id:
-        return validation_error_response({"plan_id": "Required"})
-    result = services.change_tenant_plan(
-        tenant_id, plan_id, platform_admin_id=g.current_user.id
+    result = services.update_tenant_pricing(
+        tenant_id=tenant_id,
+        platform_admin_id=g.current_user.id,
+        price_per_student_per_year=(
+            data["price_per_student_per_year"] if "price_per_student_per_year" in data else None
+        ),
+        discount_percentage=(
+            data["discount_percentage"] if "discount_percentage" in data else None
+        ),
+        discount_start_date=(
+            data["discount_start_date"] if "discount_start_date" in data else None
+        ),
+        discount_end_date=(
+            data["discount_end_date"] if "discount_end_date" in data else None
+        ),
     )
     if not result["success"]:
         if result["error"] == "Tenant not found":
             return not_found_response("Tenant")
-        if result["error"] == "Plan not found":
-            return not_found_response("Plan")
         return error_response("BadRequest", result["error"], 400)
-    return success_response(data=result["tenant"], message="Plan updated")
+    return success_response(data=result["tenant"], message="Pricing updated")
+
+
+@platform_bp.route("/tenants/<tenant_id>/features", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def update_tenant_features(tenant_id):
+    """
+    PATCH /platform/tenants/<id>/features
+    Body: { flags: { feature_key: bool, ... } }
+    Only optional features may be toggled. Core features are silently kept on.
+    """
+    data = request.get_json() or {}
+    flags = data.get("flags")
+    if not isinstance(flags, dict):
+        return validation_error_response({"flags": "Must be an object of feature_key -> bool"})
+    result = services.update_tenant_feature_flags(
+        tenant_id=tenant_id,
+        platform_admin_id=g.current_user.id,
+        flags=flags,
+    )
+    if not result["success"]:
+        if result["error"] == "Tenant not found":
+            return not_found_response("Tenant")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(
+        data={"tenant_id": result["tenant_id"], "feature_flags": result["feature_flags"]},
+        message="Feature flags updated",
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/subscription", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def get_tenant_subscription(tenant_id):
+    """GET /platform/tenants/<id>/subscription"""
+    result = services.get_tenant_subscription(tenant_id)
+    if not result["success"]:
+        return not_found_response("Tenant")
+    return success_response(data=result["subscription"])
+
+
+@platform_bp.route("/tenants/<tenant_id>/subscription", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def update_tenant_subscription(tenant_id):
+    """
+    PATCH /platform/tenants/<id>/subscription
+
+    Body keys (all optional):
+        status                       trial | active | suspended | deleted
+        trial_ends_at                YYYY-MM-DD or ISO datetime; "" clears
+        billing_cycle                yearly
+        price_per_student_per_year   number or "" to clear
+        discount_percentage          0-100 or "" to clear
+        discount_start_date          YYYY-MM-DD or "" to clear
+        discount_end_date            YYYY-MM-DD or "" to clear
+    """
+    data = request.get_json() or {}
+    fields = (
+        "status",
+        "trial_ends_at",
+        "billing_cycle",
+        "price_per_student_per_year",
+        "discount_percentage",
+        "discount_start_date",
+        "discount_end_date",
+    )
+    kwargs = {f: data[f] for f in fields if f in data}
+    result = services.update_tenant_subscription(
+        tenant_id=tenant_id,
+        platform_admin_id=g.current_user.id,
+        **kwargs,
+    )
+    if not result["success"]:
+        if result.get("error") == "Tenant not found":
+            return not_found_response("Tenant")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(
+        data=result["subscription"], message="Subscription updated"
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/usage", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def get_tenant_usage(tenant_id):
+    """GET /platform/tenants/<id>/usage"""
+    from core.models import Tenant
+    from modules.subscription.usage import get_tenant_usage as _read_usage
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+    return success_response(data=_read_usage(tenant_id))
+
+
+@platform_bp.route("/tenants/<tenant_id>/billing", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def get_tenant_billing(tenant_id):
+    """
+    GET /platform/tenants/<id>/billing?on_date=YYYY-MM-DD
+    Returns active student count, base amount, applied discount, and total.
+    """
+    on_date_str = request.args.get("on_date")
+    on_date = None
+    if on_date_str:
+        try:
+            from datetime import datetime as dt
+            on_date = dt.strptime(on_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return validation_error_response({"on_date": "Expected YYYY-MM-DD"})
+    result = services.calculate_tenant_billing(tenant_id, on_date=on_date)
+    if not result["success"]:
+        return not_found_response("Tenant")
+    return success_response(data=result)
 
 
 @platform_bp.route("/tenants/<tenant_id>/reset-admin", methods=["POST"])
@@ -154,10 +274,7 @@ def reset_admin(tenant_id):
 @auth_required
 @platform_admin_required
 def list_tenants():
-    """
-    GET /platform/tenants?page=1&per_page=20&status=active|suspended
-    Returns paginated list with tenant info, plan name, student_count, teacher_count, status.
-    """
+    """GET /platform/tenants?page=1&per_page=20&status=active|suspended"""
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
     per_page = min(max(per_page, 1), 100)
@@ -167,6 +284,7 @@ def list_tenants():
         data={"items": result["data"], "pagination": result["pagination"]},
         status_code=200,
     )
+
 
 @platform_bp.route("/tenants/<tenant_id>", methods=["GET"])
 @limiter.limit(PLATFORM_LIMIT)
@@ -220,7 +338,7 @@ def delete_tenant_route(tenant_id):
 @auth_required
 @platform_admin_required
 def list_tenant_admins(tenant_id):
-    """GET /platform/tenants/<id>/admins  List school admins for tenant."""
+    """GET /platform/tenants/<id>/admins"""
     result = services.list_tenant_admins(tenant_id)
     return success_response(data={"admins": result["admins"]})
 
@@ -252,7 +370,7 @@ def add_tenant_admin(tenant_id):
 @auth_required
 @platform_admin_required
 def remove_tenant_admin_route(tenant_id, admin_id):
-    """DELETE /platform/tenants/<id>/admins/<admin_id>  Remove admin role from user."""
+    """DELETE /platform/tenants/<id>/admins/<admin_id>"""
     result = services.remove_tenant_admin(
         tenant_id=tenant_id,
         admin_user_id=admin_id,
@@ -290,68 +408,6 @@ def update_tenant_admin_route(tenant_id, admin_id):
             return not_found_response("Admin")
         return error_response("BadRequest", result["error"], 400)
     return success_response(message="Admin updated")
-
-
-# --- Plans CRUD ---
-@platform_bp.route("/plans", methods=["POST"])
-@limiter.limit(PLATFORM_LIMIT)
-@auth_required
-@platform_admin_required
-def create_plan():
-    """POST /platform/plans  Body: name, price_monthly, max_students, max_teachers, features_json?"""
-    data = request.get_json() or {}
-    required = ["name", "price_monthly", "max_students", "max_teachers"]
-    missing = [k for k in required if k not in data]
-    if missing:
-        return validation_error_response({k: "Required" for k in missing})
-    result = services.create_plan(
-        name=data["name"],
-        price_monthly=float(data["price_monthly"]),
-        max_students=int(data["max_students"]),
-        max_teachers=int(data["max_teachers"]),
-        features_json=data.get("features_json"),
-        platform_admin_id=g.current_user.id,
-    )
-    if not result["success"]:
-        return error_response("BadRequest", result["error"], 400)
-    return success_response(data=result["plan"], message="Plan created", status_code=201)
-
-
-@platform_bp.route("/plans/<plan_id>", methods=["PATCH"])
-@limiter.limit(PLATFORM_LIMIT)
-@auth_required
-@platform_admin_required
-def update_plan(plan_id):
-    """PATCH /platform/plans/<id>  Body: name?, price_monthly?, max_students?, max_teachers?, features_json?"""
-    data = request.get_json() or {}
-    result = services.update_plan(
-        plan_id=plan_id,
-        platform_admin_id=g.current_user.id,
-        name=data.get("name"),
-        price_monthly=data.get("price_monthly") if "price_monthly" in data else None,
-        max_students=data.get("max_students") if "max_students" in data else None,
-        max_teachers=data.get("max_teachers") if "max_teachers" in data else None,
-        features_json=data.get("features_json"),
-    )
-    if not result["success"]:
-        if result["error"] == "Plan not found":
-            return not_found_response("Plan")
-        return error_response("BadRequest", result["error"], 400)
-    return success_response(data=result["plan"], message="Plan updated")
-
-
-@platform_bp.route("/plans/<plan_id>", methods=["DELETE"])
-@limiter.limit(PLATFORM_LIMIT)
-@auth_required
-@platform_admin_required
-def delete_plan(plan_id):
-    """DELETE /platform/plans/<id>"""
-    result = services.delete_plan(plan_id, platform_admin_id=g.current_user.id)
-    if not result["success"]:
-        if result["error"] == "Plan not found":
-            return not_found_response("Plan")
-        return error_response("BadRequest", result["error"], 400)
-    return success_response(message="Plan deleted")
 
 
 # --- Tenant notification settings ---
@@ -443,7 +499,7 @@ def create_notification_template():
 @auth_required
 @platform_admin_required
 def update_notification_template(template_id):
-    """PATCH /platform/notification-templates/<id>  Body: type?, channel?, category?, subject_template?, body_template?, is_system?"""
+    """PATCH /platform/notification-templates/<id>"""
     data = request.get_json() or {}
     result = services.update_notification_template(
         template_id=template_id,
@@ -479,13 +535,11 @@ def delete_notification_template(template_id):
 @auth_required
 @platform_admin_required
 def preview_notification_template_unsaved():
-    """POST /platform/notification-templates/preview  Body: subject_template, body_template. Renders with dummy context."""
+    """POST /platform/notification-templates/preview  Body: subject_template, body_template."""
     data = request.get_json() or {}
-    subject_template = data.get("subject_template", "")
-    body_template = data.get("body_template", "")
     result = services.preview_notification_template(
-        subject_template=subject_template,
-        body_template=body_template,
+        subject_template=data.get("subject_template", ""),
+        body_template=data.get("body_template", ""),
     )
     if not result["success"]:
         return error_response("BadRequest", result["error"], 400)
@@ -497,7 +551,7 @@ def preview_notification_template_unsaved():
 @auth_required
 @platform_admin_required
 def preview_notification_template_by_id(template_id):
-    """POST /platform/notification-templates/<id>/preview  Renders template with dummy context."""
+    """POST /platform/notification-templates/<id>/preview"""
     data = request.get_json() or {}
     subject_template = data.get("subject_template")
     body_template = data.get("body_template")
@@ -520,7 +574,7 @@ def preview_notification_template_by_id(template_id):
 @auth_required
 @platform_admin_required
 def test_send_notification_template(template_id):
-    """POST /platform/notification-templates/<id>/test-send  Sends rendered template to logged-in super admin email."""
+    """POST /platform/notification-templates/<id>/test-send"""
     admin_email = getattr(g.current_user, "email", None)
     if not admin_email:
         return error_response("BadRequest", "No email for current user", 400)

@@ -73,7 +73,14 @@ def list_fee_structures(
     if not tenant_id:
         return []
 
+    from core.feature_flags import is_feature_enabled
+
     query = FeeStructure.query.filter_by(tenant_id=tenant_id)
+    # Hide transport-only fee structures from regular finance listings when
+    # the transport feature is disabled — those rows belong to a feature the
+    # school has turned off and shouldn't show up alongside academic fees.
+    if not is_feature_enabled(tenant_id, "transport"):
+        query = query.filter(FeeStructure.is_transport_only.is_(False))
     if academic_year_id:
         query = query.filter_by(academic_year_id=academic_year_id)
     if class_id:

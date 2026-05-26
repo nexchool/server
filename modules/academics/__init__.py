@@ -13,3 +13,5 @@ from .academic_year import routes  # noqa: E402, F401
 from . import overview  # noqa: E402, F401
 from . import bell_routes  # noqa: E402, F401
 from . import dash_routes  # noqa: E402, F401
+from . import rollover_routes  # noqa: E402, F401
+from . import term_routes  # noqa: E402, F401

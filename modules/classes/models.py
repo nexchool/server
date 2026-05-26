@@ -10,19 +10,62 @@ class Class(TenantBaseModel):
     """
     Class/Section Model
 
-    Represents a specific class division (e.g., Grade 10-A) for an academic year.
-    Students are assigned to a Class.
-    A Teacher is assigned as the class teacher. Scoped by tenant.
+    A specific class division for an academic year, scoped by tenant.
+
+    Multi-school structure:
+    - school_unit_id: which campus / sub-school the class belongs to
+    - programme_id:   board + medium combo (e.g. CBSE-English, GSEB-Gujarati)
+    - grade_id:       master grade (LKG..12); replaces free-text grade naming
+
+    `name` is now an optional display label; identity is (school_unit,
+    programme, grade, section, academic_year). The legacy `grade_level`
+    smallint is kept for backward compatibility and will be removed once
+    callers migrate to `grade_id`.
     """
     __tablename__ = "classes"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name = db.Column(db.String(50), nullable=False)  # e.g. "Grade 10"
+    # Optional display label, e.g. "Grade 10" or "10 - CBSE English". Identity now lives on the FKs below.
+    name = db.Column(db.String(50), nullable=True)
     section = db.Column(db.String(10), nullable=False)  # e.g. "A"
+    stream = db.Column(
+        db.String(32),
+        nullable=True,
+        index=True,
+        comment="Grade 11-12 stream: Science, Commerce, Arts, Vocational. NULL for Grade 1-10.",
+    )
     academic_year_id = db.Column(
         db.String(36),
         db.ForeignKey("academic_years.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
+    )
+
+    # Multi-school structure — kept nullable in Phase 1 so existing class
+    # creation paths keep working until services are migrated. Tighten to
+    # NOT NULL in a follow-up migration once all callers populate them.
+    school_unit_id = db.Column(
+        db.String(36),
+        db.ForeignKey("school_units.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    programme_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_programmes.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    grade_id = db.Column(
+        db.String(36),
+        db.ForeignKey("grades.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    medium_id = db.Column(
+        db.String(36),
+        db.ForeignKey("mediums.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
 
@@ -33,21 +76,33 @@ class Class(TenantBaseModel):
     # Class Teacher (User with Teacher role)
     teacher_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
 
-    # Standard / grade number (e.g. 10) — sections A,B under same grade share subject offerings
+    # DEPRECATED: free-text standard number. Use grade_id instead.
     grade_level = db.Column(db.SmallInteger, nullable=True)
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
+        # Structural identity: a section is unique within a
+        # (tenant, school_unit, programme, grade, academic_year).
         db.UniqueConstraint(
-            "name", "section", "academic_year_id", "tenant_id",
-            name="uq_class_section_academic_year_id_tenant",
+            "tenant_id",
+            "school_unit_id",
+            "programme_id",
+            "grade_id",
+            "section",
+            "academic_year_id",
+            name="uq_classes_unit_programme_grade_section_year",
         ),
-        # One teacher can only be class teacher of one class per tenant
+        # One teacher can only be class teacher of one class per tenant.
         db.UniqueConstraint(
             "teacher_id", "tenant_id",
             name="uq_classes_teacher_id_tenant",
+        ),
+        db.CheckConstraint(
+            "stream IS NULL OR stream IN "
+            "('Science', 'Commerce', 'Arts', 'Vocational')",
+            name="ck_classes_stream",
         ),
     )
 
@@ -56,6 +111,29 @@ class Class(TenantBaseModel):
     academic_year_ref = db.relationship(
         "AcademicYear",
         foreign_keys=[academic_year_id],
+        lazy=True,
+    )
+    school_unit = db.relationship(
+        "SchoolUnit",
+        foreign_keys=[school_unit_id],
+        back_populates="class_records",
+        lazy=True,
+    )
+    programme = db.relationship(
+        "AcademicProgramme",
+        foreign_keys=[programme_id],
+        back_populates="class_records",
+        lazy=True,
+    )
+    grade = db.relationship(
+        "Grade",
+        foreign_keys=[grade_id],
+        back_populates="class_records",
+        lazy=True,
+    )
+    medium = db.relationship(
+        "Medium",
+        foreign_keys=[medium_id],
         lazy=True,
     )
 
@@ -68,7 +146,16 @@ class Class(TenantBaseModel):
             "id": self.id,
             "name": self.name,
             "section": self.section,
+            "stream": self.stream,
             "grade_level": self.grade_level,
+            "school_unit_id": self.school_unit_id,
+            "school_unit_name": self.school_unit.name if self.school_unit else None,
+            "programme_id": self.programme_id,
+            "programme_name": self.programme.name if self.programme else None,
+            "grade_id": self.grade_id,
+            "grade_name": self.grade.name if self.grade else None,
+            "medium_id": self.medium_id,
+            "medium_name": self.medium.name if self.medium else None,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else None,
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,
@@ -79,7 +166,9 @@ class Class(TenantBaseModel):
         }
 
     def __repr__(self):
-        return f"<Class {self.name}-{self.section} ({self.academic_year_ref.name if self.academic_year_ref else None})>"
+        label = self.name or (self.grade.name if self.grade else "?")
+        year = self.academic_year_ref.name if self.academic_year_ref else None
+        return f"<Class {label}-{self.section} ({year})>"
 
 
 class ClassTeacher(TenantBaseModel):
@@ -192,7 +281,10 @@ class ClassSubject(TenantBaseModel):
     )
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
-    class_ref = db.relationship("Class", backref=db.backref("class_subjects", lazy=True))
+    class_ref = db.relationship(
+        "Class",
+        backref=db.backref("class_subjects", lazy=True, passive_deletes=True),
+    )
     subject_ref = db.relationship("Subject", foreign_keys=[subject_id], lazy=True)
     assigned_teachers = db.relationship(
         "ClassSubjectTeacher",
@@ -224,7 +316,10 @@ class SubjectLoad(TenantBaseModel):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    class_ref = db.relationship("Class", backref=db.backref("subject_loads", lazy=True))
+    class_ref = db.relationship(
+        "Class",
+        backref=db.backref("subject_loads", lazy=True, passive_deletes=True),
+    )
     subject_ref = db.relationship("Subject", backref=db.backref("class_loads", lazy=True))
 
     def save(self):

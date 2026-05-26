@@ -269,6 +269,15 @@ def login():
             status_code=401
         )
 
+    # Backfill tenant role permissions when DEFAULT_ROLES gains new entries
+    # (idempotent). Ensures admins keep parity with seed_rbac after upgrades.
+    if not getattr(user, "is_platform_admin", False) and getattr(
+        user, "tenant_id", None
+    ):
+        from modules.rbac.role_seeder import seed_roles_for_tenant
+
+        seed_roles_for_tenant(user.tenant_id)
+
     from modules.rbac.services import get_user_permissions
     permissions = get_user_permissions(user.id)
     if not permissions or len(permissions) == 0:
@@ -298,7 +307,7 @@ def login():
     access_token = generate_access_token(user, access_minutes=access_minutes)
     session = create_session(user, request)
 
-    from core.plan_features import get_tenant_enabled_features
+    from core.feature_flags import get_tenant_enabled_features
     enabled_features = get_tenant_enabled_features(tenant.id) if tenant else []
 
     response, status_code = success_response(
@@ -602,9 +611,35 @@ def get_enabled_features():
     if not user or not user.tenant_id:
         return success_response(data={'enabled_features': []}, status_code=200)
 
-    from core.plan_features import get_tenant_enabled_features
+    from core.feature_flags import get_tenant_enabled_features
     enabled_features = get_tenant_enabled_features(user.tenant_id)
     return success_response(data={'enabled_features': enabled_features}, status_code=200)
+
+
+# ==================== TENANT BRANDING (public) ====================
+
+@auth_bp.route('/tenant-branding', methods=['GET'])
+def get_tenant_branding():
+    """
+    Public: school display name for the tenant resolved from Host / X-Tenant-ID / default.
+    Used by the login page before authentication.
+    """
+    err = resolve_tenant_for_auth({})
+    if err:
+        return err[1], err[0]
+
+    tenant = getattr(g, 'tenant', None)
+    if not tenant:
+        return error_response(
+            error='TenantError',
+            message='No tenant context',
+            status_code=400,
+        )
+
+    return success_response(
+        data={'name': tenant.name or ''},
+        status_code=200,
+    )
 
 
 # ==================== PROFILE ====================
@@ -619,11 +654,18 @@ def get_profile():
 
     user = g.current_user
 
-    from core.plan_features import get_tenant_enabled_features
+    from core.models import Tenant
+    from core.feature_flags import get_tenant_enabled_features
     from modules.rbac.services import get_user_permissions, get_user_roles
     permissions = get_user_permissions(user.id)
     roles = get_user_roles(user.id)
     enabled_features = get_tenant_enabled_features(user.tenant_id) if user.tenant_id else []
+
+    tenant_name = None
+    if user.tenant_id:
+        t = Tenant.query.get(user.tenant_id)
+        if t:
+            tenant_name = t.name
 
     return success_response(
         data={
@@ -633,9 +675,11 @@ def get_profile():
                 'name': user.name,
                 'email_verified': user.email_verified,
                 'profile_picture_url': profile_picture_public_url(user.profile_picture_url),
+                'default_unit_id': user.default_unit_id,
                 'last_login_at': user.last_login_at.isoformat() if user.last_login_at else None,
                 'created_at': user.created_at.isoformat(),
             },
+            'tenant_name': tenant_name,
             'roles': roles,
             'permissions': permissions,
             'enabled_features': enabled_features,

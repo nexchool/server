@@ -1,6 +1,13 @@
 from flask import request, g
 from modules.attendance import attendance_bp
-from core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from core.decorators import (
+    require_permission,
+    auth_required,
+    tenant_required,
+    require_feature,
+    require_setup_complete,
+    require_active_subscription,
+)
 from core.decorators.rbac import require_any_permission
 from shared.helpers import (
     success_response,
@@ -22,7 +29,7 @@ PERM_READ_ALL = 'attendance.read.all'
 @attendance_bp.route('/my-classes', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('attendance')
+@require_feature('attendance')
 @require_permission(PERM_MARK)
 def get_my_classes():
     """Get classes assigned to the current teacher for attendance."""
@@ -34,7 +41,9 @@ def get_my_classes():
 @attendance_bp.route('/mark', methods=['POST'])
 @tenant_required
 @auth_required
-@require_plan_feature('attendance')
+@require_feature('attendance')
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_MARK)
 def mark_attendance():
     """
@@ -80,7 +89,7 @@ def mark_attendance():
 @attendance_bp.route('/calendar-holidays', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('attendance')
+@require_feature('attendance')
 @require_any_permission(
     'holiday.read',
     'holiday.manage',
@@ -108,7 +117,7 @@ def attendance_calendar_holidays():
 @attendance_bp.route('/class/<class_id>', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('attendance')
+@require_feature('attendance')
 @require_any_permission(PERM_READ_CLASS, PERM_READ_ALL, PERM_MARK)
 def get_class_attendance(class_id):
     """
@@ -129,7 +138,7 @@ def get_class_attendance(class_id):
 @attendance_bp.route('/student/<student_id>', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('attendance')
+@require_feature('attendance')
 @require_any_permission(PERM_READ_SELF, PERM_READ_CLASS, PERM_READ_ALL)
 def get_student_attendance(student_id):
     """
@@ -155,10 +164,54 @@ def get_student_attendance(student_id):
     return error_response('FetchError', result['error'], 400)
 
 
+@attendance_bp.route('/list', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('attendance')
+@require_any_permission(PERM_READ_CLASS, PERM_READ_ALL)
+def list_attendance_records():
+    """List attendance records with multi-school filters.
+
+    Query params:
+        date=YYYY-MM-DD            (optional, single-day scope)
+        date_from=YYYY-MM-DD       (optional, range start)
+        date_to=YYYY-MM-DD         (optional, range end)
+        class_id=...               (optional)
+        school_unit_id=...         (optional)
+        programme_id=...           (optional)
+        grade_id=...               (optional)
+        academic_year_id=...       (optional)
+    """
+    def _int_or_none(v):
+        if v in (None, ""):
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    filters = {
+        "date": request.args.get("date"),
+        "date_from": request.args.get("date_from"),
+        "date_to": request.args.get("date_to"),
+        "class_id": request.args.get("class_id"),
+        "school_unit_id": request.args.get("school_unit_id"),
+        "programme_id": request.args.get("programme_id"),
+        "grade_id": request.args.get("grade_id"),
+        "academic_year_id": request.args.get("academic_year_id"),
+        "page": _int_or_none(request.args.get("page")),
+        "per_page": _int_or_none(request.args.get("per_page")),
+    }
+    result = services.list_attendance_records(g.tenant_id, **filters)
+    if result["success"]:
+        return success_response(data=result["data"])
+    return error_response("FetchError", result["error"], 400)
+
+
 @attendance_bp.route('/me', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('attendance')
+@require_feature('attendance')
 @require_permission(PERM_READ_SELF)
 def get_my_attendance():
     """Get current user's attendance (for students)."""

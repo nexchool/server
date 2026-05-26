@@ -76,7 +76,7 @@ class Config:
     _cors_env = os.getenv('CORS_ORIGINS', '').strip()
     CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] if _cors_env else ['*']
     CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-    CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID']
+    CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain']
     CORS_EXPOSE_HEADERS = ['X-New-Access-Token']
     CORS_SUPPORTS_CREDENTIALS = True
 

@@ -10,7 +10,7 @@ Endpoints for managing subject weekly period loads per class:
 
 from flask import request
 from modules.classes import classes_bp
-from core.decorators import require_permission, auth_required, tenant_required, require_plan_feature
+from core.decorators import require_permission, auth_required, tenant_required, require_feature
 from shared.helpers import (
     success_response,
     error_response,
@@ -24,7 +24,7 @@ PERM_MANAGE = "class.manage"
 @classes_bp.route("/<class_id>/subject-load", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def list_subject_load(class_id):
     """List all subject load entries for a class."""
@@ -35,7 +35,7 @@ def list_subject_load(class_id):
 @classes_bp.route("/<class_id>/subject-load", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def create_subject_load(class_id):
     """Create a subject load entry for a class."""
@@ -55,7 +55,7 @@ def create_subject_load(class_id):
 @classes_bp.route("/<class_id>/subject-load/<load_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def update_subject_load(class_id, load_id):
     """Update weekly_periods for a subject load entry."""
@@ -74,7 +74,7 @@ def update_subject_load(class_id, load_id):
 @classes_bp.route("/<class_id>/subject-load/<load_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("timetable")
+@require_feature("timetable")
 @require_permission(PERM_MANAGE)
 def delete_subject_load(class_id, load_id):
     """Delete a subject load entry."""

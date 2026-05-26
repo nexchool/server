@@ -28,6 +28,7 @@ from modules.students.services import (
     _clean_str,
     generate_admission_number,
 )
+from modules.students.class_enrollment_service import assign_student_to_class
 from modules.students.utils.bulk_validation import (
     REQUIRED_FIELDS,
     coerce_row_types,
@@ -496,6 +497,14 @@ def import_students_from_rows(
                     )
                     db.session.add(student)
                     db.session.flush()
+                    enr = assign_student_to_class(
+                        student.id,
+                        coerced["class_id"],
+                        academic_year_id,
+                        commit=False,
+                    )
+                    if not enr.get("success"):
+                        raise RuntimeError(enr.get("error", "enrollment failed"))
                     batch_created.append((rn, coerced, user.id, student.id))
             except IntegrityError as e:
                 logger.warning("bulk_import: integrity error row=%s: %s", rn, e)

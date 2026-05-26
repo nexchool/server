@@ -198,7 +198,7 @@ def delete_subject(subject_id: str, tenant_id: str) -> Dict:
         if ref:
             return {
                 "success": False,
-                "error": "Subject is assigned to a class; archive it instead of deleting.",
+                "error": "Subject is referenced by one or more classes. Remove it from those classes first to delete it.",
             }
 
         subject.is_active = False

@@ -6,6 +6,9 @@ seed_roles_for_tenant() helper.
 
 Kept as a standalone leaf module (no imports from teachers / students / platform)
 so it can be safely imported from any service without circular-import issues.
+
+IMPORTANT: Keep DEFAULT_ROLES permission lists in sync with server/scripts/seed_rbac.py
+ROLES so tenant-scoped roles match global RBAC definitions after seed_rbac runs.
 """
 
 from typing import Dict
@@ -15,42 +18,83 @@ from modules.rbac.models import Role, Permission, RolePermission
 
 
 # ---------------------------------------------------------------------------
-# Default role definitions
+# Default role definitions (mirrors scripts/seed_rbac.py ROLES)
 # ---------------------------------------------------------------------------
 
 DEFAULT_ROLES: Dict[str, dict] = {
     "Admin": {
         "description": "System administrator with full access",
         "permissions": [
-            "user.manage", "role.manage", "permission.manage",
-            "student.manage", "teacher.manage", "attendance.manage",
-            "grades.manage", "course.manage", "class.manage",
-            "subject.manage", "timetable.manage",
-            "finance.read", "finance.manage", "finance.collect", "finance.refund",
-            "fees.invoice.create", "fees.invoice.read", "fees.invoice.send_reminder",
-            "fees.payment.record", "fees.receipt.download",
+            "user.manage",
+            "role.manage",
+            "permission.manage",
+            "student.manage",
+            "teacher.manage",
+            "attendance.manage",
+            "grades.manage",
+            "course.manage",
+            "class.manage",
+            "subject.manage",
+            "timetable.manage",
+            "finance.read",
+            "finance.manage",
+            "finance.collect",
+            "finance.refund",
+            "fees.invoice.create",
+            "fees.invoice.read",
+            "fees.invoice.send_reminder",
+            "fees.payment.record",
+            "fees.receipt.download",
             "teacher.leave.manage",
             "holiday.manage",
+            "class_subject.manage",
+            "class_teacher.manage",
+            "academics.read",
+            "academics.manage",
             "transport.manage",
+            "school_unit.manage",
+            "programme.manage",
+            "grade.manage",
+            "religion.manage",
+            "academic_term.manage",
+            "school_setup.manage",
         ],
     },
     "Teacher": {
         "description": "School teacher with class management access",
         "permissions": [
-            "student.read.class", "attendance.mark", "attendance.read.class",
-            "grades.create", "grades.update", "grades.read.class",
-            "course.read", "class.read", "subject.read", "timetable.read",
+            "student.read.class",
+            "attendance.mark",
+            "attendance.read.class",
+            "grades.create",
+            "grades.update",
+            "grades.read.class",
+            "course.read",
+            "class.read",
+            "subject.read",
+            "timetable.read",
             "teacher.leave.apply",
             "holiday.read",
+            "class_subject.read",
+            "academics.read",
             "transport.info.read.class",
+            "school_unit.read",
+            "programme.read",
+            "grade.read",
+            "academic_term.read",
+            "school_setup.read",
         ],
     },
     "Student": {
         "description": "Student with limited access to own data",
         "permissions": [
-            "student.read.self", "attendance.read.self", "grades.read.self",
-            "course.read", "timetable.read",
+            "student.read.self",
+            "attendance.read.self",
+            "grades.read.self",
+            "course.read",
+            "timetable.read",
             "holiday.read",
+            "academics.read",
             "transport.info.read.self",
             "transport.student.read_own",
         ],
@@ -58,8 +102,11 @@ DEFAULT_ROLES: Dict[str, dict] = {
     "Parent": {
         "description": "Parent with access to their children's data",
         "permissions": [
-            "student.read.self", "attendance.read.self", "grades.read.self",
-            "course.read", "timetable.read",
+            "student.read.self",
+            "attendance.read.self",
+            "grades.read.self",
+            "course.read",
+            "timetable.read",
             "holiday.read",
             "transport.info.read.self",
             "transport.student.read_own",

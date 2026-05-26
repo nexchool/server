@@ -3,7 +3,7 @@
 from flask import Blueprint, g, request
 
 from core.database import db
-from core.decorators import auth_required, tenant_required
+from core.decorators import auth_required, require_feature, tenant_required
 from core.tenant import get_tenant_id
 from modules.devices import device_service
 from shared.helpers import error_response, success_response, validation_error_response
@@ -15,6 +15,7 @@ devices_bp = Blueprint("devices", __name__)
 @devices_bp.route("", methods=["GET"])
 @tenant_required
 @auth_required
+@require_feature("notifications")
 def list_my_devices():
     """GET /api/devices — push registrations for the current user (masked token previews)."""
     tenant_id = get_tenant_id()
@@ -29,6 +30,7 @@ def list_my_devices():
 @devices_bp.route("/register", methods=["POST"])
 @tenant_required
 @auth_required
+@require_feature("notifications")
 def register_device():
     """
     POST /api/devices/register
@@ -67,6 +69,7 @@ def register_device():
 @devices_bp.route("/unregister", methods=["POST"])
 @tenant_required
 @auth_required
+@require_feature("notifications")
 def unregister_device():
     """
     POST /api/devices/unregister

@@ -2,6 +2,7 @@
 Finance module services.
 """
 
+from . import rollover
 from . import structure_service
 from . import student_fee_service
 from .payment_service import (
@@ -12,6 +13,7 @@ from .payment_service import (
 )
 
 __all__ = [
+    "rollover",
     "structure_service",
     "student_fee_service",
     "create_payment",

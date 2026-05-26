@@ -1,0 +1,672 @@
+{
+  "metadata": {
+    "title": "Board Subjects — Gujarat-scoped",
+    "scope": "Gujarat schools — CBSE / GSEB English-Medium / GSEB Gujarati-Medium only",
+    "languages_supported": ["Gujarati", "English", "Hindi", "Sanskrit"],
+    "academic_year": "2026-27",
+    "aligned_with": "NEP 2020 / NCF-SE 2023",
+    "last_updated": "2026-05-09",
+    "notes": [
+      "All foreign and other regional languages dropped (Tamil, Telugu, Marathi, Bengali, Odia, Kannada, Malayalam, Punjabi, Urdu, Arabic, Persian, Prakrit, French, German, Spanish, Russian, Chinese, Japanese, Tibetan, Mizo, Nepali, Manipuri, Bahasa Melayu, Assamese, Sindhi).",
+      "ICSE / IB removed — out of scope.",
+      "Roles: first_language | second_language | third_language | core | elective | co_curricular.",
+      "elective_group_key: when present, students pick one item per group (e.g. 'g9_third_lang' for Hindi vs Sanskrit).",
+      "default_periods is a hint; actual class period is overridable per tenant."
+    ]
+  },
+  "boards": {
+    "cbse": {
+      "display_name": "CBSE Standard Template",
+      "default_medium": "english",
+      "standards": {
+        "1": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "The World Around Us",    "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 },
+            { "name": "Physical Education",     "role": "co_curricular",   "compulsory": true,  "code": "PE",   "default_periods": 2 }
+          ]
+        },
+        "2": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "The World Around Us",    "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 },
+            { "name": "Physical Education",     "role": "co_curricular",   "compulsory": true,  "code": "PE",   "default_periods": 2 }
+          ]
+        },
+        "3": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",               "role": "second_language", "compulsory": true,  "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies",  "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 }
+          ]
+        },
+        "4": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",               "role": "second_language", "compulsory": true,  "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies",  "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 }
+          ]
+        },
+        "5": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",               "role": "second_language", "compulsory": true,  "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies",  "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 }
+          ]
+        },
+        "6": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",               "role": "second_language", "compulsory": true,  "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",               "role": "third_language",  "compulsory": true,  "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "Science",                "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",         "role": "core",            "compulsory": true,  "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "7": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",               "role": "second_language", "compulsory": true,  "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",               "role": "third_language",  "compulsory": true,  "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "Science",                "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",         "role": "core",            "compulsory": true,  "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "8": {
+          "subjects": [
+            { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",               "role": "second_language", "compulsory": true,  "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",               "role": "third_language",  "compulsory": true,  "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
+            { "name": "Science",                "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",         "role": "core",            "compulsory": true,  "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "9": {
+          "subjects": [
+            { "name": "English Language and Literature", "role": "first_language",  "compulsory": true,  "code": "184", "default_periods": 6 },
+            { "name": "Gujarati",                        "role": "second_language", "compulsory": true,  "code": "GUJ", "default_periods": 4 },
+            { "name": "Hindi",     "role": "third_language",  "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g9_third_lang" },
+            { "name": "Sanskrit",  "role": "third_language",  "compulsory": true, "code": "SAN", "default_periods": 4, "elective_group_key": "g9_third_lang" },
+            { "name": "Standard Mathematics", "role": "core", "compulsory": true, "code": "041", "default_periods": 6, "elective_group_key": "g9_math_level" },
+            { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "241", "default_periods": 6, "elective_group_key": "g9_math_level" },
+            { "name": "Science",                         "role": "core",            "compulsory": true,  "code": "086", "default_periods": 6 },
+            { "name": "Social Science",                  "role": "core",            "compulsory": true,  "code": "087", "default_periods": 5 }
+          ]
+        },
+        "10": {
+          "subjects": [
+            { "name": "English Language and Literature", "role": "first_language",  "compulsory": true,  "code": "184", "default_periods": 6 },
+            { "name": "Gujarati",                        "role": "second_language", "compulsory": true,  "code": "GUJ", "default_periods": 4 },
+            { "name": "Hindi",     "role": "third_language",  "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g10_third_lang" },
+            { "name": "Sanskrit",  "role": "third_language",  "compulsory": true, "code": "SAN", "default_periods": 4, "elective_group_key": "g10_third_lang" },
+            { "name": "Standard Mathematics", "role": "core", "compulsory": true, "code": "041", "default_periods": 6, "elective_group_key": "g10_math_level" },
+            { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "241", "default_periods": 6, "elective_group_key": "g10_math_level" },
+            { "name": "Science",                         "role": "core",            "compulsory": true,  "code": "086", "default_periods": 6 },
+            { "name": "Social Science",                  "role": "core",            "compulsory": true,  "code": "087", "default_periods": 5 }
+          ]
+        },
+        "11": {
+          "streams": {
+            "Science": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Physics",                "role": "core",            "compulsory": true,  "code": "042", "default_periods": 6 },
+                { "name": "Chemistry",              "role": "core",            "compulsory": true,  "code": "043", "default_periods": 6 },
+                { "name": "Mathematics", "role": "core", "compulsory": true, "code": "041", "default_periods": 6, "elective_group_key": "g11_sci_track" },
+                { "name": "Biology",     "role": "core", "compulsory": true, "code": "044", "default_periods": 6, "elective_group_key": "g11_sci_track" },
+                { "name": "Computer Science",       "role": "elective",        "compulsory": false, "code": "083", "default_periods": 4 },
+                { "name": "Physical Education",     "role": "elective",        "compulsory": false, "code": "048", "default_periods": 2 }
+              ]
+            },
+            "Commerce": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Accountancy",            "role": "core",            "compulsory": true,  "code": "055", "default_periods": 6 },
+                { "name": "Business Studies",       "role": "core",            "compulsory": true,  "code": "054", "default_periods": 6 },
+                { "name": "Economics",              "role": "core",            "compulsory": true,  "code": "030", "default_periods": 6 },
+                { "name": "Mathematics",            "role": "elective",        "compulsory": false, "code": "041", "default_periods": 5 },
+                { "name": "Applied Mathematics",    "role": "elective",        "compulsory": false, "code": "241", "default_periods": 5 },
+                { "name": "Physical Education",     "role": "elective",        "compulsory": false, "code": "048", "default_periods": 2 }
+              ]
+            },
+            "Arts": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "History",                "role": "core",            "compulsory": true,  "code": "027", "default_periods": 6 },
+                { "name": "Political Science",      "role": "core",            "compulsory": true,  "code": "028", "default_periods": 6 },
+                { "name": "Geography",              "role": "core",            "compulsory": true,  "code": "029", "default_periods": 5 },
+                { "name": "Economics",              "role": "elective",        "compulsory": false, "code": "030", "default_periods": 5 },
+                { "name": "Sociology",              "role": "elective",        "compulsory": false, "code": "039", "default_periods": 5 },
+                { "name": "Psychology",             "role": "elective",        "compulsory": false, "code": "037", "default_periods": 5 },
+                { "name": "Sanskrit",               "role": "elective",        "compulsory": false, "code": "SAN", "default_periods": 4 },
+                { "name": "Fine Arts",              "role": "elective",        "compulsory": false, "code": "049", "default_periods": 4 }
+              ]
+            },
+            "Vocational": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g11_sl" },
+                { "name": "Information Technology",       "role": "core",     "compulsory": true,  "code": "VIT",  "default_periods": 6 },
+                { "name": "Yoga",                          "role": "core",     "compulsory": true,  "code": "VYG",  "default_periods": 4 },
+                { "name": "Health and Physical Education", "role": "core",     "compulsory": true,  "code": "VHPE", "default_periods": 4 },
+                { "name": "Fine Arts",                     "role": "elective", "compulsory": false, "code": "VFA",  "default_periods": 4 },
+                { "name": "Music",                         "role": "elective", "compulsory": false, "code": "VMU",  "default_periods": 4 }
+              ]
+            }
+          }
+        },
+        "12": {
+          "streams": {
+            "Science": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Physics",                "role": "core",            "compulsory": true,  "code": "042", "default_periods": 6 },
+                { "name": "Chemistry",              "role": "core",            "compulsory": true,  "code": "043", "default_periods": 6 },
+                { "name": "Mathematics", "role": "core", "compulsory": true, "code": "041", "default_periods": 6, "elective_group_key": "g12_sci_track" },
+                { "name": "Biology",     "role": "core", "compulsory": true, "code": "044", "default_periods": 6, "elective_group_key": "g12_sci_track" },
+                { "name": "Computer Science",       "role": "elective",        "compulsory": false, "code": "083", "default_periods": 4 },
+                { "name": "Physical Education",     "role": "elective",        "compulsory": false, "code": "048", "default_periods": 2 }
+              ]
+            },
+            "Commerce": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Accountancy",            "role": "core",            "compulsory": true,  "code": "055", "default_periods": 6 },
+                { "name": "Business Studies",       "role": "core",            "compulsory": true,  "code": "054", "default_periods": 6 },
+                { "name": "Economics",              "role": "core",            "compulsory": true,  "code": "030", "default_periods": 6 },
+                { "name": "Mathematics",            "role": "elective",        "compulsory": false, "code": "041", "default_periods": 5 },
+                { "name": "Applied Mathematics",    "role": "elective",        "compulsory": false, "code": "241", "default_periods": 5 },
+                { "name": "Physical Education",     "role": "elective",        "compulsory": false, "code": "048", "default_periods": 2 }
+              ]
+            },
+            "Arts": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "History",                "role": "core",            "compulsory": true,  "code": "027", "default_periods": 6 },
+                { "name": "Political Science",      "role": "core",            "compulsory": true,  "code": "028", "default_periods": 6 },
+                { "name": "Geography",              "role": "core",            "compulsory": true,  "code": "029", "default_periods": 5 },
+                { "name": "Economics",              "role": "elective",        "compulsory": false, "code": "030", "default_periods": 5 },
+                { "name": "Sociology",              "role": "elective",        "compulsory": false, "code": "039", "default_periods": 5 },
+                { "name": "Psychology",             "role": "elective",        "compulsory": false, "code": "037", "default_periods": 5 },
+                { "name": "Sanskrit",               "role": "elective",        "compulsory": false, "code": "SAN", "default_periods": 4 },
+                { "name": "Fine Arts",              "role": "elective",        "compulsory": false, "code": "049", "default_periods": 4 }
+              ]
+            },
+            "Vocational": {
+              "subjects": [
+                { "name": "English Core",           "role": "first_language",  "compulsory": true,  "code": "301", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "GUJ", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "HIN", "default_periods": 4, "elective_group_key": "g12_sl" },
+                { "name": "Information Technology",       "role": "core",     "compulsory": true,  "code": "VIT",  "default_periods": 6 },
+                { "name": "Yoga",                          "role": "core",     "compulsory": true,  "code": "VYG",  "default_periods": 4 },
+                { "name": "Health and Physical Education", "role": "core",     "compulsory": true,  "code": "VHPE", "default_periods": 4 },
+                { "name": "Fine Arts",                     "role": "elective", "compulsory": false, "code": "VFA",  "default_periods": 4 },
+                { "name": "Music",                         "role": "elective", "compulsory": false, "code": "VMU",  "default_periods": 4 }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "gseb_english": {
+      "display_name": "GSEB (English Medium) Template",
+      "default_medium": "english",
+      "standards": {
+        "1": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "2": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "3": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "4": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "5": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "6": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",              "role": "third_language",  "compulsory": true, "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "7": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",              "role": "third_language",  "compulsory": true, "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "8": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "ENG",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "GUJ",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",              "role": "third_language",  "compulsory": true, "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "9": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "04",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "13",  "default_periods": 4 },
+            { "name": "Hindi",     "role": "third_language", "compulsory": true, "code": "14", "default_periods": 4, "elective_group_key": "gseb9_third_lang" },
+            { "name": "Sanskrit",  "role": "third_language", "compulsory": true, "code": "17", "default_periods": 4, "elective_group_key": "gseb9_third_lang" },
+            { "name": "Standard Mathematics", "role": "core", "compulsory": true, "code": "12", "default_periods": 6, "elective_group_key": "gseb9_math_level" },
+            { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gseb9_math_level" },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 }
+          ]
+        },
+        "10": {
+          "subjects": [
+            { "name": "English",               "role": "first_language",  "compulsory": true, "code": "04",  "default_periods": 6 },
+            { "name": "Gujarati",              "role": "second_language", "compulsory": true, "code": "13",  "default_periods": 4 },
+            { "name": "Hindi",     "role": "third_language", "compulsory": true, "code": "14", "default_periods": 4, "elective_group_key": "gseb10_third_lang" },
+            { "name": "Sanskrit",  "role": "third_language", "compulsory": true, "code": "17", "default_periods": 4, "elective_group_key": "gseb10_third_lang" },
+            { "name": "Standard Mathematics", "role": "core", "compulsory": true, "code": "12", "default_periods": 6, "elective_group_key": "gseb10_math_level" },
+            { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gseb10_math_level" },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 }
+          ]
+        },
+        "11": {
+          "streams": {
+            "Science": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Physics",            "role": "core",            "compulsory": true,  "code": "054", "default_periods": 6 },
+                { "name": "Chemistry",          "role": "core",            "compulsory": true,  "code": "052", "default_periods": 6 },
+                { "name": "Mathematics", "role": "core", "compulsory": true, "code": "050", "default_periods": 6, "elective_group_key": "gseb11_sci_track" },
+                { "name": "Biology",     "role": "core", "compulsory": true, "code": "056", "default_periods": 6, "elective_group_key": "gseb11_sci_track" },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Commerce": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Accountancy",        "role": "core",            "compulsory": true,  "code": "ACC", "default_periods": 6 },
+                { "name": "Business Studies",   "role": "core",            "compulsory": true,  "code": "BST", "default_periods": 6 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 6 },
+                { "name": "Statistics",         "role": "elective",        "compulsory": false, "code": "STAT","default_periods": 5 },
+                { "name": "Mathematics",        "role": "elective",        "compulsory": false, "code": "MATH","default_periods": 5 },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Arts": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "History",            "role": "core",            "compulsory": true,  "code": "HIST","default_periods": 5 },
+                { "name": "Geography",          "role": "core",            "compulsory": true,  "code": "GEO", "default_periods": 5 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 5 },
+                { "name": "Political Science",  "role": "elective",        "compulsory": false, "code": "POL", "default_periods": 5 },
+                { "name": "Sociology",          "role": "elective",        "compulsory": false, "code": "SOC", "default_periods": 5 },
+                { "name": "Psychology",         "role": "elective",        "compulsory": false, "code": "PSY", "default_periods": 5 },
+                { "name": "Sanskrit",           "role": "elective",        "compulsory": false, "code": "SAN", "default_periods": 4 }
+              ]
+            },
+            "Vocational": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb11_sl" },
+                { "name": "Information Technology",       "role": "core",     "compulsory": true,  "code": "VIT",  "default_periods": 6 },
+                { "name": "Yoga",                          "role": "core",     "compulsory": true,  "code": "VYG",  "default_periods": 4 },
+                { "name": "Health and Physical Education", "role": "core",     "compulsory": true,  "code": "VHPE", "default_periods": 4 },
+                { "name": "Fine Arts",                     "role": "elective", "compulsory": false, "code": "VFA",  "default_periods": 4 },
+                { "name": "Music",                         "role": "elective", "compulsory": false, "code": "VMU",  "default_periods": 4 }
+              ]
+            }
+          }
+        },
+        "12": {
+          "streams": {
+            "Science": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Physics",            "role": "core",            "compulsory": true,  "code": "054", "default_periods": 6 },
+                { "name": "Chemistry",          "role": "core",            "compulsory": true,  "code": "052", "default_periods": 6 },
+                { "name": "Mathematics", "role": "core", "compulsory": true, "code": "050", "default_periods": 6, "elective_group_key": "gseb12_sci_track" },
+                { "name": "Biology",     "role": "core", "compulsory": true, "code": "056", "default_periods": 6, "elective_group_key": "gseb12_sci_track" },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Commerce": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Accountancy",        "role": "core",            "compulsory": true,  "code": "ACC", "default_periods": 6 },
+                { "name": "Business Studies",   "role": "core",            "compulsory": true,  "code": "BST", "default_periods": 6 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 6 },
+                { "name": "Statistics",         "role": "elective",        "compulsory": false, "code": "STAT","default_periods": 5 },
+                { "name": "Mathematics",        "role": "elective",        "compulsory": false, "code": "MATH","default_periods": 5 },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Arts": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "History",            "role": "core",            "compulsory": true,  "code": "HIST","default_periods": 5 },
+                { "name": "Geography",          "role": "core",            "compulsory": true,  "code": "GEO", "default_periods": 5 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 5 },
+                { "name": "Political Science",  "role": "elective",        "compulsory": false, "code": "POL", "default_periods": 5 },
+                { "name": "Sociology",          "role": "elective",        "compulsory": false, "code": "SOC", "default_periods": 5 },
+                { "name": "Psychology",         "role": "elective",        "compulsory": false, "code": "PSY", "default_periods": 5 },
+                { "name": "Sanskrit",           "role": "elective",        "compulsory": false, "code": "SAN", "default_periods": 4 }
+              ]
+            },
+            "Vocational": {
+              "subjects": [
+                { "name": "English",            "role": "first_language",  "compulsory": true,  "code": "006", "default_periods": 5 },
+                { "name": "Gujarati", "role": "second_language", "compulsory": true, "code": "001", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Hindi",    "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gseb12_sl" },
+                { "name": "Information Technology",       "role": "core",     "compulsory": true,  "code": "VIT",  "default_periods": 6 },
+                { "name": "Yoga",                          "role": "core",     "compulsory": true,  "code": "VYG",  "default_periods": 4 },
+                { "name": "Health and Physical Education", "role": "core",     "compulsory": true,  "code": "VHPE", "default_periods": 4 },
+                { "name": "Fine Arts",                     "role": "elective", "compulsory": false, "code": "VFA",  "default_periods": 4 },
+                { "name": "Music",                         "role": "elective", "compulsory": false, "code": "VMU",  "default_periods": 4 }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "gseb_gujarati": {
+      "display_name": "GSEB (Gujarati Medium) Template",
+      "default_medium": "gujarati",
+      "standards": {
+        "1": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "2": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "3": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "4": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "5": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Environmental Studies", "role": "core",            "compulsory": true, "code": "EVS",  "default_periods": 4 }
+          ]
+        },
+        "6": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",              "role": "third_language",  "compulsory": true, "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "7": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",              "role": "third_language",  "compulsory": true, "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "8": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "GUJ",  "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "ENG",  "default_periods": 4 },
+            { "name": "Hindi",                 "role": "second_language", "compulsory": true, "code": "HIN",  "default_periods": 4 },
+            { "name": "Sanskrit",              "role": "third_language",  "compulsory": true, "code": "SAN",  "default_periods": 3 },
+            { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 }
+          ]
+        },
+        "9": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "01", "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "16", "default_periods": 4 },
+            { "name": "Hindi",     "role": "third_language", "compulsory": true, "code": "14", "default_periods": 4, "elective_group_key": "gsebguj9_third_lang" },
+            { "name": "Sanskrit",  "role": "third_language", "compulsory": true, "code": "17", "default_periods": 4, "elective_group_key": "gsebguj9_third_lang" },
+            { "name": "Standard Mathematics", "role": "core", "compulsory": true, "code": "12", "default_periods": 6, "elective_group_key": "gsebguj9_math_level" },
+            { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gsebguj9_math_level" },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 }
+          ]
+        },
+        "10": {
+          "subjects": [
+            { "name": "Gujarati",              "role": "first_language",  "compulsory": true, "code": "01", "default_periods": 6 },
+            { "name": "English",               "role": "second_language", "compulsory": true, "code": "16", "default_periods": 4 },
+            { "name": "Hindi",     "role": "third_language", "compulsory": true, "code": "14", "default_periods": 4, "elective_group_key": "gsebguj10_third_lang" },
+            { "name": "Sanskrit",  "role": "third_language", "compulsory": true, "code": "17", "default_periods": 4, "elective_group_key": "gsebguj10_third_lang" },
+            { "name": "Standard Mathematics", "role": "core", "compulsory": true, "code": "12", "default_periods": 6, "elective_group_key": "gsebguj10_math_level" },
+            { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gsebguj10_math_level" },
+            { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
+            { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 }
+          ]
+        },
+        "11": {
+          "streams": {
+            "Science": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Physics",            "role": "core",            "compulsory": true,  "code": "054", "default_periods": 6 },
+                { "name": "Chemistry",          "role": "core",            "compulsory": true,  "code": "052", "default_periods": 6 },
+                { "name": "Mathematics", "role": "core", "compulsory": true, "code": "050", "default_periods": 6, "elective_group_key": "gsebguj11_sci_track" },
+                { "name": "Biology",     "role": "core", "compulsory": true, "code": "056", "default_periods": 6, "elective_group_key": "gsebguj11_sci_track" },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Commerce": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Accountancy",        "role": "core",            "compulsory": true,  "code": "ACC", "default_periods": 6 },
+                { "name": "Business Studies",   "role": "core",            "compulsory": true,  "code": "BST", "default_periods": 6 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 6 },
+                { "name": "Statistics",         "role": "elective",        "compulsory": false, "code": "STAT","default_periods": 5 },
+                { "name": "Mathematics",        "role": "elective",        "compulsory": false, "code": "MATH","default_periods": 5 },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Arts": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "History",            "role": "core",            "compulsory": true,  "code": "HIST","default_periods": 5 },
+                { "name": "Geography",          "role": "core",            "compulsory": true,  "code": "GEO", "default_periods": 5 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 5 },
+                { "name": "Political Science",  "role": "elective",        "compulsory": false, "code": "POL", "default_periods": 5 },
+                { "name": "Sociology",          "role": "elective",        "compulsory": false, "code": "SOC", "default_periods": 5 },
+                { "name": "Psychology",         "role": "elective",        "compulsory": false, "code": "PSY", "default_periods": 5 },
+                { "name": "Sanskrit",           "role": "elective",        "compulsory": false, "code": "SAN", "default_periods": 4 }
+              ]
+            },
+            "Vocational": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj11_sl" },
+                { "name": "Information Technology",       "role": "core",     "compulsory": true,  "code": "VIT",  "default_periods": 6 },
+                { "name": "Yoga",                          "role": "core",     "compulsory": true,  "code": "VYG",  "default_periods": 4 },
+                { "name": "Health and Physical Education", "role": "core",     "compulsory": true,  "code": "VHPE", "default_periods": 4 },
+                { "name": "Fine Arts",                     "role": "elective", "compulsory": false, "code": "VFA",  "default_periods": 4 },
+                { "name": "Music",                         "role": "elective", "compulsory": false, "code": "VMU",  "default_periods": 4 }
+              ]
+            }
+          }
+        },
+        "12": {
+          "streams": {
+            "Science": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Physics",            "role": "core",            "compulsory": true,  "code": "054", "default_periods": 6 },
+                { "name": "Chemistry",          "role": "core",            "compulsory": true,  "code": "052", "default_periods": 6 },
+                { "name": "Mathematics", "role": "core", "compulsory": true, "code": "050", "default_periods": 6, "elective_group_key": "gsebguj12_sci_track" },
+                { "name": "Biology",     "role": "core", "compulsory": true, "code": "056", "default_periods": 6, "elective_group_key": "gsebguj12_sci_track" },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Commerce": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Accountancy",        "role": "core",            "compulsory": true,  "code": "ACC", "default_periods": 6 },
+                { "name": "Business Studies",   "role": "core",            "compulsory": true,  "code": "BST", "default_periods": 6 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 6 },
+                { "name": "Statistics",         "role": "elective",        "compulsory": false, "code": "STAT","default_periods": 5 },
+                { "name": "Mathematics",        "role": "elective",        "compulsory": false, "code": "MATH","default_periods": 5 },
+                { "name": "Computer Education", "role": "elective",        "compulsory": false, "code": "331", "default_periods": 4 }
+              ]
+            },
+            "Arts": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "History",            "role": "core",            "compulsory": true,  "code": "HIST","default_periods": 5 },
+                { "name": "Geography",          "role": "core",            "compulsory": true,  "code": "GEO", "default_periods": 5 },
+                { "name": "Economics",          "role": "core",            "compulsory": true,  "code": "ECO", "default_periods": 5 },
+                { "name": "Political Science",  "role": "elective",        "compulsory": false, "code": "POL", "default_periods": 5 },
+                { "name": "Sociology",          "role": "elective",        "compulsory": false, "code": "SOC", "default_periods": 5 },
+                { "name": "Psychology",         "role": "elective",        "compulsory": false, "code": "PSY", "default_periods": 5 },
+                { "name": "Sanskrit",           "role": "elective",        "compulsory": false, "code": "SAN", "default_periods": 4 }
+              ]
+            },
+            "Vocational": {
+              "subjects": [
+                { "name": "Gujarati",           "role": "first_language",  "compulsory": true,  "code": "001", "default_periods": 5 },
+                { "name": "English", "role": "second_language", "compulsory": true, "code": "006", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Hindi",   "role": "second_language", "compulsory": true, "code": "014", "default_periods": 4, "elective_group_key": "gsebguj12_sl" },
+                { "name": "Information Technology",       "role": "core",     "compulsory": true,  "code": "VIT",  "default_periods": 6 },
+                { "name": "Yoga",                          "role": "core",     "compulsory": true,  "code": "VYG",  "default_periods": 4 },
+                { "name": "Health and Physical Education", "role": "core",     "compulsory": true,  "code": "VHPE", "default_periods": 4 },
+                { "name": "Fine Arts",                     "role": "elective", "compulsory": false, "code": "VFA",  "default_periods": 4 },
+                { "name": "Music",                         "role": "elective", "compulsory": false, "code": "VMU",  "default_periods": 4 }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

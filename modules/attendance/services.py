@@ -478,3 +478,94 @@ def get_my_classes(user_id: str) -> List[Dict]:
         )
 
     return result
+
+
+def _parse_iso_date(value: Optional[str]) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def list_attendance_records(
+    tenant_id: str,
+    *,
+    date: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    class_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Return legacy `attendance` rows scoped by tenant, with optional filters
+    on the structural Class fields and academic year.
+
+    Pagination:
+      - page is 1-indexed
+      - per_page is clamped to [1, 200] (default 50 when caller paginates)
+      - if page/per_page are both None the full filtered result is returned
+        in one envelope (mirrors students.list_students)
+    """
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context is required"}
+
+    single = _parse_iso_date(date)
+    range_from = _parse_iso_date(date_from)
+    range_to = _parse_iso_date(date_to)
+
+    query = Attendance.query.filter(Attendance.tenant_id == tenant_id)
+
+    if single:
+        query = query.filter(Attendance.date == single)
+    else:
+        if range_from:
+            query = query.filter(Attendance.date >= range_from)
+        if range_to:
+            query = query.filter(Attendance.date <= range_to)
+
+    if class_id:
+        query = query.filter(Attendance.class_id == class_id)
+
+    if school_unit_id or programme_id or grade_id or academic_year_id:
+        class_filter = db.session.query(Class.id).filter(Class.tenant_id == tenant_id)
+        if school_unit_id:
+            class_filter = class_filter.filter(Class.school_unit_id == school_unit_id)
+        if programme_id:
+            class_filter = class_filter.filter(Class.programme_id == programme_id)
+        if grade_id:
+            class_filter = class_filter.filter(Class.grade_id == grade_id)
+        if academic_year_id:
+            class_filter = class_filter.filter(Class.academic_year_id == academic_year_id)
+        query = query.filter(Attendance.class_id.in_(class_filter))
+
+    query = query.order_by(Attendance.date.desc(), Attendance.class_id)
+
+    total = query.count()
+    if page is not None or per_page is not None:
+        page_v = max(1, int(page or 1))
+        per_page_v = max(1, min(int(per_page or 50), 200))
+        rows = query.limit(per_page_v).offset((page_v - 1) * per_page_v).all()
+        total_pages = max(1, (total + per_page_v - 1) // per_page_v)
+    else:
+        rows = query.all()
+        page_v = 1
+        per_page_v = len(rows) or 0
+        total_pages = 1
+
+    return {
+        "success": True,
+        "data": {
+            "items": [r.to_dict() for r in rows],
+            "total": total,
+            "page": page_v,
+            "per_page": per_page_v,
+            "total_pages": total_pages,
+        },
+    }

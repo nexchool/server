@@ -1,7 +1,7 @@
 """Academic year CRUD services."""
 
 from datetime import date
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -9,49 +9,107 @@ from modules.academics.academic_year.models import AcademicYear
 from modules.audit.services import log_finance_action
 
 
-def _inclusive_ranges_overlap(a_start: date, a_end: date, b_start: date, b_end: date) -> bool:
-    """True if closed date ranges share at least one calendar day."""
-    return a_start <= b_end and b_start <= a_end
-
-
-def _find_overlapping_academic_year(
+def find_overlapping_year(
     tenant_id: str,
     start_date: date,
     end_date: date,
     exclude_id: Optional[str] = None,
 ) -> Optional[AcademicYear]:
-    """Return another academic year in the tenant whose range overlaps [start_date, end_date]."""
-    q = AcademicYear.query.filter_by(tenant_id=tenant_id)
+    """Return another academic year in the tenant whose range overlaps [start_date, end_date].
+
+    Two closed ranges [a_start, a_end] and [b_start, b_end] overlap when:
+        a_start <= b_end AND b_start <= a_end
+    """
+    q = AcademicYear.query.filter(
+        AcademicYear.tenant_id == tenant_id,
+        AcademicYear.start_date <= end_date,
+        AcademicYear.end_date >= start_date,
+    )
     if exclude_id:
         q = q.filter(AcademicYear.id != exclude_id)
-    for other in q.all():
-        if _inclusive_ranges_overlap(start_date, end_date, other.start_date, other.end_date):
-            return other
-    return None
+    return q.first()
 
 
-def _delete_blockers(tenant_id: str, year_id: str) -> Tuple[bool, str]:
-    """
-    Return (blocked, message) if the academic year cannot be deleted safely.
-    Prefer explicit checks over relying on DB RESTRICT alone.
+# Keep private alias for backward compatibility within this module.
+_find_overlapping_academic_year = find_overlapping_year
+
+
+def count_dependencies(tenant_id: str, year_id: str) -> Dict[str, int]:
+    """Return per-table counts of records that reference this academic year.
+
+    Tables checked (all confirmed to have both academic_year_id and tenant_id):
+      - classes            (modules.classes.models.Class)
+      - students           (modules.students.models.Student)
+      - student_enrollments(modules.academics.backbone.models.StudentClassEnrollment)
+      - terms              (modules.academics.backbone.models.AcademicTerm — filtered by deleted_at IS NULL)
+      - fee_structures     (modules.finance.models.FeeStructure)
+      - transport_enrollments (modules.transport.models.TransportEnrollment)
+      - transport_fee_plans   (modules.transport.models.TransportFeePlan)
+      - holidays           (modules.holidays.models.Holiday)
     """
     from modules.classes.models import Class
-    from modules.finance.models import FeeStructure
     from modules.students.models import Student
+    from modules.academics.backbone.models import AcademicTerm, StudentClassEnrollment
+    from modules.finance.models import FeeStructure
+    from modules.transport.models import TransportEnrollment, TransportFeePlan
+    from modules.holidays.models import Holiday
 
-    n_classes = Class.query.filter_by(academic_year_id=year_id, tenant_id=tenant_id).count()
-    if n_classes:
-        return True, f"Cannot delete: {n_classes} class(es) still use this academic year."
+    counts: Dict[str, int] = {}
 
-    n_fees = FeeStructure.query.filter_by(academic_year_id=year_id, tenant_id=tenant_id).count()
-    if n_fees:
-        return True, f"Cannot delete: {n_fees} fee structure(s) are linked to this academic year."
+    counts["classes"] = (
+        Class.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
 
-    n_students = Student.query.filter_by(academic_year_id=year_id, tenant_id=tenant_id).count()
-    if n_students:
-        return True, f"Cannot delete: {n_students} student(s) are still linked to this academic year."
+    counts["students"] = (
+        Student.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
 
-    return False, ""
+    counts["student_enrollments"] = (
+        StudentClassEnrollment.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
+
+    # AcademicTerm has a soft-delete column; only count active records.
+    counts["terms"] = (
+        AcademicTerm.query
+        .filter(
+            AcademicTerm.academic_year_id == year_id,
+            AcademicTerm.tenant_id == tenant_id,
+            AcademicTerm.deleted_at.is_(None),
+        )
+        .count()
+    )
+
+    counts["fee_structures"] = (
+        FeeStructure.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
+
+    counts["transport_enrollments"] = (
+        TransportEnrollment.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
+
+    counts["transport_fee_plans"] = (
+        TransportFeePlan.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
+
+    counts["holidays"] = (
+        Holiday.query
+        .filter_by(academic_year_id=year_id, tenant_id=tenant_id)
+        .count()
+    )
+
+    return counts
 
 
 def list_academic_years(active_only: bool = False) -> List[Dict]:
@@ -102,14 +160,15 @@ def create_academic_year(
         if existing:
             return {"success": False, "error": "Academic year with this name already exists"}
 
-        overlap = _find_overlapping_academic_year(tenant_id, start_date, end_date)
+        overlap = find_overlapping_year(tenant_id, start_date, end_date)
         if overlap:
             return {
                 "success": False,
                 "error": (
-                    f"Dates overlap with academic year “{overlap.name}” "
+                    f"Dates overlap with academic year \"{overlap.name}\" "
                     f"({overlap.start_date.isoformat()} – {overlap.end_date.isoformat()})."
                 ),
+                "overlap_year": overlap.to_dict(),
             }
 
         ay = AcademicYear(
@@ -180,14 +239,15 @@ def update_academic_year(
         if new_start >= new_end:
             return {"success": False, "error": "start_date must be before end_date"}
 
-        overlap = _find_overlapping_academic_year(tenant_id, new_start, new_end, exclude_id=year_id)
+        overlap = find_overlapping_year(tenant_id, new_start, new_end, exclude_id=year_id)
         if overlap:
             return {
                 "success": False,
                 "error": (
-                    f"Dates overlap with academic year “{overlap.name}” "
+                    f"Dates overlap with academic year \"{overlap.name}\" "
                     f"({overlap.start_date.isoformat()} – {overlap.end_date.isoformat()})."
                 ),
+                "overlap_year": overlap.to_dict(),
             }
 
         ay.name = new_name
@@ -210,7 +270,14 @@ def update_academic_year(
 
 
 def delete_academic_year(year_id: str, user_id: Optional[str] = None) -> Dict:
-    """Delete academic year."""
+    """Delete academic year after checking that no data references it.
+
+    Returns:
+        {"success": True, "message": ...} on success.
+        {"success": False, "error": ..., "blocked": True, "blockers": {...}} when
+        dependent records exist (caller should surface 409 to the client).
+        {"success": False, "error": ...} for not-found or unexpected errors.
+    """
     tenant_id = get_tenant_id()
     if not tenant_id:
         return {"success": False, "error": "Tenant context is required"}
@@ -219,9 +286,22 @@ def delete_academic_year(year_id: str, user_id: Optional[str] = None) -> Dict:
     if not ay:
         return {"success": False, "error": "Academic year not found"}
 
-    blocked, msg = _delete_blockers(tenant_id, year_id)
-    if blocked:
-        return {"success": False, "error": msg}
+    deps = count_dependencies(tenant_id, year_id)
+    total = sum(deps.values())
+    if total > 0:
+        nonzero = {k: v for k, v in deps.items() if v > 0}
+        labels = ", ".join(
+            f"{v} {k.replace('_', ' ')}" for k, v in nonzero.items()
+        )
+        return {
+            "success": False,
+            "blocked": True,
+            "blockers": deps,
+            "error": (
+                f"Cannot delete academic year because it has linked data: {labels}. "
+                "Remove or reassign that data first."
+            ),
+        }
 
     try:
         db.session.delete(ay)

@@ -18,8 +18,17 @@ from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
+from .class_enrollment_service import (
+    assign_student_to_class,
+    student_matches_academic_year_filter,
+    student_matches_class_filter,
+    student_matches_any_class_filter,
+)
 
 logger = logging.getLogger(__name__)
+
+# Sentinel: update_student omits class / academic year when not present in the request body
+PLACEMENT_UNSET = object()
 
 def _clean_str(value: Any) -> Optional[str]:
     if value is None:
@@ -295,11 +304,14 @@ def create_student(
         if Student.query.filter_by(admission_number=admission_number).first():
             return {'success': False, 'error': 'Admission number already exists'}
 
-        # Validate class exists if provided (tenant-scoped)
+        # Validate class exists if provided (tenant-scoped). Reject any
+        # cross-tenant id; in the structured flow the class carries the
+        # programme + school_unit, so they don't need to be resent.
+        class_obj = None
         if class_id:
-            class_obj = Class.query.get(class_id)
+            class_obj = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
             if not class_obj:
-                return {'success': False, 'error': 'Class not found'}
+                return {'success': False, 'error': 'Class not found for this tenant'}
 
         # Resolve academic_year_id (class derives it, or explicit academic_year_id)
         ay_id = _resolve_student_academic_year_id(academic_year_id, class_id)
@@ -438,16 +450,40 @@ def create_student(
             house_name=_clean_str(house_name),
             student_status=_clean_str(student_status),
         )
-        student.save()
+        db.session.add(student)
+        db.session.flush()
+        if class_id:
+            enr = assign_student_to_class(
+                student.id, class_id, ay_id, commit=False
+            )
+            if not enr.get("success"):
+                db.session.rollback()
+                return {
+                    "success": False,
+                    "error": enr.get("error", "Could not create class enrollment"),
+                }
+        db.session.commit()
 
-        # Auto-assign any applicable fee structures for this student's class/year
+        # Refresh tenant usage so billing reflects the new student. Failures
+        # here log but do not break the create — usage is best-effort.
         try:
-            from modules.finance.services import student_fee_service
+            from modules.subscription.usage import recompute_tenant_usage
 
-            student_fee_service.auto_assign_fees_for_student(student.id)
+            recompute_tenant_usage(tenant_id)
         except Exception:
-            # Do not fail student creation if finance auto-assignment has issues
-            db.session.rollback()
+            logger.exception("recompute_tenant_usage failed after create_student")
+
+        # Auto-assign any applicable fee structures for this student's class/year.
+        # Skipped silently when finance is disabled — student creation still succeeds.
+        try:
+            from core.feature_flags import is_feature_enabled
+
+            if is_feature_enabled(tenant_id, "fees_management"):
+                from modules.finance.services import student_fee_service
+
+                student_fee_service.auto_assign_fees_for_student(student.id)
+        except Exception:
+            logger.exception("auto_assign_fees_for_student failed after create_student")
 
         result = {
             'success': True,
@@ -501,8 +537,8 @@ def _attach_transport_summary(rows: List[Dict], academic_year_id: Optional[str])
     tenant_id = get_tenant_id()
     if not tenant_id:
         return
-    from core.plan_features import is_plan_feature_enabled
-    if not is_plan_feature_enabled(tenant_id, "transport"):
+    from core.feature_flags import is_feature_enabled
+    if not is_feature_enabled(tenant_id, "transport"):
         return
     from modules.transport.services import transport_summaries_for_students
 
@@ -529,6 +565,9 @@ def list_students(
     page: Optional[int] = None,
     per_page: Optional[int] = None,
     include_transport_summary: bool = False,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
     _restrict_class_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
@@ -548,16 +587,28 @@ def list_students(
     if _restrict_class_ids is not None:
         if not _restrict_class_ids:
             return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
-        query = query.filter(Student.class_id.in_(_restrict_class_ids))
+        query = query.filter(student_matches_any_class_filter(_restrict_class_ids))
 
     # Client-supplied class scoping (AND-ed with the teacher ceiling above).
     if class_ids:
-        query = query.filter(Student.class_id.in_(class_ids))
+        query = query.filter(student_matches_any_class_filter(class_ids))
     elif class_id:
-        query = query.filter(Student.class_id == class_id)
+        query = query.filter(student_matches_class_filter(class_id))
 
     if academic_year_id:
-        query = query.filter(Student.academic_year_id == academic_year_id)
+        query = query.filter(student_matches_academic_year_filter(academic_year_id))
+
+    # Multi-school structural filters: scope through the student's current
+    # class. Students with no class_id are excluded when any of these are set.
+    if school_unit_id or programme_id or grade_id:
+        class_filter = db.session.query(Class.id).filter(Class.tenant_id == Student.tenant_id)
+        if school_unit_id:
+            class_filter = class_filter.filter(Class.school_unit_id == school_unit_id)
+        if programme_id:
+            class_filter = class_filter.filter(Class.programme_id == programme_id)
+        if grade_id:
+            class_filter = class_filter.filter(Class.grade_id == grade_id)
+        query = query.filter(Student.class_id.in_(class_filter))
 
     if gender:
         query = query.filter(db.func.lower(Student.gender) == gender.strip().lower())
@@ -685,11 +736,39 @@ def get_student_by_user_id(user_id: str) -> Optional[Dict]:
     student = Student.query.filter_by(user_id=user_id).first()
     return student.to_dict() if student else None
 
+
+def _apply_placement_update(
+    student: Student,
+    *,
+    class_id: Any,
+    academic_year_id: Any,
+) -> Optional[str]:
+    """Returns an error message or None. Session commit is the caller's responsibility."""
+    if class_id is PLACEMENT_UNSET and academic_year_id is PLACEMENT_UNSET:
+        return None
+
+    if class_id is not PLACEMENT_UNSET and class_id is None:
+        ay = academic_year_id if academic_year_id is not PLACEMENT_UNSET else None
+        res = assign_student_to_class(student.id, None, ay, commit=False)
+        return None if res.get("success") else res.get("error", "Placement update failed")
+
+    if class_id is not PLACEMENT_UNSET and class_id:
+        ay = academic_year_id if academic_year_id is not PLACEMENT_UNSET else None
+        res = assign_student_to_class(student.id, class_id, ay, commit=False)
+        return None if res.get("success") else res.get("error", "Placement update failed")
+
+    res = assign_student_to_class(
+        student.id,
+        student.class_id,
+        academic_year_id,
+        commit=False,
+    )
+    return None if res.get("success") else res.get("error", "Placement update failed")
+
+
 def update_student(
     student_id: str,
     name: Optional[str] = None,
-    academic_year_id: Optional[str] = None,
-    class_id: Optional[str] = None,
     roll_number: Optional[int] = None,
     date_of_birth: Optional[str] = None,
     gender: Optional[str] = None,
@@ -762,21 +841,19 @@ def update_student(
     tc_number: Optional[str] = None,
     house_name: Optional[str] = None,
     student_status: Optional[str] = None,
+    academic_result: Optional[str] = None,
+    *,
+    class_id: Any = PLACEMENT_UNSET,
+    academic_year_id: Any = PLACEMENT_UNSET,
 ) -> Dict:
     """
     Update student details.
-    
+
     Only updates fields that are explicitly provided (not None).
     Handles both User fields (name) and Student fields.
-    
-    Args:
-        student_id: Student ID to update
-        name: Update student name
-        academic_year: Update academic year
-        Other fields: Optional updates to student profile
-        
-    Returns:
-        Dict with success status and updated student data or error
+
+    class_id / academic_year_id use PLACEMENT_UNSET when the client omits the key;
+    pass ``None`` only when the key is present with a null value (clear class / year).
     """
     try:
         student = Student.query.get(student_id)
@@ -789,11 +866,6 @@ def update_student(
             student.user.save()
             
         # Update Student fields (only if provided)
-        ay_id = _resolve_student_academic_year_id(academic_year_id, class_id if class_id else student.class_id)
-        if ay_id is not None:
-            student.academic_year_id = ay_id
-        if class_id is not None:
-            student.class_id = class_id
         if roll_number is not None:
             student.roll_number = roll_number
         if date_of_birth is not None:
@@ -931,8 +1003,30 @@ def update_student(
             student.house_name = _clean_str(house_name)
         if student_status is not None:
             student.student_status = _clean_str(student_status)
-            
-        student.save()
+        if academic_result is not None:
+            student.academic_result = _clean_str(academic_result)
+
+        perr = _apply_placement_update(
+            student,
+            class_id=class_id,
+            academic_year_id=academic_year_id,
+        )
+        if perr:
+            db.session.rollback()
+            return {"success": False, "error": perr}
+
+        db.session.add(student)
+        db.session.commit()
+
+        # Status transitions (active ↔ withdrawn / graduated / etc.) move
+        # the row in or out of the billable count, so refresh usage.
+        try:
+            from modules.subscription.usage import recompute_tenant_usage
+
+            recompute_tenant_usage(student.tenant_id)
+        except Exception:
+            logger.exception("recompute_tenant_usage failed after update_student")
+
         return {'success': True, 'student': student.to_dict()}
     except ValueError as e:
         db.session.rollback()
@@ -968,6 +1062,14 @@ def delete_student(student_id: str) -> Dict:
 
         db.session.delete(student)
         db.session.commit()
+
+        try:
+            from modules.subscription.usage import recompute_tenant_usage
+
+            recompute_tenant_usage(tenant_id)
+        except Exception:
+            logger.exception("recompute_tenant_usage failed after delete_student")
+
         return {'success': True, 'message': 'Student deleted successfully'}
     except Exception as e:
         db.session.rollback()

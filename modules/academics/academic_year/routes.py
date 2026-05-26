@@ -8,7 +8,7 @@ from core.decorators import (
     require_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from core.decorators.rbac import require_any_permission
 from shared.helpers import (
@@ -38,7 +38,7 @@ def list_academic_years():
 @academics_bp.route("/academic-years", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def create_academic_year():
     """POST /api/academics/academic-years"""
@@ -64,13 +64,20 @@ def create_academic_year():
     )
     if result["success"]:
         return success_response(data=result, message="Academic year created", status_code=201)
+    if result.get("overlap_year"):
+        return error_response(
+            "DateRangeOverlap",
+            result["error"],
+            400,
+            details={"overlapping_year": result["overlap_year"]},
+        )
     return error_response("AcademicsError", result["error"], 400)
 
 
 @academics_bp.route("/academic-years/<year_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_academic_year(year_id):
     """GET /api/academics/academic-years/<id>"""
@@ -83,7 +90,7 @@ def get_academic_year(year_id):
 @academics_bp.route("/academic-years/<year_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def update_academic_year(year_id):
     """PUT /api/academics/academic-years/<id>"""
@@ -100,22 +107,45 @@ def update_academic_year(year_id):
         return success_response(data=result)
     if "not found" in result.get("error", "").lower():
         return not_found_response("Academic year")
+    if result.get("overlap_year"):
+        return error_response(
+            "DateRangeOverlap",
+            result["error"],
+            400,
+            details={"overlapping_year": result["overlap_year"]},
+        )
     return error_response("AcademicsError", result["error"], 400)
 
 
 @academics_bp.route("/academic-years/<year_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def delete_academic_year(year_id):
-    """DELETE /api/academics/academic-years/<id>"""
+    """DELETE /api/academics/academic-years/<id>
+
+    Blocks deletion when any data references this year. Returns 409 with a
+    structured 'blockers' dict so the frontend can render a useful message.
+    """
     result = services.delete_academic_year(
         year_id=year_id,
         user_id=g.current_user.id if g.current_user else None,
     )
     if result["success"]:
-        return success_response(data=result)
+        return success_response(message="Academic year deleted")
     if "not found" in result.get("error", "").lower():
         return not_found_response("Academic year")
+    if result.get("blocked"):
+        nonzero = {k: v for k, v in result["blockers"].items() if v > 0}
+        labels = ", ".join(
+            f"{v} {k.replace('_', ' ')}" for k, v in nonzero.items()
+        )
+        return error_response(
+            "AcademicYearInUse",
+            f"Cannot delete academic year because it has linked data: {labels}. "
+            "Remove or reassign that data first.",
+            409,
+            details={"blockers": result["blockers"]},
+        )
     return error_response("AcademicsError", result["error"], 400)

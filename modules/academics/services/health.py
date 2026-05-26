@@ -95,12 +95,17 @@ def compute_health(tenant_id: str) -> Dict[str, Any]:
             }
         )
 
+    # Attendance health is reported only when the feature is enabled —
+    # otherwise it would always read as "pending" since nothing is being marked.
+    from core.feature_flags import is_feature_enabled
+
     attendance_pending: List[Dict[str, str]] = []
-    for c in Class.query.filter_by(tenant_id=tenant_id).all():
-        if attendance_pending_for_class_today(tenant_id, c.id, today):
-            attendance_pending.append(
-                {"class_id": c.id, "class_name": f"{c.name}-{c.section}"}
-            )
+    if is_feature_enabled(tenant_id, "attendance"):
+        for c in Class.query.filter_by(tenant_id=tenant_id).all():
+            if attendance_pending_for_class_today(tenant_id, c.id, today):
+                attendance_pending.append(
+                    {"class_id": c.id, "class_name": f"{c.name}-{c.section}"}
+                )
 
     return {
         "success": True,

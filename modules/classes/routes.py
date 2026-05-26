@@ -6,7 +6,9 @@ from core.decorators import (
     require_any_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
+    require_setup_complete,
+    require_active_subscription,
 )
 from shared.helpers import (
     success_response,
@@ -29,19 +31,29 @@ PERM_CS_MANAGE = 'class_subject.manage'
 @classes_bp.route('/', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_READ)
 def get_classes():
-    """List all classes"""
-    academic_year_id = request.args.get('academic_year_id')
-    classes = services.get_all_classes(academic_year_id=academic_year_id)
+    """List classes with optional structural filters.
+
+    Query params:
+        academic_year_id, school_unit_id, programme_id, grade_id
+    """
+    classes = services.get_all_classes(
+        academic_year_id=request.args.get('academic_year_id'),
+        school_unit_id=request.args.get('school_unit_id'),
+        programme_id=request.args.get('programme_id'),
+        grade_id=request.args.get('grade_id'),
+    )
     return success_response(data=classes)
 
 
 @classes_bp.route('/', methods=['POST'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
+@require_setup_complete
+@require_active_subscription
 @require_permission(PERM_CREATE)
 def create_class():
     """Create a new class"""
@@ -74,6 +86,11 @@ def create_class():
         start_date=data.get('start_date'),
         end_date=data.get('end_date'),
         grade_level=gl,
+        grade_id=data.get('grade_id') or None,
+        programme_id=data.get('programme_id') or None,
+        school_unit_id=data.get('school_unit_id') or None,
+        medium_id=data.get('medium_id') or None,
+        stream=data.get('stream') or None,
     )
 
     if result['success']:
@@ -86,7 +103,7 @@ def create_class():
 @classes_bp.route('/subjects/by-grade', methods=['POST'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_any_permission(PERM_CS_MANAGE, 'class.manage')
 def apply_subject_by_grade():
     """
@@ -121,7 +138,7 @@ def apply_subject_by_grade():
 @classes_bp.route('/meta/available-class-teachers', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_READ)
 def get_available_class_teachers():
     """
@@ -134,10 +151,35 @@ def get_available_class_teachers():
     return success_response(data=teachers)
 
 
+@classes_bp.route("/copy", methods=["POST"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature("class_management")
+@require_permission(PERM_CREATE)
+def copy_classes_across_years():
+    """
+    Copy all classes from one academic year to another.
+
+    Body: { "from_year_id": "...", "to_year_id": "..." }
+    Returns: { class_mapping: { old_class_id: new_class_id }, created, reused_existing, ... }
+    """
+    data = request.get_json() or {}
+    from_year_id = (data.get("from_year_id") or "").strip()
+    to_year_id = (data.get("to_year_id") or "").strip()
+    if not from_year_id or not to_year_id:
+        return validation_error_response({"message": "from_year_id and to_year_id are required"})
+
+    result = services.copy_classes_between_years(from_year_id, to_year_id)
+    if not result.get("success"):
+        return error_response("CopyError", result.get("error", "Copy failed"), 400)
+    payload = {k: v for k, v in result.items() if k != "success"}
+    return success_response(data=payload, message="Classes copied", status_code=201)
+
+
 @classes_bp.route('/<class_id>', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_READ)
 def get_class(class_id):
     """Get class details with students and teachers."""
@@ -150,7 +192,7 @@ def get_class(class_id):
 @classes_bp.route('/<class_id>', methods=['PUT'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_UPDATE)
 def update_class(class_id):
     """Update class details"""
@@ -172,6 +214,10 @@ def update_class(class_id):
                 kw['grade_level'] = int(gv)
             except (TypeError, ValueError):
                 return validation_error_response({'message': 'grade_level must be an integer'})
+    # Structural fields (optional)
+    for field in ('grade_id', 'programme_id', 'school_unit_id', 'medium_id', 'stream'):
+        if field in data:
+            kw[field] = data.get(field) or None
 
     result = services.update_class(class_id, **kw)
 
@@ -183,7 +229,7 @@ def update_class(class_id):
 @classes_bp.route('/<class_id>', methods=['DELETE'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_DELETE)
 def delete_class(class_id):
     """Delete a class"""
@@ -198,7 +244,7 @@ def delete_class(class_id):
 @classes_bp.route('/<class_id>/students', methods=['POST'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_UPDATE)
 def assign_student(class_id):
     """Assign a student to a class."""
@@ -216,7 +262,7 @@ def assign_student(class_id):
 @classes_bp.route('/<class_id>/students/<student_id>', methods=['DELETE'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_UPDATE)
 def remove_student(class_id, student_id):
     """Remove a student from a class."""
@@ -229,7 +275,7 @@ def remove_student(class_id, student_id):
 @classes_bp.route('/<class_id>/teachers', methods=['POST'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_UPDATE)
 def assign_teacher(class_id):
     """
@@ -261,7 +307,7 @@ def assign_teacher(class_id):
 @classes_bp.route('/<class_id>/teachers/<teacher_id>', methods=['DELETE'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_UPDATE)
 def remove_teacher(class_id, teacher_id):
     """Remove a teacher from a class."""
@@ -274,7 +320,7 @@ def remove_teacher(class_id, teacher_id):
 @classes_bp.route('/<class_id>/unassigned-students', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_READ)
 def get_unassigned_students(class_id):
     """Get students not assigned to any class."""
@@ -285,7 +331,7 @@ def get_unassigned_students(class_id):
 @classes_bp.route('/<class_id>/unassigned-teachers', methods=['GET'])
 @tenant_required
 @auth_required
-@require_plan_feature('class_management')
+@require_feature('class_management')
 @require_permission(PERM_READ)
 def get_unassigned_teachers(class_id):
     """Get teachers not yet assigned to this class."""

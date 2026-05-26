@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
@@ -50,11 +51,16 @@ def create_class(
     start_date: str = None,
     end_date: str = None,
     grade_level: Optional[int] = None,
+    grade_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    medium_id: Optional[str] = None,
+    stream: Optional[str] = None,
 ) -> Dict:
     """Create a new class (tenant-scoped). academic_year_id is required."""
     logger.warning(
-        "[create_class] called: name=%r, section=%r, academic_year_id=%r, teacher_id=%r, start_date=%r, end_date=%r",
-        name, section, academic_year_id, teacher_id, start_date, end_date,
+        "[create_class] called: name=%r, section=%r, academic_year_id=%r, teacher_id=%r, start_date=%r, end_date=%r, grade_id=%r, programme_id=%r, school_unit_id=%r",
+        name, section, academic_year_id, teacher_id, start_date, end_date, grade_id, programme_id, school_unit_id,
     )
     try:
         tenant_id = get_tenant_id()
@@ -114,6 +120,11 @@ def create_class(
             start_date=datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None,
             end_date=datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None,
             grade_level=grade_level,
+            grade_id=grade_id or None,
+            programme_id=programme_id or None,
+            school_unit_id=school_unit_id or None,
+            medium_id=medium_id or None,
+            stream=stream or None,
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
@@ -166,11 +177,24 @@ def create_class(
 
 def get_all_classes(
     academic_year_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
 ) -> List[Dict]:
-    """Get all classes, optionally filtered by academic year."""
+    """List classes for the current tenant with optional structural filters.
+
+    All filters are AND-ed and applied alongside the existing tenant scope
+    that TenantBaseModel adds automatically.
+    """
     query = Class.query
     if academic_year_id:
-        query = query.filter_by(academic_year_id=academic_year_id)
+        query = query.filter(Class.academic_year_id == academic_year_id)
+    if school_unit_id:
+        query = query.filter(Class.school_unit_id == school_unit_id)
+    if programme_id:
+        query = query.filter(Class.programme_id == programme_id)
+    if grade_id:
+        query = query.filter(Class.grade_id == grade_id)
 
     classes = query.order_by(Class.name, Class.section).all()
 
@@ -227,14 +251,20 @@ def update_class(
     start_date: str = None,
     end_date: str = None,
     grade_level=_MISSING,
+    grade_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    medium_id: Optional[str] = None,
+    stream: Optional[str] = None,
 ) -> Dict:
     """Update class details."""
     try:
-        cls = Class.query.get(class_id)
+        tenant_id = get_tenant_id()
+        # Explicit tenant filter — defense in depth even though
+        # TenantBaseModel scopes queries automatically.
+        cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
         if not cls:
             return {'success': False, 'error': 'Class not found'}
-
-        tenant_id = get_tenant_id()
 
         if academic_year_id:
             from modules.academics.academic_year.models import AcademicYear
@@ -291,6 +321,16 @@ def update_class(
             cls.end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
         if grade_level is not _MISSING:
             cls.grade_level = grade_level
+        if grade_id is not None:
+            cls.grade_id = grade_id or None
+        if programme_id is not None:
+            cls.programme_id = programme_id or None
+        if school_unit_id is not None:
+            cls.school_unit_id = school_unit_id or None
+        if medium_id is not None:
+            cls.medium_id = medium_id or None
+        if stream is not None:
+            cls.stream = stream if stream else None
 
         cls.save()
         return {'success': True, 'class': cls.to_dict()}
@@ -310,45 +350,152 @@ def update_class(
         return {'success': False, 'error': str(e)}
 
 
+def copy_classes_between_years(from_year_id: str, to_year_id: str) -> Dict:
+    """
+    Copy all classes from from_year_id to to_year_id (same name, section, grade_level, dates).
+    Does not copy class teacher (teacher_id=None) to avoid uq_classes_teacher_id_tenant conflicts.
+
+    If a matching (name, section, tenant, to_year) row already exists, it is reused in the mapping
+    (idempotent).
+    """
+    try:
+        tenant_id = get_tenant_id()
+        if not tenant_id:
+            return {"success": False, "error": "Tenant context is required"}
+        if not from_year_id or not to_year_id:
+            return {"success": False, "error": "from_year_id and to_year_id are required"}
+        if from_year_id == to_year_id:
+            return {"success": False, "error": "from_year_id and to_year_id must differ"}
+
+        from modules.academics.academic_year.models import AcademicYear
+
+        ay_from = AcademicYear.query.filter_by(id=from_year_id, tenant_id=tenant_id).first()
+        ay_to = AcademicYear.query.filter_by(id=to_year_id, tenant_id=tenant_id).first()
+        if not ay_from:
+            return {"success": False, "error": "from_year_id not found for this tenant"}
+        if not ay_to:
+            return {"success": False, "error": "to_year_id not found for this tenant"}
+
+        sources = (
+            Class.query.filter_by(tenant_id=tenant_id, academic_year_id=from_year_id)
+            .order_by(Class.name.asc(), Class.section.asc())
+            .all()
+        )
+
+        class_mapping: Dict[str, str] = {}
+        created = 0
+        reused = 0
+
+        for src in sources:
+            existing = Class.query.filter_by(
+                tenant_id=tenant_id,
+                academic_year_id=to_year_id,
+                name=src.name.strip(),
+                section=src.section.strip(),
+            ).first()
+            if existing:
+                class_mapping[src.id] = existing.id
+                reused += 1
+                continue
+
+            new_row = Class(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                name=src.name.strip(),
+                section=src.section.strip(),
+                academic_year_id=to_year_id,
+                teacher_id=None,
+                start_date=src.start_date,
+                end_date=src.end_date,
+                grade_level=src.grade_level,
+            )
+            db.session.add(new_row)
+            db.session.flush()
+            class_mapping[src.id] = new_row.id
+            created += 1
+
+        db.session.commit()
+        return {
+            "success": True,
+            "class_mapping": class_mapping,
+            "from_year_id": from_year_id,
+            "to_year_id": to_year_id,
+            "source_class_count": len(sources),
+            "created": created,
+            "reused_existing": reused,
+        }
+    except IntegrityError as e:
+        db.session.rollback()
+        logger.exception("copy_classes_between_years IntegrityError: %s", e)
+        return {
+            "success": False,
+            "error": "Could not copy classes (database constraint).",
+        }
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("copy_classes_between_years failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
 def delete_class(class_id: str) -> Dict:
-    """Delete a class"""
+    """Delete a class (and its subject offerings via DB-level CASCADE)."""
+    tenant_id = None
     try:
         cls = Class.query.get(class_id)
         if not cls:
             return {'success': False, 'error': 'Class not found'}
 
+        tenant_id = cls.tenant_id
         db.session.delete(cls)
         db.session.commit()
-        return {'success': True, 'message': 'Class deleted'}
+    except IntegrityError:
+        db.session.rollback()
+        return {
+            'success': False,
+            'error': (
+                'Class cannot be deleted because data is still attached '
+                '(students, attendance, fees, etc.). Remove or reassign that data first.'
+            ),
+        }
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': f'Failed to delete class: {e}'}
+
+    if tenant_id:
+        try:
+            from modules.school_setup.services import recompute_setup_complete
+            recompute_setup_complete(tenant_id)
+        except Exception:
+            pass
+    return {'success': True, 'message': 'Class deleted'}
 
 
 # ── Assignment Management ─────────────────────────────────────
 
 def assign_student_to_class(class_id: str, student_id: str) -> Dict:
-    """Assign a student to a class."""
+    """Assign a student to a class (delegates to StudentClassEnrollment)."""
     try:
         cls = Class.query.get(class_id)
         if not cls:
             return {'success': False, 'error': 'Class not found'}
 
         from modules.students.models import Student
+        from modules.students.class_enrollment_service import assign_student_to_class as set_placement
+
         student = Student.query.get(student_id)
         if not student:
             return {'success': False, 'error': 'Student not found'}
 
-        student.class_id = class_id
-        student.save()
+        res = set_placement(student_id, class_id, cls.academic_year_id, commit=True)
+        if not res.get('success'):
+            return {'success': False, 'error': res.get('error', 'Assignment failed')}
 
-        # Auto-assign any applicable fee structures for this student's class/year
         try:
             from modules.finance.services import student_fee_service
 
             student_fee_service.auto_assign_fees_for_student(student.id)
         except Exception:
-            db.session.rollback()
+            logger.exception('auto_assign_fees_for_student failed after class assignment')
 
         return {'success': True, 'message': 'Student assigned to class'}
     except Exception as e:
@@ -357,17 +504,20 @@ def assign_student_to_class(class_id: str, student_id: str) -> Dict:
 
 
 def remove_student_from_class(class_id: str, student_id: str) -> Dict:
-    """Remove a student from a class."""
+    """Remove a student from a class (closes current enrollment; keeps academic_year_id)."""
     try:
         from modules.students.models import Student
+        from modules.students.class_enrollment_service import assign_student_to_class as set_placement
+
         student = Student.query.get(student_id)
         if not student:
             return {'success': False, 'error': 'Student not found'}
         if student.class_id != class_id:
             return {'success': False, 'error': 'Student is not in this class'}
 
-        student.class_id = None
-        student.save()
+        res = set_placement(student_id, None, student.academic_year_id, commit=True)
+        if not res.get('success'):
+            return {'success': False, 'error': res.get('error', 'Remove failed')}
         return {'success': True, 'message': 'Student removed from class'}
     except Exception as e:
         db.session.rollback()

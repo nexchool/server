@@ -8,7 +8,7 @@ from flask import request, g, send_file
 import io
 
 from modules.fees import fees_bp
-from core.decorators import auth_required, tenant_required, require_plan_feature
+from core.decorators import auth_required, tenant_required, require_feature
 from core.decorators.rbac import require_permission, require_any_permission
 from shared.helpers import (
     success_response,
@@ -33,7 +33,7 @@ PERM_RECEIPT_DOWNLOAD = "fees.receipt.download"
 @fees_bp.route("/invoices", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_INVOICE_CREATE)
 def create_invoice():
     """POST /api/fees/invoices - Create invoice."""
@@ -84,7 +84,7 @@ def create_invoice():
 @fees_bp.route("/invoices", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_INVOICE_READ, "finance.read", "finance.manage")
 def list_invoices():
     """GET /api/fees/invoices - List invoices with optional filters."""
@@ -103,7 +103,7 @@ def list_invoices():
 @fees_bp.route("/invoices/<invoice_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_INVOICE_READ, "finance.read", "finance.manage")
 def get_invoice(invoice_id):
     """GET /api/fees/invoices/<id> - Get invoice detail with payments."""
@@ -116,7 +116,7 @@ def get_invoice(invoice_id):
 @fees_bp.route("/invoices/<invoice_id>/send-reminder", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_INVOICE_SEND_REMINDER)
 def send_invoice_reminder(invoice_id):
     """POST /api/fees/invoices/<id>/send-reminder - Send invoice reminder."""
@@ -131,7 +131,7 @@ def send_invoice_reminder(invoice_id):
 @fees_bp.route("/invoices/<invoice_id>/download", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_INVOICE_READ, PERM_RECEIPT_DOWNLOAD, "finance.read", "finance.manage")
 def download_invoice_pdf(invoice_id):
     """GET /api/fees/invoices/<id>/download - Generate and download invoice PDF."""
@@ -158,7 +158,7 @@ def download_invoice_pdf(invoice_id):
 @fees_bp.route("/payments", methods=["POST"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_permission(PERM_PAYMENT_RECORD)
 def record_payment():
     """POST /api/fees/payments - Record payment toward invoice."""
@@ -205,7 +205,7 @@ def record_payment():
 @fees_bp.route("/payments/<payment_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_INVOICE_READ, PERM_PAYMENT_RECORD, "finance.read", "finance.manage")
 def get_payment(payment_id):
     """GET /api/fees/payments/<id> - Get payment detail."""
@@ -220,7 +220,7 @@ def get_payment(payment_id):
 @fees_bp.route("/receipts/<payment_id>/download", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("fees_management")
+@require_feature("fees_management")
 @require_any_permission(PERM_RECEIPT_DOWNLOAD, "finance.read", "finance.manage")
 def download_receipt_pdf(payment_id):
     """GET /api/fees/receipts/<payment_id>/download - Generate and download receipt PDF."""

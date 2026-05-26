@@ -12,7 +12,7 @@ from core.decorators import (
     require_any_permission,
     auth_required,
     tenant_required,
-    require_plan_feature,
+    require_feature,
 )
 from shared.helpers import (
     success_response,
@@ -30,7 +30,7 @@ PERM_MANAGE = "subject.manage"
 @subjects_bp.route("/", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def list_subjects():
     """List all subjects for the current tenant."""
@@ -43,7 +43,7 @@ def list_subjects():
 @subjects_bp.route("/", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def create_subject():
     """Create a new subject."""
@@ -66,7 +66,7 @@ def create_subject():
 @subjects_bp.route("/<subject_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_subject(subject_id):
     """Get subject by ID."""
@@ -80,7 +80,7 @@ def get_subject(subject_id):
 @subjects_bp.route("/<subject_id>", methods=["PATCH", "PUT"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def update_subject(subject_id):
     """Update a subject (PATCH preferred; PUT kept for compatibility)."""
@@ -101,7 +101,7 @@ def update_subject(subject_id):
 @subjects_bp.route("/<subject_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_plan_feature("class_management")
+@require_feature("class_management")
 @require_permission(PERM_MANAGE)
 def delete_subject(subject_id):
     """Delete a subject."""
