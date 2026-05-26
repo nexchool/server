@@ -144,6 +144,35 @@ def register():
     )
 
 
+# ==================== TENANT BRANDING (public) ====================
+
+@auth_bp.route('/tenant-branding', methods=['GET'])
+def tenant_branding():
+    """
+    GET /api/auth/tenant-branding
+
+    Returns public branding info for the resolved tenant. No authentication required.
+    Tenant is resolved from X-Tenant-Subdomain header (sent automatically by admin-web),
+    X-Tenant-ID header, or Host subdomain — in that order.
+
+    Used by the admin-web login page to show the school name before the user signs in.
+
+    Responses:
+      200: { data: { name, subdomain, logo_url } }
+      404: no tenant could be resolved from the request
+    """
+    err = resolve_tenant_for_auth(use_default=False)
+    if err:
+        return error_response('No school found for this address', status_code=404)
+
+    tenant = g.tenant
+    return success_response(data={
+        'name': tenant.name,
+        'subdomain': tenant.subdomain,
+        'logo_url': tenant.logo_url,
+    })
+
+
 # ==================== LOGIN ====================
 
 # Lockout duration when max_login_attempts exceeded (tenant logins only)
