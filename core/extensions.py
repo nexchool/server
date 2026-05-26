@@ -35,6 +35,17 @@ def init_extensions(app):
         'supports_credentials': app.config.get('CORS_SUPPORTS_CREDENTIALS', True)
     }
 
+    # CORS_ORIGIN_REGEX (env var): a single regex that allows any matching origin.
+    # Use in production to accept all tenant subdomains without listing them individually.
+    # Example: CORS_ORIGIN_REGEX=^https://[a-z0-9-]+\.nexchool\.in$
+    import os
+    cors_origin_regex = os.getenv('CORS_ORIGIN_REGEX', '').strip()
+    if cors_origin_regex:
+        try:
+            cors_config['origins'] = [re.compile(cors_origin_regex)]
+        except re.error as exc:
+            app.logger.warning('CORS_ORIGIN_REGEX is invalid and was ignored: %s', exc)
+
     # Auto-expand wildcard *.localhost support: for every http://localhost:PORT
     # (or 127.0.0.1:PORT) in the origins list, also allow http://*.localhost:PORT.
     # This means adding a new school subdomain only requires an /etc/hosts entry,
