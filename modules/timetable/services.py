@@ -7,8 +7,8 @@ TODO (phase 2): Migrate to TimetableVersion + TimetableEntry; timetable_slots ke
 compatibility after migration 023.
 """
 
-from datetime import time
-from typing import Dict, List, Optional, Tuple
+from datetime import date, time, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
 
@@ -16,6 +16,14 @@ from core.database import db
 from core.tenant import get_tenant_id
 
 from .models import TimetableSlot, TimetableConfig, DEFAULT_BREAKS_JSON
+
+
+# ---------------------------------------------------------------------------
+# Domain exception (used by weekly views; rest of module uses dict-return style)
+# ---------------------------------------------------------------------------
+
+class TimetableNotFoundError(Exception):
+    """Raised when no published timetable exists for the requested AY scope."""
 
 
 def _parse_time(s: str) -> Optional[time]:
@@ -613,3 +621,232 @@ def swap_slots(slot_a_id: str, slot_b_id: str, tenant_id: str) -> Dict:
         "slot_a": slot_a.to_dict(),
         "slot_b": slot_b.to_dict(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Weekly timetable views (mobile teacher/student)
+# ---------------------------------------------------------------------------
+
+def _normalize_to_iso_monday(d: date) -> date:
+    """Return the ISO Monday of the week containing `d`."""
+    return d - timedelta(days=d.isoweekday() - 1)
+
+
+def _resolve_teacher_for_user(tenant_id: str, user_id: Any):
+    """Return the Teacher row for the given user, or None if not a teacher."""
+    from modules.teachers.models import Teacher
+
+    return Teacher.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
+
+
+def _resolve_student_for_user(tenant_id: str, user_id: Any):
+    """Return the Student row for the given user, or None if not a student."""
+    from modules.students.models import Student
+
+    return Student.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
+
+
+def _resolve_academic_year(tenant_id: str, academic_year_id: Optional[str]):
+    """Return the AcademicYear for the tenant (explicit ID or active one)."""
+    from modules.academics.academic_year.models import AcademicYear
+
+    if academic_year_id:
+        return AcademicYear.query.filter_by(
+            tenant_id=tenant_id, id=academic_year_id
+        ).first()
+    return (
+        AcademicYear.query
+        .filter_by(tenant_id=tenant_id, is_active=True)
+        .order_by(AcademicYear.start_date.desc())
+        .first()
+    )
+
+
+def _class_ids_for_academic_year(tenant_id: str, academic_year_id: str) -> List[str]:
+    from modules.classes.models import Class
+
+    rows = (
+        Class.query
+        .filter_by(tenant_id=tenant_id, academic_year_id=academic_year_id)
+        .with_entities(Class.id)
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def _query_periods_for_teacher(tenant_id: str, teacher_id: str,
+                               academic_year_id: str) -> List[TimetableSlot]:
+    class_ids = _class_ids_for_academic_year(tenant_id, academic_year_id)
+    if not class_ids:
+        return []
+    return (
+        TimetableSlot.query
+        .filter(
+            TimetableSlot.tenant_id == tenant_id,
+            TimetableSlot.teacher_id == teacher_id,
+            TimetableSlot.class_id.in_(class_ids),
+        )
+        .order_by(TimetableSlot.day_of_week, TimetableSlot.start_time)
+        .all()
+    )
+
+
+def _query_periods_for_class(tenant_id: str, class_id: str) -> List[TimetableSlot]:
+    return (
+        TimetableSlot.query
+        .filter(
+            TimetableSlot.tenant_id == tenant_id,
+            TimetableSlot.class_id == class_id,
+        )
+        .order_by(TimetableSlot.day_of_week, TimetableSlot.start_time)
+        .all()
+    )
+
+
+def _published_timetable_exists_for_ay(tenant_id: str, academic_year_id: str) -> bool:
+    """A timetable is considered 'published' if any slot exists for any
+    class in the academic year. The legacy TimetableSlot model has no
+    explicit published flag — presence is the signal."""
+    class_ids = _class_ids_for_academic_year(tenant_id, academic_year_id)
+    if not class_ids:
+        return False
+    return db.session.query(
+        TimetableSlot.query
+        .filter(
+            TimetableSlot.tenant_id == tenant_id,
+            TimetableSlot.class_id.in_(class_ids),
+        ).exists()
+    ).scalar() or False
+
+
+def _teacher_display_name(teacher_row) -> Optional[str]:
+    if teacher_row is None:
+        return None
+    user = getattr(teacher_row, "user", None)
+    if user is not None and getattr(user, "name", None):
+        return user.name
+    return None
+
+
+def _build_weekly_response(ay, week_start: date, week_end: date,
+                           periods: List[TimetableSlot]) -> Dict:
+    """Bucket periods into 7 days (0..6, 0=Monday). Each day carries its date."""
+    days_by_dow: Dict[int, List[Dict]] = {dow: [] for dow in range(0, 7)}
+
+    for p in periods:
+        dow = p.day_of_week
+        if dow < 0 or dow > 6:
+            continue
+        subject_ref = getattr(p, "subject_ref", None)
+        class_ref = getattr(p, "class_ref", None)
+        teacher_ref = getattr(p, "teacher_ref", None)
+        days_by_dow[dow].append({
+            "id": str(p.id),
+            "period_number": getattr(p, "period_number", None),
+            "start_time": p.start_time.strftime("%H:%M") if p.start_time else None,
+            "end_time": p.end_time.strftime("%H:%M") if p.end_time else None,
+            "subject": (
+                {"id": str(subject_ref.id), "name": subject_ref.name}
+                if subject_ref is not None else None
+            ),
+            "class": (
+                {"id": str(class_ref.id), "name": getattr(class_ref, "name", None)}
+                if class_ref is not None else None
+            ),
+            "teacher": (
+                {"id": str(teacher_ref.id), "name": _teacher_display_name(teacher_ref)}
+                if teacher_ref is not None else None
+            ),
+            "room": getattr(p, "room", None),
+        })
+
+    days = []
+    for dow in range(0, 7):
+        day_date = week_start + timedelta(days=dow)
+        days.append({
+            "day_of_week": dow,
+            "date": day_date.isoformat(),
+            "periods": sorted(
+                days_by_dow[dow],
+                key=lambda x: (x["start_time"] or "", x.get("period_number") or 0),
+            ),
+        })
+
+    return {
+        "academic_year": {"id": str(ay.id), "name": ay.name},
+        "week_start_date": week_start.isoformat(),
+        "week_end_date": week_end.isoformat(),
+        "days": days,
+    }
+
+
+def get_teacher_weekly_timetable(
+    *,
+    tenant_id: str,
+    teacher_user_id: Any,
+    week_start_date: Optional[date] = None,
+    academic_year_id: Optional[str] = None,
+) -> Optional[Dict]:
+    """Return the weekly timetable for the authenticated teacher.
+
+    Returns None when the caller's user has no Teacher row (route → 403).
+    Raises TimetableNotFoundError when no published timetable exists for the AY.
+    """
+    teacher = _resolve_teacher_for_user(tenant_id, teacher_user_id)
+    if teacher is None:
+        return None
+
+    ay = _resolve_academic_year(tenant_id, academic_year_id)
+    if ay is None:
+        raise TimetableNotFoundError("No active academic year")
+
+    base = week_start_date or date.today()
+    week_start = _normalize_to_iso_monday(base)
+    week_end = week_start + timedelta(days=6)
+
+    periods = _query_periods_for_teacher(tenant_id, teacher.id, ay.id)
+
+    if not periods and not _published_timetable_exists_for_ay(tenant_id, ay.id):
+        raise TimetableNotFoundError(
+            "No published timetable for this academic year"
+        )
+
+    return _build_weekly_response(ay, week_start, week_end, periods)
+
+
+def get_student_weekly_timetable(
+    *,
+    tenant_id: str,
+    student_user_id: Any,
+    week_start_date: Optional[date] = None,
+    academic_year_id: Optional[str] = None,
+) -> Optional[Dict]:
+    """Return the weekly timetable for the authenticated student.
+
+    Returns None when the caller's user has no Student row (route → 403).
+    Raises TimetableNotFoundError when no published timetable exists.
+    """
+    student = _resolve_student_for_user(tenant_id, student_user_id)
+    if student is None:
+        return None
+
+    ay = _resolve_academic_year(tenant_id, academic_year_id)
+    if ay is None:
+        raise TimetableNotFoundError("No active academic year")
+
+    base = week_start_date or date.today()
+    week_start = _normalize_to_iso_monday(base)
+    week_end = week_start + timedelta(days=6)
+
+    class_id = getattr(student, "class_id", None)
+    if class_id is None:
+        periods: List[TimetableSlot] = []
+    else:
+        periods = _query_periods_for_class(tenant_id, class_id)
+
+    if not periods and not _published_timetable_exists_for_ay(tenant_id, ay.id):
+        raise TimetableNotFoundError(
+            "No published timetable for this academic year"
+        )
+
+    return _build_weekly_response(ay, week_start, week_end, periods)
