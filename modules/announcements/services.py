@@ -344,3 +344,209 @@ def _enqueue_recall_fan_out(announcement_id: str, reason: str) -> None:
     except Exception as exc:
         from flask import current_app
         current_app.logger.warning("Failed to enqueue recall_fan_out for %s: %s", announcement_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Queries
+# ---------------------------------------------------------------------------
+
+def list_for_admin(*, status: Optional[str] = None, search: Optional[str] = None) -> list:
+    tenant_id = get_tenant_id()
+    q = db.session.query(Announcement).filter(Announcement.tenant_id == tenant_id)
+    if status:
+        q = q.filter(Announcement.status == status)
+    if search:
+        like = f"%{search.lower()}%"
+        q = q.filter(func.lower(Announcement.title).like(like))
+    return q.order_by(Announcement.created_at.desc()).all()
+
+
+def inbox_for_user(user_id: str) -> list:
+    """Return published/recalled announcements where this user is in the resolved audience,
+    read through the notification_recipients fan-out."""
+    tenant_id = get_tenant_id()
+    from modules.notifications.models import Notification, NotificationRecipient
+    rows = (
+        db.session.query(Announcement)
+        .join(Notification, Notification.extra_data["announcement_id"].astext == Announcement.id)
+        .join(NotificationRecipient, NotificationRecipient.notification_id == Notification.id)
+        .filter(
+            Announcement.tenant_id == tenant_id,
+            NotificationRecipient.user_id == user_id,
+            Notification.type.in_(("announcement.published", "announcement.recalled")),
+        )
+        .order_by(Announcement.published_at.desc())
+        .all()
+    )
+    seen = set()
+    out = []
+    for a in rows:
+        if a.id in seen:
+            continue
+        seen.add(a.id)
+        out.append(a)
+    return out
+
+
+def get_for_user(announcement_id: str, user) -> Announcement:
+    a = _get_or_404(announcement_id)
+    from modules.rbac.services import has_permission
+    if has_permission(user.id, "announcement.read.all"):
+        return a
+    if a.status in ("draft", "scheduled"):
+        if a.author_user_id == user.id:
+            return a
+        raise AuthorizationError("Not allowed")
+    # Published or recalled — check recipient membership via notification_recipients.
+    from modules.notifications.models import Notification, NotificationRecipient
+    is_recipient = (
+        db.session.query(NotificationRecipient.id)
+        .join(Notification, NotificationRecipient.notification_id == Notification.id)
+        .filter(
+            NotificationRecipient.user_id == user.id,
+            Notification.extra_data["announcement_id"].astext == a.id,
+        )
+        .first()
+        is not None
+    )
+    if not is_recipient:
+        raise AuthorizationError("Not allowed")
+    return a
+
+
+def list_recipients(announcement_id: str) -> list:
+    """NotificationRecipient rows joined to User for the read-receipt roster."""
+    tenant_id = get_tenant_id()
+    a = _get_or_404(announcement_id)
+    from modules.notifications.models import Notification, NotificationRecipient
+    from modules.auth.models import User
+    rows = (
+        db.session.query(NotificationRecipient, User)
+        .join(User, User.id == NotificationRecipient.user_id)
+        .join(Notification, Notification.id == NotificationRecipient.notification_id)
+        .filter(
+            Notification.type == "announcement.published",
+            Notification.extra_data["announcement_id"].astext == a.id,
+            Notification.tenant_id == tenant_id,
+        )
+        .all()
+    )
+    return [
+        {
+            "user_id": user.id,
+            "name": user.name,
+            "read_at": recipient.read_at.isoformat() if recipient.read_at else None,
+            "status": recipient.status,
+        }
+        for recipient, user in rows
+    ]
+
+
+def list_revisions(announcement_id: str) -> list:
+    a = _get_or_404(announcement_id)
+    return [r.to_dict() for r in a.revisions]
+
+
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
+
+def create_attachment(
+    *,
+    actor_user_id: str,
+    file_stream,
+    filename: str,
+    content_type: str,
+    size_bytes: int,
+    announcement_id: Optional[str] = None,
+):
+    from shared.s3_utils import upload_file, sanitize_folder
+    from modules.announcements.models import AnnouncementAttachment
+
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        raise AuthorizationError("Tenant context required")
+
+    if announcement_id:
+        a = _get_or_404(announcement_id)
+        target_announcement_id = a.id
+    else:
+        target_announcement_id = None
+
+    folder = sanitize_folder(f"tenants/{tenant_id}/announcements")
+
+    # upload_file returns (presigned_url, object_key) — we persist object_key only.
+    _url, stored_key = upload_file(file_stream, folder, filename, content_type)
+
+    att = AnnouncementAttachment(
+        tenant_id=tenant_id,
+        announcement_id=target_announcement_id,
+        s3_key=stored_key,
+        original_filename=filename,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        uploaded_by_user_id=actor_user_id,
+    )
+    db.session.add(att)
+    db.session.commit()
+    return att
+
+
+def delete_attachment(attachment_id: str, *, actor_user_id: str) -> None:
+    from shared.s3_utils import delete_file
+    from modules.announcements.models import AnnouncementAttachment
+
+    tenant_id = get_tenant_id()
+    att = db.session.query(AnnouncementAttachment).filter(
+        AnnouncementAttachment.id == attachment_id,
+        AnnouncementAttachment.tenant_id == tenant_id,
+    ).first()
+    if not att:
+        raise ValidationError("Attachment not found")
+    if att.uploaded_by_user_id != actor_user_id:
+        from modules.rbac.services import has_permission
+        if not has_permission(actor_user_id, "announcement.update"):
+            raise AuthorizationError("Not allowed")
+    try:
+        delete_file(att.s3_key)
+    except Exception as exc:
+        from flask import current_app
+        current_app.logger.warning("Failed to delete S3 object %s: %s", att.s3_key, exc)
+    db.session.delete(att)
+    db.session.commit()
+
+
+def attachment_download_url(attachment_id: str, user) -> str:
+    """Return a short-lived presigned URL for the attachment."""
+    from modules.announcements.models import AnnouncementAttachment
+    from shared.s3_utils import _get_s3_client, _bucket_name, key_for_download_url
+
+    tenant_id = get_tenant_id()
+    att = db.session.query(AnnouncementAttachment).filter(
+        AnnouncementAttachment.id == attachment_id,
+        AnnouncementAttachment.tenant_id == tenant_id,
+    ).first()
+    if not att:
+        raise ValidationError("Attachment not found")
+
+    if att.announcement_id:
+        get_for_user(att.announcement_id, user)  # raises if not authorized
+
+    s3 = _get_s3_client()
+    bucket = _bucket_name()
+    key = key_for_download_url(att.s3_key) or att.s3_key
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": bucket,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{att.original_filename or "file"}"',
+        },
+        ExpiresIn=600,
+    )
+    return url
+
+
+def list_templates() -> list:
+    from modules.announcements.templates_data import SYSTEM_TEMPLATES
+    return list(SYSTEM_TEMPLATES)
