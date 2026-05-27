@@ -429,7 +429,7 @@ def student_weekly_timetable():
         403 if the authenticated user has no Student row in this tenant
         404 if no published timetable exists for the resolved academic year
     """
-    from .services import TimetableNotFoundError
+    from .services import TimetableNotFoundError, StudentNotEnrolledError
 
     week_start, err = _parse_week_start_param()
     if err is not None:
@@ -445,6 +445,14 @@ def student_weekly_timetable():
         )
     except TimetableNotFoundError:
         return not_found_response("Timetable for this academic year")
+    except StudentNotEnrolledError:
+        # 409 Conflict — the request is well-formed but the caller's account
+        # state (no class enrollment for this AY) prevents fulfilment.
+        return error_response(
+            "NotEnrolled",
+            "Student is not enrolled in a class for this academic year",
+            409,
+        )
 
     if data is None:
         return error_response(

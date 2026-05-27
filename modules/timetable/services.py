@@ -10,6 +10,7 @@ compatibility after migration 023.
 from datetime import date, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import exists
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
@@ -25,6 +26,13 @@ from .models import TimetableSlot, TimetableConfig, DEFAULT_BREAKS_JSON
 
 class TimetableNotFoundError(Exception):
     """Raised when no published timetable exists for the requested AY scope."""
+
+
+class StudentNotEnrolledError(Exception):
+    """Raised when a student has no class enrollment for the resolved AY.
+    Routes translate to a 409 Conflict so the mobile client can render a
+    distinct empty state ("you're not enrolled in a class yet") instead of
+    the generic 'no timetable' message."""
 
 
 def _parse_time(s: str) -> Optional[time]:
@@ -725,13 +733,17 @@ def _published_timetable_exists_for_ay(tenant_id: str, academic_year_id: str) ->
     class_ids = _class_ids_for_academic_year(tenant_id, academic_year_id)
     if not class_ids:
         return False
-    return db.session.query(
-        TimetableSlot.query
-        .filter(
-            TimetableSlot.tenant_id == tenant_id,
-            TimetableSlot.class_id.in_(class_ids),
-        ).exists()
-    ).scalar() or False
+    # Canonical EXISTS form — version-safe across SQLAlchemy 2.x, avoids the
+    # nested `db.session.query(Query.exists())` form that depends on subtle
+    # entity-vs-column treatment of the wrapped Query.
+    return bool(
+        db.session.query(
+            exists().where(
+                TimetableSlot.tenant_id == tenant_id,
+                TimetableSlot.class_id.in_(class_ids),
+            )
+        ).scalar()
+    )
 
 
 def _teacher_display_name(teacher_row) -> Optional[str]:
@@ -855,9 +867,13 @@ def get_student_weekly_timetable(
 
     class_id = getattr(student, "class_id", None)
     if class_id is None:
-        periods: List[TimetableSlot] = []
-    else:
-        periods = _query_periods_for_class(tenant_id, class_id)
+        # Distinguish "student isn't enrolled in a class for this AY" from
+        # "no timetable exists" — the mobile client renders different states.
+        raise StudentNotEnrolledError(
+            "Student is not enrolled in a class for this academic year"
+        )
+
+    periods = _query_periods_for_class(tenant_id, class_id)
 
     if not periods and not _published_timetable_exists_for_ay(tenant_id, ay.id):
         raise TimetableNotFoundError(
