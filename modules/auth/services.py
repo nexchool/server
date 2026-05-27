@@ -373,9 +373,89 @@ def logout_user(refresh_token: str) -> bool:
         refresh_token=refresh_token,
         revoked=False
     ).first()
-    
+
     if not session:
         return False
-    
+
     session.revoke()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Self-serve password change (nexchool Slice 4)
+# ---------------------------------------------------------------------------
+
+class PasswordChangeError(Exception):
+    """Raised when password change fails for a domain reason.
+
+    The route layer maps codes to HTTP statuses:
+        current_password_invalid → 401
+        password_weak            → 422
+        password_unchanged       → 422
+    """
+
+    def __init__(self, code: str, message: str = ""):
+        super().__init__(message or code)
+        self.code = code
+
+
+def _is_password_strong(password: str) -> bool:
+    """Strength rule: at least 8 chars AND at least one digit."""
+    if not isinstance(password, str) or len(password) < 8:
+        return False
+    if not any(c.isdigit() for c in password):
+        return False
+    return True
+
+
+def change_password(
+    *,
+    user_id: str,
+    current_password: str,
+    new_password: str,
+    revoke_other_sessions: bool = False,
+    current_session_id: Optional[str] = None,
+) -> Dict:
+    """Change an authenticated user's password.
+
+    Args:
+        user_id: ID of the authenticated user.
+        current_password: Existing password (must match).
+        new_password: Proposed new password.
+        revoke_other_sessions: When True, revoke every other un-revoked
+            Session for this user except current_session_id.
+        current_session_id: If supplied, this session is preserved when
+            revoke_other_sessions=True.
+
+    Returns:
+        {"revoked_sessions": int}
+
+    Raises:
+        PasswordChangeError with .code in:
+            - "current_password_invalid"
+            - "password_weak"
+            - "password_unchanged"
+    """
+    user = User.query.get(user_id)
+    if user is None or not user.check_password(current_password):
+        raise PasswordChangeError("current_password_invalid")
+
+    if current_password == new_password:
+        raise PasswordChangeError("password_unchanged")
+
+    if not _is_password_strong(new_password):
+        raise PasswordChangeError("password_weak")
+
+    user.set_password(new_password)
+
+    revoked = 0
+    if revoke_other_sessions:
+        q = Session.query.filter_by(user_id=user.id, revoked=False)
+        if current_session_id:
+            q = q.filter(Session.id != current_session_id)
+        for session in q.all():
+            session.revoke()
+            revoked += 1
+
+    db.session.commit()
+    return {"revoked_sessions": revoked}

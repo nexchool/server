@@ -26,6 +26,7 @@ from shared.s3_utils import (
 from shared.storage_constants import PROFILE_PICTURES, TENANTS
 from . import auth_bp
 from .models import User, Session
+from . import services
 from .services import (
     authenticate_user,
     find_users_by_email_password,
@@ -842,3 +843,51 @@ def upload_profile_picture():
 def upload_profile_picture_short():
     """Upload profile photo. multipart: file or picture."""
     return _upload_profile_picture_handler()
+
+
+# ==================== SELF-SERVE PASSWORD CHANGE ====================
+
+@auth_bp.route('/password/change', methods=['POST'])
+@auth_required
+def change_password():
+    """Change the authenticated user's password.
+
+    Body:
+        - current_password (required)
+        - new_password (required)
+        - revoke_other_sessions (optional, bool — default False)
+
+    Responses:
+        200: {data: {revoked_sessions: int}}
+        400: missing fields
+        401: current password is wrong
+        422: new password is weak or identical to current
+    """
+    data = request.get_json(silent=True) or {}
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    revoke = bool(data.get("revoke_other_sessions", False))
+
+    if not current_password or not new_password:
+        return error_response(
+            error="ValidationError",
+            message="current_password and new_password are required",
+            status_code=400,
+        )
+
+    try:
+        result = services.change_password(
+            user_id=g.current_user.id,
+            current_password=current_password,
+            new_password=new_password,
+            revoke_other_sessions=revoke,
+        )
+    except services.PasswordChangeError as e:
+        status = 401 if e.code == "current_password_invalid" else 422
+        return error_response(
+            error=e.code,
+            message=str(e) or e.code,
+            status_code=status,
+        )
+
+    return success_response(data=result)
