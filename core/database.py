@@ -65,6 +65,7 @@ def init_db(app):
         from modules.auth.models import User, Session
         from modules.rbac.models import Role, Permission, RolePermission, UserRole
         from modules.students.models import Student, StudentDocument, StudentPromotionBatch
+        from modules.student_leaves.models import StudentLeave  # noqa: F401
         from modules.academics.academic_year.models import AcademicYear
         from modules.subjects.models import Subject
         from modules.teachers.models import Teacher
