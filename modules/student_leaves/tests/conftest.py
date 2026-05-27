@@ -226,3 +226,55 @@ def enable_admin_approval(db_session, tenant):
         s.student_leave_admin_approval_required = True
     db_session.flush()
     return s
+
+
+@pytest.fixture
+def teacher_on_leave_today(db_session, tenant, class_with_teacher):
+    """Insert an approved TeacherLeave for the class teacher overlapping today,
+    so the admin fallback eligibility check returns True."""
+    from datetime import date
+    from modules.teachers.models import TeacherLeave
+    tl = TeacherLeave(
+        id=_new_id("tl-"),
+        tenant_id=tenant.id,
+        teacher_id=class_with_teacher.class_teacher_id,
+        leave_type="sick",
+        start_date=date.today(),
+        end_date=date.today(),
+        reason="test",
+        status="approved",
+    )
+    db_session.add(tl)
+    db_session.flush()
+    return tl
+
+
+@pytest.fixture
+def holiday_in_range(db_session, tenant):
+    """Insert a non-recurring Holiday on the next Monday >= 2 weeks ahead.
+
+    Holidays model uses (start_date, end_date) range, not a single 'date'
+    column. The .date attribute we attach is for test convenience.
+    """
+    from datetime import date, timedelta
+    from modules.holidays.models import Holiday
+
+    today = date.today()
+    days_ahead = (0 - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    target = today + timedelta(days=days_ahead + 14)
+
+    h = Holiday(
+        id=_new_id("h-"),
+        tenant_id=tenant.id,
+        name=f"Test Holiday {target.isoformat()}",
+        holiday_type="school",
+        start_date=target,
+        end_date=target,
+        is_recurring=False,
+    )
+    db_session.add(h)
+    db_session.flush()
+    h.date = target  # convenience attribute for tests
+    return h

@@ -12,16 +12,19 @@ Exceptions intentionally distinct so callers (routes) can map to HTTP codes:
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import joinedload
 
 from core.database import db
 from core.tenant import get_tenant_id
+from modules.attendance.models import Attendance
 from modules.classes.models import Class
+from modules.holidays.services import get_holiday_for_date
 from modules.students.models import Student
 from modules.student_leaves.models import StudentLeave, LEAVE_TYPES
+from modules.teachers.models import Teacher, TeacherLeave
 
 
 class ValidationError(Exception):
@@ -183,10 +186,66 @@ def reject(leave_id: str, actor_user_id: str, rejection_reason: str) -> StudentL
     return leave
 
 
+def request_cancel(leave_id: str, actor_user_id: str, reason: str) -> StudentLeave:
+    """Student-owned request to cancel a leave.
+
+    Sets cancel_requested_at + cancel_requested_reason. Status is not changed
+    until an approver acts via approve_cancel / reject_cancel.
+    """
+    leave = _get_or_404(leave_id)
+    if leave.status in ("rejected", "cancelled"):
+        raise StateError("Leave is already in a terminal state")
+    if not _actor_is_owning_student(leave, actor_user_id):
+        raise AuthorizationError("Only the student can request cancellation")
+
+    leave.cancel_requested_at = datetime.utcnow()
+    leave.cancel_requested_reason = (reason or "").strip() or None
+    db.session.commit()
+    return leave
+
+
+def approve_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
+    """Approve a pending cancellation request.
+
+    Flips status to 'cancelled'. If the prior status was 'approved', the
+    attendance rows synced at approval time are removed.
+    """
+    leave = _get_or_404(leave_id)
+    if leave.cancel_requested_at is None:
+        raise StateError("No cancellation has been requested for this leave")
+    if not _actor_is_authorized_approver(leave, actor_user_id):
+        raise AuthorizationError("You are not authorized to approve this cancellation")
+
+    was_approved = leave.status == "approved"
+    leave.status = "cancelled"
+    leave.decided_by_id = actor_user_id
+    leave.decided_at = datetime.utcnow()
+    db.session.commit()
+
+    if was_approved:
+        _unsync_attendance_rows(leave)
+    return leave
+
+
+def reject_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
+    """Reject a pending cancellation request.
+
+    Clears the cancel flags; original status is preserved.
+    """
+    leave = _get_or_404(leave_id)
+    if leave.cancel_requested_at is None:
+        raise StateError("No cancellation has been requested for this leave")
+    if not _actor_is_authorized_approver(leave, actor_user_id):
+        raise AuthorizationError("You are not authorized to reject this cancellation")
+
+    leave.cancel_requested_at = None
+    leave.cancel_requested_reason = None
+    db.session.commit()
+    return leave
+
+
 # ---------------------------------------------------------------------------
-# Internal helpers — STUB IMPLEMENTATIONS for Task 4.
-# Task 5 expands _actor_is_authorized_approver (admin fallback eligibility) and
-# replaces the _sync_attendance_rows no-op with the real upsert.
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 def _get_or_404(leave_id: str) -> StudentLeave:
@@ -284,35 +343,117 @@ def _read_tenant_setting_admin_approval(tenant_id: str) -> bool:
 
 
 def _actor_is_authorized_approver(leave: StudentLeave, actor_user_id: str) -> bool:
-    """Task 4 narrow check: actor.id == teacher.user_id for leave.class_teacher_id.
+    """Class teacher always authorized; admin only when class teacher is on
+    approved teacher-leave overlapping today.
 
-    Task 5 will expand to include strict admin-fallback eligibility (only when
-    the class teacher is on approved leave today). The temporary catch-all for
-    'student.leave.approve.all' permission here is what lets the admin-required
-    flow tests reach pending_admin → approved; Task 5 tightens it.
+    Removes Task 4's loose admin shortcut (any holder of
+    student.leave.approve.all could approve). Admin fallback is now eligibility-
+    gated.
     """
-    from modules.teachers.models import Teacher
-    if leave.class_teacher_id:
-        teacher = (
-            db.session.query(Teacher)
-            .filter(Teacher.id == leave.class_teacher_id)
-            .first()
-        )
-        if teacher and teacher.user_id == actor_user_id:
-            return True
+    if not leave.class_teacher_id:
+        return False
 
-    # Temporary admin pass-through — replaced by strict eligibility in Task 5.
+    teacher = (
+        db.session.query(Teacher)
+        .filter(Teacher.id == leave.class_teacher_id)
+        .first()
+    )
+    if teacher and teacher.user_id == actor_user_id:
+        return True
+
+    # Admin fallback — only when class teacher is unavailable today.
     try:
         from modules.rbac.services import has_permission
-        if has_permission(actor_user_id, "student.leave.approve.all"):
-            return True
+        if not has_permission(actor_user_id, "student.leave.approve.all"):
+            return False
     except Exception:
-        # If rbac isn't importable in some narrow test path, deny rather than
-        # silently approve.
         return False
-    return False
+    if not _class_teacher_unavailable_today(leave.class_teacher_id, leave.tenant_id):
+        return False
+    return True
 
 
 def _sync_attendance_rows(leave: StudentLeave, actor_user_id: str) -> int:
-    """No-op for Task 4. Task 5 implements the real upsert into attendance_records."""
-    return 0
+    """Upsert one Attendance row per school day in the leave range.
+
+    School day = not weekend AND not a holiday for this tenant. If a row
+    already exists for (date, class_id, student_id, tenant_id), its status is
+    replaced with 'leave' and leave_id is set. Returns the number of rows
+    inserted-or-updated.
+    """
+    count = 0
+    cursor = leave.start_date
+    while cursor <= leave.end_date:
+        if _is_school_day(leave.tenant_id, cursor):
+            row = (
+                db.session.query(Attendance)
+                .filter(
+                    Attendance.tenant_id == leave.tenant_id,
+                    Attendance.date == cursor,
+                    Attendance.student_id == leave.student_id,
+                )
+                .first()
+            )
+            if row is None:
+                row = Attendance(
+                    tenant_id=leave.tenant_id,
+                    date=cursor,
+                    class_id=leave.class_id,
+                    student_id=leave.student_id,
+                    status="leave",
+                    marked_by=actor_user_id,
+                    leave_id=leave.id,
+                )
+                db.session.add(row)
+            else:
+                row.status = "leave"
+                row.leave_id = leave.id
+                row.marked_by = actor_user_id
+            count += 1
+        cursor += timedelta(days=1)
+    db.session.commit()
+    return count
+
+
+def _unsync_attendance_rows(leave: StudentLeave) -> int:
+    """Remove attendance rows previously synced for this leave."""
+    deleted = (
+        db.session.query(Attendance)
+        .filter(
+            Attendance.tenant_id == leave.tenant_id,
+            Attendance.leave_id == leave.id,
+        )
+        .delete(synchronize_session=False)
+    )
+    db.session.commit()
+    return deleted
+
+
+def _is_school_day(tenant_id: str, d: date) -> bool:
+    if d.weekday() >= 5:  # Sat=5, Sun=6
+        return False
+    if get_holiday_for_date(d, tenant_id) is not None:
+        return False
+    return True
+
+
+def _actor_is_owning_student(leave: StudentLeave, actor_user_id: str) -> bool:
+    if not leave.student or not getattr(leave.student, "user_id", None):
+        return False
+    return leave.student.user_id == actor_user_id
+
+
+def _class_teacher_unavailable_today(teacher_id: str, tenant_id: str) -> bool:
+    today = date.today()
+    overlap = (
+        db.session.query(TeacherLeave)
+        .filter(
+            TeacherLeave.tenant_id == tenant_id,
+            TeacherLeave.teacher_id == teacher_id,
+            TeacherLeave.status == "approved",
+            TeacherLeave.start_date <= today,
+            TeacherLeave.end_date >= today,
+        )
+        .first()
+    )
+    return overlap is not None
