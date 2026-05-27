@@ -3319,19 +3319,31 @@ def get_student_transport_assignment(
 
     today = date.today()
 
-    # Pick the most-recent enrollment for this student and verify it's active
-    # today via the canonical helper.
-    enrollment = (
+    # Query enrollments active TODAY in SQL. Picking newest-by-created_at
+    # and then date-checking misses a student who has an older active row
+    # plus a newer inactive/future row (common after deactivate→recreate).
+    active_candidates = (
         TransportEnrollment.query
         .filter(
             TransportEnrollment.tenant_id == tenant_id,
             TransportEnrollment.student_id == student.id,
+            TransportEnrollment.status == "active",
+            TransportEnrollment.start_date <= today,
+            or_(
+                TransportEnrollment.end_date.is_(None),
+                TransportEnrollment.end_date >= today,
+            ),
         )
-        .order_by(TransportEnrollment.created_at.desc())
-        .first()
+        .order_by(TransportEnrollment.start_date.desc())
+        .all()
+    )
+    # Belt-and-suspenders: confirm with the canonical helper.
+    enrollment = next(
+        (en for en in active_candidates if enrollment_active_on(en, today)),
+        None,
     )
 
-    if enrollment is None or not enrollment_active_on(enrollment, today):
+    if enrollment is None:
         return {"enrolled": False}
 
     bus = TransportBus.query.filter_by(

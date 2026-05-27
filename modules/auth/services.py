@@ -450,9 +450,20 @@ def change_password(
 
     revoked = 0
     if revoke_other_sessions:
-        q = Session.query.filter_by(user_id=user.id, revoked=False)
-        if current_session_id:
-            q = q.filter(Session.id != current_session_id)
+        # Guard against the route layer forgetting to pass current_session_id.
+        # Without it, the loop below would revoke the caller's own session and
+        # log them out immediately after password change.
+        if not current_session_id:
+            raise PasswordChangeError(
+                code="current_session_required",
+                message=(
+                    "revoke_other_sessions=True requires current_session_id "
+                    "so the active session is preserved."
+                ),
+            )
+        q = Session.query.filter_by(user_id=user.id, revoked=False).filter(
+            Session.id != current_session_id
+        )
         for session in q.all():
             session.revoke()
             revoked += 1
