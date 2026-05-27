@@ -443,6 +443,135 @@ def _actor_is_owning_student(leave: StudentLeave, actor_user_id: str) -> bool:
     return leave.student.user_id == actor_user_id
 
 
+# ---------------------------------------------------------------------------
+# Query helpers (Task 6)
+# ---------------------------------------------------------------------------
+
+def list_visible_for_user(user, status: Optional[str] = None):
+    """Return leaves visible to ``user`` within their tenant, optionally filtered
+    by ``status``. Scoping follows the read permission held by the user:
+    read.all (admin) → all rows; read.class (teacher) → leaves where the user
+    is the class teacher; read.own (student) → only their own leaves.
+    """
+    from modules.rbac.services import has_permission
+
+    tenant_id = get_tenant_id()
+    q = db.session.query(StudentLeave).filter(StudentLeave.tenant_id == tenant_id)
+    if status:
+        q = q.filter(StudentLeave.status == status)
+
+    if has_permission(user.id, "student.leave.read.all"):
+        pass
+    elif has_permission(user.id, "student.leave.read.class"):
+        teacher = (
+            db.session.query(Teacher)
+            .filter(Teacher.tenant_id == tenant_id, Teacher.user_id == user.id)
+            .first()
+        )
+        if teacher:
+            q = q.filter(StudentLeave.class_teacher_id == teacher.id)
+        else:
+            return []
+    elif has_permission(user.id, "student.leave.read.own"):
+        student = (
+            db.session.query(Student)
+            .filter(Student.tenant_id == tenant_id, Student.user_id == user.id)
+            .first()
+        )
+        if student:
+            q = q.filter(StudentLeave.student_id == student.id)
+        else:
+            return []
+    else:
+        return []
+
+    return q.order_by(StudentLeave.created_at.desc()).all()
+
+
+def get_for_user(leave_id: str, user) -> StudentLeave:
+    """Fetch a leave the user is allowed to see. Raises AuthorizationError if not."""
+    from modules.rbac.services import has_permission
+
+    leave = _get_or_404(leave_id)
+    tenant_id = get_tenant_id()
+
+    if has_permission(user.id, "student.leave.read.all"):
+        return leave
+
+    if has_permission(user.id, "student.leave.read.class"):
+        teacher = (
+            db.session.query(Teacher)
+            .filter(Teacher.tenant_id == tenant_id, Teacher.user_id == user.id)
+            .first()
+        )
+        if teacher and leave.class_teacher_id == teacher.id:
+            return leave
+
+    if has_permission(user.id, "student.leave.read.own"):
+        if leave.student and getattr(leave.student, "user_id", None) == user.id:
+            return leave
+
+    raise AuthorizationError("Not allowed to view this leave")
+
+
+def teacher_queue(user):
+    """Pending approvals (including cancel requests) for ``user`` as the class
+    teacher of the related student.
+    """
+    tenant_id = get_tenant_id()
+    teacher = (
+        db.session.query(Teacher)
+        .filter(Teacher.tenant_id == tenant_id, Teacher.user_id == user.id)
+        .first()
+    )
+    if not teacher:
+        return []
+    return (
+        db.session.query(StudentLeave)
+        .filter(
+            StudentLeave.tenant_id == tenant_id,
+            StudentLeave.class_teacher_id == teacher.id,
+            db.or_(
+                StudentLeave.status.in_(("pending_class_teacher", "pending_admin")),
+                StudentLeave.cancel_requested_at.isnot(None),
+            ),
+        )
+        .order_by(StudentLeave.created_at.desc())
+        .all()
+    )
+
+
+def admin_fallback_queue(user):
+    """Pending leaves whose class teacher is on approved teacher-leave today —
+    surfaced to admins as the fallback approver queue.
+    """
+    tenant_id = get_tenant_id()
+    today = date.today()
+    unavailable_teacher_ids = (
+        db.session.query(TeacherLeave.teacher_id)
+        .filter(
+            TeacherLeave.tenant_id == tenant_id,
+            TeacherLeave.status == "approved",
+            TeacherLeave.start_date <= today,
+            TeacherLeave.end_date >= today,
+        )
+        .subquery()
+    )
+    return (
+        db.session.query(StudentLeave)
+        .filter(
+            StudentLeave.tenant_id == tenant_id,
+            StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),
+            db.or_(
+                StudentLeave.status.in_(("pending_class_teacher", "pending_admin")),
+                StudentLeave.cancel_requested_at.isnot(None),
+            ),
+        )
+        .order_by(StudentLeave.created_at.desc())
+        .all()
+    )
+
+
 def _class_teacher_unavailable_today(teacher_id: str, tenant_id: str) -> bool:
     today = date.today()
     overlap = (
