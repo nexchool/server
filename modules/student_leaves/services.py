@@ -13,7 +13,7 @@ Exceptions intentionally distinct so callers (routes) can map to HTTP codes:
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List as _List, Optional
 
 from sqlalchemy.orm import joinedload
 
@@ -37,6 +37,57 @@ class StateError(Exception):
 
 class AuthorizationError(Exception):
     """Raised when actor is not allowed to perform the action — caller maps to 403."""
+
+
+# ---------------------------------------------------------------------------
+# Notification helper
+# ---------------------------------------------------------------------------
+
+def _notify(
+    tenant_id: str,
+    notification_type: str,
+    title: str,
+    body: str,
+    recipient_user_ids: _List[str],
+    extra_data: dict | None = None,
+    channels: _List[str] | None = None,
+) -> None:
+    """Best-effort notification — swallows errors so notification failures can't
+    roll back the leave transaction."""
+    try:
+        from modules.notifications import notification_service
+        from modules.notifications.enums import NotificationChannel
+        if not recipient_user_ids:
+            return
+        # Default to in-app + push so the student/teacher/admin gets a phone alert.
+        ch = channels or [NotificationChannel.IN_APP.value, NotificationChannel.PUSH.value]
+        clean_ids = [u for u in recipient_user_ids if u]
+        if not clean_ids:
+            return
+        if len(clean_ids) == 1:
+            notification_service.create_notification(
+                tenant_id=tenant_id,
+                notification_type=notification_type,
+                title=title,
+                body=body,
+                extra_data=extra_data or {},
+                channels=ch,
+                user_id=clean_ids[0],
+            )
+        else:
+            n = notification_service.create_notification(
+                tenant_id=tenant_id,
+                notification_type=notification_type,
+                title=title,
+                body=body,
+                extra_data=extra_data or {},
+                channels=ch,
+                user_id=None,
+            )
+            notification_service.create_recipients(n.id, clean_ids)
+    except Exception as exc:
+        from flask import current_app
+        current_app.logger.warning("student_leaves notification failed: %s", exc, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +185,22 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
     )
     db.session.add(leave)
     db.session.commit()
+
+    # Notify class teacher of the new request.
+    if leave.class_teacher_id:
+        teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
+        if teacher and teacher.user_id:
+            student_display = "A student"
+            if student.user and getattr(student.user, "name", None):
+                student_display = student.user.name
+            _notify(
+                tenant_id=leave.tenant_id,
+                notification_type="student_leave.submitted",
+                title="New student leave request",
+                body=f"{student_display} applied for {leave_type} leave from {start_d} to {end_d}",
+                recipient_user_ids=[teacher.user_id],
+                extra_data={"leave_id": leave.id, "kind": "student_leave.submitted"},
+            )
     return leave
 
 
@@ -165,6 +232,37 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
     leave.decided_by_id = actor_user_id
     leave.decided_at = now
     db.session.commit()
+
+    # Notify the student of the decision.
+    if leave.student and getattr(leave.student, "user_id", None):
+        if leave.status == "approved":
+            title = "Leave approved"
+            body = f"Your {leave.leave_type} leave for {leave.start_date} to {leave.end_date} was approved"
+        else:  # pending_admin
+            title = "Leave moved to admin review"
+            body = f"Your {leave.leave_type} leave is now awaiting admin approval"
+        _notify(
+            tenant_id=leave.tenant_id,
+            notification_type="student_leave.status_changed",
+            title=title,
+            body=body,
+            recipient_user_ids=[leave.student.user_id],
+            extra_data={"leave_id": leave.id, "status": leave.status},
+        )
+
+    # If it just transitioned to pending_admin, ping the admins.
+    if leave.status == "pending_admin":
+        admin_ids = _admin_user_ids_for_tenant(leave.tenant_id)
+        if admin_ids:
+            student_name = leave.student.user.name if (leave.student and leave.student.user and getattr(leave.student.user, "name", None)) else "a student"
+            _notify(
+                tenant_id=leave.tenant_id,
+                notification_type="student_leave.pending_admin",
+                title="Student leave needs your approval",
+                body=f"A student leave for {student_name} needs final approval",
+                recipient_user_ids=admin_ids,
+                extra_data={"leave_id": leave.id},
+            )
     return leave
 
 
@@ -183,6 +281,16 @@ def reject(leave_id: str, actor_user_id: str, rejection_reason: str) -> StudentL
     leave.decided_by_id = actor_user_id
     leave.decided_at = datetime.utcnow()
     db.session.commit()
+
+    if leave.student and getattr(leave.student, "user_id", None):
+        _notify(
+            tenant_id=leave.tenant_id,
+            notification_type="student_leave.status_changed",
+            title="Leave rejected",
+            body=f"Your {leave.leave_type} leave was rejected: {leave.rejection_reason}",
+            recipient_user_ids=[leave.student.user_id],
+            extra_data={"leave_id": leave.id, "status": "rejected"},
+        )
     return leave
 
 
@@ -201,6 +309,19 @@ def request_cancel(leave_id: str, actor_user_id: str, reason: str) -> StudentLea
     leave.cancel_requested_at = datetime.utcnow()
     leave.cancel_requested_reason = (reason or "").strip() or None
     db.session.commit()
+
+    if leave.class_teacher_id:
+        teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
+        if teacher and teacher.user_id:
+            student_name = leave.student.user.name if (leave.student and leave.student.user and getattr(leave.student.user, "name", None)) else "A student"
+            _notify(
+                tenant_id=leave.tenant_id,
+                notification_type="student_leave.cancel_requested",
+                title="Student wants to cancel leave",
+                body=f"{student_name} wants to cancel their {leave.start_date}–{leave.end_date} leave",
+                recipient_user_ids=[teacher.user_id],
+                extra_data={"leave_id": leave.id},
+            )
     return leave
 
 
@@ -224,6 +345,16 @@ def approve_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
 
     if was_approved:
         _unsync_attendance_rows(leave)
+
+    if leave.student and getattr(leave.student, "user_id", None):
+        _notify(
+            tenant_id=leave.tenant_id,
+            notification_type="student_leave.cancel_approved",
+            title="Leave cancelled",
+            body=f"Your {leave.leave_type} leave for {leave.start_date}–{leave.end_date} has been cancelled",
+            recipient_user_ids=[leave.student.user_id],
+            extra_data={"leave_id": leave.id},
+        )
     return leave
 
 
@@ -241,6 +372,16 @@ def reject_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
     leave.cancel_requested_at = None
     leave.cancel_requested_reason = None
     db.session.commit()
+
+    if leave.student and getattr(leave.student, "user_id", None):
+        _notify(
+            tenant_id=leave.tenant_id,
+            notification_type="student_leave.cancel_rejected",
+            title="Cancellation rejected",
+            body="Your cancellation request was not approved",
+            recipient_user_ids=[leave.student.user_id],
+            extra_data={"leave_id": leave.id},
+        )
     return leave
 
 
@@ -570,6 +711,23 @@ def admin_fallback_queue(user):
         .order_by(StudentLeave.created_at.desc())
         .all()
     )
+
+
+def _admin_user_ids_for_tenant(tenant_id: str) -> list:
+    """All users with the Admin role for this tenant."""
+    try:
+        from modules.rbac.models import UserRole, Role
+        from modules.auth.models import User
+        rows = (
+            db.session.query(User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(User.tenant_id == tenant_id, Role.name.in_(("Admin", "admin")))
+            .all()
+        )
+        return [r[0] for r in rows]
+    except Exception:
+        return []
 
 
 def _class_teacher_unavailable_today(teacher_id: str, tenant_id: str) -> bool:
