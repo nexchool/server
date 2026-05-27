@@ -68,7 +68,14 @@ PERMISSIONS = [
     ('student.leave.approve.class', "Approve/reject leave requests for the teacher's classes"),
     ('student.leave.approve.all', 'Approve/reject any student leave request (admin fallback)'),
     ('student.leave.request_cancel', 'Request cancellation of an own leave (student)'),
-    
+
+    # Announcement permissions
+    ('announcement.create', 'Create announcements as an admin'),
+    ('announcement.update', 'Edit/append revisions to announcements'),
+    ('announcement.recall', 'Recall a published announcement'),
+    ('announcement.read.own', 'Read announcements where I am a recipient'),
+    ('announcement.read.all', 'Read all announcements in the tenant (admin)'),
+
     # Attendance permissions
     ('attendance.read.self', 'View own attendance'),
     ('attendance.read.class', 'View class attendance'),
@@ -242,6 +249,11 @@ ROLES = {
             'teacher.leave.manage',
             'student.leave.read.all',
             'student.leave.approve.all',
+            'announcement.create',
+            'announcement.update',
+            'announcement.recall',
+            'announcement.read.own',
+            'announcement.read.all',
             'holiday.manage',
             'class_subject.manage',
             'class_teacher.manage',
@@ -287,6 +299,7 @@ ROLES = {
             'teacher.leave.apply',
             'student.leave.read.class',
             'student.leave.approve.class',
+            'announcement.read.own',
             'holiday.read',
             'class_subject.read',
             'academics.read',
@@ -313,6 +326,7 @@ ROLES = {
             'student.leave.apply',
             'student.leave.read.own',
             'student.leave.request_cancel',
+            'announcement.read.own',
         ]
     },
     'Parent': {
@@ -326,6 +340,7 @@ ROLES = {
             'holiday.read',
             'transport.info.read.self',
             'transport.student.read_own',
+            'announcement.read.own',
         ]
     },
 }
