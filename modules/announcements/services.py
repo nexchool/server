@@ -531,6 +531,14 @@ def attachment_download_url(attachment_id: str, user) -> str:
 
     if att.announcement_id:
         get_for_user(att.announcement_id, user)  # raises if not authorized
+    else:
+        # Orphan/draft attachment — must be either the uploader or an admin
+        # with the update permission. Otherwise any tenant user could fetch
+        # un-attached uploads by guessing IDs.
+        if att.uploaded_by_user_id != user.id:
+            from modules.rbac.services import has_permission
+            if not has_permission(user.id, "announcement.update"):
+                raise AuthorizationError("Not allowed")
 
     s3 = _get_s3_client()
     bucket = _bucket_name()
