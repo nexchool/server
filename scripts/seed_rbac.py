@@ -59,6 +59,15 @@ PERMISSIONS = [
     ('teacher.manage', 'Full teacher management access'),
     ('teacher.leave.apply', 'Apply for leave as a teacher'),
     ('teacher.leave.manage', 'View and manage all teacher leave requests'),
+
+    # Student leave permissions
+    ('student.leave.apply', 'Apply for a leave as a student'),
+    ('student.leave.read.own', "Read one's own student leave requests"),
+    ('student.leave.read.class', "Read leave requests for the teacher's classes"),
+    ('student.leave.read.all', 'Read all student leave requests in the tenant'),
+    ('student.leave.approve.class', "Approve/reject leave requests for the teacher's classes"),
+    ('student.leave.approve.all', 'Approve/reject any student leave request (admin fallback)'),
+    ('student.leave.request_cancel', 'Request cancellation of an own leave (student)'),
     
     # Attendance permissions
     ('attendance.read.self', 'View own attendance'),
@@ -231,6 +240,8 @@ ROLES = {
             'fees.payment.record',
             'fees.receipt.download',
             'teacher.leave.manage',
+            'student.leave.read.all',
+            'student.leave.approve.all',
             'holiday.manage',
             'class_subject.manage',
             'class_teacher.manage',
@@ -274,6 +285,8 @@ ROLES = {
             'subject.read',
             'timetable.read',
             'teacher.leave.apply',
+            'student.leave.read.class',
+            'student.leave.approve.class',
             'holiday.read',
             'class_subject.read',
             'academics.read',
@@ -297,6 +310,9 @@ ROLES = {
             'academics.read',
             'transport.info.read.self',
             'transport.student.read_own',
+            'student.leave.apply',
+            'student.leave.read.own',
+            'student.leave.request_cancel',
         ]
     },
     'Parent': {
