@@ -338,13 +338,14 @@ def approve_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
         raise AuthorizationError("You are not authorized to approve this cancellation")
 
     was_approved = leave.status == "approved"
+    if was_approved:
+        # Reverse attendance in the same transaction as the status flip.
+        _unsync_attendance_rows(leave, commit=False)
+
     leave.status = "cancelled"
     leave.decided_by_id = actor_user_id
     leave.decided_at = datetime.utcnow()
     db.session.commit()
-
-    if was_approved:
-        _unsync_attendance_rows(leave)
 
     if leave.student and getattr(leave.student, "user_id", None):
         _notify(
@@ -521,7 +522,15 @@ def _sync_attendance_rows(leave: StudentLeave, actor_user_id: str) -> int:
     already exists for (date, class_id, student_id, tenant_id), its status is
     replaced with 'leave' and leave_id is set. Returns the number of rows
     inserted-or-updated.
+
+    Re-resolves the student's current class_id at sync time — if the student
+    was transferred between submit and approval, the live class is the right
+    one for the unique-constraint key.
     """
+    # Re-resolve the student's current class. Fall back to the snapshot if the
+    # student is currently unenrolled (no class assigned).
+    current_class_id = leave.student.class_id if leave.student and leave.student.class_id else leave.class_id
+
     count = 0
     cursor = leave.start_date
     while cursor <= leave.end_date:
@@ -539,7 +548,7 @@ def _sync_attendance_rows(leave: StudentLeave, actor_user_id: str) -> int:
                 row = Attendance(
                     tenant_id=leave.tenant_id,
                     date=cursor,
-                    class_id=leave.class_id,
+                    class_id=current_class_id,
                     student_id=leave.student_id,
                     status="leave",
                     marked_by=actor_user_id,
@@ -550,14 +559,21 @@ def _sync_attendance_rows(leave: StudentLeave, actor_user_id: str) -> int:
                 row.status = "leave"
                 row.leave_id = leave.id
                 row.marked_by = actor_user_id
+                # Keep row.class_id as-is on the update path — it matches the
+                # row's historical class context. Only INSERTs use
+                # current_class_id.
             count += 1
         cursor += timedelta(days=1)
     db.session.commit()
     return count
 
 
-def _unsync_attendance_rows(leave: StudentLeave) -> int:
-    """Remove attendance rows previously synced for this leave."""
+def _unsync_attendance_rows(leave: StudentLeave, *, commit: bool = True) -> int:
+    """Delete attendance rows synthesized for this leave. Returns row count.
+
+    If commit=False, the caller is responsible for committing as part of a
+    larger transaction.
+    """
     deleted = (
         db.session.query(Attendance)
         .filter(
@@ -566,7 +582,8 @@ def _unsync_attendance_rows(leave: StudentLeave) -> int:
         )
         .delete(synchronize_session=False)
     )
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return deleted
 
 
