@@ -3294,3 +3294,147 @@ def get_route_with_stops(route_id: str) -> Tuple[Optional[Dict], Optional[str]]:
     d = r.to_dict()
     d["stops"] = list_stops_for_route(route_id, include_inactive=True)
     return d, None
+
+
+# ---------------------------------------------------------------------------
+# Student self-service: my transport (nexchool Slice 4)
+# ---------------------------------------------------------------------------
+
+def get_student_transport_assignment(
+    tenant_id: str, user_id: str
+) -> Optional[Dict]:
+    """Return the authenticated student's transport assignment.
+
+    Returns:
+        - dict with enrolled=True + bus/route/driver/stops/exceptions when the
+          student has an active TransportEnrollment for today
+        - dict with enrolled=False when the student has no active enrollment
+        - None when the caller has no Student row (route layer translates → 403)
+    """
+    student = Student.query.filter_by(
+        tenant_id=tenant_id, user_id=user_id
+    ).first()
+    if student is None:
+        return None  # route → 403
+
+    today = date.today()
+
+    # Pick the most-recent enrollment for this student and verify it's active
+    # today via the canonical helper.
+    enrollment = (
+        TransportEnrollment.query
+        .filter(
+            TransportEnrollment.tenant_id == tenant_id,
+            TransportEnrollment.student_id == student.id,
+        )
+        .order_by(TransportEnrollment.created_at.desc())
+        .first()
+    )
+
+    if enrollment is None or not enrollment_active_on(enrollment, today):
+        return {"enrolled": False}
+
+    bus = TransportBus.query.filter_by(
+        id=enrollment.bus_id, tenant_id=tenant_id
+    ).first()
+    route = TransportRoute.query.filter_by(
+        id=enrollment.route_id, tenant_id=tenant_id
+    ).first()
+
+    # Driver via the active bus+route assignment (today)
+    driver = None
+    if bus is not None and route is not None:
+        assignment = get_active_assignment_for_bus_route(bus.id, route.id, today)
+        if assignment is not None and assignment.driver_id:
+            driver = TransportDriver.query.filter_by(
+                id=assignment.driver_id, tenant_id=tenant_id
+            ).first()
+
+    # Ordered stops on this route
+    stops_links: List[TransportRouteStop] = []
+    if route is not None:
+        stops_links = (
+            TransportRouteStop.query
+            .filter(
+                TransportRouteStop.tenant_id == tenant_id,
+                TransportRouteStop.route_id == route.id,
+            )
+            .order_by(TransportRouteStop.sequence_order)
+            .all()
+        )
+
+    pickup_link = next(
+        (l for l in stops_links if l.stop_id == enrollment.pickup_stop_id),
+        None,
+    ) if enrollment.pickup_stop_id else None
+    drop_link = next(
+        (l for l in stops_links if l.stop_id == enrollment.drop_stop_id),
+        None,
+    ) if enrollment.drop_stop_id else None
+
+    def _fmt_time(t) -> Optional[str]:
+        return t.strftime("%H:%M") if t is not None else None
+
+    def _shape_stop(link: Optional[TransportRouteStop]) -> Optional[Dict]:
+        if link is None or link.stop is None:
+            return None
+        # Prefer the route-level scheduled time on the link; fall back to the
+        # stop's default time if the link doesn't carry one.
+        scheduled = link.pickup_time or link.stop.pickup_time
+        return {
+            "id": str(link.stop.id),
+            "name": link.stop.name,
+            "address": link.stop.landmark or link.stop.area,
+            "scheduled_time": _fmt_time(scheduled),
+            # No live tracking yet → ETA equals scheduled time.
+            "eta": _fmt_time(scheduled),
+        }
+
+    # Today's schedule exceptions for this route or bus
+    exceptions_payload: List[Dict] = []
+    if route is not None or bus is not None:
+        ex_q = TransportScheduleException.query.filter(
+            TransportScheduleException.tenant_id == tenant_id,
+            TransportScheduleException.exception_date == today,
+        )
+        clauses = []
+        if route is not None:
+            clauses.append(TransportScheduleException.route_id == route.id)
+        if bus is not None:
+            clauses.append(TransportScheduleException.bus_id == bus.id)
+        if clauses:
+            ex_q = ex_q.filter(or_(*clauses))
+        for ex in ex_q.all():
+            exceptions_payload.append({
+                "type": ex.exception_type,
+                "description": ex.reason or "",
+                "created_at": ex.created_at.isoformat() if ex.created_at else None,
+            })
+
+    return {
+        "enrolled": True,
+        "bus": {
+            "id": str(bus.id),
+            "registration_number": bus.vehicle_number or bus.bus_number,
+            "capacity": bus.capacity,
+        } if bus else None,
+        "route": {"id": str(route.id), "name": route.name} if route else None,
+        "pickup_stop": _shape_stop(pickup_link),
+        "drop_stop": _shape_stop(drop_link),
+        "driver": {
+            "id": str(driver.id),
+            "name": driver.name,
+            "phone": driver.phone,
+        } if driver else None,
+        "stops": [
+            {
+                "id": str(l.stop.id),
+                "name": l.stop.name,
+                "scheduled_time": _fmt_time(l.pickup_time or l.stop.pickup_time),
+                # Without live tracking we don't know which stops have passed.
+                "is_passed_today": False,
+            }
+            for l in stops_links if l.stop
+        ],
+        "exceptions": exceptions_payload,
+    }

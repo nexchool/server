@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from flask import Response, request
+from flask import Response, g, request
 
 from core.decorators import (
     auth_required,
@@ -1026,3 +1026,31 @@ def transport_rollover():
             "enrollments_skipped_existing": result["enrollments_skipped_existing"],
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Student self-service (nexchool Slice 4)
+# ---------------------------------------------------------------------------
+
+@transport_bp.route("/students/me", methods=["GET"])
+@tenant_required
+@auth_required
+@require_feature("transport")
+def student_my_transport():
+    """Return the authenticated student's transport assignment.
+
+    Responses:
+        200 with {enrolled: True, bus, route, ...} when enrolled today
+        200 with {enrolled: False} when not enrolled
+        403 when the caller is authenticated but has no Student row
+    """
+    data = services.get_student_transport_assignment(
+        g.tenant_id, g.current_user.id
+    )
+    if data is None:
+        return error_response(
+            "Forbidden",
+            "Only students can access this endpoint",
+            403,
+        )
+    return success_response(data=data)
