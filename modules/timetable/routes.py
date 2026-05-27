@@ -369,6 +369,7 @@ def _parse_week_start_param():
 @require_feature("timetable")
 @require_setup_complete
 @require_active_subscription
+@require_permission(PERM_READ)
 def teacher_weekly_timetable():
     """Return the authenticated teacher's weekly timetable.
 
@@ -416,6 +417,7 @@ def teacher_weekly_timetable():
 @require_feature("timetable")
 @require_setup_complete
 @require_active_subscription
+@require_permission(PERM_READ)
 def student_weekly_timetable():
     """Return the authenticated student's weekly timetable.
 

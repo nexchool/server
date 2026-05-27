@@ -11,6 +11,7 @@ from datetime import date, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -674,6 +675,18 @@ def _class_ids_for_academic_year(tenant_id: str, academic_year_id: str) -> List[
     return [r[0] for r in rows]
 
 
+def _weekly_eagerload_options():
+    """Eager-load the relationship chain the weekly response builder reads.
+    Prevents N+1 lookups on subject_ref / class_ref / teacher_ref / teacher.user.
+    Imports are lazy to avoid circular imports at module load time."""
+    from modules.teachers.models import Teacher
+    return (
+        joinedload(TimetableSlot.subject_ref),
+        joinedload(TimetableSlot.class_ref),
+        joinedload(TimetableSlot.teacher_ref).joinedload(Teacher.user),
+    )
+
+
 def _query_periods_for_teacher(tenant_id: str, teacher_id: str,
                                academic_year_id: str) -> List[TimetableSlot]:
     class_ids = _class_ids_for_academic_year(tenant_id, academic_year_id)
@@ -681,6 +694,7 @@ def _query_periods_for_teacher(tenant_id: str, teacher_id: str,
         return []
     return (
         TimetableSlot.query
+        .options(*_weekly_eagerload_options())
         .filter(
             TimetableSlot.tenant_id == tenant_id,
             TimetableSlot.teacher_id == teacher_id,
@@ -694,6 +708,7 @@ def _query_periods_for_teacher(tenant_id: str, teacher_id: str,
 def _query_periods_for_class(tenant_id: str, class_id: str) -> List[TimetableSlot]:
     return (
         TimetableSlot.query
+        .options(*_weekly_eagerload_options())
         .filter(
             TimetableSlot.tenant_id == tenant_id,
             TimetableSlot.class_id == class_id,
