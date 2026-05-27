@@ -40,6 +40,9 @@ class AcademicSettings(TenantBaseModel):
         nullable=True,
     )
     allow_admin_attendance_override = db.Column(db.Boolean, nullable=False, default=True)
+    student_leave_admin_approval_required = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=text("false")
+    )
     default_working_days_json = db.Column(JSONB, nullable=True)
     # Optional per-tenant patterns; null/empty → product default (see shared.id_pattern).
     admission_number_format = db.Column(db.String(120), nullable=True)
