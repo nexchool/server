@@ -272,6 +272,26 @@ def register_error_handlers(app: Flask):
         }), 500
 
     @app.after_request
+    def set_tenant_safe_cache_headers(response):
+        """Force per-tenant isolation in the browser HTTP cache.
+
+        Browsers do not key the HTTP cache on custom request headers like
+        X-Tenant-ID, so without this a GET /api/students response cached
+        for tenant A can be served verbatim to tenant B after a logout /
+        login switch. `no-store` keeps the response out of any shared or
+        private cache; `Vary` is belt-and-braces in case `no-store` is
+        later relaxed for a subset of endpoints.
+        """
+        if request.path.startswith("/api/") and request.path != "/api/health":
+            response.headers.setdefault(
+                "Cache-Control", "no-store, private, max-age=0"
+            )
+            response.headers.setdefault(
+                "Vary", "X-Tenant-ID, X-Tenant-Subdomain, Authorization"
+            )
+        return response
+
+    @app.after_request
     def log_error_responses(response):
         """Log any 4xx/5xx response from routes that return error_response() directly."""
         if response.status_code >= 400 and request.path.startswith("/api/"):
