@@ -93,9 +93,35 @@ def has_permission(user_id: str, permission_name: str) -> bool:
         >>> has_permission('user-123', 'student.create')
         False
     """
+    # Platform super-admins have god-mode: every permission check passes.
+    # Cheap single-column lookup so this stays fast on the hot authz path.
+    # A platform admin operating in another tenant has g.tenant_id set to the
+    # *entered* tenant while their User row lives in their home tenant, so the
+    # auto tenant-scope (core/database.py before_compile) would hide the row.
+    # Clear g.tenant_id for this lookup-by-id, then restore.
+    from flask import has_request_context, g
+
+    had_tenant = False
+    saved_tenant_id = None
+    if has_request_context() and getattr(g, "tenant_id", None) is not None:
+        had_tenant = True
+        saved_tenant_id = g.tenant_id
+        g.tenant_id = None
+    try:
+        is_platform_admin = (
+            User.query.with_entities(User.is_platform_admin)
+            .filter_by(id=user_id)
+            .scalar()
+        )
+    finally:
+        if had_tenant:
+            g.tenant_id = saved_tenant_id
+    if is_platform_admin:
+        return True
+
     # Get all permissions for the user
     user_permissions = get_user_permissions(user_id)
-    
+
     # Check for exact permission match
     if permission_name in user_permissions:
         return True
@@ -662,6 +688,29 @@ def remove_role_from_user(user_id: str, role_id: str) -> Dict:
             'success': False,
             'error': str(e)
         }
+
+
+def is_subadmin_user(user_id: str, tenant_id: str) -> bool:
+    """Return True iff the user is attached (via UserRole) to an is_subadmin
+    Role within the given tenant.
+
+    A platform admin is never a sub-admin: callers should treat the
+    is_platform_admin flag with precedence. This helper only inspects the
+    tenant's role graph, so the caller is responsible for that precedence.
+    """
+    if not user_id or not tenant_id:
+        return False
+    exists = (
+        db.session.query(UserRole.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(
+            UserRole.user_id == user_id,
+            UserRole.tenant_id == tenant_id,
+            Role.is_subadmin.is_(True),
+        )
+        .first()
+    )
+    return exists is not None
 
 
 def get_user_roles(user_id: str) -> List[Dict]:

@@ -25,6 +25,14 @@ def require_setup_complete(fn):
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        # Platform super-admins (god-login) may use the app while the tenant's
+        # school setup is still incomplete — bypass the gate entirely.
+        current_user = getattr(g, "current_user", None)
+        if current_user is not None and getattr(
+            current_user, "is_platform_admin", False
+        ):
+            return fn(*args, **kwargs)
+
         tenant_id = getattr(g, "tenant_id", None)
         if not tenant_id:
             return (

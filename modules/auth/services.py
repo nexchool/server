@@ -41,6 +41,7 @@ def generate_access_token(user: User, access_minutes: Optional[int] = None) -> s
     payload = {
         "sub": str(user.id),
         "email": user.email,
+        "is_platform_admin": bool(getattr(user, "is_platform_admin", False)),
         "type": "access",
         "iat": datetime.utcnow(),
         "exp": datetime.utcnow() + timedelta(minutes=minutes),
@@ -293,6 +294,48 @@ def authenticate_user(
         return None
 
     return user
+
+
+def authenticate_platform_admin(email: str, password: str) -> Optional[User]:
+    """
+    Authenticate a platform super-admin by email + password across all tenants.
+
+    A platform admin's User row is not tied to the target tenant, so this search
+    is intentionally NOT tenant-scoped. Used for "god-login": a platform admin
+    signs into any tenant's admin-web with their own credentials.
+
+    Returns the matching platform-admin User (is_platform_admin=True,
+    deleted_at IS NULL, password valid), or None. If multiple platform-admin rows
+    share the email, the first match (ordered by id) is returned deterministically.
+    """
+    # A god-login request has already resolved the *entered* tenant, so
+    # g.tenant_id is set. The before_compile listener in core/database.py would
+    # auto-scope this query to that tenant and never find the platform admin
+    # (who lives in their own tenant). Temporarily clear g.tenant_id for this
+    # intentional cross-tenant lookup, then restore it.
+    from flask import has_request_context, g
+
+    had_tenant = False
+    saved_tenant_id = None
+    if has_request_context() and getattr(g, "tenant_id", None) is not None:
+        had_tenant = True
+        saved_tenant_id = g.tenant_id
+        g.tenant_id = None
+    try:
+        candidates = (
+            User.query.filter_by(email=email, is_platform_admin=True)
+            .filter(User.deleted_at.is_(None))
+            .order_by(User.id)
+            .all()
+        )
+    finally:
+        if had_tenant:
+            g.tenant_id = saved_tenant_id
+
+    for user in candidates:
+        if user.check_password(password):
+            return user
+    return None
 
 
 def find_users_by_email_password(
