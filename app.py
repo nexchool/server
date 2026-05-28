@@ -156,6 +156,8 @@ def register_blueprints(app: Flask):
     from modules.subscription import subscription_bp
     # Audit log
     from modules.audit.routes import audit_bp
+    # Sub-admins (tenant-scoped admin management)
+    from modules.sub_admins import sub_admins_bp
 
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -193,6 +195,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(mediums_bp, url_prefix='/api/mediums')
     app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
     app.register_blueprint(audit_bp)
+    app.register_blueprint(sub_admins_bp, url_prefix='/api/sub-admins')
 
 
 def register_error_handlers(app: Flask):
