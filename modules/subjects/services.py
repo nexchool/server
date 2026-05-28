@@ -327,6 +327,8 @@ def _serialize_grouped(tenant_id: str, subjects: List, class_subjects: List) -> 
 
 
 def _subjects_for_admin(tenant_id: str) -> List[Dict]:
+    from modules.classes.models import ClassSubject
+
     subjects = (
         Subject.query.filter(
             Subject.tenant_id == tenant_id,
@@ -336,10 +338,14 @@ def _subjects_for_admin(tenant_id: str) -> List[Dict]:
         .order_by(Subject.name)
         .all()
     )
-    subject_ids = {s.id for s in subjects}
-    all_class_subjects = _active_class_subjects_query(tenant_id).all()
-    # Only keep class_subjects whose subject is active/non-deleted.
-    class_subjects = [cs for cs in all_class_subjects if cs.subject_id in subject_ids]
+    subject_ids = [s.id for s in subjects]
+    class_subjects = (
+        _active_class_subjects_query(tenant_id)
+        .filter(ClassSubject.subject_id.in_(subject_ids))
+        .all()
+        if subject_ids
+        else []
+    )
     return _serialize_grouped(tenant_id, subjects, class_subjects)
 
 
