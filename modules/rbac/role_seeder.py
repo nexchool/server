@@ -66,6 +66,18 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "academic_term.manage",
             "school_setup.manage",
             "subadmin.manage",
+            # Hostel
+            "hostel.read",
+            "hostel.manage",
+            "hostel.allocations.read",
+            "hostel.allocations.manage",
+            "hostel.visitors.read",
+            "hostel.visitors.manage",
+            "hostel.gatepass.create",
+            "hostel.gatepass.approve",
+            "hostel.gatepass.gatekeeper",
+            "hostel.gatepass.read",
+            "hostel.reports.read",
         ],
     },
     "Teacher": {
