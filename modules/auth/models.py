@@ -91,13 +91,21 @@ class User(TenantBaseModel):
         return check_password_hash(self.password_hash, password)
     
     @classmethod
-    def get_user_by_email(cls, email: str, tenant_id: str = None):
+    def get_user_by_email(cls, email: str, tenant_id: str = None, include_deleted: bool = False):
         """Get user by email address (and tenant_id when provided).
 
-        Soft-deleted users (deleted_at IS NOT NULL) are excluded so they
-        cannot log in, reset their password, or verify their email.
+        By default, soft-deleted users (deleted_at IS NOT NULL) are excluded so
+        they cannot log in, reset their password, or verify their email.
+
+        Pass include_deleted=True for existence/duplicate guards before creating
+        a user: the (email, tenant_id) unique constraint is NOT scoped to
+        deleted_at, so a duplicate check must see soft-deleted rows to avoid an
+        IntegrityError (HTTP 500) on insert. Our design treats a soft-deleted
+        email as non-reusable (the admin restores the account instead).
         """
-        q = cls.query.filter_by(email=email).filter(cls.deleted_at.is_(None))
+        q = cls.query.filter_by(email=email)
+        if not include_deleted:
+            q = q.filter(cls.deleted_at.is_(None))
         if tenant_id is not None:
             q = q.filter_by(tenant_id=tenant_id)
         return q.first()

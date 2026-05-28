@@ -87,6 +87,68 @@ def test_soft_deleted_user_not_matched_by_cross_tenant_search(db_session, tenant
     assert matches == []
 
 
+def test_include_deleted_returns_soft_deleted_user(db_session, tenant):
+    """get_user_by_email(include_deleted=True) sees soft-deleted rows for
+    duplicate guards, while the default call still excludes them.
+
+    The (email, tenant_id) unique constraint is not scoped to deleted_at, so a
+    duplicate check must use include_deleted=True or risk an IntegrityError on
+    re-create.
+    """
+    from modules.auth.models import User
+
+    email = f"reuse-{uuid.uuid4().hex[:8]}@test.school"
+    _make_user(db_session, tenant, email=email, deleted_at=datetime.utcnow())
+
+    assert User.get_user_by_email(email, tenant_id=tenant.id) is None
+    found = User.get_user_by_email(email, tenant_id=tenant.id, include_deleted=True)
+    assert found is not None
+    assert found.email == email
+
+
+# ---------------------------------------------------------------------------
+# register route: a soft-deleted email is a clean duplicate (400), not a 500
+# ---------------------------------------------------------------------------
+
+def test_register_with_soft_deleted_email_returns_clean_duplicate(db_session, tenant):
+    """Registering an email owned by a SOFT-DELETED user returns 400 UserExists,
+    not a 500 from the unscoped (email, tenant_id) unique constraint.
+    """
+    from modules.auth import routes
+
+    email = f"sdreg-{uuid.uuid4().hex[:8]}@test.school"
+    _make_user(db_session, tenant, email=email, deleted_at=datetime.utcnow())
+    db_session.flush()
+
+    captured = {}
+
+    def fake_error_response(error=None, message=None, status_code=None):
+        captured["error"] = error
+        captured["message"] = message
+        captured["status_code"] = status_code
+        return ({"error": error, "message": message}, status_code)
+
+    def fake_success_response(data=None, message=None, status_code=201):
+        captured["status_code"] = status_code
+        return (MagicMock(), status_code)
+
+    request_json = {"email": email, "password": "pw123456", "tenant_id": tenant.id}
+    fake_request = MagicMock()
+    fake_request.get_json.return_value = request_json
+
+    with (
+        patch.object(routes, "request", fake_request),
+        patch.object(routes, "error_response", fake_error_response),
+        patch.object(routes, "success_response", fake_success_response),
+        patch.object(routes, "resolve_tenant_for_auth", return_value=None),
+        patch.object(routes, "get_tenant_id", return_value=tenant.id),
+    ):
+        routes.register()
+
+    assert captured["status_code"] == 400
+    assert captured["error"] == "UserExists"
+
+
 # ---------------------------------------------------------------------------
 # (b)/(c) login route suspended gate — mocked, no DB
 # ---------------------------------------------------------------------------

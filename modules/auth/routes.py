@@ -88,8 +88,11 @@ def register():
             status_code=400
         )
 
-    # Check if user already exists (tenant-scoped)
-    if User.get_user_by_email(email, tenant_id=tenant_id):
+    # Check if user already exists (tenant-scoped). Include soft-deleted rows:
+    # the (email, tenant_id) unique constraint is not scoped to deleted_at, so a
+    # soft-deleted email must still produce a clean UserExists 400 here instead
+    # of slipping through to an IntegrityError (HTTP 500) on insert.
+    if User.get_user_by_email(email, tenant_id=tenant_id, include_deleted=True):
         return error_response(
             error='UserExists',
             message='User already exists',
