@@ -94,30 +94,42 @@ def has_permission(user_id: str, permission_name: str) -> bool:
         False
     """
     # Platform super-admins have god-mode: every permission check passes.
-    # Cheap single-column lookup so this stays fast on the hot authz path.
-    # A platform admin operating in another tenant has g.tenant_id set to the
-    # *entered* tenant while their User row lives in their home tenant, so the
-    # auto tenant-scope (core/database.py before_compile) would hide the row.
-    # Clear g.tenant_id for this lookup-by-id, then restore.
+    # On the common request path the authenticated user is already loaded on
+    # g.current_user, so prefer it to avoid an extra DB query per authz check
+    # (has_permission runs once per required permission, so multi-permission
+    # endpoints would otherwise issue N identical lookups per request).
     from flask import has_request_context, g
 
-    had_tenant = False
-    saved_tenant_id = None
-    if has_request_context() and getattr(g, "tenant_id", None) is not None:
-        had_tenant = True
-        saved_tenant_id = g.tenant_id
-        g.tenant_id = None
-    try:
-        is_platform_admin = (
-            User.query.with_entities(User.is_platform_admin)
-            .filter_by(id=user_id)
-            .scalar()
-        )
-    finally:
-        if had_tenant:
-            g.tenant_id = saved_tenant_id
-    if is_platform_admin:
-        return True
+    cu = getattr(g, "current_user", None)
+    if cu is not None and str(getattr(cu, "id", None)) == str(user_id):
+        if getattr(cu, "is_platform_admin", False):
+            return True
+        # Same non-platform request user — skip the platform DB lookup and
+        # fall through to normal permission resolution below.
+    else:
+        # No request user context (or a different user, e.g. background jobs /
+        # direct service calls): do the cleared-scope DB lookup as before.
+        # A platform admin operating in another tenant has g.tenant_id set to
+        # the *entered* tenant while their User row lives in their home tenant,
+        # so the auto tenant-scope (core/database.py before_compile) would hide
+        # the row. Clear g.tenant_id for this lookup-by-id, then restore.
+        had_tenant = False
+        saved_tenant_id = None
+        if has_request_context() and getattr(g, "tenant_id", None) is not None:
+            had_tenant = True
+            saved_tenant_id = g.tenant_id
+            g.tenant_id = None
+        try:
+            is_platform_admin = bool(
+                User.query.with_entities(User.is_platform_admin)
+                .filter_by(id=user_id)
+                .scalar()
+            )
+        finally:
+            if had_tenant:
+                g.tenant_id = saved_tenant_id
+        if is_platform_admin:
+            return True
 
     # Get all permissions for the user
     user_permissions = get_user_permissions(user_id)
