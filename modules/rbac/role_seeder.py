@@ -65,7 +65,6 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "grade.manage",
             "religion.manage",
             "academic_term.manage",
-            "school_setup.manage",
             "subadmin.manage",
             # Hostel
             "hostel.read",

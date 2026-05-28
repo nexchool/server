@@ -269,7 +269,6 @@ ROLES = {
             'grade.manage',
             'religion.manage',
             'academic_term.manage',
-            'school_setup.manage',
             # Audit log
             'audit_log.view',
             # Sub-admin management
