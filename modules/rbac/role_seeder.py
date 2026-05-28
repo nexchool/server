@@ -28,6 +28,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "user.manage",
             "role.manage",
             "permission.manage",
+            "audit_log.view",
             "student.manage",
             "teacher.manage",
             "attendance.manage",
