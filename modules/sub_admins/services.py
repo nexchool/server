@@ -14,10 +14,11 @@ layer can map to the standard error envelope without embedding business logic.
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from core.database import db
 from modules.auth.models import User
@@ -94,13 +95,6 @@ def _get_private_role(tenant_id: str, user_id: str) -> Optional[Role]:
         )
         .first()
     )
-
-
-def _role_permission_names(role_id: str) -> List[str]:
-    role = Role.query.get(role_id)
-    if not role:
-        return []
-    return [p.name for p in role.permissions]
 
 
 def _sync_role_permissions(tenant_id: str, role: Role, desired: set) -> None:
@@ -239,11 +233,28 @@ def list_sub_admins(
 
     result = paginate_query(query, page, per_page)
 
-    items = []
-    for user in result["items"]:
-        role = _get_private_role(tenant_id, user.id)
-        items.append(serialize_sub_admin(user, role))
-    result["items"] = items
+    # Batch-resolve each user's private role with permissions eager-loaded to
+    # avoid N+1 (one query per row in _get_private_role + lazy role.permissions).
+    user_ids = [user.id for user in result["items"]]
+    roles_by_user = {}
+    if user_ids:
+        rows = (
+            db.session.query(UserRole.user_id, Role)
+            .join(Role, Role.id == UserRole.role_id)
+            .options(joinedload(Role.permissions))
+            .filter(
+                UserRole.tenant_id == tenant_id,
+                UserRole.user_id.in_(user_ids),
+                Role.is_subadmin.is_(True),
+            )
+            .all()
+        )
+        roles_by_user = {user_id: role for user_id, role in rows}
+
+    result["items"] = [
+        serialize_sub_admin(user, roles_by_user.get(user.id))
+        for user in result["items"]
+    ]
     return result
 
 
@@ -352,6 +363,7 @@ def update_sub_admin(
     if not user:
         return _err("NotFound", "Sub-admin not found", 404)
 
+    role = None
     if modules is not None:
         if not selection_grants_anything(modules):
             return _err("ValidationError", "Select at least one module to grant", 422)
@@ -359,15 +371,15 @@ def update_sub_admin(
             desired = expand_selection(modules)
         except ValueError as exc:
             return _err("ValidationError", str(exc), 422)
+        role = _get_private_role(tenant_id, user_id)
+        if not role:
+            return _err("NotFound", "Sub-admin role not found", 404)
 
     try:
         if name is not None:
             user.name = name.strip() or user.name
 
         if modules is not None:
-            role = _get_private_role(tenant_id, user_id)
-            if not role:
-                return _err("NotFound", "Sub-admin role not found", 404)
             _sync_role_permissions(tenant_id, role, desired)
 
         db.session.commit()
@@ -477,7 +489,7 @@ def delete_sub_admin(tenant_id: str, user_id: str, actor_id: str) -> Dict:
         return _err("NotFound", "Sub-admin not found", 404)
 
     try:
-        user.deleted_at = datetime.utcnow()
+        user.deleted_at = datetime.now(timezone.utc)
         revoke_all_user_sessions(user_id)
         db.session.commit()
     except Exception as exc:
