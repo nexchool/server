@@ -51,6 +51,10 @@ class User(TenantBaseModel):
     failed_login_count = db.Column(db.Integer, nullable=False, default=0)
     login_locked_until = db.Column(db.DateTime, nullable=True)
 
+    # Account status
+    is_suspended = db.Column(db.Boolean, nullable=False, default=False)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
     # Metadata
     last_login_at = db.Column(db.DateTime, nullable=True)
     default_unit_id = db.Column(

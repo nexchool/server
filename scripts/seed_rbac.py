@@ -205,6 +205,9 @@ PERMISSIONS = [
     # Audit log
     ('audit_log.view', 'View tenant audit log'),
 
+    # Sub-admin management
+    ('subadmin.manage', 'Manage sub-admin accounts and their permissions'),
+
     # Hostel module
     ('hostel.read', 'View hostels, rooms, and beds'),
     ('hostel.manage', 'Create / update / delete hostels, rooms, and beds'),
@@ -269,6 +272,8 @@ ROLES = {
             'school_setup.manage',
             # Audit log
             'audit_log.view',
+            # Sub-admin management
+            'subadmin.manage',
             # Hostel
             'hostel.read',
             'hostel.manage',

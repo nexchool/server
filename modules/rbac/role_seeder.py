@@ -65,6 +65,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "religion.manage",
             "academic_term.manage",
             "school_setup.manage",
+            "subadmin.manage",
         ],
     },
     "Teacher": {
