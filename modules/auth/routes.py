@@ -292,6 +292,16 @@ def login():
                 )
 
     # Common success path (user and tenant are set)
+    # Block suspended accounts on both login paths (tenant-specified and
+    # cross-tenant search) before any token is issued. Platform admins are
+    # not suspended in practice, so a single gate on is_suspended is enough.
+    if getattr(user, 'is_suspended', False):
+        return error_response(
+            error='AccountSuspended',
+            message='This account has been suspended. Contact your school administrator.',
+            status_code=403
+        )
+
     if not user.email_verified:
         return error_response(
             error='EmailNotVerified',

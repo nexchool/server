@@ -92,8 +92,12 @@ class User(TenantBaseModel):
     
     @classmethod
     def get_user_by_email(cls, email: str, tenant_id: str = None):
-        """Get user by email address (and tenant_id when provided)."""
-        q = cls.query.filter_by(email=email)
+        """Get user by email address (and tenant_id when provided).
+
+        Soft-deleted users (deleted_at IS NOT NULL) are excluded so they
+        cannot log in, reset their password, or verify their email.
+        """
+        q = cls.query.filter_by(email=email).filter(cls.deleted_at.is_(None))
         if tenant_id is not None:
             q = q.filter_by(tenant_id=tenant_id)
         return q.first()

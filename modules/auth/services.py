@@ -308,7 +308,7 @@ def find_users_by_email_password(
     Returns:
         List of (user, tenant) for active tenants only. Empty if no match.
     """
-    users = User.query.filter_by(email=email).all()
+    users = User.query.filter_by(email=email).filter(User.deleted_at.is_(None)).all()
     matches: List[Tuple[User, Tenant]] = []
     for u in users:
         if not u.check_password(password):
