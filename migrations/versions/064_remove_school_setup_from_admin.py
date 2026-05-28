@@ -1,10 +1,12 @@
-"""remove school_setup.read / school_setup.manage grants from all roles
+"""remove school_setup.read / school_setup.manage grants from Admin roles
 
 School-setup is now restricted to the platform super-admin (god-mode), so the
 tenant-scoped Admin role must no longer hold these permissions. seed_roles_for_tenant
 only backfills missing perms (never removes), so existing tenants need this data
-migration to drop the stale grants. The permission rows themselves are kept — the
-setup endpoints still reference the strings and god-mode bypasses the grant check.
+migration to drop the stale grants. The DELETE is scoped to Admin roles so other
+roles (e.g. Teacher, which legitimately keeps school_setup.read) are untouched and
+up/down stay symmetric. The permission rows themselves are kept — the setup endpoints
+still reference the strings and god-mode bypasses the grant check.
 
 Revision ID: 064_remove_school_setup_from_admin
 Revises: 063_subadmin_user_flags
@@ -21,8 +23,10 @@ depends_on = None
 
 
 def upgrade():
-    # Drop every role_permissions grant pointing at school_setup.* across all
-    # tenants/roles. Permission definitions in `permissions` are left intact.
+    # Drop role_permissions grants pointing at school_setup.* for Admin roles
+    # only (per tenant). Other roles such as Teacher legitimately keep
+    # school_setup.read, so they are left untouched and downgrade() stays
+    # symmetric. Permission definitions in `permissions` are left intact.
     op.execute(
         """
         DELETE FROM role_permissions
@@ -30,6 +34,7 @@ def upgrade():
             SELECT id FROM permissions
             WHERE name IN ('school_setup.read', 'school_setup.manage')
         )
+        AND role_id IN (SELECT id FROM roles WHERE name = 'Admin')
         """
     )
 
