@@ -584,7 +584,13 @@ def list_students(
     to limit results to classes the teacher owns; it's AND-ed with any client
     class filters.
     """
+    from core.branch_scope import filter_students_by_branch
+
     query = Student.query.join(User)
+
+    # Branch scope backstop: restrict to students in allowed-branch classes
+    # (classless excluded) regardless of client filters. No-op if unrestricted.
+    query = filter_students_by_branch(query)
 
     # Teacher scope: hard ceiling on which classes are visible at all.
     if _restrict_class_ids is not None:

@@ -186,7 +186,12 @@ def get_all_classes(
     All filters are AND-ed and applied alongside the existing tenant scope
     that TenantBaseModel adds automatically.
     """
+    from core.branch_scope import filter_classes_by_branch
+
     query = Class.query
+    # Branch scope backstop: restrict to allowed branches even if no client
+    # school_unit_id filter is supplied. No-op for unrestricted users.
+    query = filter_classes_by_branch(query)
     if academic_year_id:
         query = query.filter(Class.academic_year_id == academic_year_id)
     if school_unit_id:

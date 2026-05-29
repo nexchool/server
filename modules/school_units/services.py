@@ -47,7 +47,14 @@ def _clean(value):
 
 
 def list_school_units(tenant_id: str, status: Optional[str] = None) -> List[Dict]:
+    from core.branch_scope import get_allowed_unit_ids
+
     q = _active(SchoolUnit.query.filter_by(tenant_id=tenant_id))
+    # Branch scope: a restricted sub-admin sees only their allowed units
+    # (powers the branch switcher). No-op for unrestricted users.
+    allowed = get_allowed_unit_ids()
+    if allowed is not None:
+        q = q.filter(SchoolUnit.id.in_(allowed))
     if status:
         q = q.filter(SchoolUnit.status == status)
     return [u.to_dict() for u in q.order_by(SchoolUnit.name.asc()).all()]

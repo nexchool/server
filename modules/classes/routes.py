@@ -16,6 +16,10 @@ from shared.helpers import (
     not_found_response,
     validation_error_response,
 )
+from core.branch_scope import (
+    assert_class_allowed,
+    assert_unit_allowed,
+)
 from . import services
 
 logger = logging.getLogger(__name__)
@@ -39,9 +43,15 @@ def get_classes():
     Query params:
         academic_year_id, school_unit_id, programme_id, grade_id
     """
+    school_unit_id = request.args.get('school_unit_id')
+    # Branch scope: a restricted sub-admin may not query a unit outside their
+    # branches (403). No-op for unrestricted users. The service applies the
+    # branch backstop filter regardless of this param.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
     classes = services.get_all_classes(
         academic_year_id=request.args.get('academic_year_id'),
-        school_unit_id=request.args.get('school_unit_id'),
+        school_unit_id=school_unit_id,
         programme_id=request.args.get('programme_id'),
         grade_id=request.args.get('grade_id'),
     )
@@ -64,6 +74,12 @@ def create_class():
         return validation_error_response({'message': 'section is required'})
     if not data.get('academic_year_id'):
         return validation_error_response({'message': 'academic_year_id is required'})
+
+    # Branch scope: a restricted sub-admin can only create a class in an
+    # allowed branch. No-op for unrestricted users.
+    school_unit_id = data.get('school_unit_id') or None
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
 
     grade_raw = data.get('grade_level')
     if grade_raw is not None and grade_raw != '':
@@ -88,7 +104,7 @@ def create_class():
         grade_level=gl,
         grade_id=data.get('grade_id') or None,
         programme_id=data.get('programme_id') or None,
-        school_unit_id=data.get('school_unit_id') or None,
+        school_unit_id=school_unit_id,
         medium_id=data.get('medium_id') or None,
         stream=data.get('stream') or None,
     )
@@ -183,6 +199,7 @@ def copy_classes_across_years():
 @require_permission(PERM_READ)
 def get_class(class_id):
     """Get class details with students and teachers."""
+    assert_class_allowed(class_id)  # branch scope (no-op if unrestricted)
     cls = services.get_class_detail(class_id)
     if cls:
         return success_response(data=cls)
@@ -196,6 +213,7 @@ def get_class(class_id):
 @require_permission(PERM_UPDATE)
 def update_class(class_id):
     """Update class details"""
+    assert_class_allowed(class_id)  # branch scope (no-op if unrestricted)
     data = request.get_json() or {}
     kw = dict(
         name=data.get('name'),
@@ -219,6 +237,11 @@ def update_class(class_id):
         if field in data:
             kw[field] = data.get(field) or None
 
+    # Branch scope: a restricted sub-admin cannot move a class into a branch
+    # outside their scope. No-op for unrestricted users.
+    if kw.get('school_unit_id'):
+        assert_unit_allowed(kw['school_unit_id'])
+
     result = services.update_class(class_id, **kw)
 
     if result['success']:
@@ -233,6 +256,7 @@ def update_class(class_id):
 @require_permission(PERM_DELETE)
 def delete_class(class_id):
     """Delete a class"""
+    assert_class_allowed(class_id)  # branch scope (no-op if unrestricted)
     result = services.delete_class(class_id)
     if result['success']:
         return success_response(message='Class deleted successfully')
