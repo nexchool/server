@@ -113,6 +113,25 @@ def _allowed_units_for(flask_app, tenant, user):
 
 
 # ---------------------------------------------------------------------------
+# Catalog flag
+# ---------------------------------------------------------------------------
+
+def test_catalog_exposes_branch_aware_flag():
+    """Each catalog entry carries branch_aware matching BRANCH_AWARE_MODULE_KEYS."""
+    from modules.sub_admins.catalog import BRANCH_AWARE_MODULE_KEYS, get_catalog
+
+    catalog = get_catalog()
+    assert catalog, "catalog must not be empty"
+    for entry in catalog:
+        assert "branch_aware" in entry
+        assert entry["branch_aware"] == (entry["key"] in BRANCH_AWARE_MODULE_KEYS)
+    # Sanity: known branch-aware and non-branch-aware keys land correctly.
+    by_key = {e["key"]: e["branch_aware"] for e in catalog}
+    assert by_key["students"] is True
+    assert by_key["teachers"] is False
+
+
+# ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
 

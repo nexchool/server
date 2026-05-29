@@ -219,6 +219,7 @@ def get_catalog() -> List[dict]:
                 "label": module["label"],
                 "levels": list(module["levels"]),
                 "toggles": list(module["toggles"].keys()),
+                "branch_aware": key in BRANCH_AWARE_MODULE_KEYS,
             }
         )
     return catalog
