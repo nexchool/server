@@ -635,6 +635,13 @@ def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
 
 def get_unassigned_students(class_id: str) -> List[Dict]:
     """Get students not assigned to any class (for assignment picker)."""
+    from core.branch_scope import get_allowed_unit_ids
+    # Classless students belong to no branch, so a branch-restricted sub-admin
+    # must see none (graceful empty picker, not a 403). A restricted admin can't
+    # assign a classless student anyway (assert_student_allowed denies classless).
+    if get_allowed_unit_ids() is not None:
+        return []
+
     from modules.students.models import Student
     students = Student.query.filter(
         db.or_(Student.class_id.is_(None), Student.class_id == '')

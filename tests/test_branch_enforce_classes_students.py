@@ -287,6 +287,35 @@ def test_students_list_unrestricted_sees_all_incl_classless(flask_app, db_sessio
 
 
 # ---------------------------------------------------------------------------
+# Students — unassigned-students picker (tenant-wide classless PII leak)
+# ---------------------------------------------------------------------------
+# get_unassigned_students returns every classless student in the tenant. Those
+# students belong to no branch, so a restricted sub-admin must see NONE (empty
+# picker, not a 403). Unrestricted admins keep seeing all classless students.
+
+def test_unassigned_students_restricted_sees_none(flask_app, db_session, tenant, classes, students, restricted_user):
+    _class_a, _class_b = classes
+    _student_a, _student_b, classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        rows = class_services.get_unassigned_students(_class_a.id)
+        assert rows == []  # classless student is branch-invisible to restricted admin
+        # Sanity: the classless student does exist in the tenant.
+        assert classless.class_id is None
+
+
+def test_unassigned_students_unrestricted_sees_classless(flask_app, db_session, tenant, classes, students, unrestricted_user):
+    class_a, _class_b = classes
+    _student_a, _student_b, classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        ids = {s["id"] for s in class_services.get_unassigned_students(class_a.id)}
+        assert classless.id in ids
+
+
+# ---------------------------------------------------------------------------
 # Students — get-by-id
 # ---------------------------------------------------------------------------
 
