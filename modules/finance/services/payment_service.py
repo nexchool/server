@@ -15,6 +15,11 @@ from core.database import db
 
 logger = logging.getLogger(__name__)
 from core.tenant import get_tenant_id
+from core.branch_scope import (
+    BranchForbidden,
+    assert_student_allowed,
+    get_allowed_unit_ids,
+)
 from modules.finance.models import (
     StudentFee,
     StudentFeeItem,
@@ -37,6 +42,12 @@ def list_recent_payments(limit: int = 10) -> List[Dict[str, Any]]:
     tenant_id = get_tenant_id()
     if not tenant_id:
         return []
+
+    # Branch scope: tenant-wide dashboard aggregate that cannot be cleanly
+    # scoped to a branch. Deny for restricted sub-admins. No-op when
+    # unrestricted.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Recent payments span all branches.")
 
     payments = (
         Payment.query.filter_by(tenant_id=tenant_id, status=PaymentStatus.success.value)
@@ -185,6 +196,19 @@ def create_payment(
         logger.warning("[create_payment] No tenant_id")
         return {"success": False, "error": "Tenant context is required"}
 
+    # Branch scope: a restricted sub-admin may only record payments for
+    # students in their branches. Resolve the owning student via the student
+    # fee and assert BEFORE the try/except below so BranchForbidden surfaces as
+    # 403 rather than being swallowed into a 400. No-op when unrestricted.
+    if get_allowed_unit_ids() is not None:
+        sf_row = (
+            StudentFee.query.with_entities(StudentFee.student_id)
+            .filter(StudentFee.id == student_fee_id, StudentFee.tenant_id == tenant_id)
+            .first()
+        )
+        if sf_row is not None:
+            assert_student_allowed(sf_row[0])
+
     try:
         amount_decimal = Decimal(str(amount))
         if amount_decimal <= 0:
@@ -307,6 +331,20 @@ def refund_payment(
     tenant_id = get_tenant_id()
     if not tenant_id:
         return {"success": False, "error": "Tenant context is required"}
+
+    # Branch scope: a restricted sub-admin may only refund payments for
+    # students in their branches. Resolve student via payment -> student_fee
+    # and assert BEFORE the try/except below so BranchForbidden surfaces as 403.
+    # No-op when unrestricted.
+    if get_allowed_unit_ids() is not None:
+        owner_row = (
+            db.session.query(StudentFee.student_id)
+            .join(Payment, Payment.student_fee_id == StudentFee.id)
+            .filter(Payment.id == payment_id, Payment.tenant_id == tenant_id)
+            .first()
+        )
+        if owner_row is not None:
+            assert_student_allowed(owner_row[0])
 
     try:
         with db.session.begin_nested():

@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from core.database import db
 from core.tenant import get_tenant_id
+from core.branch_scope import assert_student_allowed
 from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
 from modules.students.models import Student
 from modules.audit.services import log_finance_action
@@ -66,6 +67,10 @@ def record_fee_payment(
     invoice = FeeInvoice.query.filter_by(id=invoice_id, tenant_id=tenant_id).first()
     if not invoice:
         return {"success": False, "error": "Invoice not found"}
+
+    # Branch scope: a restricted sub-admin may only record payments for invoices
+    # of students in their branches. No-op for unrestricted users.
+    assert_student_allowed(invoice.student_id)
 
     if invoice.status == "cancelled":
         return {"success": False, "error": "Cannot record payment for cancelled invoice"}
@@ -157,6 +162,11 @@ def get_fee_payment(payment_id: str) -> Optional[Dict[str, Any]]:
     payment = FeePayment.query.filter_by(id=payment_id, tenant_id=tenant_id).first()
     if not payment:
         return None
+
+    # Branch scope: a restricted sub-admin may only read payments of students
+    # in their branches. FeePayment carries a direct student_id. No-op when
+    # unrestricted.
+    assert_student_allowed(payment.student_id)
 
     d = payment.to_dict()
     if payment.invoice:

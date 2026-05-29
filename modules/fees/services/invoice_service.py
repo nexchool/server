@@ -11,6 +11,11 @@ from typing import Any, Dict, List, Optional
 
 from core.database import db
 from core.tenant import get_tenant_id
+from core.branch_scope import (
+    BranchForbidden,
+    assert_student_allowed,
+    filter_fees_by_branch,
+)
 from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment
 from modules.students.models import Student
 from modules.audit.services import log_finance_action
@@ -80,6 +85,10 @@ def create_invoice(
     student = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
     if not student:
         return {"success": False, "error": "Student not found"}
+
+    # Branch scope: a restricted sub-admin may only create invoices for
+    # students in their branches. No-op for unrestricted users.
+    assert_student_allowed(student_id)
 
     if not items:
         return {"success": False, "error": "At least one fee item is required"}
@@ -164,7 +173,13 @@ def list_invoices(
     if not tenant_id:
         return []
 
+    # Branch scope: if a specific student is requested, assert access first;
+    # then restrict the whole list to the caller's allowed-branch students.
+    if student_id:
+        assert_student_allowed(student_id)
+
     query = FeeInvoice.query.filter_by(tenant_id=tenant_id)
+    query = filter_fees_by_branch(query, FeeInvoice.student_id)
     if student_id:
         query = query.filter_by(student_id=student_id)
     if status:
@@ -187,6 +202,10 @@ def get_invoice(invoice_id: str) -> Optional[Dict[str, Any]]:
     if not invoice:
         return None
 
+    # Branch scope: a restricted sub-admin may only read invoices of students
+    # in their branches. No-op for unrestricted users.
+    assert_student_allowed(invoice.student_id)
+
     d = invoice.to_dict()
     d["items"] = [it.to_dict() for it in invoice.items]
     d["payments"] = [p.to_dict() for p in invoice.payments]
@@ -202,6 +221,10 @@ def cancel_invoice(invoice_id: str) -> Dict[str, Any]:
     invoice = FeeInvoice.query.filter_by(id=invoice_id, tenant_id=tenant_id).first()
     if not invoice:
         return {"success": False, "error": "Invoice not found"}
+
+    # Branch scope: a restricted sub-admin may only cancel invoices of students
+    # in their branches. No-op for unrestricted users.
+    assert_student_allowed(invoice.student_id)
 
     if invoice.payments:
         return {"success": False, "error": "Cannot cancel invoice with existing payments"}

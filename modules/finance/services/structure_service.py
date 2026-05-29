@@ -8,6 +8,11 @@ from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from core.tenant import get_tenant_id
+from core.branch_scope import (
+    BranchForbidden,
+    assert_class_allowed,
+    get_allowed_unit_ids,
+)
 from modules.academics.academic_year.models import AcademicYear
 from modules.finance.models import (
     FeeStructure,
@@ -20,6 +25,33 @@ from modules.finance.models import (
 from modules.audit.services import log_finance_action
 from modules.classes.models import Class
 from modules.finance.services.payment_service import recalculate_student_fee_status
+
+
+def _assert_structure_branch_access(structure_id: str, tenant_id: str) -> None:
+    """Branch scope for a fee structure (config). No-op when unrestricted.
+
+    A structure linked to one or more classes is branch-scoped: the restricted
+    user must have access to *every* linked class (a structure that spans
+    branches is denied). A structure with **no** class links is a tenant-wide
+    template shared across the whole school; a branch finance sub-admin may use
+    existing structures but does not manage tenant-wide config, so it is denied.
+    """
+    if get_allowed_unit_ids() is None:
+        return
+
+    class_ids = [
+        fsc.class_id
+        for fsc in FeeStructureClass.query.filter_by(
+            fee_structure_id=structure_id,
+            tenant_id=tenant_id,
+        ).all()
+    ]
+    if not class_ids:
+        raise BranchForbidden(
+            "Tenant-wide fee structures are not editable by a branch sub-admin."
+        )
+    for cid in class_ids:
+        assert_class_allowed(cid)
 
 
 def list_available_classes_for_structure(
@@ -49,10 +81,16 @@ def list_available_classes_for_structure(
         ).all():
             taken_class_ids.discard(sc.class_id)
 
-    classes = Class.query.filter_by(
+    class_query = Class.query.filter_by(
         tenant_id=tenant_id,
         academic_year_id=academic_year_id,
-    ).all()
+    )
+    # Branch scope: only offer classes inside the caller's branches. No-op when
+    # unrestricted.
+    allowed_units = get_allowed_unit_ids()
+    if allowed_units is not None:
+        class_query = class_query.filter(Class.school_unit_id.in_(allowed_units))
+    classes = class_query.all()
     return [
         {
             "id": c.id,
@@ -75,6 +113,14 @@ def list_fee_structures(
 
     from core.feature_flags import is_feature_enabled
 
+    # Branch scope: assert an explicit class filter; otherwise restrict the
+    # list to structures linked to the caller's allowed-branch classes
+    # (tenant-wide / out-of-branch structures are excluded). No-op when
+    # unrestricted.
+    allowed_units = get_allowed_unit_ids()
+    if class_id and allowed_units is not None:
+        assert_class_allowed(class_id)
+
     query = FeeStructure.query.filter_by(tenant_id=tenant_id)
     # Hide transport-only fee structures from regular finance listings when
     # the transport feature is disabled — those rows belong to a feature the
@@ -88,6 +134,21 @@ def list_fee_structures(
             FeeStructureClass.class_id == class_id,
             FeeStructureClass.tenant_id == tenant_id,
         ).distinct()
+    elif allowed_units is not None:
+        # Restrict to structures whose linked classes are all (at least one)
+        # inside an allowed branch. Tenant-wide structures (no class links) are
+        # excluded for restricted users.
+        from modules.classes.models import Class
+
+        allowed_structure_ids = (
+            db.session.query(FeeStructureClass.fee_structure_id)
+            .join(Class, FeeStructureClass.class_id == Class.id)
+            .filter(
+                FeeStructureClass.tenant_id == tenant_id,
+                Class.school_unit_id.in_(allowed_units),
+            )
+        )
+        query = query.filter(FeeStructure.id.in_(allowed_structure_ids))
     query = query.order_by(FeeStructure.due_date)
     structures = query.all()
     result = []
@@ -107,6 +168,9 @@ def get_fee_structure(structure_id: str) -> Optional[Dict]:
     s = FeeStructure.query.filter_by(id=structure_id, tenant_id=tenant_id).first()
     if not s:
         return None
+    # Branch scope: class-linked structures require access to every linked
+    # class; tenant-wide structures are denied for restricted users.
+    _assert_structure_branch_access(structure_id, tenant_id)
     d = s.to_dict()
     d["components"] = [c.to_dict() for c in s.components]
     return d
@@ -144,6 +208,16 @@ def create_fee_structure(
     # Empty class_ids means "apply to all classes" per UI convention
     if not class_ids:
         class_ids = _get_all_class_ids_for_academic_year(academic_year_id, tenant_id)
+
+    # Branch scope: a restricted sub-admin may only create a structure scoped
+    # to classes inside their branches. Asserting each resolved class denies
+    # both out-of-branch classes and "all classes" / tenant-wide creation
+    # (which would include classes the user cannot see). No-op when
+    # unrestricted. Raised before the try below so it surfaces as 403.
+    if get_allowed_unit_ids() is not None:
+        for cid in class_ids:
+            assert_class_allowed(cid)
+
     # Validate: no class can be in another structure for this academic year
     for cid in class_ids:
         taken = FeeStructureClass.query.filter_by(
@@ -222,6 +296,20 @@ def update_fee_structure(
     fs = FeeStructure.query.filter_by(id=structure_id, tenant_id=tenant_id).first()
     if not fs:
         return {"success": False, "error": "Fee structure not found"}
+
+    # Branch scope: the existing structure must be branch-accessible (every
+    # linked class in an allowed branch; tenant-wide denied). Raised before any
+    # mutation/try below so it surfaces as 403. No-op when unrestricted.
+    _assert_structure_branch_access(structure_id, tenant_id)
+    # When reassigning classes, the new target classes must also be in branch.
+    # An empty list means "all classes" (tenant-wide) — denied for restricted.
+    if class_ids is not None and get_allowed_unit_ids() is not None:
+        if not class_ids:
+            raise BranchForbidden(
+                "A branch sub-admin cannot assign a fee structure to all classes."
+            )
+        for cid in class_ids:
+            assert_class_allowed(cid)
 
     if class_ids is not None:
         # Empty class_ids means "apply to all classes" per UI convention
@@ -360,6 +448,10 @@ def delete_fee_structure(structure_id: str, user_id: Optional[str] = None) -> Di
 
     if not FeeStructure.query.filter_by(id=structure_id, tenant_id=tenant_id).first():
         return {"success": False, "error": "Fee structure not found"}
+
+    # Branch scope: only branch-accessible structures (tenant-wide denied).
+    # Raised before the try below so it surfaces as 403. No-op when unrestricted.
+    _assert_structure_branch_access(structure_id, tenant_id)
 
     try:
         # Get student_fee ids for this structure before we start deleting

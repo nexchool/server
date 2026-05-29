@@ -29,9 +29,32 @@ PERM_COLLECT = "finance.collect"
 PERM_REFUND = "finance.refund"
 PERM_MANAGE = "finance.manage"
 
+from core.branch_scope import (
+    BranchForbidden,
+    assert_student_allowed,
+    get_allowed_unit_ids,
+)
+
 from . import services
 from .services import payment_service
 from .services.payment_service import list_recent_payments
+
+
+def _assert_payment_branch_access(payment, tenant_id):
+    """Assert the caller may access this finance Payment's student's branch.
+
+    Resolves the owning student via payment -> student_fee -> student_id.
+    No-op when unrestricted.
+    """
+    if get_allowed_unit_ids() is None:
+        return
+    from modules.finance.models import StudentFee
+
+    sf = StudentFee.query.with_entities(StudentFee.student_id).filter_by(
+        id=payment.student_fee_id, tenant_id=tenant_id
+    ).first()
+    if sf is not None:
+        assert_student_allowed(sf[0])
 
 
 # ---------- Fee Structures ----------
@@ -349,6 +372,7 @@ def download_payment_receipt(payment_id):
     payment = Payment.query.filter_by(id=payment_id, tenant_id=tenant_id).first()
     if not payment:
         return not_found_response("Payment")
+    _assert_payment_branch_access(payment, tenant_id)
     from .services.pdf_service import generate_finance_receipt_pdf
     pdf_bytes = generate_finance_receipt_pdf(payment_id)
     if not pdf_bytes:
@@ -477,6 +501,7 @@ def print_payment_receipt(payment_id):
     payment = Payment.query.filter_by(id=payment_id, tenant_id=tenant_id).first()
     if not payment:
         return not_found_response("Payment")
+    _assert_payment_branch_access(payment, tenant_id)
     from .services.pdf_service import render_finance_receipt_html_for_print
     html = render_finance_receipt_html_for_print(payment_id)
     if not html:
@@ -498,6 +523,9 @@ def get_tenant_profile():
     """GET /api/finance/tenant-profile - Get current tenant's profile for school admin."""
     from core.models import Tenant
     from core.tenant import get_tenant_id
+    # Tenant-wide branding config — not a branch sub-admin concern.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("School profile is tenant-wide configuration.")
     tenant_id = get_tenant_id()
     if not tenant_id:
         return error_response("TenantError", "Tenant context required", 400)
@@ -528,6 +556,9 @@ def update_tenant_profile():
     from core.database import db
     from core.tenant import get_tenant_id
     from datetime import datetime
+    # Tenant-wide branding config — not a branch sub-admin concern.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("School profile is tenant-wide configuration.")
     tenant_id = get_tenant_id()
     if not tenant_id:
         return error_response("TenantError", "Tenant context required", 400)

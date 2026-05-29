@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.database import db
 from core.tenant import get_tenant_id
+from core.branch_scope import BranchForbidden, get_allowed_unit_ids
 from modules.classes.models import Class
 from modules.finance.models import FeeComponent, FeeStructure, FeeStructureClass
 
@@ -58,6 +59,13 @@ def rollover_fee_structures(
     tenant_id = get_tenant_id()
     if not tenant_id:
         return {"success": False, "error": "Tenant context is required"}
+
+    # Branch scope: year-transition rollover clones tenant-wide fee config
+    # across every branch. Not a branch sub-admin operation. Deny for
+    # restricted users; no-op when unrestricted.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Fee rollover is a tenant-wide operation.")
+
     if not from_year_id or not to_year_id:
         return {"success": False, "error": "from_year_id and to_year_id are required"}
     if from_year_id == to_year_id:

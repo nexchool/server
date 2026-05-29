@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from core.database import db
 from core.tenant import get_tenant_id
+from core.branch_scope import assert_student_allowed
 from modules.fees.models import FeeInvoice
 from modules.notifications.models import Notification
 from modules.students.models import Student
@@ -30,6 +31,11 @@ def send_invoice_reminder(invoice_id: str) -> Dict[str, Any]:
     invoice = FeeInvoice.query.filter_by(id=invoice_id, tenant_id=tenant_id).first()
     if not invoice:
         return {"success": False, "error": "Invoice not found"}
+
+    # Branch scope: a restricted sub-admin may only send reminders for invoices
+    # of students in their branches. Raised before any commit/broad-except path
+    # so it surfaces as 403. No-op for unrestricted users.
+    assert_student_allowed(invoice.student_id)
 
     if invoice.status == "paid":
         return {"success": False, "error": "Invoice is already fully paid"}
