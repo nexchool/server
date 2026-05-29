@@ -280,6 +280,10 @@ def register_error_handlers(app: Flask):
             'message': 'An internal server error occurred'
         }), 500
 
+    # Branch-scope (per-sub-admin) violations -> 403 JSON.
+    from core.branch_scope import register_branch_scope_error_handler
+    register_branch_scope_error_handler(app)
+
     @app.after_request
     def log_error_responses(response):
         """Log any 4xx/5xx response from routes that return error_response() directly."""
