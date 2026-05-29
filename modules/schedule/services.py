@@ -15,6 +15,7 @@ from typing import List, Dict, Optional, Tuple
 
 from sqlalchemy import or_
 
+from core.branch_scope import assert_class_allowed
 from core.database import db
 from modules.academics.backbone.models import TimetableEntry, TimetableVersion
 from modules.academics.services.common import class_display_name
@@ -356,6 +357,37 @@ def get_all_slots_today(tenant_id: str) -> List[Dict]:
     ]
 
 
+def _override_target_class_id(
+    tenant_id: str,
+    slot: Optional[TimetableSlot],
+    entry: Optional[TimetableEntry],
+) -> Optional[str]:
+    """Resolve the class_id an override target reaches.
+
+    Legacy slot carries ``class_id`` directly; a v2 entry reaches its class
+    through its TimetableVersion. Returns None if it cannot be resolved.
+    """
+    if slot is not None:
+        return slot.class_id
+    if entry is not None:
+        ver = TimetableVersion.query.filter_by(
+            id=entry.timetable_version_id, tenant_id=tenant_id
+        ).first()
+        return ver.class_id if ver else None
+    return None
+
+
+def _assert_override_target_in_branch(
+    tenant_id: str,
+    slot: Optional[TimetableSlot],
+    entry: Optional[TimetableEntry],
+) -> None:
+    """Branch-scope guard for override targets. No-op when unrestricted."""
+    class_id = _override_target_class_id(tenant_id, slot, entry)
+    if class_id is not None:
+        assert_class_allowed(class_id)
+
+
 def upsert_override(
     slot_id: str,
     override_date: date,
@@ -375,6 +407,11 @@ def upsert_override(
     entry = None if slot else TimetableEntry.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
     if not slot and not entry:
         return {"success": False, "error": "Timetable slot or entry not found"}
+
+    # Branch scope: an override hangs off a slot/entry that reaches a branch
+    # through its class. Restricted sub-admins may only override in-branch
+    # classes. No-op when unrestricted.
+    _assert_override_target_in_branch(tenant_id, slot, entry)
 
     if override_type == ScheduleOverride.TYPE_SUBSTITUTE:
         if not substitute_teacher_id:
@@ -432,6 +469,21 @@ def delete_override(slot_id: str, override_date: date, tenant_id: str) -> Dict:
         ).first()
     if not override:
         return {"success": False, "error": "No override found for this slot on this date"}
+
+    # Branch scope: resolve the override's underlying slot/entry to its class
+    # and assert. No-op when unrestricted.
+    slot = (
+        TimetableSlot.query.filter_by(id=override.slot_id, tenant_id=tenant_id).first()
+        if override.slot_id
+        else None
+    )
+    entry = (
+        TimetableEntry.query.filter_by(id=override.timetable_entry_id, tenant_id=tenant_id).first()
+        if override.timetable_entry_id
+        else None
+    )
+    _assert_override_target_in_branch(tenant_id, slot, entry)
+
     db.session.delete(override)
     db.session.commit()
     return {"success": True}

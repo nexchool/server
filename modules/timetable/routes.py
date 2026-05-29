@@ -9,6 +9,11 @@ from datetime import date as _date
 from flask import request, g
 
 from modules.timetable import timetable_bp
+from core.branch_scope import (
+    BranchForbidden,
+    assert_class_allowed,
+    get_allowed_unit_ids,
+)
 from core.decorators import (
     require_permission,
     auth_required,
@@ -63,6 +68,9 @@ def generate_timetable():
     if not class_id:
         return validation_error_response("class_id is required")
 
+    # Branch scope: restricted sub-admins may only generate for their units.
+    assert_class_allowed(class_id)
+
     result = gen_svc.generate_timetable(class_id, overwrite_existing)
 
     if not result.get("success"):
@@ -98,6 +106,10 @@ def _generation_message(result: dict) -> str:
 @require_permission(PERM_MANAGE)
 def get_config():
     """Get timetable configuration (duration, breaks, etc.) for this school."""
+    # Branch scope: timetable config is tenant-global (one row per tenant, no
+    # class anchor) so it cannot be branch-filtered — deny for restricted.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Branch-restricted admins cannot access tenant-wide timetable configuration")
     tenant_id = g.tenant_id
     result = services.get_timetable_config(tenant_id)
     return success_response(data=result["config"])
@@ -110,6 +122,9 @@ def get_config():
 @require_permission(PERM_MANAGE)
 def update_config():
     """Update timetable configuration. Persisted per school."""
+    # Branch scope: tenant-global config — deny for restricted (see get_config).
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Branch-restricted admins cannot modify tenant-wide timetable configuration")
     data = request.get_json() or {}
     tenant_id = g.tenant_id
     result = services.upsert_timetable_config(tenant_id, data)
@@ -141,6 +156,10 @@ def check_conflicts():
     missing = [f for f in required if data.get(f) is None]
     if missing:
         return validation_error_response(f"Missing required fields: {', '.join(missing)}")
+
+    # Branch scope: restricted sub-admins may only check conflicts for a class
+    # in their units.
+    assert_class_allowed(data["class_id"])
 
     from . import validators
 

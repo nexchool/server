@@ -14,6 +14,7 @@ from sqlalchemy import exists
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
+from core.branch_scope import BranchForbidden, assert_class_allowed
 from core.database import db
 from core.tenant import get_tenant_id
 
@@ -118,6 +119,9 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         if not cls:
             return {"success": False, "error": "Class not found"}
 
+        # Branch scope: restricted sub-admins may only create slots in their units.
+        assert_class_allowed(class_id)
+
         # Validate subject exists
         subj = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).first()
         if not subj:
@@ -182,6 +186,8 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         slot.save()
 
         return {"success": True, "slot": slot.to_dict()}
+    except BranchForbidden:
+        raise
     except IntegrityError as e:
         db.session.rollback()
         error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
@@ -204,6 +210,8 @@ def get_slots_by_class(class_id: str, tenant_id: str) -> List[Dict]:
     Returns:
         List of slot dicts, ordered by day_of_week, period_number
     """
+    # Branch scope: restricted sub-admins may only read classes in their units.
+    assert_class_allowed(class_id)
     slots = (
         TimetableSlot.query.filter_by(tenant_id=tenant_id, class_id=class_id)
         .order_by(TimetableSlot.day_of_week, TimetableSlot.period_number)
@@ -245,6 +253,10 @@ def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
         if not slot:
             return {"success": False, "error": "Timetable slot not found"}
 
+        # Branch scope: restricted sub-admins may only edit slots whose class is
+        # in their units.
+        assert_class_allowed(slot.class_id)
+
         from modules.classes.models import Class
         from modules.subjects.models import Subject
         from modules.teachers.models import Teacher
@@ -253,6 +265,8 @@ def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
             cls = Class.query.filter_by(id=data["class_id"], tenant_id=tenant_id).first()
             if not cls:
                 return {"success": False, "error": "Class not found"}
+            # Branch scope: cannot reassign a slot into an out-of-branch class.
+            assert_class_allowed(data["class_id"])
             slot.class_id = data["class_id"]
 
         if "subject_id" in data and data["subject_id"] is not None:
@@ -310,6 +324,8 @@ def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
 
         slot.save()
         return {"success": True, "slot": slot.to_dict()}
+    except BranchForbidden:
+        raise
     except IntegrityError as e:
         db.session.rollback()
         error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
@@ -337,8 +353,14 @@ def delete_slot(slot_id: str, tenant_id: str) -> Dict:
         if not slot:
             return {"success": False, "error": "Timetable slot not found"}
 
+        # Branch scope: restricted sub-admins may only delete slots whose class
+        # is in their units.
+        assert_class_allowed(slot.class_id)
+
         slot.delete()
         return {"success": True, "message": "Timetable slot deleted successfully"}
+    except BranchForbidden:
+        raise
     except Exception as e:
         db.session.rollback()
         return {"success": False, "error": str(e)}
@@ -421,6 +443,10 @@ def move_slot(slot_id: str, day: int, period: int, tenant_id: str) -> Dict:
     if not slot:
         return {"success": False, "error": "Timetable slot not found"}
 
+    # Branch scope: restricted sub-admins may only move slots whose class is in
+    # their units.
+    assert_class_allowed(slot.class_id)
+
     if day < 0 or day > 6:
         return {"success": False, "error": "day must be 0-6 (0=Monday, 6=Sunday)"}
     if period < 1:
@@ -500,6 +526,11 @@ def swap_slots(slot_a_id: str, slot_b_id: str, tenant_id: str) -> Dict:
         return {"success": False, "error": "Slot A not found"}
     if not slot_b:
         return {"success": False, "error": "Slot B not found"}
+
+    # Branch scope: restricted sub-admins may only swap slots whose classes are
+    # both in their units.
+    assert_class_allowed(slot_a.class_id)
+    assert_class_allowed(slot_b.class_id)
 
     if slot_a_id == slot_b_id:
         return {"success": True, "slot_a": slot_a.to_dict(), "slot_b": slot_b.to_dict()}

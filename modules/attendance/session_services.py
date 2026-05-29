@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
+from core.branch_scope import (
+    assert_class_allowed,
+    assert_student_allowed,
+    filter_classes_by_branch,
+)
 from core.database import db
 from modules.academics.backbone.models import (
     AttendanceRecord,
@@ -103,7 +108,13 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
     items: List[Dict[str, Any]] = []
 
     if has_permission(user_id, "attendance.manage"):
-        classes = Class.query.filter_by(tenant_id=tenant_id).order_by(Class.name, Class.section).all()
+        # Branch scope: a restricted sub-admin with attendance.manage may only
+        # see classes in their units. No-op when unrestricted.
+        classes = (
+            filter_classes_by_branch(Class.query.filter_by(tenant_id=tenant_id))
+            .order_by(Class.name, Class.section)
+            .all()
+        )
         for c in classes:
             items.append(
                 {
@@ -202,6 +213,9 @@ def get_or_create_session(
     if not cls:
         return {"success": False, "error": "Class not found"}
 
+    # Branch scope: restricted sub-admins may only touch classes in their units.
+    assert_class_allowed(class_id)
+
     holiday = get_holiday_for_date(session_date, tenant_id)
     if holiday:
         return {
@@ -268,6 +282,8 @@ def get_or_create_session(
 def get_session_for_class_date(
     tenant_id: str, class_id: str, session_date: date
 ) -> Optional[AttendanceSession]:
+    # Branch scope: restricted sub-admins may only read classes in their units.
+    assert_class_allowed(class_id)
     return (
         AttendanceSession.query.filter_by(
             tenant_id=tenant_id, class_id=class_id, session_date=session_date
@@ -278,11 +294,18 @@ def get_session_for_class_date(
 
 
 def get_session_by_id(tenant_id: str, session_id: str) -> Optional[AttendanceSession]:
-    return (
+    s = (
         AttendanceSession.query.filter_by(id=session_id, tenant_id=tenant_id)
         .filter(AttendanceSession.deleted_at.is_(None))
         .first()
     )
+    # Branch scope: a session reaches a branch through its class. Restricted
+    # sub-admins may only act on sessions for classes in their units (covers
+    # POST records + finalize, which load the session by id). No-op when
+    # unrestricted; a missing session defers to caller's not-found handling.
+    if s is not None:
+        assert_class_allowed(s.class_id)
+    return s
 
 
 def list_records_for_session(tenant_id: str, session_id: str) -> List[Dict[str, Any]]:
@@ -397,6 +420,9 @@ def class_history(
     if not cls:
         return {"success": False, "error": "Class not found"}
 
+    # Branch scope: restricted sub-admins may only read classes in their units.
+    assert_class_allowed(class_id)
+
     sessions = (
         AttendanceSession.query.filter_by(tenant_id=tenant_id, class_id=class_id)
         .filter(AttendanceSession.deleted_at.is_(None))
@@ -416,6 +442,9 @@ def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = N
     st = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
     if not st:
         return {"success": False, "error": "Student not found"}
+
+    # Branch scope: restricted sub-admins may only read students in their units.
+    assert_student_allowed(student_id)
 
     q = (
         db.session.query(AttendanceRecord, AttendanceSession)
