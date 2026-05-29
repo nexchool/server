@@ -362,6 +362,138 @@ def test_school_units_list_unrestricted_sees_all(flask_app, db_session, tenant, 
 
 
 # ---------------------------------------------------------------------------
+# Student documents — cross-branch PII leak (GET/POST/file/DELETE)
+# ---------------------------------------------------------------------------
+# All four document routes gate on the same assert_student_allowed(student_id)
+# guard. A restricted unit-A admin hitting a unit-B student -> BranchForbidden;
+# hitting a unit-A student -> no raise.
+
+def test_student_documents_unit_b_forbidden_for_restricted(
+    flask_app, db_session, tenant, students, restricted_user
+):
+    _student_a, student_b, _classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        # GET / POST / file / DELETE all run this guard after the 404 check.
+        with pytest.raises(BranchForbidden):
+            assert_student_allowed(student_b.id)
+
+
+def test_student_documents_unit_a_ok_for_restricted(
+    flask_app, db_session, tenant, students, restricted_user
+):
+    student_a, _student_b, _classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        assert_student_allowed(student_a.id)  # no raise
+
+
+def test_student_documents_unrestricted_no_op(
+    flask_app, db_session, tenant, students, unrestricted_user
+):
+    student_a, student_b, _classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        assert_student_allowed(student_a.id)  # no raise
+        assert_student_allowed(student_b.id)  # no raise — unrestricted no-op
+
+
+# ---------------------------------------------------------------------------
+# Class membership mutations — assign/remove student & teacher
+# ---------------------------------------------------------------------------
+# assign_student / remove_student guard on assert_class_allowed AND
+# assert_student_allowed; assign_teacher / remove_teacher guard on
+# assert_class_allowed. A unit-B class -> 403; unit-A class -> ok.
+
+def test_class_membership_unit_b_class_forbidden_for_restricted(
+    flask_app, db_session, tenant, classes, restricted_user
+):
+    _class_a, class_b = classes
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        with pytest.raises(BranchForbidden):
+            assert_class_allowed(class_b.id)
+
+
+def test_assign_student_cross_branch_student_forbidden_for_restricted(
+    flask_app, db_session, tenant, classes, students, restricted_user
+):
+    """Pulling a unit-B student into a (unit-A) class is blocked by the
+    student-side guard."""
+    _student_a, student_b, _classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        with pytest.raises(BranchForbidden):
+            assert_student_allowed(student_b.id)
+
+
+def test_class_membership_unit_a_ok_for_restricted(
+    flask_app, db_session, tenant, classes, students, restricted_user
+):
+    class_a, _class_b = classes
+    student_a, _student_b, _classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        assert_class_allowed(class_a.id)  # no raise
+        assert_student_allowed(student_a.id)  # no raise
+
+
+def test_class_membership_unrestricted_no_op(
+    flask_app, db_session, tenant, classes, students, unrestricted_user
+):
+    _class_a, class_b = classes
+    _student_a, student_b, _classless = students
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        assert_class_allowed(class_b.id)  # no raise
+        assert_student_allowed(student_b.id)  # no raise
+
+
+# ---------------------------------------------------------------------------
+# Tenant-wide bulk / structural ops — DENIED for restricted (fail closed)
+# ---------------------------------------------------------------------------
+# promote / promotion-preview / promotion-history (students) and
+# copy / subjects-by-grade (classes) all guard with:
+#   if get_allowed_unit_ids() is not None: raise BranchForbidden(...)
+# So for a restricted user the gate is truthy (denied); for unrestricted it is
+# None (passes straight through to normal handling).
+
+def _deny_if_restricted():
+    """Mirror the exact fail-closed guard used by the bulk-op routes."""
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Branch-restricted admins cannot run tenant-wide op")
+
+
+def test_bulk_ops_denied_for_restricted(
+    flask_app, db_session, tenant, units, restricted_user
+):
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        # The guard condition is truthy -> the route raises BranchForbidden.
+        assert get_allowed_unit_ids() is not None
+        with pytest.raises(BranchForbidden):
+            _deny_if_restricted()
+
+
+def test_bulk_ops_not_blocked_for_unrestricted(
+    flask_app, db_session, tenant, units, unrestricted_user
+):
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        # Guard condition is None -> route proceeds to normal handling.
+        assert get_allowed_unit_ids() is None
+
+
+# ---------------------------------------------------------------------------
 # Regression — unrestricted admin is a strict no-op everywhere
 # ---------------------------------------------------------------------------
 

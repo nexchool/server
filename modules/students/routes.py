@@ -19,6 +19,7 @@ from shared.helpers import (
     forbidden_response,
 )
 from core.branch_scope import (
+    BranchForbidden,
     assert_class_allowed,
     assert_student_allowed,
     assert_unit_allowed,
@@ -389,6 +390,15 @@ def promotion_preview():
       include_failed?: bool (default true; when false, skip students with academic_result fail)
     }
     """
+    # Branch scope: tenant-wide promotion preview spans all branches; a
+    # branch-restricted sub-admin may not run it. Fail closed. No-op for
+    # unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot run tenant-wide promotion preview; "
+            "contact a full admin."
+        )
+
     data = request.get_json() or {}
     from_year_id = (data.get("from_year_id") or "").strip()
     to_year_id = (data.get("to_year_id") or "").strip()
@@ -426,6 +436,14 @@ def promotion_execute():
     Execute promotion in one transaction. Returns promotion_batch_id for audit logs.
     Optional body: exclude_leaving, include_failed (same as preview).
     """
+    # Branch scope: tenant-wide promotion spans all branches; a branch-restricted
+    # sub-admin may not run it. Fail closed. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot run tenant-wide promotion; "
+            "contact a full admin."
+        )
+
     data = request.get_json() or {}
     from_year_id = (data.get("from_year_id") or "").strip()
     to_year_id = (data.get("to_year_id") or "").strip()
@@ -478,6 +496,14 @@ def promotion_execute():
 @require_any_permission(PERM_READ_ALL, PERM_UPDATE, PERM_MANAGE)
 def promotion_history():
     """Paginated list of past StudentPromotionBatch rows for the tenant."""
+    # Branch scope: promotion history is tenant-wide; a branch-restricted
+    # sub-admin may not view it. Fail closed. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot view tenant-wide promotion history; "
+            "contact a full admin."
+        )
+
     from .models import StudentPromotionBatch
     from modules.academics.academic_year.models import AcademicYear
 
@@ -562,6 +588,10 @@ def list_student_documents(student_id):
     if not student:
         return not_found_response('Student')
 
+    # Branch scope: a restricted sub-admin cannot reach a student's documents
+    # outside their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     # RBAC: same as get_student
     if has_permission(user_id, PERM_READ_ALL):
         result = services.list_student_documents(student_id)
@@ -595,6 +625,10 @@ def create_student_document(student_id):
     student = services.get_student_by_id(student_id)
     if not student:
         return not_found_response('Student')
+
+    # Branch scope: a restricted sub-admin cannot upload to a student outside
+    # their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
 
     file = request.files.get('file') or request.files.get('document')
     document_type_str = request.form.get('document_type')
@@ -653,6 +687,10 @@ def get_student_document_file(student_id, document_id):
     if not student:
         return not_found_response('Student')
 
+    # Branch scope: a restricted sub-admin cannot download a student's document
+    # file outside their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     allowed = False
     if has_permission(user_id, PERM_READ_ALL):
         allowed = True
@@ -697,6 +735,11 @@ def delete_student_document(student_id, document_id):
     student = services.get_student_by_id(student_id)
     if not student:
         return not_found_response('Student')
+
+    # Branch scope: a restricted sub-admin cannot delete a document of a student
+    # outside their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     result = services.delete_student_document(document_id, student_id)
     if result.get('success'):
         return success_response(message='Document deleted successfully')

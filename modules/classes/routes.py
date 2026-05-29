@@ -17,8 +17,11 @@ from shared.helpers import (
     validation_error_response,
 )
 from core.branch_scope import (
+    BranchForbidden,
     assert_class_allowed,
+    assert_student_allowed,
     assert_unit_allowed,
+    get_allowed_unit_ids,
 )
 from . import services
 
@@ -128,6 +131,15 @@ def apply_subject_by_grade():
     """
     from modules.academics.services.grade_subjects import apply_subject_to_grade
 
+    # Branch scope: this fans a subject offering across every section of a grade
+    # tenant-wide (all branches); a branch-restricted sub-admin may not run it.
+    # Fail closed. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot run tenant-wide apply-subject-by-grade; "
+            "contact a full admin."
+        )
+
     data = request.get_json() or {}
     ay = data.get('academic_year_id')
     subj = data.get('subject_id')
@@ -179,6 +191,15 @@ def copy_classes_across_years():
     Body: { "from_year_id": "...", "to_year_id": "..." }
     Returns: { class_mapping: { old_class_id: new_class_id }, created, reused_existing, ... }
     """
+    # Branch scope: copying classes spans the whole tenant (all branches); a
+    # branch-restricted sub-admin may not run it. Fail closed. No-op for
+    # unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot run tenant-wide copy-classes; "
+            "contact a full admin."
+        )
+
     data = request.get_json() or {}
     from_year_id = (data.get("from_year_id") or "").strip()
     to_year_id = (data.get("to_year_id") or "").strip()
@@ -277,6 +298,12 @@ def assign_student(class_id):
     if not student_id:
         return validation_error_response('student_id is required')
 
+    # Branch scope: a restricted sub-admin cannot touch a class outside their
+    # branches, nor pull a student from another branch into a class. No-op for
+    # unrestricted users.
+    assert_class_allowed(class_id)
+    assert_student_allowed(student_id)
+
     result = services.assign_student_to_class(class_id, student_id)
     if result['success']:
         return success_response(message=result['message'])
@@ -290,6 +317,11 @@ def assign_student(class_id):
 @require_permission(PERM_UPDATE)
 def remove_student(class_id, student_id):
     """Remove a student from a class."""
+    # Branch scope: a restricted sub-admin cannot mutate a class or student
+    # outside their branches. No-op for unrestricted users.
+    assert_class_allowed(class_id)
+    assert_student_allowed(student_id)
+
     result = services.remove_student_from_class(class_id, student_id)
     if result['success']:
         return success_response(message=result['message'])
@@ -317,6 +349,10 @@ def assign_teacher(class_id):
     if not subject_id:
         return validation_error_response('subject_id is required')
 
+    # Branch scope: a restricted sub-admin cannot assign a teacher to a class
+    # outside their branches. No-op for unrestricted users.
+    assert_class_allowed(class_id)
+
     result = services.assign_teacher_to_class(
         class_id,
         teacher_id,
@@ -335,6 +371,10 @@ def assign_teacher(class_id):
 @require_permission(PERM_UPDATE)
 def remove_teacher(class_id, teacher_id):
     """Remove a teacher from a class."""
+    # Branch scope: a restricted sub-admin cannot mutate a class outside their
+    # branches. No-op for unrestricted users.
+    assert_class_allowed(class_id)
+
     result = services.remove_teacher_from_class(class_id, teacher_id)
     if result['success']:
         return success_response(message=result['message'])
