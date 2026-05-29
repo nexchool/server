@@ -15,6 +15,7 @@ from flask import Blueprint
 
 sub_admins_bp = Blueprint("sub_admins", __name__)
 
+from . import models  # noqa: E402,F401
 from . import routes  # noqa: E402,F401
 
 __all__ = ["sub_admins_bp"]
