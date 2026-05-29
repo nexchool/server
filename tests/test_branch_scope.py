@@ -22,7 +22,9 @@ from core.branch_scope import (
     assert_class_allowed,
     assert_student_allowed,
     assert_unit_allowed,
+    filter_by_class_ids,
     filter_classes_by_branch,
+    filter_fees_by_branch,
     filter_students_by_branch,
     get_allowed_class_ids,
     get_allowed_unit_ids,
@@ -406,3 +408,138 @@ def test_filter_students_by_branch_restricted(flask_app, db_session, tenant, stu
         assert student_a.id in ids
         assert student_b.id not in ids
         assert classless.id not in ids  # classless excluded
+
+
+# ---------------------------------------------------------------------------
+# filter_by_class_ids — direct class-FK models (attendance / timetable)
+# ---------------------------------------------------------------------------
+
+def _make_attendance(db_session, tenant, class_id, student_id, marked_by):
+    """One Attendance row (model carries a direct class_id FK)."""
+    from datetime import date
+
+    from modules.attendance.models import Attendance
+
+    att = Attendance(
+        id=_new_id("att-"),
+        tenant_id=tenant.id,
+        date=date(2025, 6, 2),
+        class_id=class_id,
+        student_id=student_id,
+        status="present",
+        marked_by=marked_by,
+    )
+    db_session.add(att)
+    db_session.flush()
+    return att
+
+
+@pytest.fixture
+def attendance_rows(db_session, tenant, classes, students, unrestricted_user):
+    """Attendance in the in-branch class (A) and the out-of-branch class (B).
+
+    ``marked_by`` reuses the unrestricted_user (a real users.id) so the
+    non-null FK is satisfied without coupling to the row under test.
+    """
+    class_a, class_b = classes
+    student_a, student_b, _classless = students
+    att_a = _make_attendance(db_session, tenant, class_a.id, student_a.id, unrestricted_user.id)
+    att_b = _make_attendance(db_session, tenant, class_b.id, student_b.id, unrestricted_user.id)
+    return att_a, att_b
+
+
+def test_filter_by_class_ids_restricted(flask_app, db_session, tenant, attendance_rows, restricted_user):
+    from modules.attendance.models import Attendance
+
+    att_a, att_b = attendance_rows
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        ids = {
+            a.id
+            for a in filter_by_class_ids(Attendance.query, Attendance.class_id).all()
+        }
+        assert att_a.id in ids          # in-branch class A
+        assert att_b.id not in ids      # out-of-branch class B excluded
+
+
+def test_filter_by_class_ids_noop_for_unrestricted(flask_app, db_session, tenant, attendance_rows, unrestricted_user):
+    from modules.attendance.models import Attendance
+
+    att_a, att_b = attendance_rows
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        ids = {
+            a.id
+            for a in filter_by_class_ids(Attendance.query, Attendance.class_id).all()
+        }
+        assert att_a.id in ids
+        assert att_b.id in ids          # strict no-op: both rows returned
+
+
+# ---------------------------------------------------------------------------
+# filter_fees_by_branch — student-FK fee model (student -> class -> unit chain)
+# ---------------------------------------------------------------------------
+
+def _make_invoice(db_session, tenant, student_id):
+    """One FeeInvoice row (model carries a direct student_id FK)."""
+    from datetime import date
+
+    from modules.fees.models import FeeInvoice
+
+    invoice = FeeInvoice(
+        id=_new_id("inv-"),
+        tenant_id=tenant.id,
+        student_id=student_id,
+        invoice_number=f"INV-{uuid.uuid4().hex[:8]}",
+        academic_year="2025-2026",
+        issue_date=date(2025, 6, 1),
+        due_date=date(2025, 6, 30),
+        total_amount=1000,
+    )
+    db_session.add(invoice)
+    db_session.flush()
+    return invoice
+
+
+@pytest.fixture
+def fee_invoices(db_session, tenant, students):
+    """Invoices for the in-branch student, out-of-branch student, and classless student."""
+    student_a, student_b, classless = students
+    inv_a = _make_invoice(db_session, tenant, student_a.id)
+    inv_b = _make_invoice(db_session, tenant, student_b.id)
+    inv_classless = _make_invoice(db_session, tenant, classless.id)
+    return inv_a, inv_b, inv_classless
+
+
+def test_filter_fees_by_branch_restricted(flask_app, db_session, tenant, fee_invoices, restricted_user):
+    from modules.fees.models import FeeInvoice
+
+    inv_a, inv_b, inv_classless = fee_invoices
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        ids = {
+            i.id
+            for i in filter_fees_by_branch(FeeInvoice.query, FeeInvoice.student_id).all()
+        }
+        assert inv_a.id in ids              # in-branch student
+        assert inv_b.id not in ids          # out-of-branch student excluded
+        assert inv_classless.id not in ids  # classless student fails closed
+
+
+def test_filter_fees_by_branch_noop_for_unrestricted(flask_app, db_session, tenant, fee_invoices, unrestricted_user):
+    from modules.fees.models import FeeInvoice
+
+    inv_a, inv_b, inv_classless = fee_invoices
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        ids = {
+            i.id
+            for i in filter_fees_by_branch(FeeInvoice.query, FeeInvoice.student_id).all()
+        }
+        assert inv_a.id in ids
+        assert inv_b.id in ids
+        assert inv_classless.id in ids      # strict no-op: classless included too
