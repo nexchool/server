@@ -48,9 +48,9 @@ class UserSchoolUnit(TenantBaseModel):
         nullable=False,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
