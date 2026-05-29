@@ -195,6 +195,20 @@ SUBADMIN_MODULES: Dict[str, dict] = {
 FORBIDDEN_PERMISSIONS: Set[str] = {"subadmin.manage"}
 
 
+# Modules whose data is scoped to a branch (school unit) via the Class anchor
+# chain in ``core/branch_scope.py``. A branch-restricted sub-admin may ONLY be
+# granted modules in this set — granting a non-branch-aware module to a
+# restricted sub-admin is rejected (fail-closed) because branch scoping cannot
+# be enforced for it. ``finance`` covers both finance and fees.
+BRANCH_AWARE_MODULE_KEYS: Set[str] = {
+    "classes",
+    "students",
+    "attendance",
+    "finance",
+    "timetable",
+}
+
+
 def get_catalog() -> List[dict]:
     """Return the catalog as a UI-friendly list (keys, labels, levels, toggles)."""
     catalog: List[dict] = []
@@ -320,3 +334,30 @@ def selection_grants_anything(selection: List[dict]) -> bool:
         return len(expand_selection(selection)) > 0
     except ValueError:
         return False
+
+
+def granted_module_keys(selection: List[dict]) -> Set[str]:
+    """Return the set of module keys actually granted by the selection.
+
+    A module counts as granted when it has a non-``none`` level or at least one
+    active toggle. Unknown keys are ignored here (``expand_selection`` is the
+    authoritative validator that rejects them).
+    """
+    keys: Set[str] = set()
+    for item in selection or []:
+        key = item.get("key")
+        if key not in SUBADMIN_MODULES:
+            continue
+        level = item.get("level", LEVEL_NONE)
+        has_level = level not in (None, LEVEL_NONE)
+        has_toggle = bool(
+            item.get(TOGGLE_DELETE) or item.get(TOGGLE_REFUND) or item.get(LEVEL_MANAGE)
+        )
+        if has_level or has_toggle:
+            keys.add(key)
+    return keys
+
+
+def non_branch_aware_granted(selection: List[dict]) -> Set[str]:
+    """Return granted module keys that are NOT branch-aware (offenders)."""
+    return granted_module_keys(selection) - BRANCH_AWARE_MODULE_KEYS

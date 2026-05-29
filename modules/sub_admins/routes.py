@@ -15,6 +15,7 @@ from shared.helpers import error_response, success_response
 from . import sub_admins_bp
 from .catalog import get_catalog
 from .services import (
+    _UNSET,
     create_sub_admin,
     delete_sub_admin,
     get_sub_admin,
@@ -88,6 +89,7 @@ def create_sub_admin_route():
         email=data.get("email"),
         password=data.get("password"),
         modules=data.get("modules") or [],
+        branch_unit_ids=data.get("branch_unit_ids") or [],
     )
     if not result["success"]:
         return _fail(result)
@@ -115,11 +117,17 @@ def get_sub_admin_route(user_id):
 def update_sub_admin_route(user_id):
     """Edit a sub-admin's name and/or module permissions."""
     data = request.get_json() or {}
+    # Distinguish "branch_unit_ids omitted" (keep current) from an explicit
+    # empty list (make unrestricted) using the service sentinel.
+    branch_unit_ids = (
+        data["branch_unit_ids"] if "branch_unit_ids" in data else _UNSET
+    )
     result = update_sub_admin(
         tenant_id=get_tenant_id(),
         user_id=user_id,
         name=data.get("name"),
         modules=data.get("modules"),
+        branch_unit_ids=branch_unit_ids,
     )
     if not result["success"]:
         return _fail(result)

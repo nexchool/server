@@ -394,6 +394,15 @@ def login():
         else False
     )
 
+    # Branch (school-unit) scope for the frontend. None = unrestricted (all
+    # branches), incl. platform admins. get_allowed_unit_ids() reads
+    # g.current_user / g.tenant_id, which aren't set on the login path, so seed
+    # them first; convert the set to a sorted JSON-serializable list.
+    g.current_user = user
+    from core.branch_scope import get_allowed_unit_ids
+    _allowed_units = get_allowed_unit_ids()
+    allowed_unit_ids = sorted(_allowed_units) if _allowed_units is not None else None
+
     # Audit the god entry — best effort; never fail login if audit write fails.
     if is_god_login and tenant:
         try:
@@ -426,6 +435,7 @@ def login():
             'is_platform_admin': is_platform_admin,
             'is_subadmin': is_subadmin,
             'is_setup_complete': is_setup_complete,
+            'allowed_unit_ids': allowed_unit_ids,
         },
         message='Login successful',
         status_code=200
@@ -785,6 +795,12 @@ def get_profile():
             tenant_name = t.name
             is_setup_complete = bool(t.is_setup_complete)
 
+    # Branch (school-unit) scope. None = unrestricted (all branches), incl.
+    # platform admins. g.current_user / g.tenant_id are already set here.
+    from core.branch_scope import get_allowed_unit_ids
+    _allowed_units = get_allowed_unit_ids()
+    allowed_unit_ids = sorted(_allowed_units) if _allowed_units is not None else None
+
     return success_response(
         data={
             'user': {
@@ -804,6 +820,7 @@ def get_profile():
             'is_platform_admin': is_platform_admin,
             'is_subadmin': is_subadmin,
             'is_setup_complete': is_setup_complete,
+            'allowed_unit_ids': allowed_unit_ids,
         },
         status_code=200
     )
