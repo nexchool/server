@@ -26,6 +26,7 @@ from shared.s3_utils import (
 from shared.storage_constants import PROFILE_PICTURES, TENANTS
 from . import auth_bp
 from .models import User, Session
+from . import services
 from .services import (
     authenticate_user,
     find_users_by_email_password,
@@ -87,8 +88,11 @@ def register():
             status_code=400
         )
 
-    # Check if user already exists (tenant-scoped)
-    if User.get_user_by_email(email, tenant_id=tenant_id):
+    # Check if user already exists (tenant-scoped). Include soft-deleted rows:
+    # the (email, tenant_id) unique constraint is not scoped to deleted_at, so a
+    # soft-deleted email must still produce a clean UserExists 400 here instead
+    # of slipping through to an IntegrityError (HTTP 500) on insert.
+    if User.get_user_by_email(email, tenant_id=tenant_id, include_deleted=True):
         return error_response(
             error='UserExists',
             message='User already exists',
@@ -209,6 +213,7 @@ def login():
 
     user = None
     tenant = None
+    is_god_login = False
 
     if tenant_id_in_body or subdomain_in_body:
         # Tenant specified: resolve tenant then authenticate in that tenant only
@@ -234,20 +239,32 @@ def login():
                 )
         user = authenticate_user(email, password, tenant_id=tenant_id)
         if not user:
-            if user_by_email and not getattr(user_by_email, 'is_platform_admin', False):
-                from modules.platform.services import get_platform_setting
-                max_attempts_str = get_platform_setting('max_login_attempts')
-                max_attempts = int(max_attempts_str) if max_attempts_str and str(max_attempts_str).isdigit() else 5
-                user_by_email.failed_login_count = (user_by_email.failed_login_count or 0) + 1
-                if user_by_email.failed_login_count >= max_attempts:
-                    user_by_email.login_locked_until = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
-                    user_by_email.failed_login_count = 0
-                user_by_email.save()
-            return error_response(
-                error='InvalidCredentials',
-                message='Invalid email or password',
-                status_code=401
-            )
+            # God-login: a real tenant user with this email keeps today's
+            # behavior (precedence). Only when no tenant user authenticated do
+            # we try the platform super-admin, who can enter any tenant with
+            # their own credentials.
+            from .services import authenticate_platform_admin
+            platform_admin = authenticate_platform_admin(email, password)
+            if platform_admin:
+                user = platform_admin
+                is_god_login = True
+            else:
+                # No god access: run the normal failed-login lockout. Skip it
+                # for the platform-admin email path (no tenant user_by_email).
+                if user_by_email and not getattr(user_by_email, 'is_platform_admin', False):
+                    from modules.platform.services import get_platform_setting
+                    max_attempts_str = get_platform_setting('max_login_attempts')
+                    max_attempts = int(max_attempts_str) if max_attempts_str and str(max_attempts_str).isdigit() else 5
+                    user_by_email.failed_login_count = (user_by_email.failed_login_count or 0) + 1
+                    if user_by_email.failed_login_count >= max_attempts:
+                        user_by_email.login_locked_until = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+                        user_by_email.failed_login_count = 0
+                    user_by_email.save()
+                return error_response(
+                    error='InvalidCredentials',
+                    message='Invalid email or password',
+                    status_code=401
+                )
         tenant = getattr(g, "tenant", None)
     else:
         # No tenant: search across all tenants (single app for all schools)
@@ -291,7 +308,22 @@ def login():
                 )
 
     # Common success path (user and tenant are set)
-    if not user.email_verified:
+    # Block suspended accounts on both login paths (tenant-specified and
+    # cross-tenant search) before any token is issued. Platform admins are
+    # not suspended in practice, so a single gate on is_suspended is enough.
+    if getattr(user, 'is_suspended', False):
+        return error_response(
+            error='AccountSuspended',
+            message='This account has been suspended. Contact your school administrator.',
+            status_code=403
+        )
+
+    # Platform super-admin entering a tenant (god-login) bypasses the email
+    # verification and permission gates — their authority is the platform flag,
+    # not a tenant role. is_platform_admin is authoritative here.
+    is_platform_admin = getattr(user, 'is_platform_admin', False)
+
+    if not is_platform_admin and not user.email_verified:
         return error_response(
             error='EmailNotVerified',
             message='Please verify your email before logging in',
@@ -300,21 +332,25 @@ def login():
 
     # Backfill tenant role permissions when DEFAULT_ROLES gains new entries
     # (idempotent). Ensures admins keep parity with seed_rbac after upgrades.
-    if not getattr(user, "is_platform_admin", False) and getattr(
-        user, "tenant_id", None
-    ):
+    if not is_platform_admin and getattr(user, "tenant_id", None):
         from modules.rbac.role_seeder import seed_roles_for_tenant
 
         seed_roles_for_tenant(user.tenant_id)
 
-    from modules.rbac.services import get_user_permissions
-    permissions = get_user_permissions(user.id)
-    if not permissions or len(permissions) == 0:
-        return error_response(
-            error='NoPermissions',
-            message='No permissions assigned. Contact administrator.',
-            status_code=403
-        )
+    if is_platform_admin:
+        # God-mode: synthetic permission so the UI unlocks everything without a
+        # tenant role. Plan-gated features are not applied to the super-admin.
+        permissions = ["system.manage"]
+        enabled_features = []
+    else:
+        from modules.rbac.services import get_user_permissions
+        permissions = get_user_permissions(user.id)
+        if not permissions or len(permissions) == 0:
+            return error_response(
+                error='NoPermissions',
+                message='No permissions assigned. Contact administrator.',
+                status_code=403
+            )
 
     if not getattr(user, 'is_platform_admin', False):
         user.failed_login_count = 0
@@ -336,14 +372,55 @@ def login():
     access_token = generate_access_token(user, access_minutes=access_minutes)
     session = create_session(user, request)
 
-    from core.feature_flags import get_tenant_enabled_features
-    enabled_features = get_tenant_enabled_features(tenant.id) if tenant else []
+    if not is_platform_admin:
+        from core.feature_flags import get_tenant_enabled_features
+        enabled_features = get_tenant_enabled_features(tenant.id) if tenant else []
+    # For platform admins, enabled_features was already set to [] above.
+
+    # The resolved (entered) tenant scopes every subsequent admin-web request,
+    # so report it here — not the user's home tenant_id. For a normal user
+    # these are the same value.
+    resolved_tenant_id = str(tenant.id) if tenant else (
+        str(user.tenant_id) if getattr(user, 'tenant_id', None) else None
+    )
+
+    # Setup state for the entered tenant (drives the SetupGate in admin-web).
+    is_setup_complete = bool(getattr(tenant, 'is_setup_complete', False)) if tenant else False
+
+    from modules.rbac.services import is_subadmin_user
+    is_subadmin = (
+        is_subadmin_user(user.id, tenant.id)
+        if (tenant and not is_platform_admin)
+        else False
+    )
+
+    # Branch (school-unit) scope for the frontend. None = unrestricted (all
+    # branches), incl. platform admins. get_allowed_unit_ids() reads
+    # g.current_user / g.tenant_id, which aren't set on the login path, so seed
+    # them first; convert the set to a sorted JSON-serializable list.
+    g.current_user = user
+    from core.branch_scope import get_allowed_unit_ids
+    _allowed_units = get_allowed_unit_ids()
+    allowed_unit_ids = sorted(_allowed_units) if _allowed_units is not None else None
+
+    # Audit the god entry — best effort; never fail login if audit write fails.
+    if is_god_login and tenant:
+        try:
+            from modules.platform.services import log_platform_action
+            log_platform_action(
+                platform_admin_id=user.id,
+                action="tenant.admin_web_entered",
+                tenant_id=tenant.id,
+                metadata={"subdomain": tenant.subdomain},
+            )
+        except Exception:
+            logger.exception("Failed to audit god-login for tenant %s", tenant.id)
 
     response, status_code = success_response(
         data={
             'access_token': access_token,
             'refresh_token': session.refresh_token,
-            'tenant_id': str(user.tenant_id),
+            'tenant_id': resolved_tenant_id,
             'subdomain': tenant.subdomain if tenant else None,
             'tenant_name': tenant.name if tenant else None,
             'user': {
@@ -355,6 +432,10 @@ def login():
             },
             'permissions': permissions,
             'enabled_features': enabled_features,
+            'is_platform_admin': is_platform_admin,
+            'is_subadmin': is_subadmin,
+            'is_setup_complete': is_setup_complete,
+            'allowed_unit_ids': allowed_unit_ids,
         },
         message='Login successful',
         status_code=200
@@ -685,16 +766,40 @@ def get_profile():
 
     from core.models import Tenant
     from core.feature_flags import get_tenant_enabled_features
-    from modules.rbac.services import get_user_permissions, get_user_roles
-    permissions = get_user_permissions(user.id)
+    from modules.rbac.services import get_user_permissions, get_user_roles, is_subadmin_user
+
+    is_platform_admin = getattr(user, 'is_platform_admin', False)
+
+    # The active tenant for a profile refresh is the per-request resolved tenant
+    # (admin-web sends X-Tenant-Subdomain / X-Tenant-ID). For a platform admin
+    # in god-login this differs from their home tenant_id.
+    active_tenant_id = get_tenant_id() or user.tenant_id
+
     roles = get_user_roles(user.id)
-    enabled_features = get_tenant_enabled_features(user.tenant_id) if user.tenant_id else []
+
+    if is_platform_admin:
+        # Keep god-mode in the UI across a profile refresh.
+        permissions = ["system.manage"]
+        enabled_features = []
+        is_subadmin = False
+    else:
+        permissions = get_user_permissions(user.id)
+        enabled_features = get_tenant_enabled_features(active_tenant_id) if active_tenant_id else []
+        is_subadmin = is_subadmin_user(user.id, active_tenant_id) if active_tenant_id else False
 
     tenant_name = None
-    if user.tenant_id:
-        t = Tenant.query.get(user.tenant_id)
+    is_setup_complete = False
+    if active_tenant_id:
+        t = Tenant.query.get(active_tenant_id)
         if t:
             tenant_name = t.name
+            is_setup_complete = bool(t.is_setup_complete)
+
+    # Branch (school-unit) scope. None = unrestricted (all branches), incl.
+    # platform admins. g.current_user / g.tenant_id are already set here.
+    from core.branch_scope import get_allowed_unit_ids
+    _allowed_units = get_allowed_unit_ids()
+    allowed_unit_ids = sorted(_allowed_units) if _allowed_units is not None else None
 
     return success_response(
         data={
@@ -712,6 +817,10 @@ def get_profile():
             'roles': roles,
             'permissions': permissions,
             'enabled_features': enabled_features,
+            'is_platform_admin': is_platform_admin,
+            'is_subadmin': is_subadmin,
+            'is_setup_complete': is_setup_complete,
+            'allowed_unit_ids': allowed_unit_ids,
         },
         status_code=200
     )
@@ -842,3 +951,51 @@ def upload_profile_picture():
 def upload_profile_picture_short():
     """Upload profile photo. multipart: file or picture."""
     return _upload_profile_picture_handler()
+
+
+# ==================== SELF-SERVE PASSWORD CHANGE ====================
+
+@auth_bp.route('/password/change', methods=['POST'])
+@auth_required
+def change_password():
+    """Change the authenticated user's password.
+
+    Body:
+        - current_password (required)
+        - new_password (required)
+        - revoke_other_sessions (optional, bool — default False)
+
+    Responses:
+        200: {data: {revoked_sessions: int}}
+        400: missing fields
+        401: current password is wrong
+        422: new password is weak or identical to current
+    """
+    data = request.get_json(silent=True) or {}
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    revoke = bool(data.get("revoke_other_sessions", False))
+
+    if not current_password or not new_password:
+        return error_response(
+            error="ValidationError",
+            message="current_password and new_password are required",
+            status_code=400,
+        )
+
+    try:
+        result = services.change_password(
+            user_id=g.current_user.id,
+            current_password=current_password,
+            new_password=new_password,
+            revoke_other_sessions=revoke,
+        )
+    except services.PasswordChangeError as e:
+        status = 401 if e.code == "current_password_invalid" else 422
+        return error_response(
+            error=e.code,
+            message=str(e) or e.code,
+            status_code=status,
+        )
+
+    return success_response(data=result)

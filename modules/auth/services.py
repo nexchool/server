@@ -41,6 +41,7 @@ def generate_access_token(user: User, access_minutes: Optional[int] = None) -> s
     payload = {
         "sub": str(user.id),
         "email": user.email,
+        "is_platform_admin": bool(getattr(user, "is_platform_admin", False)),
         "type": "access",
         "iat": datetime.utcnow(),
         "exp": datetime.utcnow() + timedelta(minutes=minutes),
@@ -295,6 +296,48 @@ def authenticate_user(
     return user
 
 
+def authenticate_platform_admin(email: str, password: str) -> Optional[User]:
+    """
+    Authenticate a platform super-admin by email + password across all tenants.
+
+    A platform admin's User row is not tied to the target tenant, so this search
+    is intentionally NOT tenant-scoped. Used for "god-login": a platform admin
+    signs into any tenant's admin-web with their own credentials.
+
+    Returns the matching platform-admin User (is_platform_admin=True,
+    deleted_at IS NULL, password valid), or None. If multiple platform-admin rows
+    share the email, the first match (ordered by id) is returned deterministically.
+    """
+    # A god-login request has already resolved the *entered* tenant, so
+    # g.tenant_id is set. The before_compile listener in core/database.py would
+    # auto-scope this query to that tenant and never find the platform admin
+    # (who lives in their own tenant). Temporarily clear g.tenant_id for this
+    # intentional cross-tenant lookup, then restore it.
+    from flask import has_request_context, g
+
+    had_tenant = False
+    saved_tenant_id = None
+    if has_request_context() and getattr(g, "tenant_id", None) is not None:
+        had_tenant = True
+        saved_tenant_id = g.tenant_id
+        g.tenant_id = None
+    try:
+        candidates = (
+            User.query.filter_by(email=email, is_platform_admin=True)
+            .filter(User.deleted_at.is_(None))
+            .order_by(User.id)
+            .all()
+        )
+    finally:
+        if had_tenant:
+            g.tenant_id = saved_tenant_id
+
+    for user in candidates:
+        if user.check_password(password):
+            return user
+    return None
+
+
 def find_users_by_email_password(
     email: str,
     password: str,
@@ -308,7 +351,7 @@ def find_users_by_email_password(
     Returns:
         List of (user, tenant) for active tenants only. Empty if no match.
     """
-    users = User.query.filter_by(email=email).all()
+    users = User.query.filter_by(email=email).filter(User.deleted_at.is_(None)).all()
     matches: List[Tuple[User, Tenant]] = []
     for u in users:
         if not u.check_password(password):
@@ -373,9 +416,100 @@ def logout_user(refresh_token: str) -> bool:
         refresh_token=refresh_token,
         revoked=False
     ).first()
-    
+
     if not session:
         return False
-    
+
     session.revoke()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Self-serve password change (nexchool Slice 4)
+# ---------------------------------------------------------------------------
+
+class PasswordChangeError(Exception):
+    """Raised when password change fails for a domain reason.
+
+    The route layer maps codes to HTTP statuses:
+        current_password_invalid → 401
+        password_weak            → 422
+        password_unchanged       → 422
+    """
+
+    def __init__(self, code: str, message: str = ""):
+        super().__init__(message or code)
+        self.code = code
+
+
+def _is_password_strong(password: str) -> bool:
+    """Strength rule: at least 8 chars AND at least one digit."""
+    if not isinstance(password, str) or len(password) < 8:
+        return False
+    if not any(c.isdigit() for c in password):
+        return False
+    return True
+
+
+def change_password(
+    *,
+    user_id: str,
+    current_password: str,
+    new_password: str,
+    revoke_other_sessions: bool = False,
+    current_session_id: Optional[str] = None,
+) -> Dict:
+    """Change an authenticated user's password.
+
+    Args:
+        user_id: ID of the authenticated user.
+        current_password: Existing password (must match).
+        new_password: Proposed new password.
+        revoke_other_sessions: When True, revoke every other un-revoked
+            Session for this user except current_session_id.
+        current_session_id: If supplied, this session is preserved when
+            revoke_other_sessions=True.
+
+    Returns:
+        {"revoked_sessions": int}
+
+    Raises:
+        PasswordChangeError with .code in:
+            - "current_password_invalid"
+            - "password_weak"
+            - "password_unchanged"
+    """
+    user = User.query.get(user_id)
+    if user is None or not user.check_password(current_password):
+        raise PasswordChangeError("current_password_invalid")
+
+    if current_password == new_password:
+        raise PasswordChangeError("password_unchanged")
+
+    if not _is_password_strong(new_password):
+        raise PasswordChangeError("password_weak")
+
+    user.set_password(new_password)
+
+    revoked = 0
+    if revoke_other_sessions:
+        # Guard against the route layer forgetting to pass current_session_id.
+        # Without it, the loop below would revoke the caller's own session and
+        # log them out immediately after password change.
+        if not current_session_id:
+            raise PasswordChangeError(
+                code="current_session_required",
+                message=(
+                    "revoke_other_sessions=True requires current_session_id "
+                    "so the active session is preserved."
+                ),
+            )
+        q = Session.query.filter_by(user_id=user.id, revoked=False).filter(
+            Session.id != current_session_id
+        )
+        for session in q.all():
+            session.revoke()
+            revoked += 1
+
+    db.session.commit()
+    return {"revoked_sessions": revoked}

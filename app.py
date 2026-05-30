@@ -139,6 +139,9 @@ def register_blueprints(app: Flask):
     from modules.devices import devices_bp
     from modules.dashboard import dashboard_bp
     from modules.hostel import hostel_bp
+    from modules.student_leaves import student_leaves_bp
+    from modules.announcements import announcements_bp
+    from modules.search import search_bp
 
     # Multi-school structure (Phase 2): real blueprints.
     from modules.school_units import school_units_bp
@@ -153,6 +156,8 @@ def register_blueprints(app: Flask):
     from modules.subscription import subscription_bp
     # Audit log
     from modules.audit.routes import audit_bp
+    # Sub-admins (tenant-scoped admin management)
+    from modules.sub_admins import sub_admins_bp
 
     # Register blueprints with URL prefixes
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -175,6 +180,9 @@ def register_blueprints(app: Flask):
     app.register_blueprint(devices_bp, url_prefix='/api/devices')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(hostel_bp, url_prefix='/api/hostel')
+    app.register_blueprint(student_leaves_bp, url_prefix='/api/student-leaves')
+    app.register_blueprint(announcements_bp, url_prefix='/api/announcements')
+    app.register_blueprint(search_bp, url_prefix='/api/search')
 
     # Multi-school structure
     app.register_blueprint(school_units_bp, url_prefix='/api/school-units')
@@ -187,6 +195,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(mediums_bp, url_prefix='/api/mediums')
     app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
     app.register_blueprint(audit_bp)
+    app.register_blueprint(sub_admins_bp, url_prefix='/api/sub-admins')
 
 
 def register_error_handlers(app: Flask):
@@ -270,6 +279,10 @@ def register_error_handlers(app: Flask):
             'error': 'InternalServerError',
             'message': 'An internal server error occurred'
         }), 500
+
+    # Branch-scope (per-sub-admin) violations -> 403 JSON.
+    from core.branch_scope import register_branch_scope_error_handler
+    register_branch_scope_error_handler(app)
 
     @app.after_request
     def set_tenant_safe_cache_headers(response):

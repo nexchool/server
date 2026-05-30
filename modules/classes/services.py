@@ -186,7 +186,12 @@ def get_all_classes(
     All filters are AND-ed and applied alongside the existing tenant scope
     that TenantBaseModel adds automatically.
     """
+    from core.branch_scope import filter_classes_by_branch
+
     query = Class.query
+    # Branch scope backstop: restrict to allowed branches even if no client
+    # school_unit_id filter is supplied. No-op for unrestricted users.
+    query = filter_classes_by_branch(query)
     if academic_year_id:
         query = query.filter(Class.academic_year_id == academic_year_id)
     if school_unit_id:
@@ -630,6 +635,13 @@ def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
 
 def get_unassigned_students(class_id: str) -> List[Dict]:
     """Get students not assigned to any class (for assignment picker)."""
+    from core.branch_scope import get_allowed_unit_ids
+    # Classless students belong to no branch, so a branch-restricted sub-admin
+    # must see none (graceful empty picker, not a 403). A restricted admin can't
+    # assign a classless student anyway (assert_student_allowed denies classless).
+    if get_allowed_unit_ids() is not None:
+        return []
+
     from modules.students.models import Student
     students = Student.query.filter(
         db.or_(Student.class_id.is_(None), Student.class_id == '')

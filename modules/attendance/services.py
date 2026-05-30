@@ -14,6 +14,14 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import joinedload
 
 from core.database import db
+from core.branch_scope import (
+    BranchForbidden,
+    assert_class_allowed,
+    assert_student_allowed,
+    assert_unit_allowed,
+    filter_by_class_ids,
+    get_allowed_unit_ids,
+)
 from core.tenant import get_tenant_id
 from modules.academics.backbone.models import AttendanceRecord, AttendanceSession
 from modules.auth.models import User
@@ -75,6 +83,9 @@ def mark_attendance(
         if not cls:
             return {"success": False, "error": "Class not found"}
 
+        # Branch scope: restricted sub-admins may only mark classes in their units.
+        assert_class_allowed(class_id)
+
         att_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
         if att_date > date.today():
@@ -131,6 +142,8 @@ def mark_attendance(
             "source": "sessions_v2",
         }
 
+    except BranchForbidden:
+        raise
     except ValueError as e:
         return {"success": False, "error": f"Invalid date format: {str(e)}"}
     except Exception as e:
@@ -229,6 +242,9 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
         )
         if not cls:
             return {"success": False, "error": "Class not found"}
+
+        # Branch scope: restricted sub-admins may only read classes in their units.
+        assert_class_allowed(class_id)
 
         att_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         tenant_id = get_tenant_id()
@@ -332,6 +348,8 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
             session=None,
         )
 
+    except BranchForbidden:
+        raise
     except ValueError:
         return {"success": False, "error": "Invalid date format. Use YYYY-MM-DD"}
     except Exception as e:
@@ -346,6 +364,9 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
         student = Student.query.get(student_id)
         if not student:
             return {"success": False, "error": "Student not found"}
+
+        # Branch scope: restricted sub-admins may only read students in their units.
+        assert_student_allowed(student_id)
 
         tenant_id = get_tenant_id()
 
@@ -455,6 +476,8 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
             },
         }
 
+    except BranchForbidden:
+        raise
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -516,6 +539,15 @@ def list_attendance_records(
     if not tenant_id:
         return {"success": False, "error": "Tenant context is required"}
 
+    # Branch scope: assert any explicit class/unit filter is in-branch (403 if
+    # a restricted user passes an out-of-branch id), then apply the backstop
+    # class filter below so scope holds even without a filter param. No-op when
+    # unrestricted.
+    if class_id:
+        assert_class_allowed(class_id)
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
+
     single = _parse_iso_date(date)
     range_from = _parse_iso_date(date_from)
     range_to = _parse_iso_date(date_to)
@@ -544,6 +576,10 @@ def list_attendance_records(
         if academic_year_id:
             class_filter = class_filter.filter(Class.academic_year_id == academic_year_id)
         query = query.filter(Attendance.class_id.in_(class_filter))
+
+    # Branch-scope backstop: restrict to attendance rows whose class is in an
+    # allowed branch. No-op when unrestricted.
+    query = filter_by_class_ids(query, Attendance.class_id)
 
     query = query.order_by(Attendance.date.desc(), Attendance.class_id)
 

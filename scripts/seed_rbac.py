@@ -59,7 +59,23 @@ PERMISSIONS = [
     ('teacher.manage', 'Full teacher management access'),
     ('teacher.leave.apply', 'Apply for leave as a teacher'),
     ('teacher.leave.manage', 'View and manage all teacher leave requests'),
-    
+
+    # Student leave permissions
+    ('student.leave.apply', 'Apply for a leave as a student'),
+    ('student.leave.read.own', "Read one's own student leave requests"),
+    ('student.leave.read.class', "Read leave requests for the teacher's classes"),
+    ('student.leave.read.all', 'Read all student leave requests in the tenant'),
+    ('student.leave.approve.class', "Approve/reject leave requests for the teacher's classes"),
+    ('student.leave.approve.all', 'Approve/reject any student leave request (admin fallback)'),
+    ('student.leave.request_cancel', 'Request cancellation of an own leave (student)'),
+
+    # Announcement permissions
+    ('announcement.create', 'Create announcements as an admin'),
+    ('announcement.update', 'Edit/append revisions to announcements'),
+    ('announcement.recall', 'Recall a published announcement'),
+    ('announcement.read.own', 'Read announcements where I am a recipient'),
+    ('announcement.read.all', 'Read all announcements in the tenant (admin)'),
+
     # Attendance permissions
     ('attendance.read.self', 'View own attendance'),
     ('attendance.read.class', 'View class attendance'),
@@ -189,6 +205,9 @@ PERMISSIONS = [
     # Audit log
     ('audit_log.view', 'View tenant audit log'),
 
+    # Sub-admin management
+    ('subadmin.manage', 'Manage sub-admin accounts and their permissions'),
+
     # Hostel module
     ('hostel.read', 'View hostels, rooms, and beds'),
     ('hostel.manage', 'Create / update / delete hostels, rooms, and beds'),
@@ -231,6 +250,13 @@ ROLES = {
             'fees.payment.record',
             'fees.receipt.download',
             'teacher.leave.manage',
+            'student.leave.read.all',
+            'student.leave.approve.all',
+            'announcement.create',
+            'announcement.update',
+            'announcement.recall',
+            'announcement.read.own',
+            'announcement.read.all',
             'holiday.manage',
             'class_subject.manage',
             'class_teacher.manage',
@@ -243,9 +269,10 @@ ROLES = {
             'grade.manage',
             'religion.manage',
             'academic_term.manage',
-            'school_setup.manage',
             # Audit log
             'audit_log.view',
+            # Sub-admin management
+            'subadmin.manage',
             # Hostel
             'hostel.read',
             'hostel.manage',
@@ -274,6 +301,9 @@ ROLES = {
             'subject.read',
             'timetable.read',
             'teacher.leave.apply',
+            'student.leave.read.class',
+            'student.leave.approve.class',
+            'announcement.read.own',
             'holiday.read',
             'class_subject.read',
             'academics.read',
@@ -297,6 +327,10 @@ ROLES = {
             'academics.read',
             'transport.info.read.self',
             'transport.student.read_own',
+            'student.leave.apply',
+            'student.leave.read.own',
+            'student.leave.request_cancel',
+            'announcement.read.own',
         ]
     },
     'Parent': {
@@ -310,6 +344,7 @@ ROLES = {
             'holiday.read',
             'transport.info.read.self',
             'transport.student.read_own',
+            'announcement.read.own',
         ]
     },
 }

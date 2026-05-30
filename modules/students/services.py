@@ -325,8 +325,11 @@ def create_student(
 
         # Create User with login credentials if email provided
         if email:
-            # Check if email already exists in this tenant
-            existing_user = User.get_user_by_email(email, tenant_id=tenant_id)
+            # Check if email already exists in this tenant. Include soft-deleted
+            # rows: the (email, tenant_id) unique constraint is not scoped to
+            # deleted_at, so a soft-deleted email must be caught here to avoid an
+            # IntegrityError on insert.
+            existing_user = User.get_user_by_email(email, tenant_id=tenant_id, include_deleted=True)
             if existing_user:
                 # Check if already linked to a student in this tenant
                 if Student.query.filter_by(user_id=existing_user.id).first():
@@ -581,7 +584,13 @@ def list_students(
     to limit results to classes the teacher owns; it's AND-ed with any client
     class filters.
     """
+    from core.branch_scope import filter_students_by_branch
+
     query = Student.query.join(User)
+
+    # Branch scope backstop: restrict to students in allowed-branch classes
+    # (classless excluded) regardless of client filters. No-op if unrestricted.
+    query = filter_students_by_branch(query)
 
     # Teacher scope: hard ceiling on which classes are visible at all.
     if _restrict_class_ids is not None:

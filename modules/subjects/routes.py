@@ -40,6 +40,17 @@ def list_subjects():
     return success_response(data=subjects)
 
 
+@subjects_bp.route("/mine", methods=["GET"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature("class_management")
+@require_permission("academics.read")
+def list_my_subjects():
+    """List subjects scoped to the current user's role (admin/teacher/student)."""
+    subjects = services.get_subjects_for_user(g.tenant_id, g.current_user)
+    return success_response(data=subjects)
+
+
 @subjects_bp.route("/", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required

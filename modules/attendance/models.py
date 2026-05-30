@@ -20,6 +20,12 @@ class Attendance(TenantBaseModel):
     student_id = db.Column(db.String(36), db.ForeignKey("students.id"), nullable=False)
     status = db.Column(db.String(10), nullable=False)  # present / absent / late
     remarks = db.Column(db.Text, nullable=True)
+    leave_id = db.Column(
+        db.String(36),
+        db.ForeignKey("student_leaves.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Who marked the attendance
     marked_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
@@ -57,6 +63,7 @@ class Attendance(TenantBaseModel):
             "admission_number": self.student.admission_number if self.student else None,
             "status": self.status,
             "remarks": self.remarks,
+            "leave_id": self.leave_id,
             "marked_by": self.marked_by,
             "marked_by_name": self.marker.name if self.marker else None,
             "created_at": self.created_at.isoformat(),

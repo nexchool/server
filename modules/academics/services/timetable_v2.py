@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.exc import IntegrityError
 
+from core.branch_scope import assert_class_allowed
 from core.database import db
 from modules.academics.backbone.models import (
     AcademicSettings,
@@ -155,6 +156,7 @@ def list_versions(tenant_id: str, class_id: str, *, include_drafts: bool = True)
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     q = TimetableVersion.query.filter_by(tenant_id=tenant_id, class_id=class_id)
     if not include_drafts:
         q = q.filter(TimetableVersion.status == "active")
@@ -166,6 +168,7 @@ def create_version(tenant_id: str, class_id: str, data: Dict[str, Any], user_id:
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     settings = get_academic_settings(tenant_id)
     default_bell = settings["settings"].get("default_bell_schedule_id")
@@ -201,6 +204,7 @@ def create_version(tenant_id: str, class_id: str, data: Dict[str, Any], user_id:
 def update_version(
     tenant_id: str, class_id: str, version_id: str, data: Dict[str, Any]
 ) -> Dict[str, Any]:
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     v = TimetableVersion.query.filter_by(
         id=version_id, tenant_id=tenant_id, class_id=class_id
     ).first()
@@ -231,6 +235,7 @@ def activate_version(tenant_id: str, class_id: str, version_id: str) -> Dict[str
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     target = TimetableVersion.query.filter_by(
         id=version_id, tenant_id=tenant_id, class_id=class_id
@@ -257,6 +262,7 @@ def activate_version(tenant_id: str, class_id: str, version_id: str) -> Dict[str
 
 
 def delete_version(tenant_id: str, class_id: str, version_id: str) -> Dict[str, Any]:
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     v = TimetableVersion.query.filter_by(
         id=version_id, tenant_id=tenant_id, class_id=class_id
     ).first()
@@ -280,6 +286,7 @@ def clone_active_to_draft(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     active = (
         TimetableVersion.query.filter_by(tenant_id=tenant_id, class_id=class_id)
@@ -535,6 +542,7 @@ def list_entries_for_active_or_draft(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     if reader_mode:
         # Non-admins: only the published (active) timetable — never drafts or archived.
@@ -609,6 +617,7 @@ def list_entries_for_active_or_draft(
 
 
 def create_entry(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     version_id = data.get("timetable_version_id")
     if not version_id:
         return {"success": False, "error": "timetable_version_id is required"}
@@ -685,6 +694,7 @@ def create_entry(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[st
 def update_entry(
     tenant_id: str, class_id: str, entry_id: str, data: Dict[str, Any]
 ) -> Dict[str, Any]:
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     e = TimetableEntry.query.filter_by(id=entry_id, tenant_id=tenant_id).first()
     if not e:
         return {"success": False, "error": "Entry not found"}
@@ -762,6 +772,7 @@ def update_entry(
 
 
 def delete_entry(tenant_id: str, class_id: str, entry_id: str) -> Dict[str, Any]:
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     e = TimetableEntry.query.filter_by(id=entry_id, tenant_id=tenant_id).first()
     if not e:
         return {"success": False, "error": "Entry not found"}
@@ -798,6 +809,7 @@ def move_entry(
 
 
 def swap_entries(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     a_id = data.get("entry_a_id")
     b_id = data.get("entry_b_id")
     if not a_id or not b_id or a_id == b_id:
@@ -914,6 +926,7 @@ def generate_draft(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     settings = get_academic_settings(tenant_id)
     default_bell = settings["settings"].get("default_bell_schedule_id")
@@ -1055,6 +1068,7 @@ def get_today_schedule(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     d = on_date or date.today()
     # ISO 1=Mon … 7=Sun (matches _working_weekdays / TimetableEntry.day_of_week)

@@ -33,6 +33,7 @@ def make_celery(app):
             "tasks.push_notifications",
             "tasks.hostel",
             "modules.school_setup.retention_tasks",
+            "modules.announcements.tasks",
         ],
     )
     # Use new lowercase config keys; avoid celery.conf.update(app.config) to prevent old-key conflicts
@@ -59,6 +60,14 @@ def make_celery(app):
         "hostel-mark-overdue-gatepasses": {
             "task": "hostel.mark_overdue_gatepasses",
             "schedule": 300.0,  # 5 minutes
+        },
+        "announcements-process-scheduled": {
+            "task": "announcements.process_scheduled",
+            "schedule": 60.0,  # every minute
+        },
+        "announcements-sweep-orphan-attachments": {
+            "task": "announcements.sweep_orphan_attachments",
+            "schedule": 86400.0,  # daily
         },
     }
     # Default cwd is /app (owned by app) but a root-owned celerybeat-schedule from an old run breaks beat.

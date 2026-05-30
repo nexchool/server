@@ -8,6 +8,12 @@ from sqlalchemy import case
 
 from core.database import db
 from core.tenant import get_tenant_id
+from core.branch_scope import (
+    assert_class_allowed,
+    assert_student_allowed,
+    filter_fees_by_branch,
+    get_allowed_unit_ids,
+)
 from modules.finance.models import (
     FeeStructure,
     FeeComponent,
@@ -36,6 +42,15 @@ def get_finance_summary(
     from sqlalchemy import func
 
     from .payment_service import list_recent_payments
+
+    # Branch scope: a restricted sub-admin gets a finance dashboard scoped to
+    # their allowed branches instead of a denial. With an explicit class_id we
+    # still assert it is allowed (per-class view); without one the aggregate is
+    # constrained to the caller's allowed-branch students via
+    # filter_fees_by_branch below, so the totals reflect ONLY their branches and
+    # never span other branches. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None and class_id:
+        assert_class_allowed(class_id)
 
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -66,6 +81,11 @@ def get_finance_summary(
         .filter(StudentFee.tenant_id == tenant_id)
         .join(Student, StudentFee.student_id == Student.id)
     )
+    # Restrict the aggregate to the caller's allowed-branch students. Same
+    # tenant-scoped allowed-student subquery the list endpoints use, so a
+    # restricted user's totals exclude every other branch. No-op when
+    # unrestricted.
+    query = filter_fees_by_branch(query, StudentFee.student_id)
     if academic_year_id:
         query = query.join(
             FeeStructure, StudentFee.fee_structure_id == FeeStructure.id
@@ -110,10 +130,19 @@ def list_student_fees(
 
     from core.feature_flags import is_feature_enabled
 
+    # Branch scope: assert explicit student/class filters first, then restrict
+    # the whole list to the caller's allowed-branch students. No-op when
+    # unrestricted.
+    if student_id:
+        assert_student_allowed(student_id)
+    if class_id:
+        assert_class_allowed(class_id)
+
     transport_off = not is_feature_enabled(tenant_id, "transport")
     query = StudentFee.query.filter_by(tenant_id=tenant_id).join(
         Student, StudentFee.student_id == Student.id
     )
+    query = filter_fees_by_branch(query, StudentFee.student_id)
     # Exclude transport-only fees when transport is disabled. We use a
     # subquery filter instead of a join to avoid duplicate-join conflicts
     # later in this function (academic_year_id also joins FeeStructure).
@@ -204,6 +233,10 @@ def get_student_fee(fee_id: str) -> Optional[Dict]:
     sf = StudentFee.query.filter_by(id=fee_id, tenant_id=tenant_id).first()
     if not sf:
         return None
+
+    # Branch scope: only students in the caller's branches. No-op when
+    # unrestricted.
+    assert_student_allowed(sf.student_id)
 
     d = sf.to_dict()
     d["items"] = [i.to_dict() for i in sf.items]
@@ -427,6 +460,11 @@ def remove_student_fee_for_structure(
     ).first()
     if not sf:
         return {"success": False, "error": "Student fee not found"}
+
+    # Branch scope: a restricted sub-admin may only remove fee assignments for
+    # students in their branches. Raised before the try/except below so it
+    # surfaces as 403. No-op for unrestricted users.
+    assert_student_allowed(student_id)
 
     try:
         # Prevent deletion if there are successful payments

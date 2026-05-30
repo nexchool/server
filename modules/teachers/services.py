@@ -129,8 +129,10 @@ def create_teacher(
         if not allowed:
             return {'success': False, 'error': limit_msg}
 
-        # Check email uniqueness (tenant-scoped)
-        existing_user = User.get_user_by_email(actual_email, tenant_id=tenant_id)
+        # Check email uniqueness (tenant-scoped). Include soft-deleted rows: the
+        # (email, tenant_id) unique constraint is not scoped to deleted_at, so a
+        # soft-deleted email must be caught here to avoid an IntegrityError on insert.
+        existing_user = User.get_user_by_email(actual_email, tenant_id=tenant_id, include_deleted=True)
         if existing_user:
             if Teacher.query.filter_by(user_id=existing_user.id).first():
                 return {'success': False, 'error': 'Email already linked to another teacher'}

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
+from core.branch_scope import assert_class_allowed
 from core.database import db
 from modules.academics.backbone.models import AcademicTerm
 from modules.classes.models import ClassSubject
@@ -42,6 +43,7 @@ def list_for_class(tenant_id: str, class_id: str) -> Dict[str, Any]:
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     rows = (
         ClassSubject.query.filter_by(tenant_id=tenant_id, class_id=class_id)
         .filter(ClassSubject.deleted_at.is_(None))
@@ -55,6 +57,7 @@ def create_offering(tenant_id: str, class_id: str, data: Dict[str, Any]) -> Dict
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     subject_id = data.get("subject_id")
     if not subject_id:
@@ -117,6 +120,7 @@ def update_offering(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     cs = ClassSubject.query.filter_by(
         id=class_subject_id, tenant_id=tenant_id, class_id=class_id
@@ -158,6 +162,7 @@ def delete_offering(tenant_id: str, class_id: str, class_subject_id: str) -> Dic
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     cs = ClassSubject.query.filter_by(
         id=class_subject_id, tenant_id=tenant_id, class_id=class_id

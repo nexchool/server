@@ -18,6 +18,13 @@ from shared.helpers import (
     validation_error_response,
     forbidden_response,
 )
+from core.branch_scope import (
+    BranchForbidden,
+    assert_class_allowed,
+    assert_student_allowed,
+    assert_unit_allowed,
+    get_allowed_unit_ids,
+)
 from . import services
 from .document_schemas import validate_document_type
 from .student_schemas import validate_student_payload
@@ -135,6 +142,17 @@ def list_students():
     programme_id = request.args.get('programme_id') or None
     grade_id = request.args.get('grade_id') or None
 
+    # Branch scope: reject client class/unit filters outside a restricted
+    # sub-admin's branches (403). No-op for unrestricted users. The service
+    # applies the branch backstop filter regardless of these params.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
+    if class_id:
+        assert_class_allowed(class_id)
+    if class_ids:
+        for cid in class_ids:
+            assert_class_allowed(cid)
+
     common_kwargs = dict(
         academic_year_id=academic_year_id,
         search=search,
@@ -220,6 +238,21 @@ def create_student():
         return validation_error_response(f"Missing required fields: {', '.join(missing)}")
     if not data.get('academic_year_id') and not data.get('class_id'):
         return validation_error_response("academic_year_id or class_id is required")
+
+    # Branch scope: a restricted sub-admin can only create a student inside an
+    # allowed branch. A classless student has no branch and would be invisible
+    # to them, so fail closed (422). No-op for unrestricted users (classless
+    # create stays allowed).
+    class_id = data.get('class_id')
+    if class_id:
+        assert_class_allowed(class_id)
+    elif get_allowed_unit_ids() is not None:
+        return error_response(
+            'UnprocessableEntity',
+            "Branch-restricted admins must assign the student to a class in "
+            "one of their branches.",
+            422,
+        )
 
     # Call service
     result = services.create_student(
@@ -357,6 +390,15 @@ def promotion_preview():
       include_failed?: bool (default true; when false, skip students with academic_result fail)
     }
     """
+    # Branch scope: tenant-wide promotion preview spans all branches; a
+    # branch-restricted sub-admin may not run it. Fail closed. No-op for
+    # unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot run tenant-wide promotion preview; "
+            "contact a full admin."
+        )
+
     data = request.get_json() or {}
     from_year_id = (data.get("from_year_id") or "").strip()
     to_year_id = (data.get("to_year_id") or "").strip()
@@ -394,6 +436,14 @@ def promotion_execute():
     Execute promotion in one transaction. Returns promotion_batch_id for audit logs.
     Optional body: exclude_leaving, include_failed (same as preview).
     """
+    # Branch scope: tenant-wide promotion spans all branches; a branch-restricted
+    # sub-admin may not run it. Fail closed. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot run tenant-wide promotion; "
+            "contact a full admin."
+        )
+
     data = request.get_json() or {}
     from_year_id = (data.get("from_year_id") or "").strip()
     to_year_id = (data.get("to_year_id") or "").strip()
@@ -446,6 +496,14 @@ def promotion_execute():
 @require_any_permission(PERM_READ_ALL, PERM_UPDATE, PERM_MANAGE)
 def promotion_history():
     """Paginated list of past StudentPromotionBatch rows for the tenant."""
+    # Branch scope: promotion history is tenant-wide; a branch-restricted
+    # sub-admin may not view it. Fail closed. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden(
+            "Branch-restricted admins cannot view tenant-wide promotion history; "
+            "contact a full admin."
+        )
+
     from .models import StudentPromotionBatch
     from modules.academics.academic_year.models import AcademicYear
 
@@ -530,6 +588,10 @@ def list_student_documents(student_id):
     if not student:
         return not_found_response('Student')
 
+    # Branch scope: a restricted sub-admin cannot reach a student's documents
+    # outside their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     # RBAC: same as get_student
     if has_permission(user_id, PERM_READ_ALL):
         result = services.list_student_documents(student_id)
@@ -563,6 +625,10 @@ def create_student_document(student_id):
     student = services.get_student_by_id(student_id)
     if not student:
         return not_found_response('Student')
+
+    # Branch scope: a restricted sub-admin cannot upload to a student outside
+    # their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
 
     file = request.files.get('file') or request.files.get('document')
     document_type_str = request.form.get('document_type')
@@ -621,6 +687,10 @@ def get_student_document_file(student_id, document_id):
     if not student:
         return not_found_response('Student')
 
+    # Branch scope: a restricted sub-admin cannot download a student's document
+    # file outside their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     allowed = False
     if has_permission(user_id, PERM_READ_ALL):
         allowed = True
@@ -665,6 +735,11 @@ def delete_student_document(student_id, document_id):
     student = services.get_student_by_id(student_id)
     if not student:
         return not_found_response('Student')
+
+    # Branch scope: a restricted sub-admin cannot delete a document of a student
+    # outside their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     result = services.delete_student_document(document_id, student_id)
     if result.get('success'):
         return success_response(message='Document deleted successfully')
@@ -683,7 +758,11 @@ def get_student(student_id):
     student = services.get_student_by_id(student_id)
     if not student:
         return not_found_response('Student')
-        
+
+    # Branch scope: a restricted sub-admin cannot view a student outside their
+    # branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
     # RBAC Checks
     # 1. Admin/Staff
     if has_permission(user_id, PERM_READ_ALL):
@@ -737,6 +816,25 @@ def update_student(student_id):
     user_id = g.current_user.id
     from modules.rbac.services import has_permission as _has_perm
 
+    data = request.get_json() or {}
+
+    # Branch scope: a restricted sub-admin cannot update a student outside
+    # their branches (403). No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
+    # A restricted sub-admin cannot move a student into a class outside their
+    # branches, nor un-class a student into a branch-invisible state.
+    allowed_units = get_allowed_unit_ids()
+    if allowed_units is not None and 'class_id' in data:
+        target_class_id = data.get('class_id')
+        if target_class_id:
+            assert_class_allowed(target_class_id)
+        else:
+            return validation_error_response(
+                "Branch-restricted admins must keep the student assigned to a "
+                "class in one of their branches."
+            )
+
     # If teacher (not admin), verify student is in their class
     if not _has_perm(user_id, PERM_READ_ALL):
         student = services.get_student_by_id(student_id)
@@ -746,8 +844,6 @@ def update_student(student_id):
         teacher_class_ids = get_teacher_class_ids(user_id)
         if student.get('class_id') not in teacher_class_ids:
             return unauthorized_response()
-
-    data = request.get_json() or {}
 
     err = validate_student_payload(data, is_update=True)
     if err:
@@ -848,6 +944,7 @@ def update_student(student_id):
 @require_permission(PERM_DELETE)
 def delete_student(student_id):
     """Delete student"""
+    assert_student_allowed(student_id)  # branch scope (no-op if unrestricted)
     result = services.delete_student(student_id)
     if result['success']:
         return success_response(message='Student deleted successfully')

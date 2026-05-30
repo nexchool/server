@@ -28,6 +28,7 @@ class Role(TenantBaseModel):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(50), nullable=False, index=True)
     description = db.Column(db.String(255), nullable=True)
+    is_subadmin = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships

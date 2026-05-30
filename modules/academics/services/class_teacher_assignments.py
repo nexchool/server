@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional
 
+from core.branch_scope import assert_class_allowed
 from core.database import db
 from modules.academics.backbone.models import ClassTeacherAssignment
 from modules.teachers.models import Teacher
@@ -57,6 +58,7 @@ def list_for_class(tenant_id: str, class_id: str) -> Dict[str, Any]:
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
     rows = (
         ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id, class_id=class_id)
         .filter(ClassTeacherAssignment.deleted_at.is_(None))
@@ -72,6 +74,7 @@ def create_assignment(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     teacher_id = data.get("teacher_id")
     if not teacher_id:
@@ -128,6 +131,7 @@ def update_assignment(
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     row = ClassTeacherAssignment.query.filter_by(
         id=assignment_id, tenant_id=tenant_id, class_id=class_id
@@ -176,6 +180,7 @@ def delete_assignment(tenant_id: str, class_id: str, assignment_id: str) -> Dict
     cls = get_class_for_tenant(class_id, tenant_id)
     if not cls:
         return {"success": False, "error": "Class not found"}
+    assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
     row = ClassTeacherAssignment.query.filter_by(
         id=assignment_id, tenant_id=tenant_id, class_id=class_id

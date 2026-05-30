@@ -9,6 +9,7 @@ from datetime import date
 from flask import g, request
 
 from modules.schedule import schedule_bp
+from core.branch_scope import BranchForbidden, get_allowed_unit_ids
 from core.decorators import (
     auth_required,
     tenant_required,
@@ -55,6 +56,11 @@ def get_all_slots_today():
     enriched with leave/unavailability and override data.
     Useful for identifying which classes need coverage.
     """
+    # Branch scope: tenant-wide coverage aggregate across every class — deny for
+    # branch-restricted sub-admins (per-class data lives in /class/<id>/... and
+    # the daily attendance/timetable routes which are themselves branch-scoped).
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Branch-restricted admins cannot access the tenant-wide coverage view")
     tenant_id = g.tenant_id
     slots = services.get_all_slots_today(tenant_id)
     return success_response(data=slots)
