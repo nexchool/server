@@ -9,7 +9,6 @@ from sqlalchemy import case
 from core.database import db
 from core.tenant import get_tenant_id
 from core.branch_scope import (
-    BranchForbidden,
     assert_class_allowed,
     assert_student_allowed,
     filter_fees_by_branch,
@@ -44,17 +43,14 @@ def get_finance_summary(
 
     from .payment_service import list_recent_payments
 
-    # Branch scope: this is a tenant-wide financial aggregate. A restricted
-    # sub-admin may only see it scoped to a single allowed class; without a
-    # class filter the total would span other branches, so deny. No-op for
-    # unrestricted users.
-    if get_allowed_unit_ids() is not None:
-        if class_id:
-            assert_class_allowed(class_id)
-        else:
-            raise BranchForbidden(
-                "Finance summary spans all branches; filter by an allowed class."
-            )
+    # Branch scope: a restricted sub-admin gets a finance dashboard scoped to
+    # their allowed branches instead of a denial. With an explicit class_id we
+    # still assert it is allowed (per-class view); without one the aggregate is
+    # constrained to the caller's allowed-branch students via
+    # filter_fees_by_branch below, so the totals reflect ONLY their branches and
+    # never span other branches. No-op for unrestricted users.
+    if get_allowed_unit_ids() is not None and class_id:
+        assert_class_allowed(class_id)
 
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -85,6 +81,11 @@ def get_finance_summary(
         .filter(StudentFee.tenant_id == tenant_id)
         .join(Student, StudentFee.student_id == Student.id)
     )
+    # Restrict the aggregate to the caller's allowed-branch students. Same
+    # tenant-scoped allowed-student subquery the list endpoints use, so a
+    # restricted user's totals exclude every other branch. No-op when
+    # unrestricted.
+    query = filter_fees_by_branch(query, StudentFee.student_id)
     if academic_year_id:
         query = query.join(
             FeeStructure, StudentFee.fee_structure_id == FeeStructure.id

@@ -16,8 +16,8 @@ from core.database import db
 logger = logging.getLogger(__name__)
 from core.tenant import get_tenant_id
 from core.branch_scope import (
-    BranchForbidden,
     assert_student_allowed,
+    filter_fees_by_branch,
     get_allowed_unit_ids,
 )
 from modules.finance.models import (
@@ -43,18 +43,22 @@ def list_recent_payments(limit: int = 10) -> List[Dict[str, Any]]:
     if not tenant_id:
         return []
 
-    # Branch scope: tenant-wide dashboard aggregate that cannot be cleanly
-    # scoped to a branch. Deny for restricted sub-admins. No-op when
-    # unrestricted.
-    if get_allowed_unit_ids() is not None:
-        raise BranchForbidden("Recent payments span all branches.")
-
-    payments = (
+    query = (
         Payment.query.filter_by(tenant_id=tenant_id, status=PaymentStatus.success.value)
         .options(
             joinedload(Payment.student_fee).joinedload(StudentFee.student).joinedload(Student.user),
         )
-        .order_by(Payment.created_at.desc())
+    )
+    # Branch scope: a restricted sub-admin sees only payments whose student
+    # belongs to one of their allowed-branch classes. We join StudentFee so the
+    # allowed-student subquery can constrain on StudentFee.student_id (the same
+    # filter the student-fee list uses), so no cross-branch payment row leaks.
+    # No-op when unrestricted.
+    if get_allowed_unit_ids() is not None:
+        query = query.join(StudentFee, Payment.student_fee_id == StudentFee.id)
+        query = filter_fees_by_branch(query, StudentFee.student_id)
+    payments = (
+        query.order_by(Payment.created_at.desc())
         .limit(limit)
         .all()
     )

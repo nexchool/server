@@ -693,17 +693,51 @@ def test_finance_structure_create_class_b_forbidden(
 
 
 # ===========================================================================
-# FINANCE — tenant-wide aggregates -> DENY for restricted
+# FINANCE — dashboard read-aggregates -> BRANCH-SCOPED for restricted
+# (summary + recent-payments). Must include ONLY the caller's branches.
 # ===========================================================================
 
-def test_finance_summary_no_class_denied_for_restricted(
+def test_finance_summary_no_class_branch_scoped_for_restricted(
     flask_app, db_session, tenant, student_fees, restricted_user
 ):
+    """Restricted user with NO class_id: 200 with unit-A-only totals.
+
+    Fixture: sf_a (unit A, total 1000), sf_b (unit B, 1000), sf_c (classless,
+    1000). The restricted user is bound to unit A, so the summary must reflect
+    ONLY sf_a — total_expected == 1000, not 2000/3000.
+    """
+    sf_a, _sf_b, _sf_c = student_fees
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = restricted_user
-        with pytest.raises(BranchForbidden):
-            student_fee_service.get_finance_summary()
+        result = student_fee_service.get_finance_summary()
+        # Only unit-A data: exactly sf_a's 1000. Unit-B + classless excluded.
+        assert result["total_expected"] == 1000.0
+        assert result["total_collected"] == 0.0
+        assert result["total_outstanding"] == 1000.0
+
+
+def test_finance_summary_no_class_excludes_other_branch_collected(
+    flask_app, db_session, tenant, student_fees, restricted_user
+):
+    """The scoped total_collected must NOT include unit-B's paid amount.
+
+    total_collected aggregates StudentFee.paid_amount. We mark BOTH sf_a (unit
+    A) and sf_b (unit B) as paid 200; a restricted (unit A) summary must collect
+    only sf_a's 200, never 400 (which would mean unit B leaked).
+    """
+    sf_a, sf_b, _sf_c = student_fees
+    sf_a.paid_amount = Decimal("200")
+    sf_b.paid_amount = Decimal("200")
+    db_session.flush()
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        result = student_fee_service.get_finance_summary()
+        # Unit A only: expected 1000, collected 200. Unit-B figures excluded.
+        assert result["total_expected"] == 1000.0
+        assert result["total_collected"] == 200.0  # NOT 400 (would mean unit B leaked)
+        assert result["total_outstanding"] == 800.0
 
 
 def test_finance_summary_class_a_ok_for_restricted(
@@ -714,37 +748,59 @@ def test_finance_summary_class_a_ok_for_restricted(
         g.tenant_id = tenant.id
         g.current_user = restricted_user
         result = student_fee_service.get_finance_summary(class_id=class_a.id)
-        assert "total_expected" in result
+        assert result["total_expected"] == 1000.0
 
 
-def test_finance_summary_unrestricted_ok(
-    flask_app, db_session, tenant, student_fees, unrestricted_user
+def test_finance_summary_class_b_param_forbidden_for_restricted(
+    flask_app, db_session, tenant, classes, student_fees, restricted_user
 ):
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = unrestricted_user
-        result = student_fee_service.get_finance_summary()
-        assert result["total_expected"] >= 0
-
-
-def test_finance_recent_payments_denied_for_restricted(
-    flask_app, db_session, tenant, finance_payments, restricted_user
-):
+    """An explicit out-of-branch class_id still 403s (existing assert)."""
+    _class_a, class_b = classes
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = restricted_user
         with pytest.raises(BranchForbidden):
-            payment_service.list_recent_payments(limit=10)
+            student_fee_service.get_finance_summary(class_id=class_b.id)
 
 
-def test_finance_recent_payments_unrestricted_ok(
-    flask_app, db_session, tenant, finance_payments, unrestricted_user
+def test_finance_summary_unrestricted_sees_all_branches(
+    flask_app, db_session, tenant, student_fees, unrestricted_user
+):
+    """Unrestricted admin: tenant-wide total incl. unit A + B + classless."""
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        result = student_fee_service.get_finance_summary()
+        # All three student_fees (1000 each) sum tenant-wide.
+        assert result["total_expected"] == 3000.0
+
+
+def test_finance_recent_payments_branch_scoped_for_restricted(
+    flask_app, db_session, tenant, student_fees, finance_payments, restricted_user
+):
+    """Restricted user: only unit-A payments, never unit-B rows.
+
+    finance_payments: pay 'a' (sf_a, unit A) + pay 'b' (sf_b, unit B). A
+    restricted (unit A) user must see only pay 'a'.
+    """
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = restricted_user
+        result = payment_service.list_recent_payments(limit=10)
+        ids = {p["id"] for p in result}
+        assert finance_payments["a"].id in ids
+        assert finance_payments["b"].id not in ids  # unit B excluded
+
+
+def test_finance_recent_payments_unrestricted_sees_all(
+    flask_app, db_session, tenant, student_fees, finance_payments, unrestricted_user
 ):
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = unrestricted_user
         result = payment_service.list_recent_payments(limit=10)
-        assert isinstance(result, list)
+        ids = {p["id"] for p in result}
+        assert {finance_payments["a"].id, finance_payments["b"].id} <= ids
 
 
 def test_finance_rollover_denied_for_restricted(
