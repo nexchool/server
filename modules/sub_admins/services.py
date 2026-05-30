@@ -237,6 +237,30 @@ def _get_branch_unit_ids(tenant_id: str, user_id: str) -> List[str]:
     return sorted(row[0] for row in rows)
 
 
+def build_tenant_login_url(subdomain: str) -> str:
+    """Build the admin-web login URL for a tenant subdomain.
+
+    The admin-web is reached on a per-tenant subdomain: ``{sub}.nexchool.in``
+    in prod, ``{sub}.localhost:3000`` in dev (see admin-web ``lib/subdomain.ts``
+    and the prod nginx ``app.nexchool.in`` host). Returns ``""`` when no
+    subdomain is known so the email simply omits the link rather than rendering
+    a broken one.
+
+    No server-side builder existed (the platform create-tenant flow receives
+    login_url from the panel), so this is the minimal tenant-aware builder for
+    the sub-admin credential / reset emails.
+    """
+    sub = (subdomain or "").strip().lower()
+    if not sub:
+        return ""
+
+    from config.settings import is_production
+
+    if is_production():
+        return f"https://{sub}.nexchool.in/login"
+    return f"http://{sub}.localhost:3000/login"
+
+
 def _dispatch_credentials_email(
     user: User,
     tenant_id: str,

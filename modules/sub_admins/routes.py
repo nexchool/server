@@ -16,6 +16,7 @@ from . import sub_admins_bp
 from .catalog import get_catalog
 from .services import (
     _UNSET,
+    build_tenant_login_url,
     create_sub_admin,
     delete_sub_admin,
     get_sub_admin,
@@ -27,6 +28,13 @@ from .services import (
 )
 
 _PERMISSION = "subadmin.manage"
+
+
+def _tenant_login_url():
+    """Admin-web login URL for the current tenant (subdomain-based)."""
+    return build_tenant_login_url(
+        getattr(getattr(g, "tenant", None), "subdomain", "") or ""
+    )
 
 
 def _fail(result):
@@ -89,6 +97,7 @@ def create_sub_admin_route():
         email=data.get("email"),
         password=data.get("password"),
         modules=data.get("modules") or [],
+        login_url=_tenant_login_url(),
         branch_unit_ids=data.get("branch_unit_ids") or [],
     )
     if not result["success"]:
@@ -171,6 +180,7 @@ def reset_sub_admin_password_route(user_id):
         user_id=user_id,
         actor_id=g.current_user.id,
         password=data.get("password"),
+        login_url=_tenant_login_url(),
     )
     if not result["success"]:
         return _fail(result)

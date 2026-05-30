@@ -471,3 +471,70 @@ def test_seeded_admin_has_subadmin_manage(db_session, seeded_tenant, mock_dispat
     db_session.flush()
 
     assert has_permission(admin_user.id, "subadmin.manage") is True
+
+
+# ---------------------------------------------------------------------------
+# Credential / reset emails carry a non-empty, tenant-correct login_url
+# ---------------------------------------------------------------------------
+
+def _dispatched_login_url(mock_dispatch, notification_type):
+    """Return extra_data['login_url'] from the matching dispatch call, or None."""
+    for call in mock_dispatch.dispatch.call_args_list:
+        if call.kwargs.get("notification_type") == notification_type:
+            return (call.kwargs.get("extra_data") or {}).get("login_url")
+    return None
+
+
+def test_build_tenant_login_url_is_subdomain_specific():
+    """The builder produces a tenant-subdomain admin-web login URL (dev/prod)."""
+    from modules.sub_admins.services import build_tenant_login_url
+
+    with patch("config.settings.is_production", return_value=False):
+        assert build_tenant_login_url("mts") == "http://mts.localhost:3000/login"
+    with patch("config.settings.is_production", return_value=True):
+        assert build_tenant_login_url("mts") == "https://mts.nexchool.in/login"
+    # No subdomain -> empty (email omits the link rather than rendering broken).
+    assert build_tenant_login_url("") == ""
+
+
+def test_create_email_carries_tenant_login_url(db_session, seeded_tenant, mock_dispatch):
+    """ADMIN_CREDENTIALS dispatch carries a non-empty, tenant-correct login_url."""
+    from modules.sub_admins.services import build_tenant_login_url
+
+    expected = build_tenant_login_url(seeded_tenant.subdomain)
+    assert expected  # sanity: tenant has a subdomain, so URL is non-empty
+
+    result = _create(seeded_tenant, email=_email(), login_url=expected)
+    assert result["success"], result
+
+    login_url = _dispatched_login_url(mock_dispatch, "ADMIN_CREDENTIALS")
+    assert login_url == expected
+    assert seeded_tenant.subdomain in login_url
+
+
+def test_reset_email_carries_tenant_login_url(db_session, seeded_tenant, mock_dispatch):
+    """ADMIN_PASSWORD_RESET dispatch carries a non-empty, tenant-correct login_url."""
+    from modules.auth.models import User
+    from modules.sub_admins.services import (
+        build_tenant_login_url,
+        reset_sub_admin_password,
+    )
+
+    email = _email()
+    _create(seeded_tenant, email=email)
+    user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
+
+    expected = build_tenant_login_url(seeded_tenant.subdomain)
+    res = reset_sub_admin_password(
+        tenant_id=seeded_tenant.id,
+        tenant_name=seeded_tenant.name,
+        user_id=user.id,
+        actor_id="someone-else",
+        password="newpassword2",
+        login_url=expected,
+    )
+    assert res["success"], res
+
+    login_url = _dispatched_login_url(mock_dispatch, "ADMIN_PASSWORD_RESET")
+    assert login_url == expected
+    assert seeded_tenant.subdomain in login_url
