@@ -37,6 +37,19 @@ def auth_required(fn):
     Response Headers:
         X-New-Access-Token: <new_access_token> (if token was refreshed)
     """
+    def _account_inactive(user):
+        """True if the user is soft-deleted or suspended.
+
+        A live access token outlives suspension/soft-delete (~15 min) unless we
+        re-check status on every request. Returning True here lets the caller
+        reject with 401 immediately, so revocation takes effect at once instead
+        of only on the next refresh.
+        """
+        return (
+            getattr(user, "deleted_at", None) is not None
+            or getattr(user, "is_suspended", False)
+        )
+
     @wraps(fn)
     def wrapper(*args, **kwargs):
         # CORS preflight: allow OPTIONS without auth
@@ -64,6 +77,14 @@ def auth_required(fn):
             if not user:
                 return jsonify({"error": "User not found"}), 401
 
+            # Re-check account status on every request so a suspension or
+            # soft-delete cuts the user off immediately, not when the live
+            # access token finally expires. 401 (not 403) routes admin-web
+            # through its logout+redirect-to-login path, where a re-login then
+            # surfaces the proper 403 AccountSuspended / invalid-credentials.
+            if _account_inactive(user):
+                return jsonify({"error": "Session expired"}), 401
+
             g.current_user = user
             return fn(*args, **kwargs)
 
@@ -87,6 +108,13 @@ def auth_required(fn):
 
         # Set current user from session
         user = session.user
+
+        # Defense in depth: the refresh path already revokes sessions on
+        # suspend/delete, but re-check here too so a stale-but-unrevoked
+        # session can never re-mint access for an inactive account.
+        if _account_inactive(user):
+            return jsonify({"error": "Session expired"}), 401
+
         g.current_user = user
 
         # Update session last accessed time
