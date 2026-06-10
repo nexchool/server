@@ -15,51 +15,73 @@ from modules.attendance.session_services import attendance_pending_for_class_tod
 def compute_health(tenant_id: str) -> Dict[str, Any]:
     today = date.today()
 
-    classes_without_subjects: List[Dict[str, str]] = []
-    for c in Class.query.filter_by(tenant_id=tenant_id).all():
-        n = (
-            ClassSubject.query.filter_by(tenant_id=tenant_id, class_id=c.id)
-            .filter(ClassSubject.deleted_at.is_(None), ClassSubject.status == "active")
-            .count()
-        )
-        if n == 0:
-            classes_without_subjects.append(
-                {"class_id": c.id, "class_name": f"{c.name}-{c.section}"}
-            )
+    # Load the tenant's classes once, then answer each question with a single
+    # batched query + in-memory set membership — no per-class / per-subject N+1.
+    classes = Class.query.filter_by(tenant_id=tenant_id).all()
+    class_map = {c.id: c for c in classes}
 
-    classes_without_timetable: List[Dict[str, str]] = []
-    for c in Class.query.filter_by(tenant_id=tenant_id).all():
-        has = TimetableVersion.query.filter_by(tenant_id=tenant_id, class_id=c.id).filter(
-            TimetableVersion.status == "active"
-        ).first()
-        if not has:
-            classes_without_timetable.append(
-                {"class_id": c.id, "class_name": f"{c.name}-{c.section}"}
-            )
+    def _label(c) -> str:
+        return f"{c.name}-{c.section}"
 
-    class_subjects_without_teacher: List[Dict[str, str]] = []
-    for cs in (
+    active_class_subjects = (
         ClassSubject.query.filter_by(tenant_id=tenant_id)
         .filter(ClassSubject.deleted_at.is_(None), ClassSubject.status == "active")
         .all()
-    ):
-        prim = (
-            ClassSubjectTeacher.query.filter(
-                ClassSubjectTeacher.class_subject_id == cs.id,
-                ClassSubjectTeacher.role == "primary",
-                ClassSubjectTeacher.is_active.is_(True),
-                ClassSubjectTeacher.deleted_at.is_(None),
-            ).first()
-        )
-        if not prim:
-            c = db.session.get(Class, cs.class_id)
-            class_subjects_without_teacher.append(
-                {
-                    "class_subject_id": cs.id,
-                    "class_id": cs.class_id,
-                    "class_name": f"{c.name}-{c.section}" if c else cs.class_id,
-                }
+    )
+
+    class_ids_with_subjects = {cs.class_id for cs in active_class_subjects}
+    classes_without_subjects: List[Dict[str, str]] = [
+        {"class_id": c.id, "class_name": _label(c)}
+        for c in classes
+        if c.id not in class_ids_with_subjects
+    ]
+
+    class_ids_with_timetable = {
+        cid
+        for (cid,) in (
+            db.session.query(TimetableVersion.class_id)
+            .filter(
+                TimetableVersion.tenant_id == tenant_id,
+                TimetableVersion.status == "active",
             )
+            .distinct()
+            .all()
+        )
+    }
+    classes_without_timetable: List[Dict[str, str]] = [
+        {"class_id": c.id, "class_name": _label(c)}
+        for c in classes
+        if c.id not in class_ids_with_timetable
+    ]
+
+    cs_ids = [cs.id for cs in active_class_subjects]
+    cs_ids_with_primary_teacher: set = set()
+    if cs_ids:
+        cs_ids_with_primary_teacher = {
+            csid
+            for (csid,) in (
+                db.session.query(ClassSubjectTeacher.class_subject_id)
+                .filter(
+                    ClassSubjectTeacher.class_subject_id.in_(cs_ids),
+                    ClassSubjectTeacher.role == "primary",
+                    ClassSubjectTeacher.is_active.is_(True),
+                    ClassSubjectTeacher.deleted_at.is_(None),
+                )
+                .distinct()
+                .all()
+            )
+        }
+    class_subjects_without_teacher: List[Dict[str, str]] = [
+        {
+            "class_subject_id": cs.id,
+            "class_id": cs.class_id,
+            "class_name": _label(class_map[cs.class_id])
+            if cs.class_id in class_map
+            else cs.class_id,
+        }
+        for cs in active_class_subjects
+        if cs.id not in cs_ids_with_primary_teacher
+    ]
 
     # Teacher double-booking: same teacher, same dow, same period, two active timetables
     conflicts: List[Dict[str, Any]] = []
@@ -101,7 +123,7 @@ def compute_health(tenant_id: str) -> Dict[str, Any]:
 
     attendance_pending: List[Dict[str, str]] = []
     if is_feature_enabled(tenant_id, "attendance"):
-        for c in Class.query.filter_by(tenant_id=tenant_id).all():
+        for c in classes:
             if attendance_pending_for_class_today(tenant_id, c.id, today):
                 attendance_pending.append(
                     {"class_id": c.id, "class_name": f"{c.name}-{c.section}"}
