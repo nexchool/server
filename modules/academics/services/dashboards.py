@@ -125,6 +125,12 @@ def student_dashboard(tenant_id: str, user_id: str) -> Dict[str, Any]:
     else:
         attendance_summary = None
 
+    if is_feature_enabled(tenant_id, "fees_management"):
+        from modules.finance.services.student_fee_service import student_fee_summary
+        fees_summary = student_fee_summary(st.id)
+    else:
+        fees_summary = None
+
     return {
         "success": True,
         "student_id": st.id,
@@ -133,6 +139,7 @@ def student_dashboard(tenant_id: str, user_id: str) -> Dict[str, Any]:
         "today_schedule": today_schedule,
         "weekly_timetable_preview": week_preview,
         "attendance_summary": attendance_summary,
+        "fees_summary": fees_summary,
     }
 
 
@@ -166,32 +173,12 @@ def admin_academic_dashboard(tenant_id: str) -> Dict[str, Any]:
             ).count()
         )
 
-    classes_without_timetable = 0
-    for c in Class.query.filter_by(tenant_id=tenant_id).all():
-        has = TimetableVersion.query.filter_by(tenant_id=tenant_id, class_id=c.id).filter(
-            TimetableVersion.status == "active"
-        ).first()
-        if not has:
-            classes_without_timetable += 1
-
-    subjects_without_teacher = 0
-    for cs in (
-        ClassSubject.query.filter_by(tenant_id=tenant_id)
-        .filter(ClassSubject.deleted_at.is_(None), ClassSubject.status == "active")
-        .all()
-    ):
-        prim = (
-            ClassSubjectTeacher.query.filter(
-                ClassSubjectTeacher.class_subject_id == cs.id,
-                ClassSubjectTeacher.role == "primary",
-                ClassSubjectTeacher.is_active.is_(True),
-                ClassSubjectTeacher.deleted_at.is_(None),
-            ).first()
-        )
-        if not prim:
-            subjects_without_teacher += 1
-
+    # These two counts are exactly the lengths of the lists compute_health()
+    # already builds (called once here), so derive them instead of re-issuing
+    # per-class / per-class-subject queries — removes a dashboard N+1.
     health = compute_health(tenant_id)
+    classes_without_timetable = len(health.get("classes_without_timetable", []))
+    subjects_without_teacher = len(health.get("class_subjects_without_teacher", []))
 
     return {
         "success": True,

@@ -112,6 +112,70 @@ def get_finance_summary(
     return result
 
 
+def student_fee_summary(student_id: str) -> Dict:
+    """Self-scoped fees summary for a single student's home dashboard.
+
+    Ownership is enforced by the caller, which resolves the Student by
+    user_id + tenant before calling this. Returns total_outstanding,
+    days_until_due (from the earliest still-owed due_date, negative when
+    overdue), and overdue_count.
+    """
+    from sqlalchemy import func
+
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"total_outstanding": 0.0, "days_until_due": None, "overdue_count": 0}
+
+    row = (
+        db.session.query(
+            func.coalesce(func.sum(StudentFee.total_amount), 0),
+            func.coalesce(func.sum(StudentFee.paid_amount), 0),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (StudentFee.status == StudentFeeStatus.overdue.value, 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+        )
+        .filter(
+            StudentFee.tenant_id == tenant_id,
+            StudentFee.student_id == student_id,
+        )
+        .first()
+    )
+    total_outstanding = round(float(row[0] or 0) - float(row[1] or 0), 2)
+    overdue_count = int(row[2] or 0)
+
+    days_until_due = None
+    if total_outstanding > 0:
+        earliest_due = (
+            db.session.query(func.min(StudentFee.due_date))
+            .filter(
+                StudentFee.tenant_id == tenant_id,
+                StudentFee.student_id == student_id,
+                StudentFee.status.in_(
+                    [
+                        StudentFeeStatus.unpaid.value,
+                        StudentFeeStatus.partial.value,
+                        StudentFeeStatus.overdue.value,
+                    ]
+                ),
+            )
+            .scalar()
+        )
+        if earliest_due:
+            days_until_due = (earliest_due - date.today()).days
+
+    return {
+        "total_outstanding": total_outstanding,
+        "days_until_due": days_until_due,
+        "overdue_count": overdue_count,
+    }
+
+
 def list_student_fees(
     student_id: Optional[str] = None,
     fee_structure_id: Optional[str] = None,
