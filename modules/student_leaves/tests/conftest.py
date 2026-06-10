@@ -55,7 +55,11 @@ def class_with_teacher(db_session, tenant, academic_year):
     """Create a Class with a primary class teacher.
 
     Returns an object with attributes:
-        .id, .class_teacher_id (teachers.id), .teacher (Teacher row)
+        .id, .class_teacher_id (teachers.id), .teacher_row (Teacher row)
+
+    NOTE: the convenience pointer is `.teacher_row`, NOT `.teacher` — `Class.teacher`
+    is a real ORM relationship to User (backref `assigned_classes`), so assigning a
+    Teacher to it breaks the backref cascade.
     """
     from modules.auth.models import User
     from modules.teachers.models import Teacher
@@ -104,7 +108,7 @@ def class_with_teacher(db_session, tenant, academic_year):
     db_session.flush()
 
     cls.class_teacher_id = teacher.id  # convenience attribute for tests
-    cls.teacher = teacher  # convenience attribute for tests
+    cls.teacher_row = teacher  # convenience attr (NOT cls.teacher — that's the User relationship)
     return cls
 
 

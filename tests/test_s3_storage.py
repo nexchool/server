@@ -17,7 +17,12 @@ from shared.s3_utils import (
 
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    # get_env_prefix() reads os.environ BEFORE Flask config, and importing the
+    # real app elsewhere in the suite loads .env (S3_ENV_PREFIX=local). Pin the
+    # env var here (auto-restored by monkeypatch) so these tests are
+    # order-independent rather than relying on a clean ambient environment.
+    monkeypatch.setenv("S3_ENV_PREFIX", "prod")
     app = Flask(__name__)
     app.config.update(
         AWS_S3_BUCKET_NAME="my-bucket",

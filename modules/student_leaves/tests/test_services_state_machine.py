@@ -99,9 +99,9 @@ def test_approve_no_admin_required_goes_directly_to_approved(
     tenant_ctx, student_user, class_with_teacher
 ):
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
-    result = approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    result = approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     assert result.status == "approved"
-    assert result.decided_by_id == class_with_teacher.teacher.user_id
+    assert result.decided_by_id == class_with_teacher.teacher_row.user_id
 
 
 def test_approve_admin_required_routes_through_pending_admin(
@@ -117,7 +117,7 @@ def test_approve_admin_required_routes_through_pending_admin(
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
     assert leave.requires_admin_approval is True
 
-    after_teacher = approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    after_teacher = approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     assert after_teacher.status == "pending_admin"
 
     final = approve(leave.id, actor_user_id=admin_user.id)
@@ -128,7 +128,7 @@ def test_reject_with_reason(tenant_ctx, student_user, class_with_teacher):
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
     result = reject(
         leave.id,
-        actor_user_id=class_with_teacher.teacher.user_id,
+        actor_user_id=class_with_teacher.teacher_row.user_id,
         rejection_reason="Insufficient documentation",
     )
     assert result.status == "rejected"
@@ -140,7 +140,7 @@ def test_reject_requires_reason(tenant_ctx, student_user, class_with_teacher):
     with pytest.raises(ValidationError):
         reject(
             leave.id,
-            actor_user_id=class_with_teacher.teacher.user_id,
+            actor_user_id=class_with_teacher.teacher_row.user_id,
             rejection_reason="",
         )
 
@@ -149,9 +149,9 @@ def test_approve_already_decided_raises_state_error(
     tenant_ctx, student_user, class_with_teacher
 ):
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
-    approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     with pytest.raises(StateError):
-        approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+        approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
 
 
 def test_unauthorized_approver_raises(tenant_ctx, student_user, other_teacher_user):
@@ -187,7 +187,7 @@ def test_cannot_request_cancel_after_rejection(
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
     reject(
         leave.id,
-        actor_user_id=class_with_teacher.teacher.user_id,
+        actor_user_id=class_with_teacher.teacher_row.user_id,
         rejection_reason="No",
     )
     with pytest.raises(StateError):
@@ -198,14 +198,14 @@ def test_approve_cancel_after_approval_reverses_attendance(
     tenant_ctx, student_user, class_with_teacher
 ):
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
-    approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     request_cancel(leave.id, actor_user_id=student_user.id, reason="ok")
 
     from modules.attendance.models import Attendance
     rows_before = db.session.query(Attendance).filter_by(leave_id=leave.id).count()
     assert rows_before > 0  # leave was approved → attendance rows exist
 
-    approve_cancel(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve_cancel(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     rows_after = db.session.query(Attendance).filter_by(leave_id=leave.id).count()
     assert rows_after == 0
 
@@ -219,7 +219,7 @@ def test_reject_cancel_clears_flag_preserves_status(
 ):
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
     request_cancel(leave.id, actor_user_id=student_user.id, reason="x")
-    result = reject_cancel(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    result = reject_cancel(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     assert result.cancel_requested_at is None
     assert result.cancel_requested_reason is None
     assert result.status == "pending_class_teacher"
@@ -231,7 +231,7 @@ def test_approve_cancel_before_approval_does_not_touch_attendance(
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
     # NO approve() call — leave is still pending
     request_cancel(leave.id, actor_user_id=student_user.id, reason="ok")
-    approve_cancel(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve_cancel(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     from modules.attendance.models import Attendance
     assert db.session.query(Attendance).filter_by(leave_id=leave.id).count() == 0
 

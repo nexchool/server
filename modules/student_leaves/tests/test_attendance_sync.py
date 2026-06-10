@@ -32,7 +32,7 @@ def test_sync_creates_one_row_per_school_day(
         "reason": "x",
     }
     leave = create_request(payload, actor_user_id=student_user.id)
-    approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
 
     rows = db.session.query(Attendance).filter_by(leave_id=leave.id).all()
     assert len(rows) == 3
@@ -53,7 +53,7 @@ def test_sync_skips_weekends(tenant_ctx, student_user, class_with_teacher):
         "reason": "x",
     }
     leave = create_request(payload, actor_user_id=student_user.id)
-    approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
 
     rows = db.session.query(Attendance).filter_by(leave_id=leave.id).all()
     dates = sorted([r.date for r in rows])
@@ -75,7 +75,7 @@ def test_sync_skips_holidays(
         "reason": "x",
     }
     leave = create_request(payload, actor_user_id=student_user.id)
-    approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
 
     rows = db.session.query(Attendance).filter_by(leave_id=leave.id).all()
     dates = sorted([r.date for r in rows])
@@ -95,7 +95,7 @@ def test_sync_overwrites_prior_attendance_status(
         class_id=class_with_teacher.id,
         student_id=student_user.student.id,
         status="absent",
-        marked_by=class_with_teacher.teacher.user_id,
+        marked_by=class_with_teacher.teacher_row.user_id,
     )
     db.session.add(existing)
     db.session.commit()
@@ -109,7 +109,7 @@ def test_sync_overwrites_prior_attendance_status(
         "reason": "x",
     }
     leave = create_request(payload, actor_user_id=student_user.id)
-    approve(leave.id, actor_user_id=class_with_teacher.teacher.user_id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
 
     db.session.expire_all()
     refetched = db.session.query(Attendance).filter_by(id=existing_id).first()
