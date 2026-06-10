@@ -281,3 +281,93 @@ def test_export_audit_logs_returns_xlsx(monkeypatch):
     assert "spreadsheetml" in call_info["mimetype"]
     assert call_info["as_attachment"] is True
     assert call_info["download_name"] == "audit-log.xlsx"
+
+
+# ---------------------------------------------------------------------------
+# _exclusive_upper_bound — date_to must include the whole calendar day
+# ---------------------------------------------------------------------------
+
+def test_exclusive_upper_bound_date_only_advances_one_day():
+    """A 'YYYY-MM-DD' end date becomes the NEXT day's midnight (exclusive), so
+    entries recorded later on that same day are still included in the results."""
+    from modules.audit import routes
+
+    assert routes._exclusive_upper_bound("2026-06-10") == datetime(2026, 6, 11, 0, 0, 0)
+
+
+def test_exclusive_upper_bound_timestamp_returns_none():
+    """A full timestamp keeps the legacy inclusive (<=) behavior (returns None)."""
+    from modules.audit import routes
+
+    assert routes._exclusive_upper_bound("2026-06-10T15:30:00") is None
+
+
+def test_exclusive_upper_bound_unparseable_returns_none():
+    """Unparseable / missing values fall back to legacy behavior (None)."""
+    from modules.audit import routes
+
+    assert routes._exclusive_upper_bound("not-a-date") is None
+    assert routes._exclusive_upper_bound(None) is None
+
+
+def test_build_query_date_to_uses_exclusive_next_day(monkeypatch):
+    """A date-only date_to filters with created_at < next-day-midnight."""
+    from modules.audit import routes
+
+    fake_q = MagicMock()
+    fake_q.filter_by.return_value = fake_q
+    fake_q.filter.return_value = fake_q
+
+    fake_col = MagicMock()
+    fake_col.__lt__ = lambda self, other: MagicMock()
+    fake_col.__le__ = lambda self, other: MagicMock()
+
+    fake_model = MagicMock()
+    fake_model.query = fake_q
+    fake_model.created_at = fake_col
+
+    monkeypatch.setattr(routes, "TenantAuditLog", fake_model)
+
+    bound_calls = []
+    real_bound = routes._exclusive_upper_bound
+    monkeypatch.setattr(
+        routes,
+        "_exclusive_upper_bound",
+        lambda v: bound_calls.append(v) or real_bound(v),
+    )
+
+    class FakeArgs(dict):
+        def getlist(self, key):
+            return []
+
+    routes._build_query("t1", FakeArgs({"date_to": "2026-06-10"}))
+
+    assert bound_calls == ["2026-06-10"]
+    fake_q.filter.assert_called()
+
+
+def test_build_query_date_to_with_time_uses_inclusive(monkeypatch):
+    """A full-timestamp date_to keeps the legacy <= bound (still filters)."""
+    from modules.audit import routes
+
+    fake_q = MagicMock()
+    fake_q.filter_by.return_value = fake_q
+    fake_q.filter.return_value = fake_q
+
+    fake_col = MagicMock()
+    fake_col.__lt__ = lambda self, other: MagicMock()
+    fake_col.__le__ = lambda self, other: MagicMock()
+
+    fake_model = MagicMock()
+    fake_model.query = fake_q
+    fake_model.created_at = fake_col
+
+    monkeypatch.setattr(routes, "TenantAuditLog", fake_model)
+
+    class FakeArgs(dict):
+        def getlist(self, key):
+            return []
+
+    routes._build_query("t1", FakeArgs({"date_to": "2026-06-10T15:30:00"}))
+
+    fake_q.filter.assert_called()

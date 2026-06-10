@@ -28,6 +28,25 @@ def _parse_int(v, default):
         return default
 
 
+def _exclusive_upper_bound(date_to):
+    """Return an exclusive upper bound for an inclusive end date.
+
+    The admin-web date filter sends a calendar day as ``YYYY-MM-DD``, which the
+    database coerces to midnight — so ``created_at <= date_to`` silently drops
+    every entry recorded later that same day. Convert a date-only value to the
+    next day's midnight (used with ``<``) so the whole day is included. A value
+    that already carries a time component, or that cannot be parsed, returns
+    ``None`` and the caller keeps the legacy inclusive (``<=``) behavior.
+    """
+    try:
+        parsed = datetime.fromisoformat(str(date_to))
+    except (TypeError, ValueError):
+        return None
+    if len(str(date_to).strip()) <= 10:  # date-only, e.g. "2026-06-10"
+        return parsed + timedelta(days=1)
+    return None
+
+
 def _build_query(tenant_id, args):
     query = TenantAuditLog.query.filter_by(tenant_id=tenant_id)
 
@@ -41,7 +60,11 @@ def _build_query(tenant_id, args):
             >= datetime.now(timezone.utc) - timedelta(days=30)
         )
     if date_to:
-        query = query.filter(TenantAuditLog.created_at <= date_to)
+        upper = _exclusive_upper_bound(date_to)
+        if upper is not None:
+            query = query.filter(TenantAuditLog.created_at < upper)
+        else:
+            query = query.filter(TenantAuditLog.created_at <= date_to)
 
     modules = args.getlist("module") if hasattr(args, "getlist") else (
         [args.get("module")] if args.get("module") else []
