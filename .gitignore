@@ -91,3 +91,5 @@ celerybeat-schedule
 .coverage
 coverage_html/
 htmlcov/
+
+graphify-out/

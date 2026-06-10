@@ -185,7 +185,6 @@ def _resolve_audience(tenant_id: str, audience_json: Dict[str, Any]) -> Set[str]
     if scope == "all":
         rows = db.session.query(User.id).filter(
             User.tenant_id == tenant_id,
-            User.is_active.is_(True),
         ).all()
         return {r[0] for r in rows}
 
@@ -202,7 +201,6 @@ def _resolve_audience(tenant_id: str, audience_json: Dict[str, Any]) -> Set[str]
             .join(Role, Role.id == UserRole.role_id)
             .filter(
                 User.tenant_id == tenant_id,
-                User.is_active.is_(True),
                 sfunc.lower(Role.name).in_(normalized),
             )
             .all()
@@ -368,7 +366,7 @@ def inbox_for_user(user_id: str) -> list:
     from modules.notifications.models import Notification, NotificationRecipient
     rows = (
         db.session.query(Announcement)
-        .join(Notification, Notification.extra_data["announcement_id"].astext == Announcement.id)
+        .join(Notification, Notification.extra_data["announcement_id"].as_string() == Announcement.id)
         .join(NotificationRecipient, NotificationRecipient.notification_id == Notification.id)
         .filter(
             Announcement.tenant_id == tenant_id,
@@ -404,7 +402,7 @@ def get_for_user(announcement_id: str, user) -> Announcement:
         .join(Notification, NotificationRecipient.notification_id == Notification.id)
         .filter(
             NotificationRecipient.user_id == user.id,
-            Notification.extra_data["announcement_id"].astext == a.id,
+            Notification.extra_data["announcement_id"].as_string() == a.id,
         )
         .first()
         is not None
@@ -426,7 +424,7 @@ def list_recipients(announcement_id: str) -> list:
         .join(Notification, Notification.id == NotificationRecipient.notification_id)
         .filter(
             Notification.type == "announcement.published",
-            Notification.extra_data["announcement_id"].astext == a.id,
+            Notification.extra_data["announcement_id"].as_string() == a.id,
             Notification.tenant_id == tenant_id,
         )
         .all()

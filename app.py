@@ -239,6 +239,16 @@ def register_error_handlers(app: Flask):
             'message': 'An internal server error occurred'
         }), 500
 
+    @app.errorhandler(413)
+    def request_entity_too_large(error):
+        """Handle 413 Payload Too Large (upload exceeds MAX_CONTENT_LENGTH)."""
+        _log_error(413, "PayloadTooLarge", str(getattr(error, "description", "Upload too large")))
+        return jsonify({
+            'success': False,
+            'error': 'PayloadTooLarge',
+            'message': 'Upload exceeds the maximum allowed size'
+        }), 413
+
     @app.errorhandler(400)
     def bad_request(error):
         """Handle 400 Bad Request errors"""

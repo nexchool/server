@@ -88,6 +88,10 @@ class Config:
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
 
+    # Max upload size (bytes). Bounds streamed uploads (announcement attachments, docs)
+    # so a single request can't grow unbounded. Keep in sync with nginx client_max_body_size.
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(64 * 1024 * 1024)))
+
     # S3 (document storage) — single bucket; S3_ENV_PREFIX separates local/prod keys
     AWS_REGION = os.getenv("AWS_REGION")
     AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME") or os.getenv("S3_BUCKET_NAME")
