@@ -99,7 +99,10 @@ class EmailStrategy(NotificationStrategy):
                         )
                         return True
                 except Exception:
-                    pass
+                    logger.exception(
+                        "EmailStrategy: failed to enqueue send_email_task for recipient=%s",
+                        email,
+                    )
 
             if async_support is True:
                 logger.warning("EmailStrategy: Celery unavailable but async_support=True")
