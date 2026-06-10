@@ -74,6 +74,46 @@ def _parse_datetime(value, field_name: str) -> datetime:
         raise ValueError(f"{field_name} must be a valid ISO 8601 datetime") from exc
 
 
+def _attach_student_info(items: list[dict]) -> list[dict]:
+    """Enrich serialized rows (each carrying a ``student_id``) with
+    ``student_name`` + ``admission_number`` in a single batch query.
+
+    Gatepass/allocation/visitor-log payloads otherwise expose only a raw
+    student UUID, which is useless in a list view (the warden/gatekeeper sees
+    "a1b2c3d4…"). This mirrors the bed-occupant enrichment in ``get_room`` and
+    keeps it to one query, never N+1. Rows whose student can't be resolved get
+    explicit ``None`` fields so the shape is stable.
+    """
+    from modules.auth.models import User
+    from modules.students.models import Student
+
+    student_ids = {it["student_id"] for it in items if it.get("student_id")}
+    if not student_ids:
+        for it in items:
+            it.setdefault("student_name", None)
+            it.setdefault("admission_number", None)
+        return items
+
+    info: dict[str, dict] = {}
+    rows = (
+        db.session.query(Student, User)
+        .join(User, Student.user_id == User.id)
+        .filter(Student.id.in_(student_ids))
+        .all()
+    )
+    for student, user in rows:
+        info[student.id] = {
+            "student_name": user.name or user.email,
+            "admission_number": student.admission_number,
+        }
+
+    for it in items:
+        meta = info.get(it.get("student_id"))
+        it["student_name"] = meta["student_name"] if meta else None
+        it["admission_number"] = meta["admission_number"] if meta else None
+    return items
+
+
 # ============================================================================
 # HOSTELS
 # ============================================================================
@@ -529,7 +569,9 @@ def list_allocations():
         status=request.args.get("status") or None,
         academic_year_id=request.args.get("academic_year_id") or None,
     )
-    return success_response(data={"allocations": [a.to_dict() for a in rows]})
+    return success_response(
+        data={"allocations": _attach_student_info([a.to_dict() for a in rows])}
+    )
 
 
 @hostel_bp.route("/students/<string:student_id>/allocation", methods=["GET"])
@@ -545,7 +587,9 @@ def get_student_allocation(student_id: str):
     )
     if allocation is None:
         return not_found_response("Active allocation")
-    return success_response(data={"allocation": allocation.to_dict()})
+    return success_response(
+        data={"allocation": _attach_student_info([allocation.to_dict()])[0]}
+    )
 
 
 @hostel_bp.route("/allocations", methods=["POST"])
@@ -660,7 +704,9 @@ def list_gatepasses():
         status=request.args.get("status") or None,
         gatepass_type=request.args.get("type") or None,
     )
-    return success_response(data={"gatepasses": [g.to_dict() for g in rows]})
+    return success_response(
+        data={"gatepasses": _attach_student_info([g.to_dict() for g in rows])}
+    )
 
 
 @hostel_bp.route("/gatepasses/<string:gatepass_id>", methods=["GET"])
@@ -692,7 +738,7 @@ def get_gatepass(gatepass_id: str):
     )
     return success_response(
         data={
-            "gatepass": gp.to_dict(),
+            "gatepass": _attach_student_info([gp.to_dict()])[0],
             "audit_trail": [a.to_dict() for a in audits],
         }
     )
@@ -710,7 +756,9 @@ def list_overdue_gatepasses():
         tenant_id=_tenant_id(),
         hostel_id=request.args.get("hostel_id") or None,
     )
-    return success_response(data={"gatepasses": [g.to_dict() for g in rows]})
+    return success_response(
+        data={"gatepasses": _attach_student_info([g.to_dict() for g in rows])}
+    )
 
 
 @hostel_bp.route("/gatepasses", methods=["POST"])
@@ -1012,7 +1060,9 @@ def list_visitor_logs():
             start_date=start_date,
             end_date=end_date,
         )
-    return success_response(data={"visitor_logs": [l.to_dict() for l in rows]})
+    return success_response(
+        data={"visitor_logs": _attach_student_info([l.to_dict() for l in rows])}
+    )
 
 
 # ============================================================================
@@ -1036,7 +1086,7 @@ def dashboard():
     return success_response(
         data={
             "occupancy": occupancy,
-            "overdue_gatepasses": [g.to_dict() for g in overdue],
+            "overdue_gatepasses": _attach_student_info([g.to_dict() for g in overdue]),
             "visitors_inside": inside_count,
         }
     )
