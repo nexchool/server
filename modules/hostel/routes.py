@@ -114,6 +114,36 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
     return items
 
 
+def _attach_visitor_info(items: list[dict]) -> list[dict]:
+    """Enrich serialized visitor-log rows with ``visitor_name`` +
+    ``visitor_phone`` in a single batch query, so the visitor desk sees who is
+    visiting instead of a raw ``visitor_id``. Unresolved visitors get explicit
+    ``None`` fields.
+    """
+    from modules.hostel.models import HostelVisitor
+
+    visitor_ids = {it["visitor_id"] for it in items if it.get("visitor_id")}
+    if not visitor_ids:
+        for it in items:
+            it.setdefault("visitor_name", None)
+            it.setdefault("visitor_phone", None)
+        return items
+
+    info: dict[str, dict] = {}
+    for v in (
+        db.session.query(HostelVisitor)
+        .filter(HostelVisitor.id.in_(visitor_ids))
+        .all()
+    ):
+        info[v.id] = {"visitor_name": v.name, "visitor_phone": v.phone}
+
+    for it in items:
+        meta = info.get(it.get("visitor_id"))
+        it["visitor_name"] = meta["visitor_name"] if meta else None
+        it["visitor_phone"] = meta["visitor_phone"] if meta else None
+    return items
+
+
 # ============================================================================
 # HOSTELS
 # ============================================================================
@@ -1061,7 +1091,7 @@ def list_visitor_logs():
             end_date=end_date,
         )
     return success_response(
-        data={"visitor_logs": _attach_student_info([l.to_dict() for l in rows])}
+        data={"visitor_logs": _attach_visitor_info(_attach_student_info([l.to_dict() for l in rows]))}
     )
 
 
