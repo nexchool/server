@@ -795,3 +795,31 @@ def test_update_slot_blocks_teacher_double_booking(
         upd = timetable_services.update_slot(b["slot"]["id"], {"teacher_id": t1.id}, tenant.id)
     assert upd["success"] is False
     assert "already teaching" in upd["error"].lower()
+
+
+def test_legacy_mark_attendance_passes_through_skipped(
+    flask_app, db_session, tenant, classes, students, unrestricted_user, monkeypatch
+):
+    """The legacy /mark path delegates to v2 upsert_records; records the session
+    layer refuses (e.g. a student not in this class) must surface as `skipped`
+    instead of being silently dropped from the response."""
+    class_a, _class_b = classes
+    student_a, student_b = students  # student_b belongs to class_b
+    monkeypatch.setattr(
+        attendance_session_services, "has_permission", lambda *a, **k: True
+    )
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        res = attendance_services.mark_attendance(
+            class_id=class_a.id,
+            date_str="2025-09-01",
+            records=[
+                {"student_id": student_a.id, "status": "present"},
+                {"student_id": student_b.id, "status": "present"},
+            ],
+            marked_by_user_id=unrestricted_user.id,
+        )
+    assert res["success"] is True
+    assert res["created"] == 1
+    assert [s["student_id"] for s in res["skipped"]] == [student_b.id]

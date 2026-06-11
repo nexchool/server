@@ -138,6 +138,9 @@ def mark_attendance(
             "message": f"Attendance saved: {ur.get('created', 0)} created, {ur.get('updated', 0)} updated",
             "created": ur.get("created", 0),
             "updated": ur.get("updated", 0),
+            # Pass through records the session layer refused (student not in this
+            # class / invalid status) so clients can warn instead of looking saved.
+            "skipped": ur.get("skipped", []),
             "session_id": session_id,
             "source": "sessions_v2",
         }
