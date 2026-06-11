@@ -11,7 +11,10 @@ from core.database import db
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
-from modules.rbac.services import assign_role_to_user_by_email
+from modules.rbac.services import (
+    assign_role_to_user_by_email,
+    remove_login_for_deleted_profile,
+)
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.classes.models import Class
 from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
@@ -1062,6 +1065,8 @@ def delete_student(student_id: str) -> Dict:
         if not student:
             return {'success': False, 'error': 'Student not found'}
 
+        user_id = student.user_id
+
         from modules.finance.models import StudentFee
 
         StudentFee.query.filter_by(
@@ -1070,6 +1075,14 @@ def delete_student(student_id: str) -> Dict:
         ).delete(synchronize_session=False)
 
         db.session.delete(student)
+        db.session.flush()  # clear the students.user_id reference before the user
+
+        # A student is a person, not a profile on a shared login: deleting the
+        # student must also remove its backing account. Otherwise an active,
+        # login-capable user with the Student role but no Student row is left
+        # behind (its dashboard 404s) and the email stays reserved. Same txn.
+        remove_login_for_deleted_profile(user_id, tenant_id, "Student")
+
         db.session.commit()
 
         try:

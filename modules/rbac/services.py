@@ -741,6 +741,48 @@ def get_user_roles(user_id: str) -> List[Dict]:
     } for r in roles]
 
 
+def remove_login_for_deleted_profile(
+    user_id: str, tenant_id: str, profile_role: str
+) -> None:
+    """Tear down the auth account behind a just-deleted student/teacher profile.
+
+    Call this inside the profile-deletion transaction (it does NOT commit), AFTER
+    the profile row has been deleted/flushed so it no longer references the user.
+
+    - If the user holds no role other than ``profile_role``, the whole User row is
+      removed via a bulk DELETE. This clears the orphaned login — which could
+      otherwise still authenticate with no profile row, 404-ing its dashboard —
+      and frees the email for re-enrolment. DB FKs cascade (user_roles, sessions,
+      device_tokens, notifications, user_school_units) and audit references
+      SET NULL. A bulk delete (not session.delete) is used so the ORM does not try
+      to NULL the NOT NULL user_id columns first.
+    - If the same person also holds another role (rare — e.g. someone recorded as
+      both a teacher and a student), the User is kept and only the ``profile_role``
+      assignment is detached. This preserves their other access and sidesteps the
+      NO ACTION FKs (classes.teacher_id, attendance.marked_by) that a teacher's
+      user carries.
+    """
+    role_rows = (
+        db.session.query(UserRole.id, Role.name)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(UserRole.user_id == user_id, UserRole.tenant_id == tenant_id)
+        .all()
+    )
+    has_other_role = any(name != profile_role for _id, name in role_rows)
+
+    if has_other_role:
+        profile_role_ids = [rid for rid, name in role_rows if name == profile_role]
+        if profile_role_ids:
+            UserRole.query.filter(UserRole.id.in_(profile_role_ids)).delete(
+                synchronize_session=False
+            )
+        return
+
+    User.query.filter_by(id=user_id, tenant_id=tenant_id).delete(
+        synchronize_session=False
+    )
+
+
 # ==================== BULK OPERATIONS ====================
 
 def bulk_assign_permissions_to_role(role_id: str, permission_ids: List[str]) -> Dict:
