@@ -709,3 +709,89 @@ def test_upsert_records_reports_skipped_instead_of_silently_dropping(
         for s in res["skipped"]
     )
     assert len(res["skipped"]) == 3
+
+
+# ===========================================================================
+# Timetable: create_slot must prevent teacher double-booking (not only move/swap)
+# ===========================================================================
+
+def test_create_slot_blocks_teacher_double_booking(
+    flask_app, db_session, tenant, classes, unrestricted_user
+):
+    class_a, class_b = classes
+    subject = _make_subject(db_session, tenant)
+    teacher = _make_teacher(db_session, tenant)
+    base = {
+        "subject_id": subject.id,
+        "teacher_id": teacher.id,
+        "day_of_week": 0,
+        "period_number": 1,
+        "start_time": "08:00",
+        "end_time": "08:45",
+    }
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        first = timetable_services.create_slot({**base, "class_id": class_a.id}, tenant.id)
+        assert first["success"] is True
+        # Same teacher, same day + period, a different class -> double-booking.
+        second = timetable_services.create_slot({**base, "class_id": class_b.id}, tenant.id)
+    assert second["success"] is False
+    assert "already teaching" in second["error"].lower()
+
+
+def test_create_slot_allows_same_teacher_at_a_different_period(
+    flask_app, db_session, tenant, classes, unrestricted_user
+):
+    class_a, class_b = classes
+    subject = _make_subject(db_session, tenant)
+    teacher = _make_teacher(db_session, tenant)
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        first = timetable_services.create_slot(
+            {
+                "class_id": class_a.id, "subject_id": subject.id, "teacher_id": teacher.id,
+                "day_of_week": 0, "period_number": 1,
+                "start_time": "08:00", "end_time": "08:45",
+            },
+            tenant.id,
+        )
+        # Same teacher, DIFFERENT period -> allowed.
+        second = timetable_services.create_slot(
+            {
+                "class_id": class_b.id, "subject_id": subject.id, "teacher_id": teacher.id,
+                "day_of_week": 0, "period_number": 2,
+                "start_time": "08:45", "end_time": "09:30",
+            },
+            tenant.id,
+        )
+    assert first["success"] is True
+    assert second["success"] is True
+
+
+def test_update_slot_blocks_teacher_double_booking(
+    flask_app, db_session, tenant, classes, unrestricted_user
+):
+    class_a, class_b = classes
+    subject = _make_subject(db_session, tenant)
+    t1 = _make_teacher(db_session, tenant)
+    t2 = _make_teacher(db_session, tenant)
+    common = {
+        "subject_id": subject.id, "day_of_week": 0, "period_number": 1,
+        "start_time": "08:00", "end_time": "08:45",
+    }
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        a = timetable_services.create_slot(
+            {**common, "class_id": class_a.id, "teacher_id": t1.id}, tenant.id
+        )
+        b = timetable_services.create_slot(
+            {**common, "class_id": class_b.id, "teacher_id": t2.id}, tenant.id
+        )
+        assert a["success"] is True and b["success"] is True
+        # Re-pointing class_b's slot to t1 would double-book t1 at day 0 period 1.
+        upd = timetable_services.update_slot(b["slot"]["id"], {"teacher_id": t1.id}, tenant.id)
+    assert upd["success"] is False
+    assert "already teaching" in upd["error"].lower()

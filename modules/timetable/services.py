@@ -99,16 +99,6 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         if period_number is None:
             return {"success": False, "error": "period_number is required"}
 
-        try:
-            day_of_week = int(day_of_week)
-            period_number = int(period_number)
-        except (TypeError, ValueError):
-            return {"success": False, "error": "day_of_week and period_number must be integers"}
-        try:
-            day_of_week = int(day_of_week)
-            period_number = int(period_number)
-        except (TypeError, ValueError):
-            return {"success": False, "error": "day_of_week and period_number must be integers"}
         if not start_time_str:
             return {"success": False, "error": "start_time is required"}
         if not end_time_str:
@@ -139,24 +129,6 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         if not end_t:
             return {"success": False, "error": "Invalid end_time format (use HH:MM or HH:MM:SS)"}
 
-        try:
-            day_of_week = int(day_of_week)
-            period_number = int(period_number)
-        except (TypeError, ValueError):
-            return {"success": False, "error": "day_of_week and period_number must be integers"}
-
-        try:
-            day_of_week = int(day_of_week)
-            period_number = int(period_number)
-        except (TypeError, ValueError):
-            return {"success": False, "error": "day_of_week and period_number must be integers"}
-
-        try:
-            day_of_week = int(day_of_week)
-            period_number = int(period_number)
-        except (TypeError, ValueError):
-            return {"success": False, "error": "day_of_week and period_number must be integers"}
-
         if day_of_week < 0 or day_of_week > 6:
             return {"success": False, "error": "day_of_week must be 0-6 (0=Monday, 6=Sunday)"}
         if period_number < 1:
@@ -171,6 +143,26 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         ).first()
         if existing:
             return {"success": False, "error": "Slot already exists for this class, day, and period"}
+
+        # Enforce the same constraints as move/swap so a slot cannot be CREATED
+        # double-booking a teacher (or breaking availability / workload / subject
+        # limits). create_slot previously skipped this, letting the timetable be
+        # built with conflicts that only surfaced later in the health dashboard.
+        from . import validators
+        conflict_check = validators.check_slot_conflicts(
+            class_id=class_id,
+            teacher_id=teacher_id,
+            subject_id=subject_id,
+            day=day_of_week,
+            period=period_number,
+            tenant_id=tenant_id,
+        )
+        if conflict_check["has_conflict"]:
+            return {
+                "success": False,
+                "error": "; ".join(c["message"] for c in conflict_check["conflicts"]),
+                "conflicts": conflict_check["conflicts"],
+            }
 
         slot = TimetableSlot(
             tenant_id=tenant_id,
@@ -321,6 +313,31 @@ def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
         ).first()
         if existing:
             return {"success": False, "error": "Slot already exists for this class, day, and period"}
+
+        # Re-validate conflicts only when the placement actually changed
+        # (teacher / day / period / subject / class). A room- or time-only edit
+        # must not be blocked by a pre-existing conflict it doesn't touch.
+        placement_changed = any(
+            k in data and data[k] is not None
+            for k in ("teacher_id", "day_of_week", "period_number", "subject_id", "class_id")
+        )
+        if placement_changed:
+            from . import validators
+            conflict_check = validators.check_slot_conflicts(
+                class_id=class_id,
+                teacher_id=slot.teacher_id,
+                subject_id=slot.subject_id,
+                day=day,
+                period=period,
+                tenant_id=tenant_id,
+                exclude_slot_id=slot_id,
+            )
+            if conflict_check["has_conflict"]:
+                return {
+                    "success": False,
+                    "error": "; ".join(c["message"] for c in conflict_check["conflicts"]),
+                    "conflicts": conflict_check["conflicts"],
+                }
 
         slot.save()
         return {"success": True, "slot": slot.to_dict()}
