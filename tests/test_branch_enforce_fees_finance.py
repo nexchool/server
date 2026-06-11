@@ -833,3 +833,47 @@ def test_unrestricted_counts_unchanged(
         assert len({r["id"] for r in student_fee_service.list_student_fees()}) >= 3
         struct_ids = {s["id"] for s in structure_service.list_fee_structures()}
         assert {fs_a.id, fs_b.id, fs_t.id} <= struct_ids
+
+
+# ===========================================================================
+# FINANCE — student-fee pagination + server-side summary
+# ===========================================================================
+
+def test_finance_student_fee_pagination_splits_into_pages(
+    flask_app, db_session, tenant, student_fees, unrestricted_user
+):
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        assert student_fee_service.count_student_fees() == 3
+        page1 = student_fee_service.list_student_fees(page=1, page_size=2)
+        page2 = student_fee_service.list_student_fees(page=2, page_size=2)
+        assert len(page1) == 2
+        assert len(page2) == 1
+        # Pages must not overlap and together cover every row.
+        ids = {r["id"] for r in page1} | {r["id"] for r in page2}
+        assert ids == {sf.id for sf in student_fees}
+
+
+def test_finance_student_fee_summary_aggregates_over_all_rows(
+    flask_app, db_session, tenant, student_fees, unrestricted_user
+):
+    sf_a, sf_b, sf_c = student_fees
+    sf_a.status = StudentFeeStatus.paid.value
+    sf_a.paid_amount = Decimal("1000")
+    sf_b.status = StudentFeeStatus.partial.value
+    sf_b.paid_amount = Decimal("400")
+    sf_c.status = StudentFeeStatus.overdue.value
+    sf_c.paid_amount = Decimal("0")
+    db_session.flush()
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        summary = student_fee_service.summarize_student_fees()
+        assert summary["total_count"] == 3
+        assert summary["total_amount"] == 3000.0
+        assert summary["paid_amount"] == 1400.0
+        # Outstanding is clamped per row (>= 0): 0 + 600 + 1000.
+        assert summary["outstanding_amount"] == 1600.0
+        assert summary["paid_count"] == 1
+        assert summary["overdue_count"] == 1

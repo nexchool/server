@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from sqlalchemy import case
+from sqlalchemy import case, func
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -176,22 +176,18 @@ def student_fee_summary(student_id: str) -> Dict:
     }
 
 
-def list_student_fees(
+def _build_student_fees_query(
+    tenant_id: str,
     student_id: Optional[str] = None,
     fee_structure_id: Optional[str] = None,
     status: Optional[str] = None,
     academic_year_id: Optional[str] = None,
     class_id: Optional[str] = None,
     search: Optional[str] = None,
-    include_items: bool = True,
-) -> List[Dict]:
-    """List student fees with optional filters. Set include_items=False for list views."""
-    from modules.auth.models import User
-
-    tenant_id = get_tenant_id()
-    if not tenant_id:
-        return []
-
+):
+    """Build the filtered (unordered, unpaginated) StudentFee query shared by the
+    list, count, and summary entry points so all three apply identical branch
+    scope, transport gating, and status-bucket rules."""
     from core.feature_flags import is_feature_enabled
 
     # Branch scope: assert explicit student/class filters first, then restrict
@@ -263,10 +259,43 @@ def list_student_fees(
                 Student.admission_number.ilike(f"%{search.strip()}%"),
             )
         )
+    return query
+
+
+def list_student_fees(
+    student_id: Optional[str] = None,
+    fee_structure_id: Optional[str] = None,
+    status: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+    search: Optional[str] = None,
+    include_items: bool = True,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> List[Dict]:
+    """List student fees with optional filters. Set include_items=False for list
+    views. When both page and page_size are provided, only that page is returned
+    (rows ordered overdue-first, then by due date); otherwise all matches."""
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return []
+
+    query = _build_student_fees_query(
+        tenant_id,
+        student_id=student_id,
+        fee_structure_id=fee_structure_id,
+        status=status,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        search=search,
+    )
 
     query = query.order_by(
         case((StudentFee.status == "overdue", 0), else_=1)
     ).order_by(StudentFee.due_date.asc())
+
+    if page and page_size:
+        query = query.limit(page_size).offset((page - 1) * page_size)
 
     fees = query.all()
     result = []
@@ -286,6 +315,93 @@ def list_student_fees(
         d["academic_year_id"] = sf.fee_structure.academic_year_id if sf.fee_structure else None
         result.append(d)
     return result
+
+
+def count_student_fees(
+    student_id: Optional[str] = None,
+    fee_structure_id: Optional[str] = None,
+    status: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+    search: Optional[str] = None,
+) -> int:
+    """Total number of student fees matching the filters (drives pagination)."""
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return 0
+    return _build_student_fees_query(
+        tenant_id,
+        student_id=student_id,
+        fee_structure_id=fee_structure_id,
+        status=status,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        search=search,
+    ).count()
+
+
+def summarize_student_fees(
+    student_id: Optional[str] = None,
+    fee_structure_id: Optional[str] = None,
+    status: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+    search: Optional[str] = None,
+) -> Dict:
+    """Aggregate totals across ALL fees matching the filters (not just one page),
+    so the list summary stays correct under pagination. Outstanding is clamped to
+    >= 0 per row to match the client's per-row max(0, total - paid)."""
+    tenant_id = get_tenant_id()
+    empty = {
+        "total_count": 0,
+        "total_amount": 0.0,
+        "paid_amount": 0.0,
+        "outstanding_amount": 0.0,
+        "paid_count": 0,
+        "overdue_count": 0,
+    }
+    if not tenant_id:
+        return empty
+
+    query = _build_student_fees_query(
+        tenant_id,
+        student_id=student_id,
+        fee_structure_id=fee_structure_id,
+        status=status,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        search=search,
+    )
+    # Clamp per row (>= 0) so overpaid rows don't offset the outstanding total.
+    outstanding_expr = case(
+        (
+            StudentFee.total_amount - StudentFee.paid_amount > 0,
+            StudentFee.total_amount - StudentFee.paid_amount,
+        ),
+        else_=0,
+    )
+    row = query.with_entities(
+        func.count(StudentFee.id),
+        func.coalesce(func.sum(StudentFee.total_amount), 0),
+        func.coalesce(func.sum(StudentFee.paid_amount), 0),
+        func.coalesce(func.sum(outstanding_expr), 0),
+        func.coalesce(
+            func.sum(case((StudentFee.status == StudentFeeStatus.paid.value, 1), else_=0)),
+            0,
+        ),
+        func.coalesce(
+            func.sum(case((StudentFee.status == StudentFeeStatus.overdue.value, 1), else_=0)),
+            0,
+        ),
+    ).one()
+    return {
+        "total_count": int(row[0] or 0),
+        "total_amount": float(row[1] or 0),
+        "paid_amount": float(row[2] or 0),
+        "outstanding_amount": float(row[3] or 0),
+        "paid_count": int(row[4] or 0),
+        "overdue_count": int(row[5] or 0),
+    }
 
 
 def get_student_fee(fee_id: str) -> Optional[Dict]:

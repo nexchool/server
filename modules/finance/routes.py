@@ -285,24 +285,53 @@ def get_finance_summary():
 @require_feature("fees_management")
 @require_any_permission(PERM_READ, PERM_MANAGE, PERM_COLLECT)
 def list_student_fees():
-    """GET /api/finance/student-fees"""
-    student_id = request.args.get("student_id")
-    fee_structure_id = request.args.get("fee_structure_id")
-    status = request.args.get("status")
-    academic_year_id = request.args.get("academic_year_id")
-    class_id = request.args.get("class_id")
-    search = request.args.get("search")
+    """GET /api/finance/student-fees
+
+    Pagination is opt-in and backward-compatible: pass page (1-based) and
+    optionally page_size (default 20, max 100) to receive a single page plus a
+    `pagination` block. Without page, all matching rows are returned as before.
+    Pass include_summary=true (implied when paginating) to also receive a
+    `summary` aggregate computed over ALL matching rows, not just the page.
+    """
     include_items = request.args.get("include_items", "true").lower() not in ("false", "0", "no")
-    data = services.student_fee_service.list_student_fees(
-        student_id=student_id,
-        fee_structure_id=fee_structure_id,
-        status=status,
-        academic_year_id=academic_year_id,
-        class_id=class_id,
-        search=search,
-        include_items=include_items,
+
+    page = request.args.get("page", type=int)
+    page_size = request.args.get("page_size", type=int)
+    paginate = page is not None and page >= 1
+    if paginate:
+        page_size = max(1, min(page_size or 20, 100))
+
+    filters = dict(
+        student_id=request.args.get("student_id"),
+        fee_structure_id=request.args.get("fee_structure_id"),
+        status=request.args.get("status"),
+        academic_year_id=request.args.get("academic_year_id"),
+        class_id=request.args.get("class_id"),
+        search=request.args.get("search"),
     )
-    return success_response(data={"student_fees": data})
+
+    data = services.student_fee_service.list_student_fees(
+        include_items=include_items,
+        page=page if paginate else None,
+        page_size=page_size if paginate else None,
+        **filters,
+    )
+    payload = {"student_fees": data}
+
+    if paginate:
+        total = services.student_fee_service.count_student_fees(**filters)
+        payload["pagination"] = {
+            "page": page,
+            "page_size": page_size,
+            "total_items": total,
+            "total_pages": (total + page_size - 1) // page_size if page_size else 1,
+        }
+
+    include_summary = request.args.get("include_summary", "").lower() in ("true", "1", "yes")
+    if paginate or include_summary:
+        payload["summary"] = services.student_fee_service.summarize_student_fees(**filters)
+
+    return success_response(data=payload)
 
 
 @finance_bp.route("/recent-payments", methods=["GET"])
