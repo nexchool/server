@@ -10,9 +10,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, BinaryIO, Dict, List, Tuple, Union
+from zipfile import BadZipFile
 
 from openpyxl.cell.cell import Cell
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +75,21 @@ def parse_xlsx_to_rows(
         file_obj.seek(0)
         stream = file_obj
 
-    wb = load_workbook(stream, read_only=True, data_only=True)
     try:
+        wb = load_workbook(stream, read_only=True, data_only=True)
+    except (BadZipFile, InvalidFileException) as e:
+        # openpyxl surfaces these as "File is not a zip file" / similar, which is
+        # meaningless to a school admin who uploaded a .xls, .csv, or a corrupt
+        # download. Re-raise as a ValueError so the route returns a clear 400.
+        raise ValueError(
+            "This file isn't a readable .xlsx workbook. Open it in Excel or "
+            "Google Sheets and re-save as .xlsx (not .xls, .csv, or password-"
+            "protected), then upload again."
+        ) from e
+
+    try:
+        if not wb.sheetnames:
+            raise ValueError("The workbook has no sheets to read.")
         ws = wb[wb.sheetnames[0]]
         all_rows = list(ws.iter_rows(values_only=False))
         if not all_rows:

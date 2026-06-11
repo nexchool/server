@@ -306,24 +306,31 @@ def _dispatch_welcome(
     tenant_id: str,
     send_email: bool,
 ) -> None:
-    from modules.notifications.enums import NotificationChannel, NotificationType
-    from modules.notifications.services import notification_dispatcher
+    """Best-effort welcome notification. Runs AFTER the student row is committed,
+    so any failure here must be logged and swallowed — it must never turn an
+    already-successful import into a reported failure. (dispatch() already
+    swallows per-channel send errors; this also guards the surrounding setup.)"""
+    try:
+        from modules.notifications.enums import NotificationChannel, NotificationType
+        from modules.notifications.services import notification_dispatcher
 
-    # IN_APP: persists to DB so the student sees it after first login (no device token yet).
-    # EMAIL: optional from import UI. PUSH skipped here — no FCM token before login.
-    channels = [NotificationChannel.IN_APP.value]
-    if send_email:
-        channels.append(NotificationChannel.EMAIL.value)
+        # IN_APP: persists to DB so the student sees it after first login (no device token yet).
+        # EMAIL: optional from import UI. PUSH skipped here — no FCM token before login.
+        channels = [NotificationChannel.IN_APP.value]
+        if send_email:
+            channels.append(NotificationChannel.EMAIL.value)
 
-    notification_dispatcher.dispatch(
-        user_id=user_id,
-        tenant_id=tenant_id,
-        notification_type=NotificationType.ANNOUNCEMENT.value,
-        channels=channels,
-        title="Welcome to Nexchool",
-        body="Your account has been created. Login using your credentials.",
-        extra_data={},
-    )
+        notification_dispatcher.dispatch(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            notification_type=NotificationType.ANNOUNCEMENT.value,
+            channels=channels,
+            title="Welcome to Nexchool",
+            body="Your account has been created. Login using your credentials.",
+            extra_data={},
+        )
+    except Exception:
+        logger.exception("bulk_import: welcome dispatch failed for user=%s", user_id)
 
 
 def _post_create_fees(student_id: str) -> None:
