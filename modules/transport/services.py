@@ -244,6 +244,15 @@ def assignment_active_on(a: TransportBusAssignment, on_date: date) -> bool:
     return True
 
 
+def _date_ranges_overlap(
+    from_a: date, to_a: Optional[date], from_b: date, to_b: Optional[date]
+) -> bool:
+    """True if [from_a, to_a] and [from_b, to_b] overlap. A None end is open-ended."""
+    end_a = to_a or date.max
+    end_b = to_b or date.max
+    return from_a <= end_b and from_b <= end_a
+
+
 def enrollment_active_on(en: TransportEnrollment, on_date: date) -> bool:
     if en.status != "active":
         return False
@@ -968,6 +977,27 @@ def create_assignment(payload: Dict) -> Tuple[Optional[Dict], Optional[str]]:
             return None, "Helper staff not found or inactive"
         if h.role not in HELPER_ROLES:
             return None, "Selected staff must have role helper or attendant"
+
+    # A driver/helper can only staff one bus at a time. Bus double-assignment is
+    # blocked by a DB constraint, but the driver and helper have no such guard —
+    # so a person could be put on two buses for an overlapping period. Reject it.
+    new_from = payload["effective_from"]
+    new_to = payload.get("effective_to")
+
+    def _has_overlapping_active(column, value: str) -> bool:
+        for other in TransportBusAssignment.query.filter(
+            TransportBusAssignment.tenant_id == tenant_id,
+            column == value,
+            TransportBusAssignment.status == "active",
+        ).all():
+            if _date_ranges_overlap(other.effective_from, other.effective_to, new_from, new_to):
+                return True
+        return False
+
+    if _has_overlapping_active(TransportBusAssignment.driver_id, payload["driver_id"]):
+        return None, "Driver is already assigned to another bus for an overlapping period"
+    if helper_id and _has_overlapping_active(TransportBusAssignment.helper_staff_id, helper_id):
+        return None, "Helper is already assigned to another bus for an overlapping period"
 
     a = TransportBusAssignment(
         tenant_id=tenant_id,
