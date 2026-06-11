@@ -64,7 +64,7 @@ jobs:
                 "cd /home/ec2-user",
                 "docker compose -f docker-compose.prod.yml --env-file .env.prod pull api celery-worker celery-beat",
                 "docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans",
-                "docker image prune -f"
+                "docker image prune -f || true"
               ],
               "executionTimeout": ["900"]
             }' \
