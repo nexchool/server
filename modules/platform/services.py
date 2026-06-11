@@ -963,7 +963,10 @@ def add_tenant_admin(
         tenant_id=tenant_id,
         metadata={"admin_email": email},
     )
-    return {"success": True, "admin_user_id": user.id}
+    # The temporary password is returned ONCE so the panel can show it to the
+    # super admin (email delivery may be unavailable, e.g. SES sandbox). It is
+    # force_password_reset-gated, never logged, and never stored in plaintext.
+    return {"success": True, "admin_user_id": user.id, "temp_password": password}
 
 
 def remove_tenant_admin(

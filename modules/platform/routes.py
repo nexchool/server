@@ -365,7 +365,15 @@ def add_tenant_admin(tenant_id):
     )
     if not result["success"]:
         return error_response("BadRequest", result["error"], 400)
-    return success_response(data={"admin_user_id": result["admin_user_id"]}, message="Admin created", status_code=201)
+    return success_response(
+        data={
+            "admin_user_id": result["admin_user_id"],
+            # One-time reveal for the panel; see add_tenant_admin.
+            "temp_password": result.get("temp_password"),
+        },
+        message="Admin created",
+        status_code=201,
+    )
 
 
 @platform_bp.route("/tenants/<tenant_id>/admins/<admin_id>", methods=["DELETE"])
