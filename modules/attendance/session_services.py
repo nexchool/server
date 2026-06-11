@@ -216,6 +216,16 @@ def get_or_create_session(
     # Branch scope: restricted sub-admins may only touch classes in their units.
     assert_class_allowed(class_id)
 
+    # Attendance can only be taken for a day that has occurred. date.today() is the
+    # server date, matching the rest of this module (e.g. the route default); for
+    # IST / UTC+ tenants the only divergence is before dawn local time, outside
+    # marking hours.
+    if session_date > date.today():
+        return {
+            "success": False,
+            "error": "Attendance cannot be taken for a future date",
+        }
+
     holiday = get_holiday_for_date(session_date, tenant_id)
     if holiday:
         return {
@@ -350,15 +360,20 @@ def upsert_records(
 
     updated = 0
     created = 0
+    skipped: List[Dict[str, Any]] = []
     now = datetime.now(timezone.utc)
 
     for rec in records:
         student_id = rec.get("student_id")
         status = (rec.get("status") or "absent").strip()
         if status not in ("present", "absent", "late", "excused"):
+            skipped.append({"student_id": student_id, "reason": f"invalid status '{status}'"})
             continue
         st = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
         if not st or st.class_id != s.class_id:
+            skipped.append(
+                {"student_id": student_id, "reason": "student is not in this class"}
+            )
             continue
 
         row = AttendanceRecord.query.filter_by(
@@ -389,7 +404,7 @@ def upsert_records(
     s.updated_by = user_id
 
     db.session.commit()
-    return {"success": True, "created": created, "updated": updated}
+    return {"success": True, "created": created, "updated": updated, "skipped": skipped}
 
 
 def finalize_session(tenant_id: str, session_id: str, user_id: str) -> Dict[str, Any]:

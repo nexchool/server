@@ -21,7 +21,7 @@ bound to the savepoint connection in conftest (rolled back per test).
 from __future__ import annotations
 
 import uuid
-from datetime import date, time
+from datetime import date, time, timedelta
 
 import pytest
 from flask import g
@@ -632,3 +632,80 @@ def test_unrestricted_counts_unchanged(
         assert len({r["id"] for r in att}) == 2
         assert len(slots_a) == 1
         assert len(slots_b) == 1
+
+
+# ===========================================================================
+# Attendance session integrity: no future-dated sessions, no silent record skips
+# ===========================================================================
+
+def test_get_or_create_session_rejects_future_date(
+    flask_app, db_session, tenant, classes, marker_user, unrestricted_user
+):
+    class_a, _ = classes
+    future = date.today() + timedelta(days=5)
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        r = attendance_session_services.get_or_create_session(
+            tenant.id, class_a.id, future, marker_user.id
+        )
+    assert r["success"] is False
+    assert "future" in r["error"].lower()
+
+
+def test_get_or_create_session_allows_today(
+    flask_app, db_session, tenant, classes, marker_user, unrestricted_user
+):
+    class_a, _ = classes
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        r = attendance_session_services.get_or_create_session(
+            tenant.id, class_a.id, date.today(), marker_user.id
+        )
+    assert r["success"] is True
+
+
+def test_upsert_records_reports_skipped_instead_of_silently_dropping(
+    flask_app, db_session, tenant, classes, students, unrestricted_user
+):
+    class_a, _class_b = classes
+    student_a, student_b = students  # student_b belongs to class_b, not class_a
+    teacher = _make_teacher(db_session, tenant)  # the session's assigned marker
+
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        created = attendance_session_services.get_or_create_session(
+            tenant.id,
+            class_a.id,
+            date(2025, 9, 1),
+            teacher.user_id,
+            assigned_marker_teacher_id=teacher.id,
+        )
+        assert created["success"] is True
+        session_id = created["session"]["id"]
+
+        res = attendance_session_services.upsert_records(
+            tenant.id,
+            session_id,
+            teacher.user_id,
+            [
+                {"student_id": student_a.id, "status": "present"},
+                {"student_id": student_b.id, "status": "present"},       # wrong class
+                {"student_id": "no-such-student", "status": "absent"},    # nonexistent
+                {"student_id": student_a.id, "status": "teleported"},     # invalid status
+            ],
+        )
+
+    assert res["success"] is True
+    assert res["created"] == 1  # only student_a's valid record saved
+    skipped_ids = [s["student_id"] for s in res["skipped"]]
+    assert student_b.id in skipped_ids          # not in this class
+    assert "no-such-student" in skipped_ids     # nonexistent
+    # student_a's bad-status record is surfaced, not silently dropped.
+    assert any(
+        s["student_id"] == student_a.id and "invalid status" in s["reason"]
+        for s in res["skipped"]
+    )
+    assert len(res["skipped"]) == 3
