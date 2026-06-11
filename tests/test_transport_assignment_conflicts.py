@@ -88,3 +88,50 @@ def test_create_assignment_allows_driver_in_non_overlapping_period(flask_app, db
         })
     assert err2 is None
     assert b is not None
+
+
+def test_create_enrollment_enforces_bus_capacity(flask_app, db_session, tenant):
+    """Enrolling past a bus's capacity is rejected (the path now also takes a
+    FOR UPDATE lock on the bus so concurrent enrollments can't overflow it)."""
+    from decimal import Decimal
+
+    from modules.academics.academic_year.models import AcademicYear
+    from modules.auth.models import User
+    from modules.students.models import Student
+    from modules.transport import services
+    from modules.transport.models import TransportBus, TransportBusAssignment
+
+    ay = _mk(
+        AcademicYear, tenant_id=tenant.id, name="2026-27",
+        start_date="2026-06-01", end_date="2027-03-31",
+    )
+    bus = _mk(TransportBus, tenant_id=tenant.id, bus_number="CAP1", capacity=1, status="active")
+    driver = _driver(tenant)
+    route = _route(tenant, "Cap Route")
+    _mk(
+        TransportBusAssignment, tenant_id=tenant.id, bus_id=bus.id, driver_id=driver.id,
+        route_id=route.id, effective_from=date(2026, 6, 1), status="active",
+    )
+
+    def _student(suffix):
+        u = _mk(
+            User, tenant_id=tenant.id, email=f"cap-{suffix}@test.local",
+            password_hash="x" * 60, name=f"Cap {suffix}",
+        )
+        return _mk(
+            Student, tenant_id=tenant.id, user_id=u.id,
+            admission_number=f"CAP-{suffix}", academic_year_id=ay.id,
+        )
+
+    s1, s2 = _student("1"), _student("2")
+    payload = {
+        "bus_id": bus.id, "route_id": route.id, "academic_year_id": ay.id,
+        "start_date": date(2026, 6, 10), "monthly_fee": Decimal("500"),
+    }
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        en1, err1 = services.create_enrollment({**payload, "student_id": s1.id})
+        assert err1 is None and en1 is not None  # fills the capacity-1 bus
+        en2, err2 = services.create_enrollment({**payload, "student_id": s2.id})
+    assert en2 is None
+    assert err2 is not None and "capacity" in err2.lower()

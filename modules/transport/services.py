@@ -1063,7 +1063,15 @@ def validate_transport_enrollment_prereqs(
     exclude_enrollment_id: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Strict checks before create/update enrollment."""
-    bus = TransportBus.query.filter_by(id=bus_id, tenant_id=tenant_id).first()
+    # Lock the bus row so concurrent enrollments to the same bus serialize on the
+    # capacity check below — otherwise two requests could both see one free seat
+    # and both insert, overflowing capacity by one (capacity has no DB
+    # constraint backstop, unlike the duplicate-enrollment guard).
+    bus = (
+        TransportBus.query.filter_by(id=bus_id, tenant_id=tenant_id)
+        .with_for_update()
+        .first()
+    )
     if not bus:
         return False, "Bus not found"
     if bus.status != "active":
