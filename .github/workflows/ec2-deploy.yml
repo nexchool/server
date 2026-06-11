@@ -45,17 +45,38 @@ jobs:
             --push .
           echo "registry=$(echo "$ECR_REPO" | cut -d'/' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy on EC2
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script_stop: true
-          script: |
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} \
-              | sudo docker login --username AWS --password-stdin "${{ steps.image.outputs.registry }}"
-            cd /home/ec2-user
-            sudo docker compose -f docker-compose.prod.yml --env-file .env.prod pull api celery-worker celery-beat
-            sudo docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans
-            sudo docker image prune -f
+      # Deploys over SSM instead of SSH: no key secret, no open port 22. Commands
+      # run as root on the instance (no sudo); the instance role provides ECR auth.
+      - name: Deploy on EC2 via SSM
+        env:
+          # Prod instance. Update if the instance is ever replaced.
+          EC2_INSTANCE_ID: i-0cfd39b4452e87ef1
+        run: |
+          set -euo pipefail
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "deploy server ${{ github.sha }}" \
+            --parameters '{
+              "commands": [
+                "set -euo pipefail",
+                "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.image.outputs.registry }}",
+                "cd /home/ec2-user",
+                "docker compose -f docker-compose.prod.yml --env-file .env.prod pull api celery-worker celery-beat",
+                "docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans",
+                "docker image prune -f"
+              ],
+              "executionTimeout": ["900"]
+            }' \
+            --query 'Command.CommandId' --output text)
+          echo "SSM command: $CMD_ID"
+          STATUS=Pending
+          for _ in $(seq 1 90); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "$EC2_INSTANCE_ID" --query 'Status' --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 10
+          done
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status: Status, Stdout: StandardOutputContent, Stderr: StandardErrorContent}' --output json
+          test "$STATUS" = "Success"
