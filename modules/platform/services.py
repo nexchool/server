@@ -702,11 +702,25 @@ def list_tenants(
     page: int = 1,
     per_page: int = 20,
     status: Optional[str] = None,
+    search: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Paginated list of tenants with pricing summary and counts."""
+    """Paginated list of tenants with pricing summary and counts.
+
+    `search` does a case-insensitive contains-match on name, subdomain, or
+    contact email — the panel's jump-to-tenant box.
+    """
     query = Tenant.query
     if status:
         query = query.filter(Tenant.status == status)
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        query = query.filter(
+            db.or_(
+                Tenant.name.ilike(like),
+                Tenant.subdomain.ilike(like),
+                Tenant.contact_email.ilike(like),
+            )
+        )
     query = query.order_by(Tenant.created_at.desc())
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     items = []

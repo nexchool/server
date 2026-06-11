@@ -274,12 +274,15 @@ def reset_admin(tenant_id):
 @auth_required
 @platform_admin_required
 def list_tenants():
-    """GET /platform/tenants?page=1&per_page=20&status=active|suspended"""
+    """GET /platform/tenants?page=1&per_page=20&status=active|suspended&search=..."""
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
     per_page = min(max(per_page, 1), 100)
     status = request.args.get("status")
-    result = services.list_tenants(page=page, per_page=per_page, status=status)
+    search = request.args.get("search")
+    result = services.list_tenants(
+        page=page, per_page=per_page, status=status, search=search
+    )
     return success_response(
         data={"items": result["data"], "pagination": result["pagination"]},
         status_code=200,
