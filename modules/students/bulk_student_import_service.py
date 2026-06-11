@@ -64,15 +64,91 @@ def _tenant_admission_numbers(tenant_id: str) -> Set[str]:
     return {r[0] for r in rows if r[0]}
 
 
-def _class_map_for_year(tenant_id: str, academic_year_id: str) -> Dict[Tuple[str, str], str]:
-    classes = Class.query.filter_by(
-        tenant_id=tenant_id,
-        academic_year_id=academic_year_id,
-    ).all()
-    return {
-        (c.name.strip().lower(), c.section.strip().lower()): c.id
-        for c in classes
-    }
+def _class_candidates_for_year(
+    tenant_id: str, academic_year_id: str
+) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+    """Map (name_lower, section_lower) -> list of candidate classes.
+
+    A school running multiple programmes/mediums can have several classes that
+    share the same display name + section (e.g. GSEB Gujarati "10 A" and GSEB
+    English "10 A" — `name` is only a display label; real class identity includes
+    the programme). Returning a LIST lets the caller detect that ambiguity and ask
+    for disambiguation instead of silently assigning an arbitrary one. `name` is
+    nullable, so it is coalesced before keying.
+    """
+    from modules.academic_programmes.models import AcademicProgramme
+
+    rows = (
+        db.session.query(
+            Class.id,
+            Class.name,
+            Class.section,
+            AcademicProgramme.name,
+            AcademicProgramme.board,
+        )
+        .outerjoin(AcademicProgramme, AcademicProgramme.id == Class.programme_id)
+        .filter(
+            Class.tenant_id == tenant_id,
+            Class.academic_year_id == academic_year_id,
+        )
+        .all()
+    )
+    out: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for class_id, class_name, section, programme_name, board in rows:
+        key = ((class_name or "").strip().lower(), (section or "").strip().lower())
+        out.setdefault(key, []).append(
+            {"id": class_id, "programme_name": programme_name, "board": board}
+        )
+    return out
+
+
+def _disambiguate_class(
+    class_name: str,
+    section: str,
+    candidates: List[Dict[str, Any]],
+    raw: Dict[str, Any],
+    errors: List[str],
+) -> Optional[str]:
+    """Resolve a name+section that matches several classes (multi-medium/board).
+
+    Narrow by an optional `medium` / `programme` / `board` column on the row
+    (matched against the programme name or board, case-insensitive). If that
+    lands on exactly one class, use it; otherwise record a clear error listing the
+    options rather than guessing.
+    """
+    hint = None
+    for col in ("medium", "programme", "board"):
+        if not is_blank(raw.get(col)):
+            hint = str(raw.get(col)).strip()
+            break
+
+    narrowed = candidates
+    if hint:
+        hint_lower = hint.lower()
+        narrowed = [
+            c
+            for c in candidates
+            if hint_lower in (c.get("programme_name") or "").lower()
+            or hint_lower == (c.get("board") or "").strip().lower()
+        ]
+
+    if len(narrowed) == 1:
+        return narrowed[0]["id"]
+
+    options = ", ".join(
+        sorted(c.get("programme_name") or "(no programme)" for c in candidates)
+    )
+    if hint:
+        errors.append(
+            f"Class '{class_name} / {section}' is ambiguous: '{hint}' did not match "
+            f"exactly one of [{options}]. Use a 'medium' or 'programme' column."
+        )
+    else:
+        errors.append(
+            f"Class '{class_name} / {section}' matches {len(candidates)} classes "
+            f"[{options}]. Add a 'medium' or 'programme' column to choose one."
+        )
+    return None
 
 
 def _soft_phone_column(val: Any, field: str, warnings: List[str]) -> Optional[str]:
@@ -89,7 +165,7 @@ def _validate_and_coerce_row(
     raw: Dict[str, Any],
     row_number: int,
     *,
-    class_map: Dict[Tuple[str, str], str],
+    class_map: Dict[Tuple[str, str], List[Dict[str, Any]]],
     db_emails_lower: Set[str],
     file_emails: Set[str],
 ) -> Tuple[bool, Dict[str, Any], List[str], List[str], Optional[Dict[str, Any]]]:
@@ -125,9 +201,13 @@ def _validate_and_coerce_row(
     section = str(row.get("section")).strip() if not is_blank(row.get("section")) else None
     class_id: Optional[str] = None
     if class_name and section:
-        class_id = class_map.get((class_name.lower(), section.lower()))
-        if not class_id:
+        candidates = class_map.get((class_name.lower(), section.lower()), [])
+        if not candidates:
             errors.append("Class not found for class_name and section")
+        elif len(candidates) == 1:
+            class_id = candidates[0]["id"]
+        else:
+            class_id = _disambiguate_class(class_name, section, candidates, raw, errors)
     elif class_name or section:
         errors.append("Both class_name and section are required")
 
@@ -186,7 +266,7 @@ def validate_workbook_rows(
     if not ay:
         raise ValueError("academic_year_id not found for this tenant")
 
-    class_map = _class_map_for_year(tenant_id, academic_year_id)
+    class_map = _class_candidates_for_year(tenant_id, academic_year_id)
     db_emails = _tenant_emails_lower(tenant_id)
 
     file_emails: Set[str] = set()
@@ -388,7 +468,7 @@ def import_students_from_rows(
             "error": "Student role not found",
         }
 
-    class_map = _class_map_for_year(tenant_id, academic_year_id)
+    class_map = _class_candidates_for_year(tenant_id, academic_year_id)
     db_emails = _tenant_emails_lower(tenant_id)
 
     validated: List[Tuple[int, Dict[str, Any]]] = []
