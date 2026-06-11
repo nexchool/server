@@ -13,6 +13,7 @@ RBAC Philosophy:
 - 'manage' permission implies all actions on that resource
 """
 
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
@@ -742,25 +743,26 @@ def get_user_roles(user_id: str) -> List[Dict]:
 
 
 def remove_login_for_deleted_profile(
-    user_id: str, tenant_id: str, profile_role: str
+    user_id: str, tenant_id: str, profile_role: str, *, hard: bool = True
 ) -> None:
     """Tear down the auth account behind a just-deleted student/teacher profile.
 
     Call this inside the profile-deletion transaction (it does NOT commit), AFTER
     the profile row has been deleted/flushed so it no longer references the user.
 
-    - If the user holds no role other than ``profile_role``, the whole User row is
-      removed via a bulk DELETE. This clears the orphaned login — which could
-      otherwise still authenticate with no profile row, 404-ing its dashboard —
-      and frees the email for re-enrolment. DB FKs cascade (user_roles, sessions,
-      device_tokens, notifications, user_school_units) and audit references
-      SET NULL. A bulk delete (not session.delete) is used so the ORM does not try
-      to NULL the NOT NULL user_id columns first.
-    - If the same person also holds another role (rare — e.g. someone recorded as
-      both a teacher and a student), the User is kept and only the ``profile_role``
-      assignment is detached. This preserves their other access and sidesteps the
-      NO ACTION FKs (classes.teacher_id, attendance.marked_by) that a teacher's
-      user carries.
+    - If the user holds a role beyond ``profile_role`` (rare — e.g. someone
+      recorded as both a teacher and a student), the User is kept and only the
+      ``profile_role`` assignment is detached, preserving their other access.
+    - Otherwise, with ``hard=True`` (default, for students) the whole User row is
+      removed via a bulk DELETE: it clears the orphaned login and frees the email
+      for re-enrolment. DB FKs cascade (user_roles, sessions, device_tokens,
+      notifications, user_school_units) and audit references SET NULL. A bulk
+      delete (not session.delete) avoids the ORM NULLing NOT NULL user_id columns.
+    - With ``hard=False`` (for teachers) the login is SOFT-deactivated instead: the
+      User row is kept — so NOT NULL audit references like attendance.marked_by
+      stay valid and history is preserved — with deleted_at set so it can no longer
+      authenticate, and its roles detached. A teacher's user is referenced by
+      NO ACTION / NOT NULL FKs that forbid a hard delete.
     """
     role_rows = (
         db.session.query(UserRole.id, Role.name)
@@ -778,7 +780,17 @@ def remove_login_for_deleted_profile(
             )
         return
 
-    User.query.filter_by(id=user_id, tenant_id=tenant_id).delete(
+    if hard:
+        User.query.filter_by(id=user_id, tenant_id=tenant_id).delete(
+            synchronize_session=False
+        )
+        return
+
+    # Soft-deactivate: keep the row (preserves FK history), block login, drop roles.
+    user = User.query.filter_by(id=user_id, tenant_id=tenant_id).first()
+    if user is not None and user.deleted_at is None:
+        user.deleted_at = datetime.now(timezone.utc)
+    UserRole.query.filter_by(user_id=user_id, tenant_id=tenant_id).delete(
         synchronize_session=False
     )
 

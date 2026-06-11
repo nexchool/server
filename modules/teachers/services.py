@@ -7,7 +7,10 @@ from core.database import db
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
-from modules.rbac.services import assign_role_to_user_by_email
+from modules.rbac.services import (
+    assign_role_to_user_by_email,
+    remove_login_for_deleted_profile,
+)
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from .models import Teacher
 
@@ -394,20 +397,41 @@ def update_teacher(
 
 
 def delete_teacher(teacher_id: str) -> Dict:
-    """Delete teacher."""
+    """Delete teacher and deactivate its backing user.
+
+    Mirrors delete_student so no orphaned, login-capable user is left behind. The
+    user is SOFT-deactivated (deleted_at) rather than hard-deleted: a teacher's
+    user is referenced by NOT NULL / NO ACTION FKs (attendance.marked_by,
+    classes.teacher_id), so soft delete preserves that history while blocking
+    login. A user who also holds another role keeps their login (only the Teacher
+    role is detached).
+    """
     try:
         teacher = Teacher.query.get(teacher_id)
         if not teacher:
             return {'success': False, 'error': 'Teacher not found'}
 
+        tenant_id = teacher.tenant_id
+        user_id = teacher.user_id
+
         # class_teachers has no ON DELETE CASCADE on its FK, so SQLAlchemy would
         # try to SET teacher_id = NULL (NOT NULL column) and raise a violation.
         # Explicitly remove those rows before deleting the teacher.
-        from modules.classes.models import ClassTeacher
+        from modules.classes.models import ClassTeacher, Class
         ClassTeacher.query.filter_by(teacher_id=teacher_id).delete(synchronize_session=False)
-        db.session.flush()
+        # Clear the legacy homeroom pointer (classes.teacher_id -> users.id) so no
+        # class still lists this departed teacher as its class teacher.
+        Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).update(
+            {Class.teacher_id: None}, synchronize_session=False
+        )
 
-        teacher.delete()
+        db.session.delete(teacher)
+        db.session.flush()  # clear teachers.user_id before touching the user
+
+        # Soft-deactivate the backing login (hard=False) — see docstring.
+        remove_login_for_deleted_profile(user_id, tenant_id, "Teacher", hard=False)
+
+        db.session.commit()
         return {'success': True, 'message': 'Teacher deleted successfully'}
     except Exception as e:
         db.session.rollback()
