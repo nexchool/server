@@ -296,6 +296,19 @@ class Payment(TenantBaseModel):
     """
     __tablename__ = "payments"
 
+    __table_args__ = (
+        # A non-null idempotency_key is unique per tenant: a retried/duplicate
+        # submission with the same key cannot create a second payment. Partial so
+        # legacy rows (NULL key) are unconstrained.
+        db.Index(
+            "uq_payments_tenant_idempotency_key",
+            "tenant_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=db.text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     student_fee_id = db.Column(
         db.String(36),
@@ -309,6 +322,9 @@ class Payment(TenantBaseModel):
     reference_number = db.Column(db.String(100), nullable=True, index=True)
     method_detail = db.Column(db.String(200), nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    # Client-supplied dedup token: a retry / double-submit carrying the same key
+    # returns the original payment instead of charging again (see create_payment).
+    idempotency_key = db.Column(db.String(64), nullable=True)
     created_by = db.Column(
         db.String(36),
         db.ForeignKey("users.id", ondelete="SET NULL"),

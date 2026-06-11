@@ -466,6 +466,7 @@ def create_payment():
         notes=data.get("notes"),
         allocations=allocations,
         method_detail=data.get("method_detail"),
+        idempotency_key=data.get("idempotency_key"),
     )
     if result["success"]:
         return success_response(data=result, message="Payment recorded", status_code=201)

@@ -11,6 +11,8 @@ import logging
 from decimal import Decimal
 from typing import Dict, Optional, Any, List
 
+from sqlalchemy.exc import IntegrityError
+
 from core.database import db
 
 logger = logging.getLogger(__name__)
@@ -172,6 +174,7 @@ def create_payment(
     notes: Optional[str] = None,
     allocations: Optional[List[Dict[str, Any]]] = None,
     method_detail: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a payment and apply it to the student fee.
@@ -199,6 +202,22 @@ def create_payment(
     if not tenant_id:
         logger.warning("[create_payment] No tenant_id")
         return {"success": False, "error": "Tenant context is required"}
+
+    # Idempotency fast path: a retry / duplicate submission carrying a key that
+    # already produced a payment returns that original payment — never a second
+    # charge. The unique index backstops a true concurrent race (see below).
+    idem_key = (idempotency_key or "").strip() or None
+    if idem_key:
+        existing = Payment.query.filter_by(
+            tenant_id=tenant_id, idempotency_key=idem_key
+        ).first()
+        if existing is not None:
+            logger.info(
+                "[create_payment] idempotent replay key=%s -> payment=%s",
+                idem_key,
+                existing.id,
+            )
+            return {"success": True, "payment": existing.to_dict(), "idempotent": True}
 
     # Branch scope: a restricted sub-admin may only record payments for
     # students in their branches. Resolve the owning student via the student
@@ -277,6 +296,7 @@ def create_payment(
                 method_detail=stored_detail,
                 notes=notes,
                 created_by=created_by,
+                idempotency_key=idem_key,
             )
             db.session.add(payment)
             db.session.flush()
@@ -315,6 +335,23 @@ def create_payment(
     except ValueError as e:
         logger.exception("[create_payment] ValueError: %s", e)
         return {"success": False, "error": str(e)}
+    except IntegrityError as e:
+        # A concurrent request with the same idempotency_key won the unique-index
+        # race; return its payment rather than failing or charging again.
+        db.session.rollback()
+        if idem_key:
+            existing = Payment.query.filter_by(
+                tenant_id=tenant_id, idempotency_key=idem_key
+            ).first()
+            if existing is not None:
+                logger.info(
+                    "[create_payment] idempotent race key=%s -> payment=%s",
+                    idem_key,
+                    existing.id,
+                )
+                return {"success": True, "payment": existing.to_dict(), "idempotent": True}
+        logger.exception("[create_payment] IntegrityError: %s", e)
+        return {"success": False, "error": "Payment could not be recorded (duplicate)"}
     except Exception as e:
         logger.exception("[create_payment] Exception: %s", e)
         db.session.rollback()

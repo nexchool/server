@@ -877,3 +877,85 @@ def test_finance_student_fee_summary_aggregates_over_all_rows(
         assert summary["outstanding_amount"] == 1600.0
         assert summary["paid_count"] == 1
         assert summary["overdue_count"] == 1
+
+
+# ===========================================================================
+# FINANCE — payment idempotency (no double-charge on retry / duplicate submit)
+# ===========================================================================
+
+def test_create_payment_same_idempotency_key_charges_once(
+    flask_app, db_session, tenant, student_fees, unrestricted_user
+):
+    from modules.finance.models import Payment
+
+    sf_a, _b, _c = student_fees
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        first = payment_service.create_payment(
+            student_fee_id=sf_a.id, amount="300", method="cash", idempotency_key="KEY-1"
+        )
+        second = payment_service.create_payment(
+            student_fee_id=sf_a.id, amount="300", method="cash", idempotency_key="KEY-1"
+        )
+        assert first["success"] is True
+        assert second["success"] is True
+        # The replay returns the original payment, flagged idempotent...
+        assert second.get("idempotent") is True
+        assert second["payment"]["id"] == first["payment"]["id"]
+        # ...so exactly one payment exists — the fee is charged once, not twice.
+        assert Payment.query.filter_by(student_fee_id=sf_a.id).count() == 1
+
+
+def test_create_payment_different_keys_charge_separately(
+    flask_app, db_session, tenant, student_fees, unrestricted_user
+):
+    from modules.finance.models import Payment
+
+    sf_a, _b, _c = student_fees
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        payment_service.create_payment(
+            student_fee_id=sf_a.id, amount="200", method="cash", idempotency_key="A"
+        )
+        payment_service.create_payment(
+            student_fee_id=sf_a.id, amount="200", method="cash", idempotency_key="B"
+        )
+        assert Payment.query.filter_by(student_fee_id=sf_a.id).count() == 2
+
+
+def test_create_payment_without_key_is_not_deduplicated(
+    flask_app, db_session, tenant, student_fees, unrestricted_user
+):
+    from modules.finance.models import Payment
+
+    sf_a, _b, _c = student_fees
+    with flask_app.test_request_context("/"):
+        g.tenant_id = tenant.id
+        g.current_user = unrestricted_user
+        payment_service.create_payment(student_fee_id=sf_a.id, amount="100", method="cash")
+        payment_service.create_payment(student_fee_id=sf_a.id, amount="100", method="cash")
+        # No key -> backward-compatible behaviour: both are recorded.
+        assert Payment.query.filter_by(student_fee_id=sf_a.id).count() == 2
+
+
+def test_payments_unique_index_blocks_duplicate_key(db_session, tenant, student_fees):
+    """The partial unique index is the concurrency backstop: two payments with the
+    same (tenant, idempotency_key) cannot both persist."""
+    from sqlalchemy.exc import IntegrityError
+    from modules.finance.models import Payment
+
+    sf_a, _b, _c = student_fees
+    db_session.add(Payment(
+        tenant_id=tenant.id, student_fee_id=sf_a.id, amount=10,
+        method="cash", status="success", idempotency_key="DUP",
+    ))
+    db_session.flush()
+    db_session.add(Payment(
+        tenant_id=tenant.id, student_fee_id=sf_a.id, amount=10,
+        method="cash", status="success", idempotency_key="DUP",
+    ))
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()
