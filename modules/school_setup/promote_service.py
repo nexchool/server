@@ -11,6 +11,7 @@ idempotent, never overwrites existing user-tuned weekly_periods).
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from typing import Any, Dict, List
 
@@ -92,7 +93,7 @@ def promote_year(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     subject_links_created = 0
     if apply_subjects and created_classes:

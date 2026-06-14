@@ -3,6 +3,7 @@ AcademicProgramme Services
 
 Business logic for AcademicProgramme CRUD. Tenant-scoped, soft-delete aware.
 """
+from shared.safe_error import safe_error
 
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -135,7 +136,7 @@ def create_programme(data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_programme(programme_id: str, data: Dict, tenant_id: str) -> Dict:
@@ -187,7 +188,7 @@ def update_programme(programme_id: str, data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_programme(programme_id: str, tenant_id: str) -> Dict:
@@ -213,7 +214,7 @@ def delete_programme(programme_id: str, tenant_id: str) -> Dict:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     try:
         from modules.school_setup.services import recompute_setup_complete

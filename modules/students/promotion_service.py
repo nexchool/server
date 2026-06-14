@@ -5,6 +5,7 @@ Uses StudentClassEnrollment as source of truth; syncs students.class_id / academ
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 import logging
 import re
@@ -555,7 +556,7 @@ def execute_promotion(
     except Exception as e:
         db.session.rollback()
         logger.exception("promotion batch %s: failed %s", batch_id, e)
-        return {"success": False, "error": str(e), "promotion_batch_id": batch_id}
+        return {"success": False, "error": safe_error(e), "promotion_batch_id": batch_id}
 
 
 def parse_promotion_filters(data: Dict[str, Any]) -> Tuple[bool, bool]:

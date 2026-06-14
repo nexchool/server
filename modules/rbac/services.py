@@ -12,6 +12,7 @@ RBAC Philosophy:
 - Permission naming: resource.action.scope
 - 'manage' permission implies all actions on that resource
 """
+from shared.safe_error import safe_error
 
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
@@ -239,7 +240,7 @@ def create_permission(name: str, description: str = None) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e),
+            'error': safe_error(e),
             'permission': None
         }
 
@@ -318,7 +319,7 @@ def update_permission(permission_id: str, name: str = None, description: str = N
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -343,7 +344,7 @@ def delete_permission(permission_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -382,7 +383,7 @@ def create_role(name: str, description: str = None) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e),
+            'error': safe_error(e),
             'role': None
         }
 
@@ -464,7 +465,7 @@ def update_role(role_id: str, name: str = None, description: str = None) -> Dict
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -489,7 +490,7 @@ def delete_role(role_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -540,7 +541,7 @@ def assign_permission_to_role(role_id: str, permission_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -582,7 +583,7 @@ def remove_permission_from_role(role_id: str, permission_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -646,7 +647,7 @@ def assign_role_to_user(user_id: str, role_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -699,7 +700,7 @@ def remove_role_from_user(user_id: str, role_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -824,7 +825,7 @@ def bulk_assign_permissions_to_role(role_id: str, permission_ids: List[str]) -> 
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -855,5 +856,5 @@ def bulk_assign_roles_to_user(user_id: str, role_ids: List[str]) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }

@@ -1,4 +1,5 @@
 """Student fee assignment and listing services."""
+from shared.safe_error import safe_error
 
 from datetime import date
 from decimal import Decimal
@@ -544,7 +545,7 @@ def assign_student_fees_for_structure(
         return {"success": True, "created_count": created}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def unassign_fees_for_removed_classes(
@@ -617,7 +618,7 @@ def unassign_fees_for_removed_classes(
         return {"success": True, "removed_count": removed}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e), "removed_count": 0}
+        return {"success": False, "error": safe_error(e), "removed_count": 0}
 
 
 def remove_student_fee_for_structure(
@@ -692,7 +693,7 @@ def remove_student_fee_for_structure(
         return {"success": True, "message": "Student removed from fee structure"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def auto_assign_fees_for_student(student_id: str) -> None:

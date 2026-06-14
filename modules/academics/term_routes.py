@@ -5,6 +5,7 @@ REST API for AcademicTerm CRUD. Mounted under the academics blueprint at
 /api/academics/terms. The model already exists in
 modules.academics.backbone.models.AcademicTerm; this module just exposes it.
 """
+from shared.safe_error import safe_error
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -158,7 +159,7 @@ def create_academic_term():
         return error_response("CreationError", "Database constraint violation", 400)
     except Exception as e:
         db.session.rollback()
-        return error_response("CreationError", str(e), 400)
+        return error_response("CreationError", safe_error(e), 400)
 
 
 @academics_bp.route("/terms/<term_id>", methods=["GET"])
@@ -248,7 +249,7 @@ def update_academic_term(term_id):
         return error_response("UpdateError", "Database constraint violation", 400)
     except Exception as e:
         db.session.rollback()
-        return error_response("UpdateError", str(e), 400)
+        return error_response("UpdateError", safe_error(e), 400)
 
 
 @academics_bp.route("/terms/<term_id>", methods=["DELETE"])
@@ -274,5 +275,5 @@ def delete_academic_term(term_id):
         return success_response(message="Term deleted successfully")
     except Exception as e:
         db.session.rollback()
-        return error_response("DeleteError", str(e), 400)
+        return error_response("DeleteError", safe_error(e), 400)
 

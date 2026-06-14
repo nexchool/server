@@ -12,6 +12,7 @@ Apply semantics (idempotent, non-destructive):
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 import uuid
 from datetime import datetime, timezone
@@ -232,13 +233,13 @@ def create_context(
         return {"success": True, "context": ctx.to_dict()}
     except IntegrityError as e:
         db.session.rollback()
-        msg = str(e.orig) if hasattr(e, "orig") else str(e)
-        if "uq_subject_contexts_offering_active" in msg:
+        raw = str(getattr(e, "orig", None) or e)
+        if "uq_subject_contexts_offering_active" in raw:
             return {
                 "success": False,
                 "error": "This subject is already assigned to that grade with the same medium and role",
             }
-        return {"success": False, "error": msg}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_context(
@@ -306,13 +307,13 @@ def update_context(
         return {"success": True, "context": c.to_dict()}
     except IntegrityError as e:
         db.session.rollback()
-        msg = str(e.orig) if hasattr(e, "orig") else str(e)
-        if "uq_subject_contexts_offering_active" in msg:
+        raw = str(getattr(e, "orig", None) or e)
+        if "uq_subject_contexts_offering_active" in raw:
             return {
                 "success": False,
                 "error": "Another offering with this subject, medium and role already exists",
             }
-        return {"success": False, "error": msg}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_context(context_id: str, tenant_id: str) -> Dict[str, Any]:
@@ -457,13 +458,13 @@ def bulk_upsert_contexts(
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        msg = str(e.orig) if hasattr(e, "orig") else str(e)
-        if "uq_subject_contexts_offering_active" in msg:
+        raw = str(getattr(e, "orig", None) or e)
+        if "uq_subject_contexts_offering_active" in raw:
             return {
                 "success": False,
                 "error": "Two entries collide on (subject, medium, role).",
             }
-        return {"success": False, "error": msg}
+        return {"success": False, "error": safe_error(e)}
 
     return {
         "success": True,
@@ -628,11 +629,11 @@ def apply_for_grade(
         db.session.rollback()
         return {
             "success": False,
-            "error": str(e.orig) if hasattr(e, "orig") else str(e),
+            "error": safe_error(e),
         }
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     try:
         from modules.school_setup.services import recompute_setup_complete

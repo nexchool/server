@@ -8,6 +8,7 @@ flips to true: that requires explicit POST /school-setup/complete.
 
 All probes are existence + count queries; no full table loads.
 """
+from shared.safe_error import safe_error
 
 import logging
 from datetime import datetime, timezone
@@ -438,7 +439,7 @@ def run_complete_setup(
             "school_setup.complete.error",
             extra={"tenant_id": tenant_id, "actor_user_id": actor_user_id},
         )
-        return {"success": False, "error": str(e), "code": "UpdateError"}
+        return {"success": False, "error": safe_error(e), "code": "UpdateError"}
 
 
 def get_status_payload(tenant_id: str) -> Dict[str, Any]:

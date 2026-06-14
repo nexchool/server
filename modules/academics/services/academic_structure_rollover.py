@@ -9,6 +9,7 @@ target are skipped. The whole batch runs inside a single DB transaction.
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 import logging
 import uuid
@@ -400,7 +401,7 @@ def rollover_academic_structure(
     except Exception as e:
         db.session.rollback()
         logger.exception("academic structure rollover failed: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     return {
         "success": True,

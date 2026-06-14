@@ -1,6 +1,7 @@
 """Medium CRUD services. Tenant-scoped."""
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -60,7 +61,7 @@ def create_medium(
         return {"success": True, "medium": m.to_dict()}
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e.orig) if hasattr(e, "orig") else str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_medium(
@@ -99,7 +100,7 @@ def update_medium(
         return {"success": True, "medium": m.to_dict()}
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e.orig) if hasattr(e, "orig") else str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_medium(medium_id: str, tenant_id: str) -> Dict[str, Any]:

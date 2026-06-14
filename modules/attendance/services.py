@@ -7,6 +7,7 @@ migrated. New marks via POST /api/attendance/mark write only to v2.
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -151,7 +152,7 @@ def mark_attendance(
         return {"success": False, "error": f"Invalid date format: {str(e)}"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to mark attendance: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to mark attendance")}
 
 
 def _user_names_map(user_ids: List[Optional[str]]) -> Dict[str, str]:
@@ -356,7 +357,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
     except ValueError:
         return {"success": False, "error": "Invalid date format. Use YYYY-MM-DD"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict:
@@ -482,7 +483,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
     except BranchForbidden:
         raise
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_my_classes(user_id: str) -> List[Dict]:

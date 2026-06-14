@@ -3,6 +3,7 @@ Reminder Service
 
 Sends invoice reminders via push notification, email, and in-app notification.
 """
+from shared.safe_error import safe_error
 
 from typing import Any, Dict, Optional
 
@@ -95,4 +96,4 @@ def send_invoice_reminder(invoice_id: str) -> Dict[str, Any]:
         }
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}

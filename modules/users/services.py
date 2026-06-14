@@ -3,6 +3,7 @@ User Management Services
 
 Business logic for user administration and management.
 """
+from shared.safe_error import safe_error
 
 from typing import List, Dict, Optional
 from sqlalchemy import or_
@@ -145,7 +146,7 @@ def update_user(user_id: str, data: Dict) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -179,7 +180,7 @@ def delete_user(user_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 
@@ -213,7 +214,7 @@ def verify_user_email(user_id: str) -> Dict:
         db.session.rollback()
         return {
             'success': False,
-            'error': str(e)
+            'error': safe_error(e)
         }
 
 

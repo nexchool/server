@@ -6,6 +6,7 @@ compatibility and legacy queries.
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 import logging
 import uuid
@@ -86,7 +87,7 @@ def assign_student_to_class(
         logger.exception("assign_student_to_class failed: %s", e)
         if commit:
             db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def _assign_student_to_class_impl(

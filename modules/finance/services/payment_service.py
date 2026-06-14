@@ -6,6 +6,7 @@ Uses db.session.begin_nested() for transactional boundaries (savepoints) to avoi
 "A transaction is already begun" when Flask-SQLAlchemy autobegin has already started
 a transaction via decorators (auth, tenant). Row-level locking prevents race conditions.
 """
+from shared.safe_error import safe_error
 
 import logging
 from decimal import Decimal
@@ -355,7 +356,7 @@ def create_payment(
     except Exception as e:
         logger.exception("[create_payment] Exception: %s", e)
         db.session.rollback()
-        return {"success": False, "error": f"Payment failed: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Payment failed")}
 
 
 def refund_payment(
@@ -471,4 +472,4 @@ def refund_payment(
 
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Refund failed: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Refund failed")}

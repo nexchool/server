@@ -1,6 +1,7 @@
 """Timetable versions and entries (weekly recurring) — academic backbone only."""
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -197,7 +198,7 @@ def create_version(tenant_id: str, class_id: str, data: Dict[str, Any], user_id:
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "version": _serialize_version(v)}
 
 
@@ -227,7 +228,7 @@ def update_version(
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "version": _serialize_version(v)}
 
 
@@ -257,7 +258,7 @@ def activate_version(tenant_id: str, class_id: str, version_id: str) -> Dict[str
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "version": _serialize_version(target)}
 
 
@@ -275,7 +276,7 @@ def delete_version(tenant_id: str, class_id: str, version_id: str) -> Dict[str, 
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "message": "Draft version deleted"}
 
 
@@ -328,7 +329,7 @@ def clone_active_to_draft(
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "version": _serialize_version(new_v)}
 
 

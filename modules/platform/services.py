@@ -6,6 +6,7 @@ school admin creation, audit, per-tenant pricing & feature flags. All
 operations are platform-scoped (no g.tenant_id); tenant_id is passed
 explicitly where needed.
 """
+from shared.safe_error import safe_error
 
 import logging
 import secrets
@@ -1370,7 +1371,7 @@ def preview_notification_template(
         )
         return {"success": True, "subject": subj, "body": body}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def test_send_notification_template(template_id: str, to_email: str) -> Dict[str, Any]:
@@ -1395,7 +1396,7 @@ def test_send_notification_template(template_id: str, to_email: str) -> Dict[str
         send_email_task.delay(to_email, subj, body or "", is_html=True)
         return {"success": True, "message": "Test email sent"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_platform_settings(updates: Dict[str, Any], platform_admin_id: Optional[str] = None) -> Dict[str, Any]:

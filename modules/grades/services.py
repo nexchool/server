@@ -3,6 +3,7 @@ Grade Services
 
 Business logic for Grade master CRUD. Tenant-scoped, soft-delete aware.
 """
+from shared.safe_error import safe_error
 
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -76,7 +77,7 @@ def create_grade(data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_grade(grade_id: str, data: Dict, tenant_id: str) -> Dict:
@@ -107,7 +108,7 @@ def update_grade(grade_id: str, data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_grade(grade_id: str, tenant_id: str) -> Dict:
@@ -130,7 +131,7 @@ def delete_grade(grade_id: str, tenant_id: str) -> Dict:
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     try:
         from modules.school_setup.services import recompute_setup_complete

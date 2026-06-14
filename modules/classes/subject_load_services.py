@@ -7,6 +7,7 @@ These are used by the timetable generator as scheduling constraints.
 TODO (phase 2): Switch reads/writes to ClassSubject (class_subjects). The subject_load table
 remains for backward compatibility after migration 023; new code should use class_subjects.
 """
+from shared.safe_error import safe_error
 
 from typing import Dict, List, Optional
 from sqlalchemy.exc import IntegrityError
@@ -62,7 +63,7 @@ def create_subject_load(class_id: str, subject_id: str, weekly_periods: int) -> 
         return {"success": False, "error": "Subject load already exists for this class"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to create subject load: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to create subject load")}
 
 
 def update_subject_load(load_id: str, weekly_periods: int) -> Dict:
@@ -79,7 +80,7 @@ def update_subject_load(load_id: str, weekly_periods: int) -> Dict:
         return {"success": True, "subject_load": load.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to update subject load: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to update subject load")}
 
 
 def delete_subject_load(load_id: str) -> Dict:
@@ -93,4 +94,4 @@ def delete_subject_load(load_id: str) -> Dict:
         return {"success": True}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to delete subject load: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to delete subject load")}

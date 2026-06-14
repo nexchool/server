@@ -1,6 +1,7 @@
 """Bell schedules and periods."""
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from datetime import date, datetime, time, timezone
 from typing import Any, Dict, List, Optional
@@ -105,7 +106,7 @@ def create_schedule(tenant_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         db.session.commit()
     except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "bell_schedule": _serialize_schedule(bs)}
 
 

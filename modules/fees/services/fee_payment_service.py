@@ -4,6 +4,7 @@ Fee Payment Service
 Records payments toward fee invoices. Handles partial payments, overpayment,
 duplicate detection (payment_reference), and always creates a receipt.
 """
+from shared.safe_error import safe_error
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -150,7 +151,7 @@ def record_fee_payment(
         }
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_fee_payment(payment_id: str) -> Optional[Dict[str, Any]]:

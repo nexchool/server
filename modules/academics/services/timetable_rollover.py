@@ -16,6 +16,7 @@ class) are skipped and counted. The whole batch runs in one transaction.
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 import logging
 import uuid
@@ -244,7 +245,7 @@ def rollover_timetables(
     except Exception as e:
         db.session.rollback()
         logger.exception("timetable rollover failed: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     return {
         "success": True,
