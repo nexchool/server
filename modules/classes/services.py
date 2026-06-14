@@ -1,7 +1,7 @@
 import logging
 import uuid
 from typing import List, Dict, Optional
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DataError
 from datetime import datetime
 
 from core.database import db
@@ -158,20 +158,30 @@ def create_class(
                 'success': False,
                 'error': 'Invalid academic year or teacher. Please ensure the academic year exists and the teacher (if selected) is valid.'
             }
-        raw = str(e.orig) if hasattr(e, 'orig') and e.orig else str(e)
+        # Unrecognized integrity violation — log the detail, return a safe
+        # message (never leak the raw SQL / parameters to the client).
         return {
             'success': False,
-            'error': raw,
-            'raw_error': raw,
+            'error': 'Could not create the class because it conflicts with existing data.',
+        }
+    except DataError as e:
+        db.session.rollback()
+        logger.exception(
+            "create_class: DataError orig=%r",
+            str(e.orig) if hasattr(e, 'orig') and e.orig else None,
+        )
+        # e.g. StringDataRightTruncation when section/name is too long.
+        return {
+            'success': False,
+            'error': 'One or more fields are too long. Section must be 10 characters or fewer.',
         }
     except Exception as e:
         db.session.rollback()
-        err_str = str(e)
-        logger.exception("create_class: Exception %s", err_str)
+        logger.exception("create_class: Exception %s", str(e))
+        # Generic safe message — the detail is logged, not returned.
         return {
             'success': False,
-            'error': err_str,
-            'raw_error': err_str,
+            'error': 'Could not create the class. Please check the details and try again.',
         }
 
 
@@ -349,10 +359,19 @@ def update_class(
             return {'success': False, 'error': 'Class with this name, section and academic year already exists'}
         if pgcode == '23503':
             return {'success': False, 'error': 'Invalid academic year or teacher.'}
-        return {'success': False, 'error': str(e.orig) if hasattr(e, 'orig') and e.orig else str(e)}
+        logger.exception(
+            "update_class: IntegrityError orig=%r",
+            str(e.orig) if hasattr(e, 'orig') and e.orig else None,
+        )
+        return {'success': False, 'error': 'Could not update the class because it conflicts with existing data.'}
+    except DataError as e:
+        db.session.rollback()
+        logger.exception("update_class: DataError orig=%r", getattr(e, 'orig', None))
+        return {'success': False, 'error': 'One or more fields are too long. Section must be 10 characters or fewer.'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        logger.exception("update_class: Exception %s", str(e))
+        return {'success': False, 'error': 'Could not update the class. Please check the details and try again.'}
 
 
 def copy_classes_between_years(from_year_id: str, to_year_id: str) -> Dict:
