@@ -1,3 +1,4 @@
+from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
@@ -508,7 +509,7 @@ def create_student(
 
     except IntegrityError as e:
         db.session.rollback()
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        error_msg = str(getattr(e, "orig", None) or e)
         if 'admission_number' in error_msg:
             return {'success': False, 'error': 'Admission number already exists'}
         elif 'email' in error_msg:
@@ -519,7 +520,7 @@ def create_student(
         return {'success': False, 'error': f'Invalid data format: {str(e)}'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to create student: {str(e)}'}
+        return {'success': False, 'error': safe_error(e, "Failed to create student")}
 
 # Columns the client may sort by. The actual ordering expression is built in
 # `_build_sort_order` below so `class` can use natural (grade_level) order
@@ -1045,7 +1046,7 @@ def update_student(
         return {'success': False, 'error': f'Invalid data format: {str(e)}'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to update student: {str(e)}'}
+        return {'success': False, 'error': safe_error(e, "Failed to update student")}
 
 def delete_student(student_id: str) -> Dict:
     """
@@ -1095,7 +1096,7 @@ def delete_student(student_id: str) -> Dict:
         return {'success': True, 'message': 'Student deleted successfully'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to delete student: {str(e)}'}
+        return {'success': False, 'error': safe_error(e, "Failed to delete student")}
 
 
 # ---------------------------------------------------------------------------
@@ -1191,7 +1192,7 @@ def create_student_document(
         return {"success": True, "document": doc.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e), "error_code": "InternalError"}
+        return {"success": False, "error": safe_error(e), "error_code": "InternalError"}
 
 
 def list_student_documents(student_id: str) -> Dict:
@@ -1212,7 +1213,7 @@ def list_student_documents(student_id: str) -> Dict:
         ).all()
         return {"success": True, "documents": [d.to_dict() for d in docs]}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_student_document_by_id(document_id: str, student_id: str) -> Optional[Dict]:
@@ -1264,7 +1265,7 @@ def get_student_document_file_content(document_id: str, student_id: str) -> Dict
         }
     except Exception as e:
         logger.exception("get_student_document_file_content: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_student_document(document_id: str, student_id: str) -> Dict:
@@ -1290,4 +1291,4 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
         return {"success": True}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}

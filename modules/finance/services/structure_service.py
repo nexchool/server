@@ -1,4 +1,5 @@
 """Fee structure and component CRUD services."""
+from shared.safe_error import safe_error
 
 from datetime import date
 from decimal import Decimal
@@ -277,7 +278,7 @@ def create_fee_structure(
         return {"success": True, "fee_structure": d}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_fee_structure(
@@ -437,7 +438,7 @@ def update_fee_structure(
         return result
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_fee_structure(structure_id: str, user_id: Optional[str] = None) -> Dict:
@@ -507,4 +508,4 @@ def delete_fee_structure(structure_id: str, user_id: Optional[str] = None) -> Di
         return {"success": True, "message": "Fee structure deleted"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}

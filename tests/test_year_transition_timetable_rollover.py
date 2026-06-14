@@ -437,5 +437,8 @@ def test_db_exception_triggers_rollback(monkeypatch):
 
     result = ttr.rollover_timetables({"C-OLD": "C-NEW"})
     assert result["success"] is False
-    assert "forced commit failure" in result["error"]
+    # The raw internal error must NOT leak to the client (see shared/safe_error.py);
+    # a friendly, generic message is surfaced instead.
+    assert "forced commit failure" not in result["error"]
+    assert result["error"]
     assert sess.rollbacks == 1

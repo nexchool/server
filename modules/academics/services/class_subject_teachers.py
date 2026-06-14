@@ -1,6 +1,7 @@
 """Assign teachers to class_subject rows — class_subject_teachers."""
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -131,7 +132,7 @@ def create_assignment(
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
     return {"success": True, "assignment": _serialize(row)}
 
 

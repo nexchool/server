@@ -9,6 +9,7 @@ Business logic for today's schedule. Returns slots enriched with:
 Timetable v2 (TimetableEntry + TimetableVersion) is the source of truth after migration 023.
 Legacy TimetableSlot rows are used only when no v2 entries exist for the user.
 """
+from shared.safe_error import safe_error
 
 from datetime import date
 from typing import List, Dict, Optional, Tuple
@@ -455,7 +456,7 @@ def upsert_override(
             return {"success": True, "override": override.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_override(slot_id: str, override_date: date, tenant_id: str) -> Dict:

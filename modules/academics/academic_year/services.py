@@ -1,4 +1,5 @@
 """Academic year CRUD services."""
+from shared.safe_error import safe_error
 
 from datetime import date
 from typing import Dict, List, Optional
@@ -190,7 +191,7 @@ def create_academic_year(
         return {"success": True, "academic_year": ay.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_academic_year(
@@ -266,7 +267,7 @@ def update_academic_year(
         return {"success": True, "academic_year": ay.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_academic_year(year_id: str, user_id: Optional[str] = None) -> Dict:
@@ -315,4 +316,4 @@ def delete_academic_year(year_id: str, user_id: Optional[str] = None) -> Dict:
         return {"success": True, "message": "Academic year deleted"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}

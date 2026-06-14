@@ -15,6 +15,7 @@ poison the batch (mirrors `bulk_create_classes`).
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from typing import Any, Dict, List, Optional
 
@@ -165,7 +166,7 @@ def duplicate_unit_to_unit(
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     return {
         "success": True,
@@ -304,7 +305,7 @@ def duplicate_programme_to_programme(
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     return {
         "success": True,

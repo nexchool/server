@@ -9,6 +9,7 @@ Business logic for teacher management constraint features:
   - Leave Policy management
   - Teacher Leave Balance management
 """
+from shared.safe_error import safe_error
 
 import logging
 from typing import Dict, List, Optional
@@ -172,7 +173,7 @@ def add_teacher_subject(teacher_id: str, subject_id: str) -> Dict:
         return {"success": False, "error": "Subject already assigned to teacher"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to assign subject: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to assign subject")}
 
 
 def remove_teacher_subject(teacher_id: str, subject_id: str) -> Dict:
@@ -188,7 +189,7 @@ def remove_teacher_subject(teacher_id: str, subject_id: str) -> Dict:
         return {"success": True}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to remove subject: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to remove subject")}
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +254,7 @@ def create_availability(teacher_id: str, day_of_week: int, period_number: int, a
 
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to create availability: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to create availability")}
 
 
 def update_availability(availability_id: str, available: bool) -> Dict:
@@ -268,7 +269,7 @@ def update_availability(availability_id: str, available: bool) -> Dict:
         return {"success": True, "availability": slot.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to update availability: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to update availability")}
 
 
 def delete_availability(availability_id: str) -> Dict:
@@ -282,7 +283,7 @@ def delete_availability(availability_id: str) -> Dict:
         return {"success": True}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to delete availability: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to delete availability")}
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +368,7 @@ def upsert_leave_policy(
         return {"success": True, "policy": policy.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to update policy: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to update policy")}
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +492,7 @@ def adjust_teacher_leave_balance(
         return {"success": True, "balance": result}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to adjust balance: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to adjust balance")}
 
 
 # ---------------------------------------------------------------------------
@@ -641,7 +642,7 @@ def create_leave(
 
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to create leave: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to create leave")}
 
 
 def list_leaves(teacher_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
@@ -708,7 +709,7 @@ def approve_leave(leave_id: str) -> Dict:
         return {"success": True, "leave": leave.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to approve leave: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to approve leave")}
 
 
 def reject_leave(leave_id: str) -> Dict:
@@ -762,7 +763,7 @@ def reject_leave(leave_id: str) -> Dict:
         return {"success": True, "leave": leave.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to reject leave: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to reject leave")}
 
 
 def cancel_leave(leave_id: str, teacher_id: str) -> Dict:
@@ -799,7 +800,7 @@ def cancel_leave(leave_id: str, teacher_id: str) -> Dict:
         return {"success": True, "leave": leave.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to cancel leave: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to cancel leave")}
 
 
 # ---------------------------------------------------------------------------
@@ -840,7 +841,7 @@ def create_workload_rule(teacher_id: str, max_periods_per_day: int, max_periods_
 
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to create workload rule: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to create workload rule")}
 
 
 def update_workload_rule(
@@ -877,4 +878,4 @@ def update_workload_rule(
 
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": f"Failed to update workload rule: {str(e)}"}
+        return {"success": False, "error": safe_error(e, "Failed to update workload rule")}

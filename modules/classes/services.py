@@ -1,3 +1,4 @@
+from shared.safe_error import safe_error
 import logging
 import uuid
 from typing import List, Dict, Optional
@@ -458,7 +459,7 @@ def copy_classes_between_years(from_year_id: str, to_year_id: str) -> Dict:
     except Exception as e:
         db.session.rollback()
         logger.exception("copy_classes_between_years failed: %s", e)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_class(class_id: str) -> Dict:
@@ -483,7 +484,7 @@ def delete_class(class_id: str) -> Dict:
         }
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to delete class: {e}'}
+        return {'success': False, 'error': safe_error(e, "Failed to delete class")}
 
     if tenant_id:
         try:
@@ -524,7 +525,7 @@ def assign_student_to_class(class_id: str, student_id: str) -> Dict:
         return {'success': True, 'message': 'Student assigned to class'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': safe_error(e)}
 
 
 def remove_student_from_class(class_id: str, student_id: str) -> Dict:
@@ -545,7 +546,7 @@ def remove_student_from_class(class_id: str, student_id: str) -> Dict:
         return {'success': True, 'message': 'Student removed from class'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': safe_error(e)}
 
 
 def assign_teacher_to_class(
@@ -634,7 +635,7 @@ def assign_teacher_to_class(
         return {'success': True, 'assignment': ct.to_dict(), 'message': 'Teacher assigned to class'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': safe_error(e)}
 
 
 def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
@@ -649,7 +650,7 @@ def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
         return {'success': True, 'message': 'Teacher removed from class'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': str(e)}
+        return {'success': False, 'error': safe_error(e)}
 
 
 def get_unassigned_students(class_id: str) -> List[Dict]:

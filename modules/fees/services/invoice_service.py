@@ -4,6 +4,7 @@ Invoice Service
 Creates invoices, lists with filters, gets detail with payments.
 Business rules: status derived from total_payments vs total_amount.
 """
+from shared.safe_error import safe_error
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -160,7 +161,7 @@ def create_invoice(
         return {"success": True, "invoice": invoice.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def list_invoices(
@@ -240,4 +241,4 @@ def cancel_invoice(invoice_id: str) -> Dict[str, Any]:
         return {"success": True, "invoice": invoice.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}

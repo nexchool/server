@@ -3,6 +3,7 @@ Subject Services
 
 Business logic for subject CRUD operations. All operations are tenant-scoped.
 """
+from shared.safe_error import safe_error
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -62,7 +63,7 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         return {"success": True, "subject": subject.to_dict()}
     except IntegrityError as e:
         db.session.rollback()
-        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        error_msg = str(getattr(e, "orig", None) or e)
         if (
             "uq_subjects_tenant_code_active" in error_msg
             or "uq_subjects_code_tenant" in error_msg
@@ -74,7 +75,7 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_subjects(tenant_id: str, include_inactive: bool = False) -> List[Dict]:
@@ -163,7 +164,7 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
         return {"success": True, "subject": subject.to_dict()}
     except IntegrityError as e:
         db.session.rollback()
-        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        error_msg = str(getattr(e, "orig", None) or e)
         if (
             "uq_subjects_tenant_code_active" in error_msg
             or "uq_subjects_code_tenant" in error_msg
@@ -175,7 +176,7 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_subject(subject_id: str, tenant_id: str) -> Dict:
@@ -209,7 +210,7 @@ def delete_subject(subject_id: str, tenant_id: str) -> Dict:
         return {"success": True, "message": "Subject archived successfully"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 # ---------------------------------------------------------------------------

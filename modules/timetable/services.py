@@ -6,6 +6,7 @@ Business logic for timetable slot CRUD and config. All operations are tenant-sco
 TODO (phase 2): Migrate to TimetableVersion + TimetableEntry; timetable_slots kept for
 compatibility after migration 023.
 """
+from shared.safe_error import safe_error
 
 from datetime import date, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -182,13 +183,13 @@ def create_slot(data: Dict, tenant_id: str) -> Dict:
         raise
     except IntegrityError as e:
         db.session.rollback()
-        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        error_msg = str(getattr(e, "orig", None) or e)
         if "uq_timetable_slots" in error_msg or "unique" in error_msg.lower():
             return {"success": False, "error": "Slot already exists for this class, day, and period"}
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_slots_by_class(class_id: str, tenant_id: str) -> List[Dict]:
@@ -345,13 +346,13 @@ def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
         raise
     except IntegrityError as e:
         db.session.rollback()
-        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        error_msg = str(getattr(e, "orig", None) or e)
         if "uq_timetable_slots" in error_msg or "unique" in error_msg.lower():
             return {"success": False, "error": "Slot already exists for this class, day, and period"}
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_slot(slot_id: str, tenant_id: str) -> Dict:
@@ -380,7 +381,7 @@ def delete_slot(slot_id: str, tenant_id: str) -> Dict:
         raise
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def get_timetable_config(tenant_id: str) -> Dict:

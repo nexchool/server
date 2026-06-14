@@ -1,3 +1,4 @@
+from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
@@ -193,7 +194,7 @@ def create_teacher(
 
     except IntegrityError as e:
         db.session.rollback()
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        error_msg = str(getattr(e, "orig", None) or e)
         if 'employee_id' in error_msg:
             return {'success': False, 'error': 'Employee ID already exists'}
         if 'email' in error_msg:
@@ -204,7 +205,7 @@ def create_teacher(
         return {'success': False, 'error': f'Invalid data format: {str(e)}'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to create teacher: {str(e)}'}
+        return {'success': False, 'error': safe_error(e, "Failed to create teacher")}
 
 
 def list_teachers(
@@ -393,7 +394,7 @@ def update_teacher(
         return {'success': True, 'teacher': teacher.to_dict()}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to update teacher: {str(e)}'}
+        return {'success': False, 'error': safe_error(e, "Failed to update teacher")}
 
 
 def delete_teacher(teacher_id: str) -> Dict:
@@ -435,4 +436,4 @@ def delete_teacher(teacher_id: str) -> Dict:
         return {'success': True, 'message': 'Teacher deleted successfully'}
     except Exception as e:
         db.session.rollback()
-        return {'success': False, 'error': f'Failed to delete teacher: {str(e)}'}
+        return {'success': False, 'error': safe_error(e, "Failed to delete teacher")}

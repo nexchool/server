@@ -3,6 +3,7 @@ Religion Services
 
 Business logic for the tenant-scoped religion master. Soft-delete aware.
 """
+from shared.safe_error import safe_error
 
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -65,7 +66,7 @@ def create_religion(data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def update_religion(religion_id: str, data: Dict, tenant_id: str) -> Dict:
@@ -98,7 +99,7 @@ def update_religion(religion_id: str, data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
 
 def delete_religion(religion_id: str, tenant_id: str) -> Dict:
@@ -115,4 +116,4 @@ def delete_religion(religion_id: str, tenant_id: str) -> Dict:
         return {"success": True, "message": "Religion deleted"}
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}

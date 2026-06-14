@@ -1,6 +1,7 @@
 """
 Bulk student import API (Excel preview + import).
 """
+from shared.safe_error import safe_error
 
 from flask import g, request
 
@@ -56,7 +57,7 @@ def bulk_import_preview():
     except ValueError as e:
         return validation_error_response(str(e))
     except Exception as e:
-        return error_response("BulkImportError", str(e), 400)
+        return error_response("BulkImportError", safe_error(e), 400)
 
 
 @students_bp.route(
@@ -102,4 +103,4 @@ def bulk_import_execute():
     except ValueError as e:
         return validation_error_response(str(e))
     except Exception as e:
-        return error_response("BulkImportError", str(e), 400)
+        return error_response("BulkImportError", safe_error(e), 400)

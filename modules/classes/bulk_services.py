@@ -14,6 +14,7 @@ Structured (UI-driven) bulk operations — NOT Excel imports.
     ClassSubject row per (class, subject) combination, skipping pairs
     that already exist (active, not soft-deleted).
 """
+from shared.safe_error import safe_error
 
 from typing import Any, Dict, List
 
@@ -185,7 +186,7 @@ def bulk_create_classes(payload: Dict[str, Any], tenant_id: str) -> Dict[str, An
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     try:
         from modules.school_setup.services import recompute_setup_complete
@@ -322,7 +323,7 @@ def bulk_assign_class_subjects(payload: Dict[str, Any], tenant_id: str) -> Dict[
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     try:
         from modules.school_setup.services import recompute_setup_complete

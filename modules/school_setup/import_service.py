@@ -15,6 +15,7 @@ or the value in the `periods` column when present).
 """
 
 from __future__ import annotations
+from shared.safe_error import safe_error
 
 from io import BytesIO
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
@@ -186,7 +187,7 @@ def import_excel(
     except ValueError as e:
         return {"success": False, "error": str(e)}
     except Exception as e:
-        return {"success": False, "error": f"Could not parse file: {e}"}
+        return {"success": False, "error": safe_error(e, "Could not parse file")}
 
     if not rows:
         return {"success": False, "error": "File is empty or contains only a header row"}
@@ -344,7 +345,7 @@ def import_excel(
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": safe_error(e)}
 
     try:
         from .services import recompute_setup_complete
