@@ -816,6 +816,10 @@ def remove_login_for_deleted_profile(
             UserRole.query.filter(UserRole.id.in_(profile_role_ids)).delete(
                 synchronize_session=False
             )
+        # User row is kept and stays active, so auth_required won't cut them off —
+        # drop their cached permissions so the removed profile role's perms don't
+        # linger. (Caller commits the surrounding txn; TTL backstops any race.)
+        invalidate_user_permissions(user_id)
         return
 
     if hard:
