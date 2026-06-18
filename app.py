@@ -287,7 +287,28 @@ def register_error_handlers(app: Flask):
 
     @app.errorhandler(Exception)
     def handle_unhandled_exception(error):
-        """Catch-all for unhandled exceptions with full traceback."""
+        """Catch-all. HTTPExceptions without a dedicated handler above (e.g. 405 Method
+        Not Allowed, 406, 409, 415, 422) must keep their real status code and semantic
+        headers (Allow, Retry-After); only genuinely unhandled errors collapse to 500.
+        Without this branch a wrong-method request fell through here and was mis-reported
+        as a 500 instead of a 405."""
+        from werkzeug.exceptions import HTTPException
+        from werkzeug.http import HTTP_STATUS_CODES
+        if isinstance(error, HTTPException):
+            code = error.code or 500
+            # Log the rich description server-side, but return only the generic status text
+            # to the client so a future abort(..., description="<sensitive>") cannot leak it.
+            _log_error(code, type(error).__name__, str(error.description), exc=code >= 500)
+            if code >= 500:
+                db.session.rollback()
+            resp = error.get_response()  # preserves status code + headers (e.g. Allow on 405)
+            resp.set_data(jsonify({
+                'success': False,
+                'error': type(error).__name__,
+                'message': HTTP_STATUS_CODES.get(code, 'Error'),
+            }).get_data())
+            resp.content_type = 'application/json'
+            return resp
         _log_error(500, type(error).__name__, str(error), exc=True)
         db.session.rollback()
         return jsonify({

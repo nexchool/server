@@ -198,7 +198,9 @@ def login():
     """
     from datetime import datetime, timedelta
 
-    data = request.get_json() or {}
+    # silent=True: a missing/malformed/non-JSON body degrades to {} and falls to the
+    # email/password validation below (clean 400), rather than raising 415/400 here.
+    data = request.get_json(silent=True) or {}
     email = (data.get('email') or '').strip()
     password = data.get('password')
     tenant_id_in_body = data.get('tenant_id') or data.get('tenantId')
