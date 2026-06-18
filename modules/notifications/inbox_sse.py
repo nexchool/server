@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Any, Dict, Iterator, Tuple
@@ -12,7 +13,10 @@ from modules.notifications.realtime_pub import get_redis_url, notification_chann
 
 logger = logging.getLogger(__name__)
 
-_KEEPALIVE_SEC = 25.0
+# Keepalive doubles as dead-client detection: the worker thread only discovers a
+# disconnected browser (e.g. after a page reload) when it next writes, so a lower
+# value frees the thread sooner at the cost of slightly more idle traffic.
+_KEEPALIVE_SEC = float(os.getenv("SSE_KEEPALIVE_SEC", "15"))
 
 
 def _format_sse_frame(event: str, data: Dict[str, Any]) -> str:

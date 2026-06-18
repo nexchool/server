@@ -169,6 +169,12 @@ def notification_inbox_stream():
             503,
         )
 
+    # Release the pooled DB connection the auth/tenant decorators checked out.
+    # This response streams for the connection's whole lifetime and never touches
+    # the ORM again (the generator is Redis-only), so holding the connection open
+    # would park one pool slot per connected user and exhaust the pool at scale.
+    db.session.remove()
+
     headers = {
         "Cache-Control": "no-cache, no-transform",
         "Connection": "keep-alive",
