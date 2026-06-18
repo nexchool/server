@@ -86,6 +86,14 @@ def make_celery(app):
     celery.Task = ContextTask
     # Celery 6: startup retries no longer follow broker_connection_retry; keep current behavior.
     celery.conf.broker_connection_retry_on_startup = True
+
+    # Safety: a stuck task (hung SMTP / WeasyPrint render / slow external call) must not hold a
+    # worker slot forever — with concurrency 2, two stuck tasks would freeze all async work.
+    # soft limit raises SoftTimeLimitExceeded (task can clean up); hard limit force-kills.
+    celery.conf.task_soft_time_limit = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
+    celery.conf.task_time_limit = int(os.getenv("CELERY_TASK_TIME_LIMIT", "660"))
+    # Long tasks + low concurrency: prefetch one at a time so work spreads evenly across workers.
+    celery.conf.worker_prefetch_multiplier = 1
     return celery
 
 
