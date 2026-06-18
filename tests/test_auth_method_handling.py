@@ -24,6 +24,10 @@ def test_get_login_returns_405_not_500(flask_app):
     body = resp.get_json()
     assert body is not None and body["success"] is False
     assert body["error"] == "MethodNotAllowed"
+    # message is the generic status text, never the verbose werkzeug description
+    # (guards against leaking a future abort(..., description="<sensitive>")).
+    assert body["message"] == "Method Not Allowed"
+    assert "requested URL" not in body["message"]
 
 
 def test_get_login_405_advertises_allowed_methods(flask_app):

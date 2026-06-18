@@ -293,8 +293,11 @@ def register_error_handlers(app: Flask):
         Without this branch a wrong-method request fell through here and was mis-reported
         as a 500 instead of a 405."""
         from werkzeug.exceptions import HTTPException
+        from werkzeug.http import HTTP_STATUS_CODES
         if isinstance(error, HTTPException):
             code = error.code or 500
+            # Log the rich description server-side, but return only the generic status text
+            # to the client so a future abort(..., description="<sensitive>") cannot leak it.
             _log_error(code, type(error).__name__, str(error.description), exc=code >= 500)
             if code >= 500:
                 db.session.rollback()
@@ -302,7 +305,7 @@ def register_error_handlers(app: Flask):
             resp.set_data(jsonify({
                 'success': False,
                 'error': type(error).__name__,
-                'message': error.description,
+                'message': HTTP_STATUS_CODES.get(code, 'Error'),
             }).get_data())
             resp.content_type = 'application/json'
             return resp
