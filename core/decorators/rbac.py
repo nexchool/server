@@ -52,7 +52,8 @@ def require_permission(permission_name: str) -> Callable:
             
     Design Rules:
         - Never checks role names, only permissions
-        - Always fetches fresh permissions from database (no caching yet)
+        - Permissions come from get_user_permissions, cached in Redis per user
+          (~120s TTL, invalidated on role/permission changes; fails open to the DB)
         - Implements 'manage' implies all rule for hierarchical permissions
     """
     def decorator(fn: Callable) -> Callable:

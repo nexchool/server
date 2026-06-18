@@ -28,6 +28,38 @@ from .models import Role, Permission, RolePermission, UserRole
 # ==================== AUTHORIZATION LOGIC ====================
 
 def get_user_permissions(user_id: str) -> List[str]:
+    """Return the user's sorted unique permission names; empty list if none.
+
+    Cached in Redis per user (key ``perms:<user_id>``, TTL ``CACHE_PERMS_TTL``,
+    default 120s) since this runs on every permission-gated request. Fails open
+    (Redis down -> direct DB read) and is invalidated when the user's roles change
+    or a role's permissions change. The short TTL bounds staleness on any missed
+    invalidation; ``CACHE_ENABLED=false`` disables caching entirely.
+    """
+    import os
+    from core import cache
+
+    return cache.get_or_set_json(
+        cache.key("perms", user_id),
+        ttl_seconds=int(os.getenv("CACHE_PERMS_TTL", "120")),
+        loader=lambda: _load_user_permissions_from_db(user_id),
+    )
+
+
+def invalidate_user_permissions(user_id: str) -> None:
+    """Drop one user's cached permission set (after that user's roles change)."""
+    from core import cache
+    cache.delete(cache.key("perms", user_id))
+
+
+def invalidate_all_permissions() -> None:
+    """Drop every cached permission set — for role/permission-definition changes
+    that affect many users at once (rare, admin-initiated)."""
+    from core import cache
+    cache.delete_pattern(cache.key("perms", "*"))
+
+
+def _load_user_permissions_from_db(user_id: str) -> List[str]:
     """
     Fetch all unique permissions for a user by traversing their roles.
     
@@ -481,6 +513,7 @@ def delete_role(role_id: str) -> Dict:
         
         db.session.delete(role)
         db.session.commit()
+        invalidate_all_permissions()  # users who had this role lose its permissions
         
         return {
             'success': True,
@@ -526,6 +559,7 @@ def assign_permission_to_role(role_id: str, permission_id: str) -> Dict:
             permission_id=permission_id,
         )
         role_permission.save()
+        invalidate_all_permissions()  # a role's permissions changed -> affects all its users
         
         return {
             'success': True,
@@ -574,6 +608,7 @@ def remove_permission_from_role(role_id: str, permission_id: str) -> Dict:
         
         db.session.delete(role_permission)
         db.session.commit()
+        invalidate_all_permissions()  # a role's permissions changed -> affects all its users
         
         return {
             'success': True,
@@ -632,6 +667,7 @@ def assign_role_to_user(user_id: str, role_id: str) -> Dict:
             role_id=role_id,
         )
         user_role.save()
+        invalidate_user_permissions(user_id)
         
         return {
             'success': True,
@@ -691,6 +727,7 @@ def remove_role_from_user(user_id: str, role_id: str) -> Dict:
         
         db.session.delete(user_role)
         db.session.commit()
+        invalidate_user_permissions(user_id)
         
         return {
             'success': True,
@@ -779,6 +816,10 @@ def remove_login_for_deleted_profile(
             UserRole.query.filter(UserRole.id.in_(profile_role_ids)).delete(
                 synchronize_session=False
             )
+        # User row is kept and stays active, so auth_required won't cut them off —
+        # drop their cached permissions so the removed profile role's perms don't
+        # linger. (Caller commits the surrounding txn; TTL backstops any race.)
+        invalidate_user_permissions(user_id)
         return
 
     if hard:

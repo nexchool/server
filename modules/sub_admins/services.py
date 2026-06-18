@@ -609,6 +609,12 @@ def update_sub_admin(
             _sync_user_school_units(tenant_id, user_id, post_branch_ids)
 
         db.session.commit()
+
+        if modules is not None:
+            # The sub-admin's private-role permissions changed -> drop their cached
+            # permission set so a grant/revoke takes effect on the very next request.
+            from modules.rbac.services import invalidate_user_permissions
+            invalidate_user_permissions(user_id)
     except Exception as exc:
         db.session.rollback()
         logger.error("Failed to update sub-admin %s: %s", user_id, exc, exc_info=True)
