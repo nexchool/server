@@ -16,6 +16,7 @@ import logging
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import ProductionConfig, get_config
 from core.database import db, init_db
@@ -40,6 +41,11 @@ def create_app(config_name=None):
     """
     # Create Flask app
     app = Flask(__name__)
+
+    # Behind nginx (one proxy hop): trust X-Forwarded-* so request.remote_addr is the real
+    # client IP. Without this, rate-limiting, login-lockout keying, and audit logs all see
+    # nginx's internal IP — i.e. one global login bucket that throttles legitimate users.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     
     # Load configuration
     config_class = get_config(config_name)

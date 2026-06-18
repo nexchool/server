@@ -26,6 +26,11 @@ timeout = int(os.getenv("GUNICORN_TIMEOUT", "120"))
 # Use gthread when threads>1 so --threads is honored (sync worker ignores threads)
 worker_class = "gthread" if threads > 1 else "sync"
 keepalive = 5
+# Recycle workers after N requests (+jitter so they don't all restart together) to cap memory
+# growth from any slow leak on a tight-RAM box. graceful_timeout bounds worker shutdown.
+max_requests = int(os.getenv("GUNICORN_MAX_REQUESTS", "1000"))
+max_requests_jitter = int(os.getenv("GUNICORN_MAX_REQUESTS_JITTER", "100"))
+graceful_timeout = int(os.getenv("GUNICORN_GRACEFUL_TIMEOUT", "30"))
 preload = False  # Set True to load app before forking (can help on macOS)
 
 # When GUNICORN_RELOAD=1, restart workers on code changes (bind-mounted /app in Docker).

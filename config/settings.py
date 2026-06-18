@@ -44,6 +44,12 @@ class Config:
         "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
         "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
         "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
+        # Kill any single statement exceeding this (ms) so a runaway/locked query frees its
+        # connection + worker instead of hanging for minutes. Generous ceiling: catches true
+        # hangs, not slow-but-legitimate reports. Env-tunable.
+        "connect_args": {
+            "options": f"-c statement_timeout={os.getenv('DB_STATEMENT_TIMEOUT_MS', '120000')}"
+        },
     }
 
     # JWT Configuration
