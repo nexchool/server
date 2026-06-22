@@ -23,6 +23,7 @@ boto3==1.40.39
 pytest==8.3.5
 pytest-cov>=4.1
 openpyxl==3.1.5
+pyyaml==6.0.2
 google-auth==2.45.0
 requests==2.32.5
 # WeasyPrint 62.3 crashes on Python 3.14 (pydyf stream transform); use 68.x for 3.14+
