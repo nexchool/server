@@ -24,14 +24,15 @@ from modules.school_setup.seed_service import SeedValidationError, seed_school
 
 
 def _load_config(path: Path) -> dict:
-    raw = path.read_text(encoding="utf-8")
+    # Validate the extension before reading so an unsupported type fails with a
+    # clear message rather than an incidental read error.
     suffix = path.suffix.lower()
     if suffix in (".yaml", ".yml"):
         import yaml  # PyYAML
 
-        return yaml.safe_load(raw)
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
     if suffix == ".json":
-        return json.loads(raw)
+        return json.loads(path.read_text(encoding="utf-8"))
     raise SystemExit(f"Unsupported config extension '{suffix}' (use .yaml/.yml/.json)")
 
 
