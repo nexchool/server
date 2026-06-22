@@ -37,6 +37,10 @@ from .services import get_status_payload, run_complete_setup
 
 logger = logging.getLogger(__name__)
 
+# Fallback weekly period count when a config offering omits "weekly".
+# Mirrors SubjectContext.default_weekly_periods' DB default.
+DEFAULT_WEEKLY_PERIODS = 5
+
 
 class SeedValidationError(Exception):
     """Raised when the config fails pre-flight validation (no writes performed)."""
@@ -248,7 +252,7 @@ def _ensure_subject_context(tenant_id, programme_id, grade_id, subject_id, offer
         grade_id=grade_id,
         subject_id=subject_id,
         type=offered.get("type", "mandatory"),
-        default_weekly_periods=int(offered.get("weekly", 5)),
+        default_weekly_periods=int(offered.get("weekly", DEFAULT_WEEKLY_PERIODS)),
         is_active=True,
     )
     db.session.add(ctx)
@@ -304,7 +308,7 @@ def apply_subject_contexts_to_classes(tenant_id, academic_year_id) -> dict:
                     tenant_id=tenant_id,
                     class_id=c.id,
                     subject_id=ctx.subject_id,
-                    weekly_periods=int(ctx.default_weekly_periods or 5),
+                    weekly_periods=int(ctx.default_weekly_periods),
                     is_mandatory=(ctx.type == "mandatory"),
                     status="active",
                 )
@@ -325,6 +329,12 @@ def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
     returns a plan and writes nothing. Otherwise upserts the foundation, creates
     classes via bulk_generate_classes, derives class_subjects, then verifies via
     get_status_payload and (if ready and complete) flips is_setup_complete.
+
+    Failure model: the foundation, classes, and class_subjects commit in separate
+    phases (the driven services self-commit), so this is NOT one atomic
+    transaction. If a later phase fails, earlier writes persist; because every
+    step is idempotent, re-running the same config safely completes the
+    remainder. Partial progress is preserved by design, never corrupted.
     """
     errors = _validate_config(config)
     if errors:

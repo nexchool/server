@@ -214,6 +214,20 @@ def test_apply_contexts_returns_zero_when_no_classes(monkeypatch):
     assert result == {"created": 0, "skipped": 0}
 
 
+def test_apply_contexts_dedups_same_subject_within_one_run(monkeypatch):
+    # Two contexts for one class point at the SAME subject (e.g. duplicate
+    # offering lines). Only one ClassSubject must be created; the second is
+    # skipped via the in-call existing_pairs guard.
+    c1 = MagicMock(id="c1", programme_id="p1", grade_id="g1")
+    contexts = [_ctx("p1", "g1", "s1", 6), _ctx("p1", "g1", "s1", 4)]
+    svc, session = _wire_apply(monkeypatch, [c1], [], contexts)
+
+    result = svc.apply_subject_contexts_to_classes("t1", "ay1")
+
+    assert result == {"created": 1, "skipped": 1}
+    assert session.add.call_count == 1
+
+
 # --- seed_school orchestrator ----------------------------------------------
 
 def test_seed_school_raises_on_invalid_config():
