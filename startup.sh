@@ -44,8 +44,11 @@ widen_alembic_version() {
   # Alembic ships `alembic_version.version_num` as VARCHAR(32). Some of our
   # revision IDs are >32 chars and Postgres rejects the post-upgrade UPDATE
   # with StringDataRightTruncation. Widening to VARCHAR(255) is the standard
-  # fix and is idempotent (no-op if already wider). Skipped on a fresh DB
-  # where the table doesn't exist yet — `flask db upgrade` will create it.
+  # fix and is idempotent (no-op if already wider). On a FRESH DB we create the
+  # table at VARCHAR(255) up front, because `flask db upgrade` runs all
+  # migrations in one transaction and would otherwise abort mid-way on a
+  # >32-char revision id (e.g. 045_classes_structural_uniqueness). Alembic
+  # reuses the pre-created table instead of making its own VARCHAR(32) one.
   python - <<'PY'
 import os
 import psycopg2
@@ -62,6 +65,11 @@ try:
             ) THEN
                 ALTER TABLE alembic_version
                     ALTER COLUMN version_num TYPE VARCHAR(255);
+            ELSE
+                CREATE TABLE alembic_version (
+                    version_num VARCHAR(255) NOT NULL,
+                    CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+                );
             END IF;
         END $$;
     """)

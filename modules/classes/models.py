@@ -154,6 +154,7 @@ class Class(TenantBaseModel):
             "programme_name": self.programme.name if self.programme else None,
             "grade_id": self.grade_id,
             "grade_name": self.grade.name if self.grade else None,
+            "grade_sequence": self.grade.sequence if self.grade else None,
             "medium_id": self.medium_id,
             "medium_name": self.medium.name if self.medium else None,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else None,

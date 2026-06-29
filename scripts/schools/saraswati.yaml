@@ -1,0 +1,78 @@
+# =============================================================================
+# Saraswati Vidyalaya — pilot onboarding config (limited classes)
+# Single unit · GSEB Gujarati medium · Std 8–10 · sections A & B only
+# Use to test the in-app upload (Onboarding screen) on a fresh tenant.
+# SSC subject codes (01/16/12/11/10) are researched, ⚠ verify vs the official
+# GSEB list before relying on them.
+# =============================================================================
+
+tenant:
+  subdomain: saraswati
+
+academic_year:
+  name: "2026-2027"
+  start: 2026-06-01
+  end: 2027-03-31
+  active: true
+
+units:
+  - { code: "SVV", name: "Saraswati Vidyalaya" }
+
+programmes:
+  - { code: "GSEB-GUJ", name: "GSEB Gujarati", board: "GSEB", medium: "Gujarati" }
+
+grades:
+  - { name: "8",  sequence: 8 }
+  - { name: "9",  sequence: 9 }
+  - { name: "10", sequence: 10 }
+
+subjects:
+  - { code: "01",   name: "Gujarati (First Language)", description: "ગુજરાતી (પ્રથમ ભાષા)",  subject_type: language,      role: first_language,  short_code: "GUJ" }   # ⚠GSEB SSC
+  - { code: "16",   name: "English (Second Language)", description: "અંગ્રેજી (દ્વિતીય ભાષા)", subject_type: language,      role: second_language, short_code: "ENG" }   # ⚠GSEB SSC
+  - { code: "HIN",  name: "Hindi (Third Language)",    description: "હિન્દી (તૃતીય ભાષા)",     subject_type: language,      role: third_language,  short_code: "HIN" }
+  - { code: "SANS", name: "Sanskrit (Third Language)", description: "સંસ્કૃત",                 subject_type: language,      role: third_language,  short_code: "SAN" }
+  - { code: "12",   name: "Mathematics",               description: "ગણિત",                    subject_type: core,          role: core,            short_code: "MATH" }  # ⚠GSEB SSC (Standard)
+  - { code: "11",   name: "Science & Technology",      description: "વિજ્ઞાન અને ટેકનોલોજી",  subject_type: core,          role: core,            short_code: "SCI" }   # ⚠GSEB SSC
+  - { code: "10",   name: "Social Science",            description: "સામાજિક વિજ્ઞાન",         subject_type: core,          role: core,            short_code: "SST" }   # ⚠GSEB SSC
+  - { code: "COMP", name: "Computer",                  description: "કમ્પ્યુટર",               subject_type: co_curricular, role: co_curricular,   short_code: "COMP" }
+  - { code: "PE",   name: "Physical Education",        description: "શારીરિક શિક્ષણ",          subject_type: co_curricular, role: co_curricular,   short_code: "PE" }
+
+offerings:
+  - programme: "GSEB-GUJ"
+    grade: "8"
+    subjects:
+      - { code: "01",   weekly: 6 }
+      - { code: "12",   weekly: 6 }
+      - { code: "16",   weekly: 5 }
+      - { code: "11",   weekly: 5 }
+      - { code: "10",   weekly: 5 }
+      - { code: "HIN",  weekly: 4 }
+      - { code: "SANS", weekly: 3 }
+      - { code: "COMP", weekly: 2 }
+      - { code: "PE",   weekly: 2 }
+  - programme: "GSEB-GUJ"
+    grade: "9"
+    subjects:
+      - { code: "01",   weekly: 6 }
+      - { code: "16",   weekly: 6 }
+      - { code: "12",   weekly: 6 }
+      - { code: "11",   weekly: 6 }
+      - { code: "10",   weekly: 6 }
+      - { code: "HIN",  weekly: 4 }
+      - { code: "COMP", weekly: 2 }
+      - { code: "PE",   weekly: 2 }
+  - programme: "GSEB-GUJ"
+    grade: "10"
+    subjects:
+      - { code: "01",  weekly: 6 }
+      - { code: "16",  weekly: 6 }
+      - { code: "12",  weekly: 6 }
+      - { code: "11",  weekly: 6 }
+      - { code: "10",  weekly: 6 }
+      - { code: "HIN", weekly: 4 }
+      - { code: "PE",  weekly: 2 }
+
+classes:
+  - { unit: "SVV", programme: "GSEB-GUJ", grade: "8",  sections: [A, B] }
+  - { unit: "SVV", programme: "GSEB-GUJ", grade: "9",  sections: [A, B] }
+  - { unit: "SVV", programme: "GSEB-GUJ", grade: "10", sections: [A, B] }

@@ -1,0 +1,64 @@
+# Per-school onboarding config. Copy to <subdomain>.yaml and edit.
+# Natural keys only (no UUIDs); the seed script resolves them at runtime.
+# The tenant must already exist (created via platform onboarding).
+tenant:
+  subdomain: demo-school
+
+academic_year:
+  name: "2025-2026"
+  start: 2025-06-01
+  end: 2026-03-31
+  active: true
+
+units:
+  - { code: MN, name: "Main Campus" }
+
+programmes:
+  - { code: GSEB-GUJ, name: "GSEB Gujarati", board: GSEB, medium: Gujarati }
+  - { code: CBSE-ENG, name: "CBSE English", board: CBSE, medium: English }
+
+grades:
+  - { name: "1", sequence: 1 }
+  - { name: "2", sequence: 2 }
+
+subjects:
+  - { code: MATH, name: Mathematics }
+  - { code: GUJ,  name: Gujarati }
+  - { code: ENG,  name: English }
+  - { code: EVS,  name: "Environmental Studies" }
+
+# SubjectContext: which subjects each (programme, grade) offers + weekly periods.
+# Every (programme, grade) used in `classes` MUST have an offering here.
+offerings:
+  - programme: GSEB-GUJ
+    grade: "1"
+    subjects:
+      - { code: MATH, weekly: 6, type: mandatory }
+      - { code: GUJ,  weekly: 6, type: mandatory }
+      - { code: EVS,  weekly: 4, type: mandatory }
+  - programme: GSEB-GUJ
+    grade: "2"
+    subjects:
+      - { code: MATH, weekly: 6, type: mandatory }
+      - { code: GUJ,  weekly: 6, type: mandatory }
+      - { code: EVS,  weekly: 4, type: mandatory }
+  - programme: CBSE-ENG
+    grade: "1"
+    subjects:
+      - { code: MATH, weekly: 6, type: mandatory }
+      - { code: ENG,  weekly: 6, type: mandatory }
+      - { code: EVS,  weekly: 4, type: mandatory }
+  - programme: CBSE-ENG
+    grade: "2"
+    subjects:
+      - { code: MATH, weekly: 6, type: mandatory }
+      - { code: ENG,  weekly: 6, type: mandatory }
+      - { code: EVS,  weekly: 4, type: mandatory }
+
+# Classes -> bulk_generate_classes cells. Grade 11-12 streams via section
+# prefix: "Sci-A", "Com-B", "Arts-A", "Voc-A".
+classes:
+  - { unit: MN, programme: GSEB-GUJ, grade: "1", sections: [A, B] }
+  - { unit: MN, programme: GSEB-GUJ, grade: "2", sections: [A] }
+  - { unit: MN, programme: CBSE-ENG, grade: "1", sections: [A] }
+  - { unit: MN, programme: CBSE-ENG, grade: "2", sections: [A] }
