@@ -33,6 +33,7 @@ from .services import (
 )
 from .template_models import SubjectTemplateGroup, SubjectTemplateItem
 from . import apply_subjects_service
+from . import seed_service
 
 
 PERM_READ = "school_setup.read"
@@ -300,3 +301,97 @@ def apply_subject_offerings_route():
         tenant_id=g.tenant_id, academic_year_id=academic_year_id
     )
     return success_response(data=result)
+
+
+def _active_subdomain(tenant_id):
+    """Subdomain of the tenant the request operates in (config-vs-tenant guard)."""
+    from core.models import Tenant
+
+    t = Tenant.query.filter_by(id=tenant_id).first()
+    return t.subdomain if t else None
+
+
+@school_setup_bp.route("/seed/preview", methods=["POST"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_permission(PERM_MANAGE)
+def post_seed_preview():
+    """Parse an uploaded .yaml/.json onboarding config; return a read-only diff (no writes)."""
+    file = request.files.get("file")
+    if file is None:
+        return error_response(
+            "ValidationError", "file is required (multipart field 'file')", 400
+        )
+    try:
+        config = seed_service.parse_config_bytes(file.filename or "", file.read())
+    except seed_service.UnsupportedConfigType as e:
+        return error_response("UnsupportedFileType", str(e), 400)
+    except Exception:
+        return error_response(
+            "ParseError", "Could not parse the file. Ensure it is valid YAML or JSON.", 400
+        )
+    preview = seed_service.preview_seed(
+        g.tenant_id, config, active_subdomain=_active_subdomain(g.tenant_id)
+    )
+    return success_response(data=preview)
+
+
+@school_setup_bp.route("/seed/apply", methods=["POST"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature("class_management")
+@require_permission(PERM_MANAGE)
+def post_seed_apply():
+    """Apply an uploaded .yaml/.json onboarding config to the active tenant (real seed)."""
+    file = request.files.get("file")
+    if file is None:
+        return error_response(
+            "ValidationError", "file is required (multipart field 'file')", 400
+        )
+    try:
+        config = seed_service.parse_config_bytes(file.filename or "", file.read())
+    except seed_service.UnsupportedConfigType as e:
+        return error_response("UnsupportedFileType", str(e), 400)
+    except Exception:
+        return error_response(
+            "ParseError", "Could not parse the file. Ensure it is valid YAML or JSON.", 400
+        )
+
+    # Guard: never seed a config meant for a different tenant.
+    active = _active_subdomain(g.tenant_id)
+    cfg_sub = (config.get("tenant") or {}).get("subdomain")
+    if cfg_sub and active and cfg_sub != active:
+        return error_response(
+            "TenantMismatch",
+            f"This config targets tenant '{cfg_sub}', but you are operating in '{active}'.",
+            409,
+        )
+
+    try:
+        result = seed_service.seed_school(
+            g.tenant_id, config, dry_run=False, complete=True
+        )
+    except seed_service.SeedValidationError as e:
+        from flask import jsonify
+
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "ValidationError",
+                    "message": "Config validation failed.",
+                    "details": {"errors": e.errors},
+                }
+            ),
+            400,
+        )
+
+    return success_response(
+        data=result,
+        message=(
+            f"Seeded {result['classes']['created']} class(es) and "
+            f"{result['class_subjects']['created']} subject link(s). "
+            f"Setup complete: {result['setup_complete']}."
+        ),
+        status_code=201,
+    )

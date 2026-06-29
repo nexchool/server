@@ -13,6 +13,10 @@ Design notes:
   unit/programme/grade FKs, parses streams, and is itself idempotent).
 - class_subjects are derived granularly from each class's (programme, grade)
   SubjectContext rows -- never the blunt every-subject-to-every-class approach.
+- Real-board structure: a SubjectContext carries `role` (first/second/third
+  language, core, co_curricular), `short_code`, and `sort_order`. A subject may
+  declare a default `role`/`short_code` once in `subjects[]`; each offering
+  inherits it (and can override per (programme, grade)).
 - Mirrors the readiness checks in services.py so get_status_payload /
   run_complete_setup can verify and flip tenant.is_setup_complete at the end.
 """
@@ -32,7 +36,7 @@ from modules.school_units.models import SchoolUnit
 from modules.subject_contexts.models import SubjectContext
 from modules.subjects.models import Subject
 
-from .bulk_generator_service import bulk_generate_classes
+from .bulk_generator_service import bulk_generate_classes, _parse_stream_section
 from .services import get_status_payload, run_complete_setup
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,17 @@ logger = logging.getLogger(__name__)
 # Fallback weekly period count when a config offering omits "weekly".
 # Mirrors SubjectContext.default_weekly_periods' DB default.
 DEFAULT_WEEKLY_PERIODS = 5
+
+# Allowed SubjectContext.role / type values (mirror modules.subject_contexts.models
+# CONTEXT_ROLES / CONTEXT_TYPES). Used to validate config offerings.
+VALID_CONTEXT_ROLES = {
+    "first_language",
+    "second_language",
+    "third_language",
+    "core",
+    "co_curricular",
+}
+VALID_CONTEXT_TYPES = {"mandatory", "elective"}
 
 
 class SeedValidationError(Exception):
@@ -67,6 +82,12 @@ def _validate_config(config: dict) -> list[str]:
     if not grade_names:
         errors.append("at least one grade is required")
 
+    # Subject-level default role (optional) must be a known role.
+    for s in config.get("subjects", []):
+        role = s.get("role")
+        if role is not None and role not in VALID_CONTEXT_ROLES:
+            errors.append(f"subject '{s['code']}' has invalid role '{role}'")
+
     offered_pairs: set[tuple[str, str]] = set()
     for off in config.get("offerings", []):
         if off["programme"] not in prog_codes:
@@ -76,6 +97,18 @@ def _validate_config(config: dict) -> list[str]:
         for s in off.get("subjects", []):
             if s["code"] not in subject_codes:
                 errors.append(f"offering references unknown subject '{s['code']}'")
+            role = s.get("role")
+            if role is not None and role not in VALID_CONTEXT_ROLES:
+                errors.append(
+                    f"offering subject '{s['code']}' in (programme {off['programme']}, "
+                    f"grade {off['grade']}) has invalid role '{role}'"
+                )
+            stype = s.get("type")
+            if stype is not None and stype not in VALID_CONTEXT_TYPES:
+                errors.append(
+                    f"offering subject '{s['code']}' in (programme {off['programme']}, "
+                    f"grade {off['grade']}) has invalid type '{stype}'"
+                )
         offered_pairs.add((off["programme"], str(off["grade"])))
 
     for cl in config.get("classes", []):
@@ -225,6 +258,7 @@ def _ensure_subject(tenant_id, row):
         name=row["name"],
         code=row["code"],
         subject_type=row.get("subject_type", "core"),
+        description=row.get("description"),
         is_active=True,
     )
     db.session.add(subj)
@@ -232,7 +266,15 @@ def _ensure_subject(tenant_id, row):
     return subj, True
 
 
-def _ensure_subject_context(tenant_id, programme_id, grade_id, subject_id, offered):
+def _ensure_subject_context(
+    tenant_id, programme_id, grade_id, subject_id, offered, sort_order=0
+):
+    """Upsert one SubjectContext (offering of a subject for a programme x grade).
+
+    `offered` is a config offering line; it may carry `type`, `role`,
+    `short_code`, `weekly`, and `sort_order`. `sort_order` defaults to the
+    caller-supplied position when the offering omits it.
+    """
     ctx = (
         SubjectContext.query.filter_by(
             tenant_id=tenant_id,
@@ -252,6 +294,9 @@ def _ensure_subject_context(tenant_id, programme_id, grade_id, subject_id, offer
         grade_id=grade_id,
         subject_id=subject_id,
         type=offered.get("type", "mandatory"),
+        role=offered.get("role"),
+        short_code=offered.get("short_code"),
+        sort_order=int(offered.get("sort_order", sort_order)),
         default_weekly_periods=int(offered.get("weekly", DEFAULT_WEEKLY_PERIODS)),
         is_active=True,
     )
@@ -267,8 +312,9 @@ def apply_subject_contexts_to_classes(tenant_id, academic_year_id) -> dict:
     """Create one ClassSubject per (class, offered subject) for the active year.
 
     A class's offered subjects are the SubjectContext rows matching its
-    (programme_id, grade_id). Additive + idempotent: skips active rows that
-    already exist. Returns {"created": n, "skipped": m}.
+    (programme_id, grade_id). Carries each context's sort_order onto the
+    ClassSubject. Additive + idempotent: skips active rows that already exist.
+    Returns {"created": n, "skipped": m}.
     """
     classes = Class.query.filter_by(
         tenant_id=tenant_id, academic_year_id=academic_year_id
@@ -310,6 +356,7 @@ def apply_subject_contexts_to_classes(tenant_id, academic_year_id) -> dict:
                     subject_id=ctx.subject_id,
                     weekly_periods=int(ctx.default_weekly_periods),
                     is_mandatory=(ctx.type == "mandatory"),
+                    sort_order=ctx.sort_order,
                     status="active",
                 )
             )
@@ -322,6 +369,25 @@ def apply_subject_contexts_to_classes(tenant_id, academic_year_id) -> dict:
 # --------------------------------------------------------------------------- #
 # Orchestrator
 # --------------------------------------------------------------------------- #
+def _subject_defaults(config: dict) -> dict:
+    """Map subject code -> default {role, short_code} declared in subjects[]."""
+    return {
+        s["code"]: {"role": s.get("role"), "short_code": s.get("short_code")}
+        for s in config.get("subjects", [])
+    }
+
+
+def _merge_offering(offered: dict, defaults: dict) -> dict:
+    """Apply subject-level role/short_code defaults unless the offering overrides."""
+    merged = dict(offered)
+    d = defaults.get(offered["code"], {})
+    if merged.get("role") is None and d.get("role"):
+        merged["role"] = d["role"]
+    if merged.get("short_code") is None and d.get("short_code"):
+        merged["short_code"] = d["short_code"]
+    return merged
+
+
 def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
     """Seed a tenant's academic foundation from a config dict.
 
@@ -362,12 +428,16 @@ def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
         subj, _created = _ensure_subject(tenant_id, row)
         subj_by_code[row["code"]] = subj
 
+    defaults = _subject_defaults(config)
     for off in config.get("offerings", []):
         prog = prog_by_code[off["programme"]]
         grade = grade_by_name[str(off["grade"])]
-        for s in off.get("subjects", []):
+        for idx, s in enumerate(off.get("subjects", []), start=1):
             subj = subj_by_code[s["code"]]
-            _ensure_subject_context(tenant_id, prog.id, grade.id, subj.id, s)
+            _ensure_subject_context(
+                tenant_id, prog.id, grade.id, subj.id, _merge_offering(s, defaults),
+                sort_order=idx,
+            )
 
     db.session.commit()
 
@@ -415,4 +485,171 @@ def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
         "class_subjects": cs_result,
         "status": status,
         "setup_complete": completed,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# In-app upload support: parse an uploaded config + read-only preview
+# --------------------------------------------------------------------------- #
+class UnsupportedConfigType(Exception):
+    """Raised when an uploaded config isn't .yaml/.yml/.json or isn't a mapping."""
+
+
+def parse_config_bytes(filename: str, raw: bytes) -> dict:
+    """Parse uploaded config bytes into a dict by file extension (.yaml/.yml/.json)."""
+    name = (filename or "").lower()
+    text = raw.decode("utf-8")
+    if name.endswith((".yaml", ".yml")):
+        import yaml
+
+        data = yaml.safe_load(text)
+    elif name.endswith(".json"):
+        import json as _json
+
+        data = _json.loads(text)
+    else:
+        raise UnsupportedConfigType("Config must be a .yaml, .yml, or .json file")
+    if not isinstance(data, dict):
+        raise UnsupportedConfigType("Config root must be a mapping/object")
+    return data
+
+
+def _existing_natural_keys(tenant_id):
+    """Maps of existing entities by natural key (one query each) for preview diffing."""
+    units = {
+        u.code: u.id
+        for u in SchoolUnit.query.filter_by(tenant_id=tenant_id)
+        .filter(SchoolUnit.deleted_at.is_(None))
+        .all()
+    }
+    programmes = {
+        p.code: p.id
+        for p in AcademicProgramme.query.filter_by(tenant_id=tenant_id)
+        .filter(AcademicProgramme.deleted_at.is_(None))
+        .all()
+    }
+    grades = {
+        gr.name: gr.id
+        for gr in Grade.query.filter_by(tenant_id=tenant_id)
+        .filter(Grade.deleted_at.is_(None))
+        .all()
+    }
+    subjects = {
+        s.code: s.id
+        for s in Subject.query.filter_by(tenant_id=tenant_id)
+        .filter(Subject.deleted_at.is_(None))
+        .all()
+        if s.code
+    }
+    years = {y.name: y.id for y in AcademicYear.query.filter_by(tenant_id=tenant_id).all()}
+    return units, programmes, grades, subjects, years
+
+
+def preview_seed(tenant_id, config, active_subdomain=None) -> dict:
+    """Read-only preview of what seed_school would do — NO DB writes.
+
+    Returns validation errors plus, per entity type, totals split into new vs
+    already-existing, so the UI can render a confirm-before-apply summary.
+    """
+    errors = _validate_config(config)
+    ex_units, ex_progs, ex_grades, ex_subjects, ex_years = _existing_natural_keys(tenant_id)
+
+    def _simple(rows, key, exists_fn):
+        items, new = [], 0
+        for r in rows:
+            exists = exists_fn(r)
+            if not exists:
+                new += 1
+            items.append({"key": str(r.get(key)), "name": r.get("name"), "exists": exists})
+        return {"total": len(rows), "new": new, "existing": len(rows) - new, "items": items}
+
+    units = _simple(config.get("units", []), "code", lambda r: r["code"] in ex_units)
+    programmes = _simple(config.get("programmes", []), "code", lambda r: r["code"] in ex_progs)
+    grades = _simple(config.get("grades", []), "name", lambda r: str(r["name"]) in ex_grades)
+    subjects = _simple(config.get("subjects", []), "code", lambda r: r["code"] in ex_subjects)
+
+    ay = config.get("academic_year") or {}
+    ay_name = ay.get("name")
+    academic_year = {
+        "name": ay_name,
+        "exists": ay_name in ex_years,
+        "active": bool(ay.get("active", True)),
+    }
+
+    # offerings -> subject_contexts (existing iff programme+grade+subject all exist
+    # AND a context row already links them)
+    ex_ctx = {
+        (c.programme_id, c.grade_id, c.subject_id)
+        for c in SubjectContext.query.filter_by(tenant_id=tenant_id)
+        .filter(SubjectContext.deleted_at.is_(None))
+        .all()
+    }
+    off_total = off_new = 0
+    for off in config.get("offerings", []):
+        pid = ex_progs.get(off["programme"])
+        gid = ex_grades.get(str(off["grade"]))
+        for s in off.get("subjects", []):
+            off_total += 1
+            sid = ex_subjects.get(s["code"])
+            if not (pid and gid and sid and (pid, gid, sid) in ex_ctx):
+                off_new += 1
+    offerings = {"total": off_total, "new": off_new, "existing": off_total - off_new}
+
+    # classes (existing iff the year + unit + programme + grade exist AND a row
+    # with that section/stream already exists in the active year)
+    year_id = ex_years.get(ay_name)
+    ex_classes = set()
+    if year_id:
+        ex_classes = {
+            (c.school_unit_id, c.programme_id, c.grade_id, c.section, c.stream)
+            for c in Class.query.filter_by(
+                tenant_id=tenant_id, academic_year_id=year_id
+            ).all()
+        }
+    cls_items, cls_new, cls_total = [], 0, 0
+    for cl in config.get("classes", []):
+        uid = ex_units.get(cl["unit"])
+        pid = ex_progs.get(cl["programme"])
+        gid = ex_grades.get(str(cl["grade"]))
+        for sec_raw in cl.get("sections", []):
+            cls_total += 1
+            stream, section = _parse_stream_section(str(sec_raw).strip())
+            exists = bool(
+                year_id and uid and pid and gid
+                and (uid, pid, gid, section, stream) in ex_classes
+            )
+            if not exists:
+                cls_new += 1
+            cls_items.append({
+                "label": f"{cl['unit']} / {cl['programme']} / {cl['grade']} / {section}",
+                "exists": exists,
+            })
+    classes = {
+        "total": cls_total,
+        "new": cls_new,
+        "existing": cls_total - cls_new,
+        "items": cls_items,
+    }
+
+    tenant_info = {"subdomain": (config.get("tenant") or {}).get("subdomain")}
+    if active_subdomain is not None:
+        tenant_info["active_subdomain"] = active_subdomain
+        tenant_info["matches"] = (
+            tenant_info["subdomain"] is None
+            or tenant_info["subdomain"] == active_subdomain
+        )
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "tenant": tenant_info,
+        "academic_year": academic_year,
+        "entities": {
+            "units": units,
+            "programmes": programmes,
+            "grades": grades,
+            "subjects": subjects,
+            "offerings": offerings,
+            "classes": classes,
+        },
     }
