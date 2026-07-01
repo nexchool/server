@@ -1,13 +1,17 @@
 # Per-school onboarding config. Copy to <subdomain>.yaml and edit.
 # Natural keys only (no UUIDs); the seed script resolves them at runtime.
 # The tenant must already exist (created via platform onboarding).
+#
+# In-app Onboarding upload: this applies to the school you are operating in —
+# `tenant.subdomain` is only a label (a mismatch is shown in the preview).
+# CLI (scripts/seed_school.py): `tenant.subdomain` selects the target tenant.
 tenant:
-  subdomain: demo-school
+  subdomain: your-school-subdomain   # CLI target; ignored by the in-app upload
 
 academic_year:
-  name: "2025-2026"
-  start: 2025-06-01
-  end: 2026-03-31
+  name: "2026-2027"
+  start: 2026-06-01
+  end: 2027-03-31
   active: true
 
 units:
