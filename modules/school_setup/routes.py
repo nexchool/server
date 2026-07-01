@@ -357,16 +357,10 @@ def post_seed_apply():
             "ParseError", "Could not parse the file. Ensure it is valid YAML or JSON.", 400
         )
 
-    # Guard: never seed a config meant for a different tenant.
-    active = _active_subdomain(g.tenant_id)
-    cfg_sub = (config.get("tenant") or {}).get("subdomain")
-    if cfg_sub and active and cfg_sub != active:
-        return error_response(
-            "TenantMismatch",
-            f"This config targets tenant '{cfg_sub}', but you are operating in '{active}'.",
-            409,
-        )
-
+    # The upload always applies to the tenant the operator is in (g.tenant_id).
+    # config.tenant.subdomain is advisory only — the preview surfaces a mismatch
+    # so a wrong file is caught before Confirm & apply, but a template config
+    # (e.g. example.yaml) still applies cleanly to the current school.
     try:
         result = seed_service.seed_school(
             g.tenant_id, config, dry_run=False, complete=True
