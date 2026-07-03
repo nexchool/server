@@ -10,8 +10,10 @@ when the query runs inside a request that has tenant resolution.
 
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import Query
 from sqlalchemy import event
+# Aliased: `init_db` locally imports modules.auth.models.Session (the user-session
+# model), which would otherwise shadow this ORM Session in the function scope.
+from sqlalchemy.orm import Session as OrmSession, with_loader_criteria
 
 # Initialize SQLAlchemy instance
 # This will be initialized with the app in the application factory
@@ -19,31 +21,43 @@ db = SQLAlchemy()
 migrate = Migrate()
 
 
-def _tenant_scope_query(query):
+def _tenant_scope_execute(execute_state):
     """
-    Apply tenant_id filter to queries for models with __tenant_scoped__.
-    Ensures no cross-tenant data leakage when g.tenant_id is set.
-    Uses column_descriptions (public API) for SQLAlchemy 1.4/2.0 compatibility.
+    Inject a ``tenant_id`` WHERE criterion into every ORM SELECT that touches a
+    ``TenantBaseModel`` subclass, scoped to the request's ``g.tenant_id``.
+
+    This uses ``with_loader_criteria`` rather than the legacy ``before_compile``
+    hook because ``before_compile`` silently *drops* an added WHERE clause when
+    the query already has LIMIT/OFFSET (the criterion would have to move inside a
+    subquery). That made ``count()`` scope correctly while the paginated
+    ``limit().offset().all()`` leaked every tenant's rows — a cross-tenant data
+    leak on every list endpoint. ``with_loader_criteria`` is applied at execution
+    time and is safe under LIMIT/OFFSET, JOINs, aliases and subqueries.
+
+    Only primary entity SELECTs are scoped; relationship lazy-loads and column
+    refreshes are reached through already-scoped parents and are skipped so we
+    don't interfere with identity-map loads.
     """
     from flask import has_request_context, g
+    from core.models import TenantBaseModel
+
     if not has_request_context():
-        return query
+        return
+    if not execute_state.is_select:
+        return
+    if execute_state.is_column_load or execute_state.is_relationship_load:
+        return
     tenant_id = getattr(g, "tenant_id", None)
     if tenant_id is None:
-        return query
-    try:
-        for desc in query.column_descriptions:
-            entity = desc.get("entity")
-            if entity is None:
-                continue
-            # entity is often the mapped class; support both class and mapper-like
-            cls = getattr(entity, "class_", entity) if not isinstance(entity, type) else entity
-            if isinstance(cls, type) and getattr(cls, "__tenant_scoped__", False):
-                query = query.filter(cls.tenant_id == tenant_id)
-            break
-    except Exception:
-        pass
-    return query
+        return
+
+    execute_state.statement = execute_state.statement.options(
+        with_loader_criteria(
+            TenantBaseModel,
+            lambda cls: cls.tenant_id == tenant_id,
+            include_aliases=True,
+        )
+    )
 
 
 def init_db(app):
@@ -57,8 +71,10 @@ def init_db(app):
     db.init_app(app)
     migrate.init_app(app, db, directory="migrations")
 
-    # Automatically scope tenant-scoped model queries by g.tenant_id
-    event.listen(Query, "before_compile", _tenant_scope_query, retval=True)
+    # Automatically scope tenant-scoped model SELECTs by g.tenant_id.
+    # do_orm_execute + with_loader_criteria is LIMIT/OFFSET-safe (see the
+    # handler docstring); listen on the base Session so all sessions are covered.
+    event.listen(OrmSession, "do_orm_execute", _tenant_scope_execute)
 
     with app.app_context():
         from core.models import Tenant, Plan, AuditLog, PlatformSetting
