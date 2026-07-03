@@ -90,7 +90,7 @@ def _compute_allowed_unit_ids() -> Optional[Set[str]]:
     # Lazy import to avoid circular imports (models import core indirectly).
     from modules.sub_admins.models import UserSchoolUnit
 
-    # tenant_id is auto-applied by the before_compile listener.
+    # tenant_id is auto-applied by the do_orm_execute tenant-scope listener.
     rows = (
         UserSchoolUnit.query
         .with_entities(UserSchoolUnit.school_unit_id)
@@ -140,8 +140,8 @@ def get_allowed_class_ids() -> Optional[Set[str]]:
 def _allowed_class_id_subquery(allowed_units: Set[str]):
     """Scalar subquery: select Class.id where unit in allowed and tenant matches.
 
-    Explicitly tenant-scoped rather than depending on the before_compile
-    listener (which only fires on the outer query's leading entity).
+    Explicitly tenant-scoped rather than depending on the global tenant-scope
+    listener, keeping this correlated subquery self-contained.
     """
     from modules.classes.models import Class
 

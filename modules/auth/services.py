@@ -309,7 +309,7 @@ def authenticate_platform_admin(email: str, password: str) -> Optional[User]:
     share the email, the first match (ordered by id) is returned deterministically.
     """
     # A god-login request has already resolved the *entered* tenant, so
-    # g.tenant_id is set. The before_compile listener in core/database.py would
+    # g.tenant_id is set. The do_orm_execute listener in core/database.py would
     # auto-scope this query to that tenant and never find the platform admin
     # (who lives in their own tenant). Temporarily clear g.tenant_id for this
     # intentional cross-tenant lookup, then restore it.

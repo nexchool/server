@@ -145,8 +145,8 @@ def has_permission(user_id: str, permission_name: str) -> bool:
         # direct service calls): do the cleared-scope DB lookup as before.
         # A platform admin operating in another tenant has g.tenant_id set to
         # the *entered* tenant while their User row lives in their home tenant,
-        # so the auto tenant-scope (core/database.py before_compile) would hide
-        # the row. Clear g.tenant_id for this lookup-by-id, then restore.
+        # so the auto tenant-scope (core/database.py do_orm_execute listener)
+        # would hide the row. Clear g.tenant_id for this lookup-by-id, then restore.
         had_tenant = False
         saved_tenant_id = None
         if has_request_context() and getattr(g, "tenant_id", None) is not None:
