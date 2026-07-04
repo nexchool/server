@@ -10,6 +10,41 @@ from flask import request, jsonify, g
 from datetime import datetime
 
 
+def _load_without_tenant_scope(loader):
+    """Run ``loader()`` with tenant scoping disabled, then restore g.tenant_id.
+
+    Auth identity comes from the token/session, not the request's tenant. A
+    platform admin god-logging into another tenant has ``g.tenant_id`` set to the
+    *entered* tenant while their User/Session rows live in their home tenant, so a
+    tenant-scoped identity lookup would 401 ("User not found") on every tenant
+    route. Clearing ``g.tenant_id`` for just the lookup keeps identity resolution
+    tenant-agnostic; ``_acts_outside_own_tenant`` re-imposes isolation afterwards.
+    """
+    saved_tenant_id = getattr(g, "tenant_id", None)
+    if saved_tenant_id is not None:
+        g.tenant_id = None
+    try:
+        return loader()
+    finally:
+        if saved_tenant_id is not None:
+            g.tenant_id = saved_tenant_id
+
+
+def _acts_outside_own_tenant(user):
+    """True if a non-platform user's token is being used in another tenant.
+
+    Now that identity is resolved unscoped, this re-imposes tenant isolation: a
+    normal user may only act within their own tenant, while a platform admin may
+    operate in any tenant (god-login).
+    """
+    current_tenant_id = getattr(g, "tenant_id", None)
+    return (
+        current_tenant_id is not None
+        and getattr(user, "tenant_id", None) != current_tenant_id
+        and not getattr(user, "is_platform_admin", False)
+    )
+
+
 def auth_required(fn):
     """
     Decorator to protect routes requiring authentication.
@@ -72,9 +107,11 @@ def auth_required(fn):
         # Try to validate the access token
         payload = validate_jwt_token(access_token, token_type="access")
         if payload:
-            # Token is valid, get user
-            user = User.query.get(payload["sub"])
-            if not user:
+            # Token is valid. Resolve identity from the token's global user id
+            # without tenant scoping, then re-impose isolation for non-platform
+            # users (see _load_without_tenant_scope / _acts_outside_own_tenant).
+            user = _load_without_tenant_scope(lambda: User.query.get(payload["sub"]))
+            if not user or _acts_outside_own_tenant(user):
                 return jsonify({"error": "User not found"}), 401
 
             # Re-check account status on every request so a suspension or
@@ -97,17 +134,23 @@ def auth_required(fn):
         if not new_access_token:
             return jsonify({"error": "Invalid refresh token"}), 401
 
-        # Get session and user
-        session = Session.query.filter_by(
-            refresh_token=refresh_token,
-            revoked=False
-        ).first()
+        # Get session and user — resolved without tenant scoping (the session /
+        # user rows live in the account's home tenant, which may differ from the
+        # entered tenant during a platform-admin god-login).
+        session = _load_without_tenant_scope(
+            lambda: Session.query.filter_by(
+                refresh_token=refresh_token,
+                revoked=False,
+            ).first()
+        )
 
         if not session:
             return jsonify({"error": "Session not found"}), 401
 
-        # Set current user from session
-        user = session.user
+        # Set current user from session, then re-impose tenant isolation.
+        user = _load_without_tenant_scope(lambda: User.query.get(session.user_id))
+        if not user or _acts_outside_own_tenant(user):
+            return jsonify({"error": "Session not found"}), 401
 
         # Defense in depth: the refresh path already revokes sessions on
         # suspend/delete, but re-check here too so a stale-but-unrevoked
