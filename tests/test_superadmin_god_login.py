@@ -366,3 +366,64 @@ def test_profile_flags_sub_admin(client, db_session, setup_tenant, sub_admin):
     body = resp.get_json()["data"]
     assert body["is_platform_admin"] is False
     assert body["is_subadmin"] is True
+
+
+# ---------------------------------------------------------------------------
+# auth_required identity resolution across tenants (god-login session fix)
+#
+# Regression: a platform admin god-logs into another tenant, so g.tenant_id is
+# the entered tenant while their User row lives in their home tenant. auth_required
+# used to load the user tenant-scoped -> None -> 401 "User not found" on every
+# tenant-scoped route, so god-login "signed in" but the app was unusable. Fixed by
+# resolving identity unscoped in core/decorators/auth.py, with an explicit
+# isolation check so a normal user still can't act outside their own tenant.
+# ---------------------------------------------------------------------------
+
+def _call_auth_required(flask_app, token, tenant_id):
+    from flask import jsonify
+    from core.decorators.auth import auth_required
+
+    @auth_required
+    def _view():
+        return jsonify({"user_id": g.current_user.id}), 200
+
+    with flask_app.test_request_context(
+        "/api/school-setup/status",
+        headers={"Authorization": f"Bearer {token}"},
+    ):
+        g.tenant_id = tenant_id
+        return _view()
+
+
+def test_auth_required_god_login_resolves_across_tenants(
+    flask_app, db_session, setup_tenant, platform_admin
+):
+    from modules.auth.services import generate_access_token
+
+    token = generate_access_token(platform_admin)
+    body, status = _call_auth_required(flask_app, token, setup_tenant.id)
+    assert status == 200
+    assert body.get_json()["user_id"] == platform_admin.id
+
+
+def test_auth_required_blocks_normal_user_in_another_tenant(
+    flask_app, db_session, setup_tenant, platform_home_tenant, tenant_admin
+):
+    from modules.auth.services import generate_access_token
+
+    # tenant_admin lives in setup_tenant; using their token while operating in a
+    # different tenant must be rejected (isolation preserved after unscoped load).
+    token = generate_access_token(tenant_admin)
+    _body, status = _call_auth_required(flask_app, token, platform_home_tenant.id)
+    assert status == 401
+
+
+def test_auth_required_allows_normal_user_in_own_tenant(
+    flask_app, db_session, setup_tenant, tenant_admin
+):
+    from modules.auth.services import generate_access_token
+
+    token = generate_access_token(tenant_admin)
+    body, status = _call_auth_required(flask_app, token, setup_tenant.id)
+    assert status == 200
+    assert body.get_json()["user_id"] == tenant_admin.id
