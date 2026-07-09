@@ -16,6 +16,7 @@ from shared.helpers import (
     forbidden_response,
 )
 from . import services
+from .teacher_schemas import validate_teacher_payload
 
 # Permissions
 PERM_CREATE = 'teacher.create'
@@ -111,10 +112,11 @@ def create_teacher():
     Optional: email, phone, designation, department, qualification,
               specialization, experience_years, address, date_of_joining
     """
-    data = request.get_json()
+    data = request.get_json() or {}
 
-    if not data.get('name'):
-        return validation_error_response('Name is required')
+    errors = validate_teacher_payload(data, is_update=False)
+    if errors:
+        return validation_error_response(errors)
 
     result = services.create_teacher(
         name=data['name'],
@@ -189,7 +191,11 @@ def get_my_teacher_profile():
 @require_permission(PERM_UPDATE)
 def update_teacher(teacher_id):
     """Update teacher details."""
-    data = request.get_json()
+    data = request.get_json() or {}
+
+    errors = validate_teacher_payload(data, is_update=True)
+    if errors:
+        return validation_error_response(errors)
 
     result = services.update_teacher(
         teacher_id,

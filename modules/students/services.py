@@ -22,6 +22,7 @@ from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
+from .student_schemas import DEFAULT_STUDENT_STATUS
 from .class_enrollment_service import (
     assign_student_to_class,
     student_matches_academic_year_filter,
@@ -455,7 +456,9 @@ def create_student(
             last_school_board=_clean_str(last_school_board),
             tc_number=_clean_str(tc_number),
             house_name=_clean_str(house_name),
-            student_status=_clean_str(student_status),
+            # New students default to "active"; the status field is not
+            # collected on create and is only editable afterwards.
+            student_status=_clean_str(student_status) or DEFAULT_STUDENT_STATUS,
         )
         db.session.add(student)
         db.session.flush()

@@ -24,6 +24,7 @@ from core.branch_scope import (
     get_allowed_unit_ids,
 )
 from . import services
+from .class_schemas import validate_class_payload
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,10 @@ def create_class():
         return validation_error_response({'message': 'section is required'})
     if not data.get('academic_year_id'):
         return validation_error_response({'message': 'academic_year_id is required'})
+
+    errors = validate_class_payload(data, is_update=False)
+    if errors:
+        return validation_error_response(errors)
 
     # Branch scope: a restricted sub-admin can only create a class in an
     # allowed branch. No-op for unrestricted users.
@@ -236,6 +241,11 @@ def update_class(class_id):
     """Update class details"""
     assert_class_allowed(class_id)  # branch scope (no-op if unrestricted)
     data = request.get_json() or {}
+
+    errors = validate_class_payload(data, is_update=True)
+    if errors:
+        return validation_error_response(errors)
+
     kw = dict(
         name=data.get('name'),
         section=data.get('section'),
