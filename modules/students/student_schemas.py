@@ -10,6 +10,21 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from core import validation as v
+
+# Canonical student lifecycle statuses. Keep in sync with the frontend at
+# admin-web/src/constants/studentStatus.ts.
+STUDENT_STATUS_VALUES = (
+    "active",
+    "inactive",
+    "transferred",
+    "graduated",
+    "leaving",
+    "suspended",
+    "dropped_out",
+)
+DEFAULT_STUDENT_STATUS = "active"
+
 
 def _trim_or_none(value: Any) -> str | None:
     if value is None:
@@ -79,75 +94,69 @@ def parse_bool(value: Any) -> tuple[bool, str | None]:
     return False, "Invalid boolean."
 
 
-def validate_student_payload(data: dict, *, is_update: bool) -> str | None:
-    """
-    Validate obvious constraints only. Return error message if invalid; None if OK.
-    Keep permissive: optional fields may be omitted or empty.
-    """
-    if not isinstance(data, dict):
-        return "Invalid JSON payload."
-
+# Field validation spec, applied to both create and update payloads. Required
+# fields and the academic_year/class rule stay in the route (they carry
+# create-only logic); this covers formats, ranges, enums and lengths.
+_STUDENT_SPEC = {
+    # Emails
+    "email": [v.email()],
+    "guardian_email": [v.email()],
+    "father_email": [v.email()],
+    "mother_email": [v.email()],
+    # Phones — guardian is the primary (mobile) contact; others may be landlines.
+    "guardian_phone": [v.phone("Guardian phone")],
+    "phone": [v.phone_loose()],
+    "father_phone": [v.phone_loose()],
+    "mother_phone": [v.phone_loose()],
+    "emergency_contact_phone": [v.phone_loose()],
+    "emergency_contact_alt_phone": [v.phone_loose()],
+    # Government IDs
+    "aadhar_number": [v.aadhar()],
+    "guardian_aadhar_number": [v.aadhar("Guardian Aadhaar")],
+    "current_pincode": [v.pincode()],
+    "permanent_pincode": [v.pincode()],
     # Dates
-    for key in ("date_of_birth", "admission_date"):
-        ok, err = parse_date(data.get(key))
-        if not ok:
-            return f"{key}: {err}"
-
+    "date_of_birth": [v.is_date("Date of birth")],
+    "admission_date": [v.is_date("Admission date")],
     # Numbers
-    ok, err = parse_int(data.get("height_cm"), min_value=0, max_value=300)
-    if not ok:
-        return f"height_cm: {err}"
-    ok, err = parse_decimal(data.get("weight_kg"), min_value=0, max_value=500)
-    if not ok:
-        return f"weight_kg: {err}"
-
-    for key in ("father_annual_income", "mother_annual_income", "roll_number"):
-        ok, err = parse_int(data.get(key), min_value=0)
-        if not ok:
-            return f"{key}: {err}"
-
+    "height_cm": [v.integer(min_value=0, max_value=300, label="Height")],
+    "weight_kg": [v.decimal(min_value=0, max_value=500, label="Weight")],
+    "father_annual_income": [v.integer(min_value=0, label="Father's annual income")],
+    "mother_annual_income": [v.integer(min_value=0, label="Mother's annual income")],
+    "roll_number": [v.integer(min_value=0, label="Roll number")],
     # Booleans
-    for key in ("is_same_as_permanent_address", "is_commuting_from_outstation"):
-        ok, err = parse_bool(data.get(key))
-        if not ok:
-            return f"{key}: {err}"
+    "is_same_as_permanent_address": [v.boolean()],
+    "is_commuting_from_outstation": [v.boolean()],
+    # Enum
+    "student_status": [v.one_of(STUDENT_STATUS_VALUES, "student status")],
+    # Length guards
+    "blood_group": [v.max_length(10, "Blood group")],
+    "apaar_id": [v.max_length(50, "APAAR ID")],
+    "emis_number": [v.max_length(50, "EMIS number")],
+    "udise_student_id": [v.max_length(50, "UDISE ID")],
+    "religion": [v.max_length(50, "Religion")],
+    "category": [v.max_length(50, "Category")],
+    "caste": [v.max_length(50, "Caste")],
+    "nationality": [v.max_length(50, "Nationality")],
+    "mother_tongue": [v.max_length(50, "Mother tongue")],
+    "place_of_birth": [v.max_length(120, "Place of birth")],
+    "current_city": [v.max_length(80, "Current city")],
+    "current_state": [v.max_length(80, "Current state")],
+    "permanent_city": [v.max_length(80, "Permanent city")],
+    "permanent_state": [v.max_length(80, "Permanent state")],
+    "tc_number": [v.max_length(50, "TC number")],
+    "house_name": [v.max_length(50, "House name")],
+    "academic_result": [v.max_length(20, "Academic result")],
+}
 
-    # Lightweight length checks (avoid overly strict validation)
-    max_len: dict[str, int] = {
-        "blood_group": 10,
-        "father_phone": 20,
-        "mother_phone": 20,
-        "guardian_aadhar_number": 20,
-        "aadhar_number": 20,
-        "apaar_id": 50,
-        "emis_number": 50,
-        "udise_student_id": 50,
-        "religion": 50,
-        "category": 50,
-        "caste": 50,
-        "nationality": 50,
-        "mother_tongue": 50,
-        "place_of_birth": 120,
-        "current_city": 80,
-        "current_state": 80,
-        "current_pincode": 12,
-        "permanent_city": 80,
-        "permanent_state": 80,
-        "permanent_pincode": 12,
-        "emergency_contact_phone": 20,
-        "emergency_contact_alt_phone": 20,
-        "tc_number": 50,
-        "house_name": 50,
-        "student_status": 30,
-        "academic_result": 20,
-    }
-    for k, m in max_len.items():
-        v = data.get(k)
-        if v is None:
-            continue
-        if isinstance(v, str) and len(v) > m:
-            return f"{k}: Too long (max {m})."
 
-    # Create-only required logic remains in routes/services; do not duplicate here.
-    return None
+def validate_student_payload(data: dict, *, is_update: bool) -> dict[str, str] | None:
+    """
+    Validate formats, ranges, enums and lengths for a student payload. Returns a
+    ``{field: message}`` dict (for ``validation_error_response``) or None.
+
+    Optional fields are only checked when present. Required-field and
+    academic-year logic stays in the route.
+    """
+    return v.run(data, _STUDENT_SPEC)
 
