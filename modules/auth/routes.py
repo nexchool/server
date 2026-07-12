@@ -765,6 +765,9 @@ def force_reset_password():
     user.force_password_reset = False
 
     # Revoke every other active session; keep the caller's current one.
+    # Only revoke when we can identify the caller's session (via X-Refresh-Token);
+    # otherwise skip revocation rather than log the caller out of the session they
+    # just used to set their password.
     refresh_token = request.headers.get('X-Refresh-Token')
     current_session = None
     if refresh_token:
@@ -772,11 +775,17 @@ def force_reset_password():
             refresh_token=refresh_token, revoked=False
         ).first()
 
-    query = Session.query.filter_by(user_id=user.id, revoked=False)
     if current_session is not None:
-        query = query.filter(Session.id != current_session.id)
-    for session in query.all():
-        session.revoke()
+        others = Session.query.filter_by(user_id=user.id, revoked=False).filter(
+            Session.id != current_session.id
+        )
+        for session in others.all():
+            session.revoke()
+    else:
+        logger.warning(
+            "force-reset: no current session identified (missing X-Refresh-Token); "
+            "skipping other-session revocation for user %s", user.id
+        )
 
     user.save()
 
