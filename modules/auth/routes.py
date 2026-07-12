@@ -611,12 +611,13 @@ def forgot_password():
     if err:
         return err[1], err[0]
 
-    from config.settings import get_reset_password_url
+    from config.settings import get_reset_password_url, get_admin_web_reset_url
     from modules.notifications.services import notification_dispatcher
     from modules.notifications.enums import NotificationChannel
 
     data = request.get_json()
     email = data.get('email')
+    platform = (data or {}).get('platform')
 
     if not email:
         return error_response(
@@ -633,8 +634,12 @@ def forgot_password():
         token = user.generate_reset_password_token()
         user.save()
 
-        # Send reset email via notification dispatcher
-        reset_url = get_reset_password_url(token, email)
+        # Send reset email via notification dispatcher. Web (admin-web/panel)
+        # needs a browser link; mobile clients keep the app deep link.
+        if platform == "web":
+            reset_url = get_admin_web_reset_url(token, email, g.tenant.subdomain)
+        else:
+            reset_url = get_reset_password_url(token, email)
         notification_dispatcher.dispatch(
             user_id=user.id,
             tenant_id=get_tenant_id(),

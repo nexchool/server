@@ -215,6 +215,24 @@ def get_reset_password_url(token: str, email: str) -> str:
     return f"{base_url}/--/reset-password?token={token}&email={email}"
 
 
+def get_admin_web_reset_url(token: str, email: str, subdomain: str = "") -> str:
+    """Generate the admin-web (browser) password reset URL.
+
+    Reads ADMIN_WEB_BASE_URL (default http://localhost:3000) and, when a tenant
+    subdomain is present, prefixes it to the host so the link lands on the
+    tenant's admin-web (e.g. http://mts.localhost:3000/reset-password?...).
+    """
+    from urllib.parse import urlsplit, urlunsplit, urlencode
+
+    base_url = os.getenv("ADMIN_WEB_BASE_URL", "http://localhost:3000")
+    parts = urlsplit(base_url)
+    host = parts.netloc
+    if subdomain:
+        host = f"{subdomain}.{host}"
+    query = urlencode({"token": token, "email": email})
+    return urlunsplit((parts.scheme, host, "/reset-password", query, ""))
+
+
 def get_email_verification_url(token: str, email: str) -> str:
     """Generates the email verification URL"""
     base_url = get_backend_url()
