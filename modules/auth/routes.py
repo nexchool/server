@@ -729,6 +729,62 @@ def reset_password():
     )
 
 
+@auth_bp.route('/password/force-reset', methods=['POST'])
+@auth_required
+@limiter.limit("5 per minute")
+def force_reset_password():
+    """Set a new password for the authenticated user and clear the force flag.
+
+    Used for the mandatory first-login change after an admin provisions or
+    resets an account (force_password_reset=True). Preserves the caller's
+    current session (matched by X-Refresh-Token) and revokes the rest.
+
+    Body:
+        - new_password (required, must pass strength rule)
+
+    Responses:
+        200: password updated, force_password_reset cleared
+        401: not authenticated
+        422: new_password missing or weak
+    """
+    from .services import _is_password_strong
+
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('new_password')
+
+    if not new_password or not _is_password_strong(new_password):
+        return error_response(
+            error='password_weak',
+            message='Password must be at least 8 characters and include a digit',
+            status_code=422
+        )
+
+    user = g.current_user
+    user.set_password(new_password)
+    user.force_password_reset = False
+
+    # Revoke every other active session; keep the caller's current one.
+    refresh_token = request.headers.get('X-Refresh-Token')
+    current_session = None
+    if refresh_token:
+        current_session = Session.query.filter_by(
+            refresh_token=refresh_token, revoked=False
+        ).first()
+
+    query = Session.query.filter_by(user_id=user.id, revoked=False)
+    if current_session is not None:
+        query = query.filter(Session.id != current_session.id)
+    for session in query.all():
+        session.revoke()
+
+    user.save()
+
+    return success_response(
+        message='Password updated successfully',
+        status_code=200
+    )
+
+
 # ==================== ENABLED FEATURES (lightweight, for app-focus refresh) ====================
 
 @auth_bp.route('/enabled-features', methods=['GET'])

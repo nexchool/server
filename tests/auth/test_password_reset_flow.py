@@ -170,3 +170,53 @@ def test_reset_expired_token_returns_400(flask_app, db_session, tenant):
         {"email": user.email, "token": token, "new_password": "Password1"},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# S3 — authenticated /password/force-reset
+# ---------------------------------------------------------------------------
+
+def _post_authed(flask_app, tenant, user, path, body):
+    """POST as `user`: patch JWT validation so auth_required loads them by id."""
+    with patch(
+        "modules.auth.services.validate_jwt_token",
+        return_value={"sub": user.id},
+    ):
+        return _post(
+            flask_app, tenant, path, body,
+            headers={"Authorization": "Bearer test-access-token"},
+        )
+
+
+def test_force_reset_succeeds_and_clears_flag(flask_app, db_session, tenant):
+    user = _make_user(db_session, tenant)
+    user.force_password_reset = True
+    db_session.flush()
+
+    resp = _post_authed(
+        flask_app, tenant, user, "/api/auth/password/force-reset",
+        {"new_password": "Password1"},
+    )
+    assert resp.status_code == 200
+
+    db_session.refresh(user)
+    assert user.force_password_reset is False
+    assert user.check_password("Password1") is True
+
+
+def test_force_reset_weak_password_returns_422(flask_app, db_session, tenant):
+    user = _make_user(db_session, tenant)
+
+    resp = _post_authed(
+        flask_app, tenant, user, "/api/auth/password/force-reset",
+        {"new_password": "short"},
+    )
+    assert resp.status_code == 422
+
+
+def test_force_reset_without_auth_returns_401(flask_app, db_session, tenant):
+    resp = _post(
+        flask_app, tenant, "/api/auth/password/force-reset",
+        {"new_password": "Password1"},
+    )
+    assert resp.status_code == 401
