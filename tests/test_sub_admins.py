@@ -104,7 +104,7 @@ def test_create_happy_path(db_session, seeded_tenant, mock_dispatch):
     user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
     assert user is not None
     assert user.email_verified is True
-    assert user.force_password_reset is False  # no forced first-login change
+    assert user.force_password_reset is True  # admin-typed creds: force first-login change
 
     # Private is_subadmin role linked via UserRole
     ur = UserRole.query.filter_by(user_id=user.id, tenant_id=seeded_tenant.id).first()

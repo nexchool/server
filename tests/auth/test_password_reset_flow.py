@@ -220,3 +220,83 @@ def test_force_reset_without_auth_returns_401(flask_app, db_session, tenant):
         {"new_password": "Password1"},
     )
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# S4 — force flag on sub-admin create/reset + surfaced in login/profile
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seeded_tenant(db_session, tenant):
+    """Tenant with default roles seeded so sub-admin RBAC joins resolve."""
+    from modules.rbac.models import Permission
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+
+    if not Permission.query.filter_by(name="subadmin.manage").first():
+        db_session.add(Permission(name="subadmin.manage", description="Manage sub-admins"))
+        db_session.flush()
+    seed_roles_for_tenant(tenant.id)
+    return tenant
+
+
+@pytest.fixture
+def mock_dispatch():
+    with patch("modules.notifications.services.notification_dispatcher") as md:
+        md.dispatch.return_value = {"email": True}
+        yield md
+
+
+def _create_sub_admin(tenant, *, email, password="password123"):
+    from modules.sub_admins.services import create_sub_admin
+
+    return create_sub_admin(
+        tenant_id=tenant.id,
+        tenant_name=tenant.name,
+        name="Force Admin",
+        email=email,
+        password=password,
+        modules=[{"key": "finance", "level": "operate"}],
+    )
+
+
+def test_create_sub_admin_sets_force_flag(db_session, seeded_tenant, mock_dispatch):
+    from modules.auth.models import User
+
+    email = f"fa-{uuid.uuid4().hex[:10]}@test.school"
+    result = _create_sub_admin(seeded_tenant, email=email)
+    assert result["success"], result
+
+    user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
+    assert user.force_password_reset is True
+
+
+def test_login_surfaces_force_password_reset(flask_app, db_session, seeded_tenant, mock_dispatch):
+    email = f"fa-{uuid.uuid4().hex[:10]}@test.school"
+    assert _create_sub_admin(seeded_tenant, email=email)["success"]
+
+    resp = _post(
+        flask_app, seeded_tenant, "/api/auth/login",
+        {"email": email, "password": "password123", "tenant_id": seeded_tenant.id},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["force_password_reset"] is True
+
+
+def test_force_reset_clears_flag_for_created_sub_admin(
+    flask_app, db_session, seeded_tenant, mock_dispatch
+):
+    from modules.auth.models import User
+
+    email = f"fa-{uuid.uuid4().hex[:10]}@test.school"
+    assert _create_sub_admin(seeded_tenant, email=email)["success"]
+    user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
+    assert user.force_password_reset is True
+
+    resp = _post_authed(
+        flask_app, seeded_tenant, user, "/api/auth/password/force-reset",
+        {"new_password": "Password9"},
+    )
+    assert resp.status_code == 200
+
+    db_session.refresh(user)
+    assert user.force_password_reset is False

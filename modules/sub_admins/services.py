@@ -491,6 +491,8 @@ def create_sub_admin(
         user = User(tenant_id=tenant_id, email=email, name=name or email)
         user.set_password(password)
         user.email_verified = True
+        # Admin-typed credentials are provisional: force a change on first login.
+        user.force_password_reset = True
         db.session.add(user)
         db.session.flush()
 
@@ -692,6 +694,8 @@ def reset_sub_admin_password(
 
     try:
         user.set_password(password)
+        # Admin-typed reset is provisional: force a change on next login.
+        user.force_password_reset = True
         revoke_all_user_sessions(user_id)
         db.session.commit()
     except Exception as exc:

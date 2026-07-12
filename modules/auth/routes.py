@@ -444,6 +444,7 @@ def login():
             'is_platform_admin': is_platform_admin,
             'is_subadmin': is_subadmin,
             'is_setup_complete': is_setup_complete,
+            'force_password_reset': bool(user.force_password_reset),
             'allowed_unit_ids': allowed_unit_ids,
         },
         message='Login successful',
@@ -877,6 +878,7 @@ def get_profile():
             'is_platform_admin': is_platform_admin,
             'is_subadmin': is_subadmin,
             'is_setup_complete': is_setup_complete,
+            'force_password_reset': bool(user.force_password_reset),
             'allowed_unit_ids': allowed_unit_ids,
         },
         status_code=200
