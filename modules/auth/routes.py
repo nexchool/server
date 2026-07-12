@@ -602,6 +602,7 @@ def validate_email():
 # ==================== PASSWORD RESET ====================
 
 @auth_bp.route('/password/forgot', methods=['POST'])
+@limiter.limit("5 per minute")
 def forgot_password():
     """
     Request password reset email.
@@ -661,6 +662,7 @@ def forgot_password():
 
 
 @auth_bp.route('/password/reset', methods=['POST'])
+@limiter.limit("5 per minute")
 def reset_password():
     """
     Reset password using reset token.
@@ -699,6 +701,15 @@ def reset_password():
             error='InvalidToken',
             message='Invalid or expired token',
             status_code=400
+        )
+
+    # Enforce the same strength rule as the self-serve change flow.
+    from .services import _is_password_strong
+    if not _is_password_strong(new_password):
+        return error_response(
+            error='password_weak',
+            message='Password must be at least 8 characters and include a digit',
+            status_code=422
         )
 
     # Update password

@@ -48,12 +48,22 @@ def _make_user(db_session, tenant, *, email=None, password="Password0", name="Re
     return user
 
 
-def _post(flask_app, tenant, path, body):
-    return flask_app.test_client().post(
-        path,
-        headers={"X-Tenant-ID": tenant.id},
-        json=body,
-    )
+def _post(flask_app, tenant, path, body, headers=None):
+    base = {"X-Tenant-ID": tenant.id}
+    if headers:
+        base.update(headers)
+    return flask_app.test_client().post(path, headers=base, json=body)
+
+
+@pytest.fixture(autouse=True)
+def _disable_rate_limit():
+    """These tests assert behaviour, not throttling; keep them deterministic."""
+    from core.extensions import limiter
+
+    prev = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = prev
 
 
 # ---------------------------------------------------------------------------
@@ -101,3 +111,62 @@ def test_forgot_default_platform_keeps_mobile_link(flask_app, db_session, tenant
     assert resp.status_code == 200
     reset_url = fake_dispatcher.dispatch.call_args.kwargs["extra_data"]["reset_url"]
     assert not reset_url.startswith("http")
+
+
+# ---------------------------------------------------------------------------
+# S2 — strength check + token validity on /password/reset
+# ---------------------------------------------------------------------------
+
+def _issue_token(db_session, user):
+    token = user.generate_reset_password_token()
+    db_session.flush()
+    return token
+
+
+def test_reset_weak_password_returns_422(flask_app, db_session, tenant):
+    user = _make_user(db_session, tenant)
+    token = _issue_token(db_session, user)
+
+    resp = _post(
+        flask_app, tenant, "/api/auth/password/reset",
+        {"email": user.email, "token": token, "new_password": "short"},
+    )
+    assert resp.status_code == 422
+
+
+def test_reset_strong_password_succeeds(flask_app, db_session, tenant):
+    user = _make_user(db_session, tenant)
+    token = _issue_token(db_session, user)
+
+    resp = _post(
+        flask_app, tenant, "/api/auth/password/reset",
+        {"email": user.email, "token": token, "new_password": "Password1"},
+    )
+    assert resp.status_code == 200
+
+    db_session.refresh(user)
+    assert user.check_password("Password1") is True
+
+
+def test_reset_invalid_token_returns_400(flask_app, db_session, tenant):
+    user = _make_user(db_session, tenant)
+    _issue_token(db_session, user)
+
+    resp = _post(
+        flask_app, tenant, "/api/auth/password/reset",
+        {"email": user.email, "token": "not-the-real-token", "new_password": "Password1"},
+    )
+    assert resp.status_code == 400
+
+
+def test_reset_expired_token_returns_400(flask_app, db_session, tenant):
+    user = _make_user(db_session, tenant)
+    token = _issue_token(db_session, user)
+    user.reset_password_sent_at = datetime.utcnow() - timedelta(minutes=31)
+    db_session.flush()
+
+    resp = _post(
+        flask_app, tenant, "/api/auth/password/reset",
+        {"email": user.email, "token": token, "new_password": "Password1"},
+    )
+    assert resp.status_code == 400
