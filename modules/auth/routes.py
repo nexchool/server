@@ -162,7 +162,7 @@ def tenant_branding():
     Used by the admin-web login page to show the school name before the user signs in.
 
     Responses:
-      200: { data: { name, subdomain, logo_url } }
+      200: { data: { name, subdomain, logo_url, tagline, login_variant } }
       404: no tenant could be resolved from the request
     """
     err = resolve_tenant_for_auth(use_default=False)
@@ -170,10 +170,17 @@ def tenant_branding():
         return error_response('No school found for this address', status_code=404)
 
     tenant = g.tenant
+    flags = tenant.feature_flags or {}
+    # Opt-in: default to "default" so tenants without the flag keep the standard
+    # login. Deliberately NOT is_feature_enabled() — that treats a missing key as
+    # enabled, which would flip every school onto a custom layout.
+    login_variant = flags.get('login_variant') or 'default'
     return success_response(data={
         'name': tenant.name,
         'subdomain': tenant.subdomain,
         'logo_url': tenant.logo_url,
+        'tagline': tenant.tagline,
+        'login_variant': login_variant,
     })
 
 
@@ -729,30 +736,6 @@ def get_enabled_features():
 
 
 # ==================== TENANT BRANDING (public) ====================
-
-@auth_bp.route('/tenant-branding', methods=['GET'])
-def get_tenant_branding():
-    """
-    Public: school display name for the tenant resolved from Host / X-Tenant-ID / default.
-    Used by the login page before authentication.
-    """
-    err = resolve_tenant_for_auth({})
-    if err:
-        return err[1], err[0]
-
-    tenant = getattr(g, 'tenant', None)
-    if not tenant:
-        return error_response(
-            error='TenantError',
-            message='No tenant context',
-            status_code=400,
-        )
-
-    return success_response(
-        data={'name': tenant.name or ''},
-        status_code=200,
-    )
-
 
 # ==================== PROFILE ====================
 
