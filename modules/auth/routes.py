@@ -444,6 +444,7 @@ def login():
             'is_platform_admin': is_platform_admin,
             'is_subadmin': is_subadmin,
             'is_setup_complete': is_setup_complete,
+            'force_password_reset': bool(user.force_password_reset),
             'allowed_unit_ids': allowed_unit_ids,
         },
         message='Login successful',
@@ -602,6 +603,7 @@ def validate_email():
 # ==================== PASSWORD RESET ====================
 
 @auth_bp.route('/password/forgot', methods=['POST'])
+@limiter.limit("5 per minute")
 def forgot_password():
     """
     Request password reset email.
@@ -611,12 +613,13 @@ def forgot_password():
     if err:
         return err[1], err[0]
 
-    from config.settings import get_reset_password_url
+    from config.settings import get_reset_password_url, get_admin_web_reset_url
     from modules.notifications.services import notification_dispatcher
     from modules.notifications.enums import NotificationChannel
 
     data = request.get_json()
     email = data.get('email')
+    platform = (data or {}).get('platform')
 
     if not email:
         return error_response(
@@ -633,8 +636,12 @@ def forgot_password():
         token = user.generate_reset_password_token()
         user.save()
 
-        # Send reset email via notification dispatcher
-        reset_url = get_reset_password_url(token, email)
+        # Send reset email via notification dispatcher. Web (admin-web/panel)
+        # needs a browser link; mobile clients keep the app deep link.
+        if platform == "web":
+            reset_url = get_admin_web_reset_url(token, email, g.tenant.subdomain)
+        else:
+            reset_url = get_reset_password_url(token, email)
         notification_dispatcher.dispatch(
             user_id=user.id,
             tenant_id=get_tenant_id(),
@@ -656,6 +663,7 @@ def forgot_password():
 
 
 @auth_bp.route('/password/reset', methods=['POST'])
+@limiter.limit("5 per minute")
 def reset_password():
     """
     Reset password using reset token.
@@ -696,6 +704,15 @@ def reset_password():
             status_code=400
         )
 
+    # Enforce the same strength rule as the self-serve change flow.
+    from .services import _is_password_strong
+    if not _is_password_strong(new_password):
+        return error_response(
+            error='password_weak',
+            message='Password must be at least 8 characters and include a digit',
+            status_code=422
+        )
+
     # Update password
     user.set_password(new_password)
     user.reset_password_token = None
@@ -709,6 +726,71 @@ def reset_password():
 
     return success_response(
         message='Password reset successful',
+        status_code=200
+    )
+
+
+@auth_bp.route('/password/force-reset', methods=['POST'])
+@auth_required
+@limiter.limit("5 per minute")
+def force_reset_password():
+    """Set a new password for the authenticated user and clear the force flag.
+
+    Used for the mandatory first-login change after an admin provisions or
+    resets an account (force_password_reset=True). Preserves the caller's
+    current session (matched by X-Refresh-Token) and revokes the rest.
+
+    Body:
+        - new_password (required, must pass strength rule)
+
+    Responses:
+        200: password updated, force_password_reset cleared
+        401: not authenticated
+        422: new_password missing or weak
+    """
+    from .services import _is_password_strong
+
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('new_password')
+
+    if not new_password or not _is_password_strong(new_password):
+        return error_response(
+            error='password_weak',
+            message='Password must be at least 8 characters and include a digit',
+            status_code=422
+        )
+
+    user = g.current_user
+    user.set_password(new_password)
+    user.force_password_reset = False
+
+    # Revoke every other active session; keep the caller's current one.
+    # Only revoke when we can identify the caller's session (via X-Refresh-Token);
+    # otherwise skip revocation rather than log the caller out of the session they
+    # just used to set their password.
+    refresh_token = request.headers.get('X-Refresh-Token')
+    current_session = None
+    if refresh_token:
+        current_session = Session.query.filter_by(
+            refresh_token=refresh_token, revoked=False
+        ).first()
+
+    if current_session is not None:
+        others = Session.query.filter_by(user_id=user.id, revoked=False).filter(
+            Session.id != current_session.id
+        )
+        for session in others.all():
+            session.revoke()
+    else:
+        logger.warning(
+            "force-reset: no current session identified (missing X-Refresh-Token); "
+            "skipping other-session revocation for user %s", user.id
+        )
+
+    user.save()
+
+    return success_response(
+        message='Password updated successfully',
         status_code=200
     )
 
@@ -805,6 +887,7 @@ def get_profile():
             'is_platform_admin': is_platform_admin,
             'is_subadmin': is_subadmin,
             'is_setup_complete': is_setup_complete,
+            'force_password_reset': bool(user.force_password_reset),
             'allowed_unit_ids': allowed_unit_ids,
         },
         status_code=200
