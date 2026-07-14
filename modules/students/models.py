@@ -250,6 +250,16 @@ class Student(TenantBaseModel):
         db.session.delete(self)
         db.session.commit()
     
+    def _class_display_name(self):
+        """Class label for payloads. Class.name is a legacy nullable display
+        column — grade-based classes (post multi-school migration) carry their
+        label on grade.name, so coalesce before joining with the section."""
+        c = self.current_class
+        if not c:
+            return None
+        label = c.name or (c.grade.name if c.grade else None)
+        return "-".join(p for p in (label, c.section) if p) or None
+
     def to_dict(self, include_profile_picture: bool = True):
         return {
             "id": self.id,
@@ -268,7 +278,13 @@ class Student(TenantBaseModel):
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else self.academic_year,
             "academic_year_id": self.academic_year_id,
             "class_id": self.class_id,
-            "class_name": f"{self.current_class.name}-{self.current_class.section}" if self.current_class else None,
+            "class_name": self._class_display_name(),
+            "programme_id": self.current_class.programme_id if self.current_class else None,
+            "programme_name": (
+                self.current_class.programme.name
+                if self.current_class and self.current_class.programme
+                else None
+            ),
             "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
             "gender": self.gender,
             "phone": self.phone,

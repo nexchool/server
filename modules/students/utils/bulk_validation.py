@@ -12,12 +12,17 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_FIELDS = ("name", "email", "class_name", "section")
+# branch + programme are not Student columns — they identify the class together
+# with class_name (grade) + section. They are required so every admission row
+# resolves to exactly one class (branch -> programme -> grade -> section), the
+# same cascade as the Add-Student class picker.
+REQUIRED_FIELDS = ("name", "email", "branch", "programme", "class_name", "section")
 
 # Optional columns that map to Student / User (ignored if absent)
 OPTIONAL_STUDENT_FIELDS: Set[str] = {
     "admission_number",  # legacy column; ignored with a warning (server assigns)
     "roll_number",
+    "address",
     "gender",
     "date_of_birth",
     "phone",
@@ -35,6 +40,9 @@ OPTIONAL_STUDENT_FIELDS: Set[str] = {
     "guardian_phone",
     "guardian_email",
     "guardian_relationship",
+    "guardian_address",
+    "guardian_occupation",
+    "guardian_aadhar_number",
     "current_address",
     "current_city",
     "current_state",
@@ -59,9 +67,15 @@ OPTIONAL_STUDENT_FIELDS: Set[str] = {
     "weight_kg",
     "medical_allergies",
     "medical_conditions",
+    "disability_details",
+    "identification_marks",
+    "is_commuting_from_outstation",
+    "commute_location",
+    "commute_notes",
     "emergency_contact_name",
     "emergency_contact_phone",
     "emergency_contact_relationship",
+    "emergency_contact_alt_phone",
     "admission_date",
     "previous_school_name",
     "previous_school_class",
@@ -198,6 +212,10 @@ def coerce_row_types(
     if "is_same_as_permanent_address" in out:
         out["is_same_as_permanent_address"] = parse_bool(
             out.get("is_same_as_permanent_address")
+        )
+    if "is_commuting_from_outstation" in out:
+        out["is_commuting_from_outstation"] = parse_bool(
+            out.get("is_commuting_from_outstation")
         )
     if "is_transport_opted" in out:
         b = parse_bool(out.get("is_transport_opted"))

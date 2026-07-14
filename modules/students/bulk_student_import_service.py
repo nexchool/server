@@ -67,26 +67,39 @@ def _tenant_admission_numbers(tenant_id: str) -> Set[str]:
 def _class_candidates_for_year(
     tenant_id: str, academic_year_id: str
 ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
-    """Map (name_lower, section_lower) -> list of candidate classes.
+    """Map (grade_label_lower, section_lower) -> list of candidate classes.
 
-    A school running multiple programmes/mediums can have several classes that
-    share the same display name + section (e.g. GSEB Gujarati "10 A" and GSEB
-    English "10 A" — `name` is only a display label; real class identity includes
-    the programme). Returning a LIST lets the caller detect that ambiguity and ask
-    for disambiguation instead of silently assigning an arbitrary one. `name` is
-    nullable, so it is coalesced before keying.
+    A school running multiple branches/programmes can have several classes that
+    share the same grade label + section (e.g. GSEB Gujarati "10 A" and GSEB
+    English "10 A", or the same grade+section in two branches). The class is only
+    uniquely identified by (branch, programme, grade, section), so each candidate
+    carries its branch (school unit) and programme identifiers and the caller
+    narrows to exactly one using the required `branch` + `programme` columns.
+
+    Class.name is a legacy nullable display column; grade-based classes (post
+    multi-school migration) carry their label on grade.name. Each class is keyed
+    under BOTH labels (when they differ) so a spreadsheet saying "10" or
+    "Nursery" matches regardless of which column the school's data populates.
     """
     from modules.academic_programmes.models import AcademicProgramme
+    from modules.grades.models import Grade
+    from modules.school_units.models import SchoolUnit
 
     rows = (
         db.session.query(
             Class.id,
             Class.name,
+            Grade.name,
             Class.section,
             AcademicProgramme.name,
             AcademicProgramme.board,
+            AcademicProgramme.code,
+            SchoolUnit.name,
+            SchoolUnit.code,
         )
+        .outerjoin(Grade, Grade.id == Class.grade_id)
         .outerjoin(AcademicProgramme, AcademicProgramme.id == Class.programme_id)
+        .outerjoin(SchoolUnit, SchoolUnit.id == Class.school_unit_id)
         .filter(
             Class.tenant_id == tenant_id,
             Class.academic_year_id == academic_year_id,
@@ -94,61 +107,89 @@ def _class_candidates_for_year(
         .all()
     )
     out: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-    for class_id, class_name, section, programme_name, board in rows:
-        key = ((class_name or "").strip().lower(), (section or "").strip().lower())
-        out.setdefault(key, []).append(
-            {"id": class_id, "programme_name": programme_name, "board": board}
-        )
+    for (
+        class_id,
+        class_name,
+        grade_name,
+        section,
+        programme_name,
+        board,
+        programme_code,
+        unit_name,
+        unit_code,
+    ) in rows:
+        section_key = (section or "").strip().lower()
+        labels = {
+            label
+            for label in (
+                (class_name or "").strip().lower(),
+                (grade_name or "").strip().lower(),
+            )
+            if label
+        }
+        entry = {
+            "id": class_id,
+            "programme_name": programme_name,
+            "programme_code": programme_code,
+            "board": board,
+            "unit_name": unit_name,
+            "unit_code": unit_code,
+        }
+        for label in labels:
+            out.setdefault((label, section_key), []).append(entry)
     return out
 
 
-def _disambiguate_class(
+def _resolve_class_by_branch_programme(
     class_name: str,
     section: str,
+    branch: Optional[str],
+    programme: Optional[str],
     candidates: List[Dict[str, Any]],
-    raw: Dict[str, Any],
-    errors: List[str],
-) -> Optional[str]:
-    """Resolve a name+section that matches several classes (multi-medium/board).
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve the exact class from the required branch + programme columns.
 
-    Narrow by an optional `medium` / `programme` / `board` column on the row
-    (matched against the programme name or board, case-insensitive). If that
-    lands on exactly one class, use it; otherwise record a clear error listing the
-    options rather than guessing.
+    Returns ``(class_id, error_message)``. `candidates` are the classes matching
+    the grade label + section. Branch is matched (case-insensitive) against the
+    school unit name or code; programme against the programme name, code, or
+    board. Because a class is unique per (branch, programme, grade, section), a
+    valid pair lands on exactly one class. Blank branch/programme return
+    ``(None, None)`` — they are flagged as "Missing" separately, so this adds no
+    duplicate error.
     """
-    hint = None
-    for col in ("medium", "programme", "board"):
-        if not is_blank(raw.get(col)):
-            hint = str(raw.get(col)).strip()
-            break
 
-    narrowed = candidates
-    if hint:
-        hint_lower = hint.lower()
-        narrowed = [
-            c
-            for c in candidates
-            if hint_lower in (c.get("programme_name") or "").lower()
-            or hint_lower == (c.get("board") or "").strip().lower()
-        ]
+    def norm(value: Any) -> str:
+        return str(value or "").strip().lower()
 
-    if len(narrowed) == 1:
-        return narrowed[0]["id"]
+    b = norm(branch)
+    p = norm(programme)
+    if not b or not p:
+        return None, None
 
-    options = ", ".join(
-        sorted(c.get("programme_name") or "(no programme)" for c in candidates)
+    matched = [
+        c
+        for c in candidates
+        if b in {norm(c.get("unit_name")), norm(c.get("unit_code"))}
+        and p in {norm(c.get("programme_name")), norm(c.get("programme_code")), norm(c.get("board"))}
+    ]
+
+    if len(matched) == 1:
+        return matched[0]["id"], None
+
+    branches = ", ".join(sorted({c.get("unit_name") or "(no branch)" for c in candidates}))
+    programmes = ", ".join(
+        sorted({c.get("programme_name") or "(no programme)" for c in candidates})
     )
-    if hint:
-        errors.append(
-            f"Class '{class_name} / {section}' is ambiguous: '{hint}' did not match "
-            f"exactly one of [{options}]. Use a 'medium' or 'programme' column."
+    if not matched:
+        return None, (
+            f"No class for branch '{branch}' + programme '{programme}' at grade "
+            f"'{class_name}' / section '{section}'. Available for this grade+section — "
+            f"branches: [{branches}]; programmes: [{programmes}]."
         )
-    else:
-        errors.append(
-            f"Class '{class_name} / {section}' matches {len(candidates)} classes "
-            f"[{options}]. Add a 'medium' or 'programme' column to choose one."
-        )
-    return None
+    return None, (
+        f"Grade '{class_name}' / section '{section}' with branch '{branch}' + "
+        f"programme '{programme}' matched {len(matched)} classes; contact support."
+    )
 
 
 def _soft_phone_column(val: Any, field: str, warnings: List[str]) -> Optional[str]:
@@ -199,17 +240,25 @@ def _validate_and_coerce_row(
         str(row.get("class_name")).strip() if not is_blank(row.get("class_name")) else None
     )
     section = str(row.get("section")).strip() if not is_blank(row.get("section")) else None
+    branch = str(row.get("branch")).strip() if not is_blank(row.get("branch")) else None
+    programme = (
+        str(row.get("programme")).strip() if not is_blank(row.get("programme")) else None
+    )
+    # branch/programme/class_name/section are all required (flagged above if
+    # missing); resolve to exactly one class only when the grade+section are present.
     class_id: Optional[str] = None
     if class_name and section:
         candidates = class_map.get((class_name.lower(), section.lower()), [])
         if not candidates:
-            errors.append("Class not found for class_name and section")
-        elif len(candidates) == 1:
-            class_id = candidates[0]["id"]
+            errors.append(
+                f"No class found for grade '{class_name}' / section '{section}'"
+            )
         else:
-            class_id = _disambiguate_class(class_name, section, candidates, raw, errors)
-    elif class_name or section:
-        errors.append("Both class_name and section are required")
+            class_id, class_err = _resolve_class_by_branch_programme(
+                class_name, section, branch, programme, candidates
+            )
+            if class_err:
+                errors.append(class_err)
 
     date_errs: List[str] = []
     coerced = coerce_row_types(row, warnings, date_errs)
@@ -221,6 +270,7 @@ def _validate_and_coerce_row(
         "mother_phone",
         "guardian_phone",
         "emergency_contact_phone",
+        "emergency_contact_alt_phone",
     ):
         if f in coerced and not is_blank(coerced.get(f)):
             coerced[f] = _soft_phone_column(coerced.get(f), f, warnings)
@@ -324,15 +374,21 @@ def _student_kwargs_from_row(
         "date_of_birth": dob,
         "gender": _clean_str(coerced.get("gender")),
         "phone": _clean_str(coerced.get("phone")),
+        "address": _clean_str(coerced.get("address")),
         "guardian_name": _clean_str(coerced.get("guardian_name")),
         "guardian_relationship": _clean_str(coerced.get("guardian_relationship")),
         "guardian_phone": _clean_str(coerced.get("guardian_phone")),
         "guardian_email": _clean_str(coerced.get("guardian_email")),
+        "guardian_address": _clean_str(coerced.get("guardian_address")),
+        "guardian_occupation": _clean_str(coerced.get("guardian_occupation")),
+        "guardian_aadhar_number": _clean_str(coerced.get("guardian_aadhar_number")),
         "blood_group": _clean_str(coerced.get("blood_group")),
         "height_cm": _clean_int(coerced.get("height_cm")),
         "weight_kg": weight,
         "medical_allergies": _clean_str(coerced.get("medical_allergies")),
         "medical_conditions": _clean_str(coerced.get("medical_conditions")),
+        "disability_details": _clean_str(coerced.get("disability_details")),
+        "identification_marks": _clean_str(coerced.get("identification_marks")),
         "father_name": _clean_str(coerced.get("father_name")),
         "father_phone": _clean_str(coerced.get("father_phone")),
         "father_email": _clean_str(coerced.get("father_email")),
@@ -364,11 +420,19 @@ def _student_kwargs_from_row(
         "is_same_as_permanent_address": _clean_bool(
             coerced.get("is_same_as_permanent_address")
         ),
+        "is_commuting_from_outstation": _clean_bool(
+            coerced.get("is_commuting_from_outstation")
+        ),
+        "commute_location": _clean_str(coerced.get("commute_location")),
+        "commute_notes": _clean_str(coerced.get("commute_notes")),
         "emergency_contact_name": _clean_str(coerced.get("emergency_contact_name")),
         "emergency_contact_relationship": _clean_str(
             coerced.get("emergency_contact_relationship")
         ),
         "emergency_contact_phone": _clean_str(coerced.get("emergency_contact_phone")),
+        "emergency_contact_alt_phone": _clean_str(
+            coerced.get("emergency_contact_alt_phone")
+        ),
         "admission_date": adm_date,
         "previous_school_name": _clean_str(coerced.get("previous_school_name")),
         "previous_school_class": _clean_str(coerced.get("previous_school_class")),
