@@ -1,6 +1,7 @@
 from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import aliased, contains_eager, joinedload
 from datetime import datetime
 import logging
 import secrets
@@ -17,6 +18,7 @@ from modules.rbac.services import (
     remove_login_for_deleted_profile,
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
+from modules.academic_programmes.models import AcademicProgramme
 from modules.classes.models import Class
 from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
@@ -528,10 +530,10 @@ def create_student(
 # Columns the client may sort by. The actual ordering expression is built in
 # `_build_sort_order` below so `class` can use natural (grade_level) order
 # rather than a lexicographic sort on the class name.
-SORTABLE_COLUMNS = {"admission_number", "name", "class", "roll_number"}
+SORTABLE_COLUMNS = {"admission_number", "name", "class", "roll_number", "programme"}
 
 # Fields the client may pick in the "search within" dropdown.
-SEARCH_FIELDS = {"all", "name", "admission_number", "email", "guardian_phone"}
+SEARCH_FIELDS = {"all", "name", "admission_number", "email", "guardian_phone", "programme"}
 
 
 def _parse_date(value: Optional[str]) -> Optional[datetime]:
@@ -616,14 +618,20 @@ def list_students(
 
     # Multi-school structural filters: scope through the student's current
     # class. Students with no class_id are excluded when any of these are set.
+    # Class is ALIASED here: the outer query may itself join Class (class /
+    # programme sort, programme search) and an unaliased correlated subquery
+    # would auto-correlate against that join and lose its FROM clause.
     if school_unit_id or programme_id or grade_id:
-        class_filter = db.session.query(Class.id).filter(Class.tenant_id == Student.tenant_id)
+        ClassScope = aliased(Class)
+        class_filter = db.session.query(ClassScope.id).filter(
+            ClassScope.tenant_id == Student.tenant_id
+        )
         if school_unit_id:
-            class_filter = class_filter.filter(Class.school_unit_id == school_unit_id)
+            class_filter = class_filter.filter(ClassScope.school_unit_id == school_unit_id)
         if programme_id:
-            class_filter = class_filter.filter(Class.programme_id == programme_id)
+            class_filter = class_filter.filter(ClassScope.programme_id == programme_id)
         if grade_id:
-            class_filter = class_filter.filter(Class.grade_id == grade_id)
+            class_filter = class_filter.filter(ClassScope.grade_id == grade_id)
         query = query.filter(Student.class_id.in_(class_filter))
 
     if gender:
@@ -644,35 +652,49 @@ def list_students(
     if date_to:
         query = query.filter(Student.admission_date <= date_to)
 
-    if search:
-        term = search.strip()
-        if term:
-            pattern = f"%{term}%"
-            field = search_field if search_field in SEARCH_FIELDS else "all"
-            if field == "name":
-                query = query.filter(User.name.ilike(pattern))
-            elif field == "admission_number":
-                query = query.filter(Student.admission_number.ilike(pattern))
-            elif field == "email":
-                query = query.filter(User.email.ilike(pattern))
-            elif field == "guardian_phone":
-                query = query.filter(Student.guardian_phone.ilike(pattern))
-            else:
-                query = query.filter(
-                    db.or_(
-                        User.name.ilike(pattern),
-                        User.email.ilike(pattern),
-                        Student.admission_number.ilike(pattern),
-                        Student.guardian_phone.ilike(pattern),
-                    )
-                )
-
-    # Sorting. Class sort uses the natural grade_level order (not a lex sort on
-    # name, which would put "10" before "2"). Outer-join so students without a
-    # class still appear at the end. Admission_number is always the tie-breaker.
+    # Programme search/sort and class sort all reach Class (and programme also
+    # AcademicProgramme) through joins; apply each join at most once whichever
+    # combination of search + sort needs it.
     sort_key = sort_by if sort_by in SORTABLE_COLUMNS else "admission_number"
     is_desc = str(sort_dir).lower() == "desc"
+    term = (search or "").strip()
+    field = search_field if search_field in SEARCH_FIELDS else "all"
+    programme_needed = sort_key == "programme" or (
+        bool(term) and field in ("all", "programme")
+    )
+    if programme_needed or sort_key == "class":
+        query = query.outerjoin(Class, Student.class_id == Class.id)
+    if programme_needed:
+        query = query.outerjoin(
+            AcademicProgramme, Class.programme_id == AcademicProgramme.id
+        )
 
+    if term:
+        pattern = f"%{term}%"
+        if field == "name":
+            query = query.filter(User.name.ilike(pattern))
+        elif field == "admission_number":
+            query = query.filter(Student.admission_number.ilike(pattern))
+        elif field == "email":
+            query = query.filter(User.email.ilike(pattern))
+        elif field == "guardian_phone":
+            query = query.filter(Student.guardian_phone.ilike(pattern))
+        elif field == "programme":
+            query = query.filter(AcademicProgramme.name.ilike(pattern))
+        else:
+            query = query.filter(
+                db.or_(
+                    User.name.ilike(pattern),
+                    User.email.ilike(pattern),
+                    Student.admission_number.ilike(pattern),
+                    Student.guardian_phone.ilike(pattern),
+                    AcademicProgramme.name.ilike(pattern),
+                )
+            )
+
+    # Sorting. Class sort uses the natural grade_level order (not a lex sort on
+    # name, which would put "10" before "2"). Outer-joins keep students without
+    # a class at the end. Admission_number is always the tie-breaker.
     def _ordered(col, nulls_last: bool = False):
         expr = col.desc() if is_desc else col.asc()
         # NULLS LAST keeps rows with NULL in the sort key at the bottom in both
@@ -680,10 +702,15 @@ def list_students(
         return expr.nulls_last() if nulls_last else expr
 
     if sort_key == "class":
-        query = query.outerjoin(Class, Student.class_id == Class.id)
         order_cols = [
             _ordered(Class.grade_level, nulls_last=True),
             _ordered(Class.name, nulls_last=True),
+            _ordered(Class.section, nulls_last=True),
+        ]
+    elif sort_key == "programme":
+        order_cols = [
+            _ordered(AcademicProgramme.name, nulls_last=True),
+            _ordered(Class.grade_level, nulls_last=True),
             _ordered(Class.section, nulls_last=True),
         ]
     elif sort_key == "name":
@@ -701,6 +728,14 @@ def list_students(
     # Pagination. If the caller doesn't ask for a page, return everything
     # (keeps non-paginating callers like the mobile app working).
     total = query.count()
+    # Eager-load the relationships to_dict touches (user, class, programme,
+    # grade) so serialization stays at a constant number of queries per page.
+    # User is already inner-joined above — contains_eager reuses that join.
+    query = query.options(
+        contains_eager(Student.user),
+        joinedload(Student.current_class).joinedload(Class.programme),
+        joinedload(Student.current_class).joinedload(Class.grade),
+    )
     if page is not None and per_page is not None and per_page > 0:
         page = max(1, int(page))
         per_page = max(1, min(int(per_page), 100))
