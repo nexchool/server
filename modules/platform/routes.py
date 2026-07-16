@@ -643,3 +643,170 @@ def patch_settings():
         return validation_error_response({"body": "Must be an object"})
     services.update_platform_settings(data, platform_admin_id=g.current_user.id)
     return success_response(message="Settings updated")
+
+
+# --- Tenant onboarding (config upload → preview → apply, target tenant explicit) ---
+
+def _resolve_target_tenant(tenant_id):
+    """Load the target tenant for a platform op, or None. Platform routes skip
+    tenant middleware, so nothing is auto-scoped — the tenant is the path param.
+
+    Soft-deleted tenants (status 'deleted') are excluded: their access is
+    blocked, so we never seed one or mint a login link into one. Suspended
+    tenants are still returned — an operator may need to enter one to
+    investigate or lift the suspension.
+    """
+    from core.models import Tenant, TENANT_STATUS_DELETED
+
+    return (
+        Tenant.query.filter_by(id=tenant_id)
+        .filter(Tenant.status != TENANT_STATUS_DELETED)
+        .first()
+    )
+
+
+def _parse_uploaded_config():
+    """Parse the multipart 'file' field into a config dict, or (None, error_response)."""
+    from modules.school_setup import seed_service
+
+    file = request.files.get("file")
+    if file is None:
+        return None, error_response(
+            "ValidationError", "file is required (multipart field 'file')", 400
+        )
+    try:
+        return seed_service.parse_config_bytes(file.filename or "", file.read()), None
+    except seed_service.UnsupportedConfigType as e:
+        return None, error_response("UnsupportedFileType", str(e), 400)
+    except Exception:
+        return None, error_response(
+            "ParseError", "Could not parse the file. Ensure it is valid YAML or JSON.", 400
+        )
+
+
+@platform_bp.route("/tenants/<tenant_id>/seed/preview", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_seed_preview(tenant_id):
+    """POST /platform/tenants/<id>/seed/preview — read-only diff of an uploaded
+    onboarding config against the target tenant. No writes."""
+    from modules.school_setup import seed_service
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    config, err = _parse_uploaded_config()
+    if err is not None:
+        return err
+
+    # Scope the preview's reads to the target tenant (the listener no-ops when
+    # g.tenant_id is unset, which it is on platform routes).
+    g.tenant_id = tenant.id
+    preview = seed_service.preview_seed(
+        tenant.id, config, active_subdomain=tenant.subdomain
+    )
+    return success_response(data=preview)
+
+
+@platform_bp.route("/tenants/<tenant_id>/seed/apply", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_seed_apply(tenant_id):
+    """POST /platform/tenants/<id>/seed/apply — seed the target tenant from an
+    uploaded onboarding config. Audited as tenant.seeded."""
+    from modules.school_setup import seed_service
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    config, err = _parse_uploaded_config()
+    if err is not None:
+        return err
+
+    g.tenant_id = tenant.id
+    try:
+        result = seed_service.seed_school(tenant.id, config, dry_run=False, complete=True)
+    except seed_service.SeedValidationError as e:
+        from flask import jsonify
+
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "ValidationError",
+                    "message": "Config validation failed.",
+                    "details": {"errors": e.errors},
+                }
+            ),
+            400,
+        )
+
+    try:
+        services.log_platform_action(
+            platform_admin_id=g.current_user.id,
+            action="tenant.seeded",
+            tenant_id=tenant.id,
+            metadata={
+                "subdomain": tenant.subdomain,
+                "classes_created": result.get("classes", {}).get("created"),
+                "setup_complete": result.get("setup_complete"),
+            },
+        )
+    except Exception:
+        pass
+
+    return success_response(
+        data=result,
+        message=(
+            f"Seeded {result['classes']['created']} class(es) and "
+            f"{result['class_subjects']['created']} subject link(s). "
+            f"Setup complete: {result['setup_complete']}."
+        ),
+        status_code=201,
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/login-link", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def create_tenant_login_link(tenant_id):
+    """POST /platform/tenants/<id>/login-link — mint a one-time, single-use link
+    that opens this tenant's admin-web as the super-admin (god session), no
+    password re-entry. Audited as tenant.login_link_issued."""
+    from modules.auth.handoff import issue, DEFAULT_TTL_SECONDS
+    from config.settings import get_admin_web_login_link_url
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    code = issue(g.current_user.id, tenant.id)
+    if not code:
+        return error_response(
+            "ServiceUnavailable",
+            "Login links are temporarily unavailable. Please try again shortly.",
+            503,
+        )
+
+    try:
+        services.log_platform_action(
+            platform_admin_id=g.current_user.id,
+            action="tenant.login_link_issued",
+            tenant_id=tenant.id,
+            metadata={"subdomain": tenant.subdomain},
+        )
+    except Exception:
+        pass
+
+    return success_response(
+        data={
+            "url": get_admin_web_login_link_url(code, tenant.subdomain),
+            "subdomain": tenant.subdomain,
+            "expires_in": DEFAULT_TTL_SECONDS,
+        }
+    )

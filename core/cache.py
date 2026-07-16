@@ -47,6 +47,16 @@ def _redis():
         return None
 
 
+def redis_client():
+    """The shared Redis client (over the process pool), or ``None`` if unavailable.
+
+    For callers that need Redis primitives beyond the JSON cache helpers here
+    (e.g. an atomic get-and-delete for one-time tokens). Still fail-open at the
+    connection level — callers decide their own fail-open/closed policy.
+    """
+    return _redis()
+
+
 def key(*parts: Any) -> str:
     """Build a namespaced cache key from parts: ``key('perms', user_id)``."""
     return ":".join((_PREFIX, *(str(p) for p in parts)))
