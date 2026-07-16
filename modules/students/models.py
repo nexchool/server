@@ -35,7 +35,7 @@ class StudentDocument(TenantBaseModel):
     """
     Student document model for storing PDF/image documents.
 
-    Files are uploaded to Cloudinary; this model stores metadata.
+    Files are uploaded to AWS S3; this model stores metadata (the object key).
     Scoped by tenant. Extends TenantBaseModel (tenant_id).
     """
 
@@ -53,8 +53,9 @@ class StudentDocument(TenantBaseModel):
         nullable=False,
     )
     original_filename = db.Column(db.String(255), nullable=False)
-    cloudinary_url = db.Column(db.Text, nullable=False)
-    cloudinary_public_id = db.Column(db.String(500), nullable=False, unique=True)
+    # S3 object key / resolvable URL for the stored file.
+    file_url = db.Column(db.Text, nullable=False)
+    s3_object_key = db.Column(db.String(500), nullable=False, unique=True)
     mime_type = db.Column(db.String(100), nullable=False)
     file_size_bytes = db.Column(db.Integer, nullable=False)
     uploaded_by_user_id = db.Column(
@@ -87,7 +88,7 @@ class StudentDocument(TenantBaseModel):
             if self.document_type
             else None,
             "original_filename": self.original_filename,
-            "cloudinary_url": None,
+            "file_url": None,
             "view_url": f"/api/students/{self.student_id}/documents/{self.id}/file",
             "mime_type": self.mime_type,
             "file_size_bytes": self.file_size_bytes,

@@ -573,6 +573,156 @@ def promotion_history():
     )
 
 
+@students_bp.route('/bulk-status', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def bulk_update_student_status():
+    """
+    Set student_status for many students at once.
+
+    Body: { student_ids: [str], student_status: str }
+    """
+    from .student_schemas import STUDENT_STATUS_VALUES
+
+    data = request.get_json() or {}
+    student_ids = data.get('student_ids')
+    student_status = (data.get('student_status') or '').strip()
+
+    if not isinstance(student_ids, list) or not student_ids:
+        return validation_error_response({'student_ids': 'a non-empty list is required'})
+    if student_status not in STUDENT_STATUS_VALUES:
+        return validation_error_response({
+            'student_status': f"must be one of: {', '.join(STUDENT_STATUS_VALUES)}"
+        })
+
+    # Branch scope: reject if any target student is outside a restricted
+    # sub-admin's branches (403). No-op for unrestricted users.
+    for sid in student_ids:
+        assert_student_allowed(sid)
+
+    result = services.bulk_update_status(student_ids, student_status)
+    if not result.get('success'):
+        return error_response('BulkStatusError', result.get('error', 'Failed'), 400)
+    return success_response(
+        data={'updated': result['updated'], 'missing': result.get('missing', [])},
+        message=f"Updated {result['updated']} student(s)",
+    )
+
+
+@students_bp.route('/export', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
+def export_students():
+    """
+    Export the filtered student list as CSV. Accepts the same filter/search
+    query params as the list endpoint (pagination is ignored — all matching
+    rows are returned).
+    """
+    import csv
+    from io import StringIO
+    from datetime import datetime
+    from modules.rbac.services import has_permission
+
+    user_id = g.current_user.id
+
+    # Reuse the list filters (no pagination -> all rows).
+    class_id = request.args.get('class_id')
+    class_ids_param = request.args.get('class_ids')
+    class_ids = (
+        [c.strip() for c in class_ids_param.split(',') if c.strip()]
+        if class_ids_param
+        else None
+    )
+    search_field = request.args.get('search_field', 'all')
+    if search_field not in services.SEARCH_FIELDS:
+        return validation_error_response({
+            'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
+        })
+    sort_by = request.args.get('sort_by', 'admission_number')
+    if sort_by not in services.SORTABLE_COLUMNS:
+        sort_by = 'admission_number'
+    sort_dir = request.args.get('sort_dir', 'asc')
+    if sort_dir not in ('asc', 'desc'):
+        sort_dir = 'asc'
+
+    school_unit_id = request.args.get('school_unit_id') or None
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
+    if class_id:
+        assert_class_allowed(class_id)
+    if class_ids:
+        for cid in class_ids:
+            assert_class_allowed(cid)
+
+    common_kwargs = dict(
+        academic_year_id=request.args.get('academic_year_id'),
+        search=request.args.get('search'),
+        search_field=search_field,
+        gender=request.args.get('gender'),
+        student_status=request.args.get('student_status'),
+        is_transport_opted=_parse_bool_param(request.args.get('is_transport_opted')),
+        admission_date_from=request.args.get('admission_date_from'),
+        admission_date_to=request.args.get('admission_date_to'),
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        page=None,
+        per_page=None,
+        school_unit_id=school_unit_id,
+        programme_id=request.args.get('programme_id') or None,
+        grade_id=request.args.get('grade_id') or None,
+    )
+
+    if has_permission(user_id, PERM_READ_ALL):
+        result = services.list_students(
+            class_id=class_id if not class_ids else None,
+            class_ids=class_ids,
+            **common_kwargs,
+        )
+    elif has_permission(user_id, PERM_READ_CLASS):
+        from modules.attendance.services import get_teacher_class_ids
+        result = services.list_students(
+            class_id=class_id if not class_ids else None,
+            class_ids=class_ids,
+            _restrict_class_ids=get_teacher_class_ids(user_id),
+            **common_kwargs,
+        )
+    else:
+        return unauthorized_response()
+
+    columns = [
+        ('admission_number', 'Admission Number'),
+        ('name', 'Name'),
+        ('email', 'Email'),
+        ('class_name', 'Class'),
+        ('programme_name', 'Programme'),
+        ('roll_number', 'Roll Number'),
+        ('gender', 'Gender'),
+        ('student_status', 'Status'),
+        ('guardian_name', 'Guardian Name'),
+        ('guardian_phone', 'Guardian Phone'),
+        ('admission_date', 'Admission Date'),
+    ]
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([label for _, label in columns])
+    for item in result.get('items', []):
+        writer.writerow(['' if item.get(k) is None else item.get(k) for k, _ in columns])
+
+    csv_text = buf.getvalue()
+    filename = f"students_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    return Response(
+        csv_text,
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
 # --- Document routes: more specific paths, register before /<student_id> ---
 
 @students_bp.route('/<student_id>/documents', methods=['GET'], strict_slashes=False)

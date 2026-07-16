@@ -24,7 +24,7 @@ from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
-from .student_schemas import DEFAULT_STUDENT_STATUS
+from .student_schemas import DEFAULT_STUDENT_STATUS, STUDENT_STATUS_VALUES
 from .class_enrollment_service import (
     assign_student_to_class,
     student_matches_academic_year_filter,
@@ -1086,6 +1086,44 @@ def update_student(
         db.session.rollback()
         return {'success': False, 'error': safe_error(e, "Failed to update student")}
 
+def bulk_update_status(student_ids: List[str], student_status: str) -> Dict:
+    """Set student_status for many students in one tenant-scoped transaction.
+
+    Returns {success, updated, missing} where `missing` lists requested ids not
+    found in the tenant. Branch-scope enforcement is the caller's responsibility
+    (the route validates each id before calling).
+    """
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context required"}
+
+    ids = [s for s in {str(i).strip() for i in (student_ids or [])} if s]
+    if not ids:
+        return {"success": False, "error": "No students selected"}
+    if student_status not in STUDENT_STATUS_VALUES:
+        return {
+            "success": False,
+            "error": f"Invalid status. Allowed: {', '.join(STUDENT_STATUS_VALUES)}",
+        }
+
+    try:
+        students = Student.query.filter(
+            Student.tenant_id == tenant_id, Student.id.in_(ids)
+        ).all()
+        found_ids = {s.id for s in students}
+        for student in students:
+            student.student_status = student_status
+        db.session.commit()
+        return {
+            "success": True,
+            "updated": len(students),
+            "missing": [i for i in ids if i not in found_ids],
+        }
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": safe_error(e, "Failed to update students")}
+
+
 def delete_student(student_id: str) -> Dict:
     """
     Delete student.
@@ -1218,8 +1256,8 @@ def create_student_document(
             student_id=student_id,
             document_type=DocumentType(document_type),
             original_filename=filename,
-            cloudinary_url=object_key,
-            cloudinary_public_id=object_key,
+            file_url=object_key,
+            s3_object_key=object_key,
             mime_type=mime,
             file_size_bytes=size,
             uploaded_by_user_id=user_id,
@@ -1283,7 +1321,7 @@ def get_student_document_file_content(document_id: str, student_id: str) -> Dict
         if not doc:
             return {"success": False, "error": "Document not found"}
 
-        key = doc.cloudinary_public_id or doc.cloudinary_url
+        key = doc.s3_object_key or doc.file_url
         if not key:
             return {"success": False, "error": "Document has no storage key"}
 
@@ -1320,7 +1358,7 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
             return {"success": False, "error": "Document not found"}
 
         try:
-            delete_file(doc.cloudinary_public_id)
+            delete_file(doc.s3_object_key)
         except Exception:
             pass
 
