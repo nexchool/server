@@ -8,6 +8,7 @@ from shared.safe_error import safe_error
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
@@ -16,17 +17,24 @@ from core.tenant import get_tenant_id
 
 from .models import Subject
 
+# Keep in sync with seed_service (mts.yaml uses language / co_curricular) and
+# admin-web src/types/subject.ts.
+SUBJECT_TYPES = ("core", "elective", "language", "activity", "co_curricular", "other")
+
 
 def create_subject(data: Dict, tenant_id: str) -> Dict:
     """
     Create a new subject (tenant-scoped).
 
     Args:
-        data: Dict with name (required), code (optional), description (optional)
+        data: Dict with name (required), code (optional), description (optional),
+            subject_type (optional), class_ids (optional — assign the new subject
+            to these classes atomically), weekly_periods (optional, with class_ids)
         tenant_id: Tenant ID for scoping
 
     Returns:
-        Dict with success status and subject data or error
+        Dict with success status and subject data or error. When class_ids were
+        given, includes "assignment": {created_count, skipped_count}.
     """
     try:
         if not tenant_id:
@@ -35,6 +43,11 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         name = (data.get("name") or "").strip()
         if not name:
             return {"success": False, "error": "name is required"}
+
+        class_ids = data.get("class_ids") or []
+        if not isinstance(class_ids, list):
+            return {"success": False, "error": "class_ids must be a list"}
+        class_ids = [c for c in class_ids if c]
 
         code = (data.get("code") or "").strip() or None
         if code:
@@ -47,8 +60,11 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
                 return {"success": False, "error": "Subject with this code already exists"}
 
         subject_type = (data.get("subject_type") or "core").strip()
-        if subject_type not in ("core", "elective", "activity", "other"):
-            subject_type = "core"
+        if subject_type not in SUBJECT_TYPES:
+            return {
+                "success": False,
+                "error": f"subject_type must be one of: {', '.join(SUBJECT_TYPES)}",
+            }
 
         subject = Subject(
             tenant_id=tenant_id,
@@ -58,9 +74,39 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
             subject_type=subject_type,
             is_active=bool(data.get("is_active", True)),
         )
-        subject.save()
 
-        return {"success": True, "subject": subject.to_dict()}
+        if not class_ids:
+            subject.save()
+            return {"success": True, "subject": subject.to_dict()}
+
+        # Atomic create + assign: flush the subject (visible to the bulk-assign
+        # validation via autoflush) and let bulk_assign_class_subjects run its
+        # own class/weekly_periods validation. Its final commit persists both;
+        # any validation error rolls the pending subject back too.
+        from modules.classes.bulk_services import bulk_assign_class_subjects
+
+        db.session.add(subject)
+        db.session.flush()
+        assignment = bulk_assign_class_subjects(
+            {
+                "class_ids": class_ids,
+                "subject_ids": [subject.id],
+                "weekly_periods": data.get("weekly_periods", 1),
+            },
+            tenant_id,
+        )
+        if not assignment.get("success"):
+            db.session.rollback()
+            return {"success": False, "error": assignment.get("error", "Class assignment failed")}
+
+        return {
+            "success": True,
+            "subject": subject.to_dict(),
+            "assignment": {
+                "created_count": assignment.get("created_count", 0),
+                "skipped_count": assignment.get("skipped_count", 0),
+            },
+        }
     except IntegrityError as e:
         db.session.rollback()
         error_msg = str(getattr(e, "orig", None) or e)
@@ -94,6 +140,140 @@ def list_subjects_filtered(tenant_id: str, include_inactive: bool = False) -> Li
         q = q.filter(Subject.is_active.is_(True))
     subjects = q.order_by(Subject.name).all()
     return [s.to_dict() for s in subjects]
+
+
+LIST_SORT_FIELDS = {
+    "name": Subject.name,
+    "code": Subject.code,
+    "subject_type": Subject.subject_type,
+    "created_at": Subject.created_at,
+    "updated_at": Subject.updated_at,
+}
+
+MAX_PER_PAGE = 100
+DEFAULT_PER_PAGE = 20
+
+
+def list_subjects_paginated(
+    tenant_id: str,
+    *,
+    search: Optional[str] = None,
+    subject_type: Optional[str] = None,
+    include_inactive: bool = False,
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+    sort_by: str = "name",
+    sort_dir: str = "asc",
+) -> Dict:
+    """Paginated + searchable subject catalogue for the admin listing.
+
+    Search is a case-insensitive contains-match on name / code / description.
+    Each item carries its active class assignments (classes[]) and the distinct
+    programmes derived from them (programmes[]).
+
+    Returns the standard list envelope:
+        {items, total, page, per_page, total_pages}
+    """
+    q = Subject.query.filter(
+        Subject.tenant_id == tenant_id, Subject.deleted_at.is_(None)
+    )
+    if not include_inactive:
+        q = q.filter(Subject.is_active.is_(True))
+    if subject_type in SUBJECT_TYPES:
+        q = q.filter(Subject.subject_type == subject_type)
+
+    term = (search or "").strip()
+    if term:
+        like = f"%{term}%"
+        q = q.filter(
+            or_(
+                Subject.name.ilike(like),
+                Subject.code.ilike(like),
+                Subject.description.ilike(like),
+            )
+        )
+
+    sort_col = LIST_SORT_FIELDS.get(sort_by, Subject.name)
+    ordered = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+    q = q.order_by(ordered, Subject.name.asc(), Subject.id.asc())
+
+    total = q.count()
+    page = max(page or 1, 1)
+    per_page = min(max(per_page or DEFAULT_PER_PAGE, 1), MAX_PER_PAGE)
+    rows = q.limit(per_page).offset((page - 1) * per_page).all()
+
+    return {
+        "items": _serialize_catalogue(tenant_id, rows),
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": (total + per_page - 1) // per_page,
+    }
+
+
+def _serialize_catalogue(tenant_id: str, subjects: List) -> List[Dict]:
+    """to_dict() + active class assignments + derived programmes, without N+1.
+
+    One grouped ClassSubject query for the whole page; programme/grade come in
+    via joinedload on the class relationship.
+    """
+    from modules.classes.models import Class, ClassSubject
+
+    subject_ids = [s.id for s in subjects]
+    class_subjects = []
+    if subject_ids:
+        class_subjects = (
+            ClassSubject.query.options(
+                joinedload(ClassSubject.class_ref).joinedload(Class.programme),
+                joinedload(ClassSubject.class_ref).joinedload(Class.grade),
+            )
+            .filter(
+                ClassSubject.tenant_id == tenant_id,
+                ClassSubject.subject_id.in_(subject_ids),
+                ClassSubject.deleted_at.is_(None),
+                ClassSubject.status == "active",
+            )
+            .all()
+        )
+
+    classes_by_subject: Dict[str, List[Dict]] = {}
+    for cs in class_subjects:
+        klass = cs.class_ref
+        programme = klass.programme if klass is not None else None
+        grade = klass.grade if klass is not None else None
+        classes_by_subject.setdefault(cs.subject_id, []).append(
+            {
+                "class_subject_id": cs.id,
+                "class_id": cs.class_id,
+                "class_name": _class_label(klass),
+                "grade_name": grade.name if grade is not None else None,
+                "programme_id": programme.id if programme is not None else None,
+                "programme_name": programme.name if programme is not None else None,
+                "weekly_periods": cs.weekly_periods,
+                "is_mandatory": cs.is_mandatory,
+            }
+        )
+
+    items: List[Dict] = []
+    for subject in subjects:
+        row = subject.to_dict()
+        classes = sorted(
+            classes_by_subject.get(subject.id, []),
+            key=lambda c: (c["class_name"] or ""),
+        )
+        programmes: Dict[str, Dict] = {}
+        for c in classes:
+            if c["programme_id"] and c["programme_id"] not in programmes:
+                programmes[c["programme_id"]] = {
+                    "id": c["programme_id"],
+                    "name": c["programme_name"],
+                }
+        row["classes"] = classes
+        row["programmes"] = sorted(
+            programmes.values(), key=lambda p: (p["name"] or "")
+        )
+        items.append(row)
+    return items
 
 
 def get_subject_by_id(subject_id: str, tenant_id: str) -> Optional[Dict]:
@@ -154,8 +334,12 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
             subject.description = (data["description"] or "").strip() or None
         if "subject_type" in data and data["subject_type"] is not None:
             st = str(data["subject_type"]).strip()
-            if st in ("core", "elective", "activity", "other"):
-                subject.subject_type = st
+            if st not in SUBJECT_TYPES:
+                return {
+                    "success": False,
+                    "error": f"subject_type must be one of: {', '.join(SUBJECT_TYPES)}",
+                }
+            subject.subject_type = st
         if "is_active" in data and data["is_active"] is not None:
             subject.is_active = bool(data["is_active"])
 

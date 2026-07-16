@@ -20,6 +20,10 @@ def get_academics_overview():
         return success_response(data={"total_classes": 0, "total_subjects": 0})
 
     total_classes = Class.query.filter_by(tenant_id=tenant_id).count()
-    total_subjects = Subject.query.filter_by(tenant_id=tenant_id).count()
+    total_subjects = (
+        Subject.query.filter_by(tenant_id=tenant_id)
+        .filter(Subject.deleted_at.is_(None), Subject.is_active.is_(True))
+        .count()
+    )
 
     return success_response(data={"total_classes": total_classes, "total_subjects": total_subjects})

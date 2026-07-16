@@ -362,12 +362,17 @@ def test_assert_student_classless_passes_for_unrestricted(flask_app, db_session,
 # ---------------------------------------------------------------------------
 
 def test_branch_forbidden_maps_to_403(flask_app):
-    @flask_app.route("/__test_branch_forbidden__")
-    def _raise():
-        raise BranchForbidden()
+    # Invoke the registered error handler the same way Flask's dispatch does
+    # (handle_user_exception). Registering a throwaway route here instead would
+    # blow up in full-suite runs: the session-scoped app has already served a
+    # request by then, and Flask forbids late route registration.
+    with flask_app.test_request_context("/__test_branch_forbidden__"):
+        try:
+            raise BranchForbidden()
+        except BranchForbidden as exc:
+            rv = flask_app.handle_user_exception(exc)
 
-    client = flask_app.test_client()
-    resp = client.get("/__test_branch_forbidden__")
+    resp = flask_app.make_response(rv)
     assert resp.status_code == 403
     body = resp.get_json()
     assert body["success"] is False
