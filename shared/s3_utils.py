@@ -198,7 +198,7 @@ def normalize_stored_file_value_for_db(value: str | None) -> str | None:
 
 
 def is_external_url(stored: str | None) -> bool:
-    """True if value is not a resolvable key in our bucket (e.g. Cloudinary or other host)."""
+    """True if value is not a resolvable key in our bucket (e.g. a legacy external host)."""
     if not stored:
         return False
     s = str(stored).strip()
@@ -215,7 +215,7 @@ def get_object_url(
     """
     Presigned GET URL for a stored object key or S3 URL from this bucket.
 
-    External URLs (e.g. legacy Cloudinary) are returned unchanged.
+    Legacy external URLs (from a prior storage provider) are returned unchanged.
     """
     if not stored_key_or_url:
         return None
@@ -348,5 +348,5 @@ def profile_picture_public_url(stored: str | None) -> str | None:
 
 
 def document_download_url(stored_key_or_url: str | None) -> str | None:
-    """Resolve student document field (cloudinary_url or key) for API."""
+    """Resolve student document field (S3 object key or URL) for API."""
     return get_object_url(stored_key_or_url)
