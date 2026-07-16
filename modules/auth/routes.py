@@ -491,7 +491,7 @@ def login_link_redeem():
     """
     from .handoff import redeem as redeem_handoff
     from core.decorators.auth import _load_without_tenant_scope
-    from core.models import Tenant, TENANT_STATUS_DELETED
+    from core.models import Tenant, TENANT_STATUS_ACTIVE
 
     data = request.get_json(silent=True) or {}
     code = (data.get('code') or '').strip()
@@ -510,12 +510,13 @@ def login_link_redeem():
             id=payload['admin_id'], is_platform_admin=True
         ).filter(User.deleted_at.is_(None)).first()
     )
-    # Exclude soft-deleted tenants — access to them is blocked even for the
-    # super-admin. Suspended tenants remain enterable (support/investigation).
+    # Only ACTIVE tenants, mirroring resolve_tenant_for_auth on the password
+    # login path — a suspended/deleted tenant blocks login for everyone,
+    # super-admin included. Un-suspend from the panel first.
     tenant = (
-        Tenant.query.filter_by(id=payload['tenant_id'])
-        .filter(Tenant.status != TENANT_STATUS_DELETED)
-        .first()
+        Tenant.query.filter_by(
+            id=payload['tenant_id'], status=TENANT_STATUS_ACTIVE
+        ).first()
     )
     if not user or not tenant:
         return error_response(

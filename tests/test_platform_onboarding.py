@@ -218,24 +218,35 @@ def test_seed_apply_404_when_tenant_missing(monkeypatch):
     assert captured["name"] == "Tenant"
 
 
-def test_resolve_target_tenant_excludes_deleted(flask_app, db_session):
-    """A soft-deleted tenant is never a valid onboarding / login-link target."""
+def test_resolve_target_tenant_active_only(flask_app, db_session):
+    """Only ACTIVE tenants are valid onboarding / login-link targets — suspended
+    and soft-deleted are excluded, matching every login path."""
     import uuid
-    from core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_DELETED
+    from core.models import (
+        Tenant,
+        TENANT_STATUS_ACTIVE,
+        TENANT_STATUS_SUSPENDED,
+        TENANT_STATUS_DELETED,
+    )
     from modules.platform import routes
 
-    active = Tenant(
-        id=uuid.uuid4().hex, name="Active", subdomain=f"act-{uuid.uuid4().hex[:6]}",
-        status=TENANT_STATUS_ACTIVE,
-    )
-    deleted = Tenant(
-        id=uuid.uuid4().hex, name="Gone", subdomain=f"gone-{uuid.uuid4().hex[:6]}",
-        status=TENANT_STATUS_DELETED,
-    )
-    db_session.add_all([active, deleted])
+    def _mk(status):
+        t = Tenant(
+            id=uuid.uuid4().hex,
+            name=status,
+            subdomain=f"{status}-{uuid.uuid4().hex[:6]}",
+            status=status,
+        )
+        db_session.add(t)
+        return t
+
+    active = _mk(TENANT_STATUS_ACTIVE)
+    suspended = _mk(TENANT_STATUS_SUSPENDED)
+    deleted = _mk(TENANT_STATUS_DELETED)
     db_session.flush()
 
     assert routes._resolve_target_tenant(active.id) is not None
+    assert routes._resolve_target_tenant(suspended.id) is None
     assert routes._resolve_target_tenant(deleted.id) is None
 
 

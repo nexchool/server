@@ -5,6 +5,8 @@ All routes require @auth_required and @platform_admin_required.
 Prefix: /platform (registered at /api/platform).
 """
 
+import logging
+
 from flask import request, g
 
 from modules.platform import platform_bp
@@ -12,6 +14,8 @@ from core.decorators import auth_required, platform_admin_required
 from core.extensions import limiter
 from shared.helpers import success_response, error_response, not_found_response, validation_error_response
 from modules.platform import services
+
+logger = logging.getLogger(__name__)
 
 # Rate limit: 30 requests per minute per IP for all platform routes
 PLATFORM_LIMIT = "30 per minute"
@@ -648,20 +652,19 @@ def patch_settings():
 # --- Tenant onboarding (config upload → preview → apply, target tenant explicit) ---
 
 def _resolve_target_tenant(tenant_id):
-    """Load the target tenant for a platform op, or None. Platform routes skip
-    tenant middleware, so nothing is auto-scoped — the tenant is the path param.
+    """Load an ACTIVE target tenant for a platform op, or None. Platform routes
+    skip tenant middleware, so nothing is auto-scoped — the tenant is the path
+    param.
 
-    Soft-deleted tenants (status 'deleted') are excluded: their access is
-    blocked, so we never seed one or mint a login link into one. Suspended
-    tenants are still returned — an operator may need to enter one to
-    investigate or lift the suspension.
+    Only ACTIVE tenants are returned, matching every login path
+    (resolve_tenant_for_auth requires status == active): we never seed, nor mint
+    a login link into, a suspended or soft-deleted tenant. An operator lifts a
+    suspension from the panel first, then onboards / opens admin-web.
     """
-    from core.models import Tenant, TENANT_STATUS_DELETED
+    from core.models import Tenant, TENANT_STATUS_ACTIVE
 
     return (
-        Tenant.query.filter_by(id=tenant_id)
-        .filter(Tenant.status != TENANT_STATUS_DELETED)
-        .first()
+        Tenant.query.filter_by(id=tenant_id, status=TENANT_STATUS_ACTIVE).first()
     )
 
 
@@ -757,7 +760,7 @@ def platform_seed_apply(tenant_id):
             },
         )
     except Exception:
-        pass
+        logger.exception("Failed to audit tenant.seeded for tenant %s", tenant.id)
 
     return success_response(
         data=result,
@@ -801,7 +804,7 @@ def create_tenant_login_link(tenant_id):
             metadata={"subdomain": tenant.subdomain},
         )
     except Exception:
-        pass
+        logger.exception("Failed to audit tenant.login_link_issued for tenant %s", tenant.id)
 
     return success_response(
         data={
