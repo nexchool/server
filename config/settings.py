@@ -233,6 +233,24 @@ def get_admin_web_reset_url(token: str, email: str, subdomain: str = "") -> str:
     return urlunsplit((parts.scheme, host, "/reset-password", query, ""))
 
 
+def get_admin_web_login_link_url(code: str, subdomain: str = "") -> str:
+    """Generate the admin-web one-click login URL for a platform-admin handoff code.
+
+    Mirrors get_admin_web_reset_url: reads ADMIN_WEB_BASE_URL and prefixes the
+    tenant subdomain so the link lands on that tenant's admin-web /enter route,
+    which redeems the code for a god-login session.
+    """
+    from urllib.parse import urlsplit, urlunsplit, urlencode
+
+    base_url = os.getenv("ADMIN_WEB_BASE_URL", "http://localhost:3000")
+    parts = urlsplit(base_url)
+    host = parts.netloc
+    if subdomain:
+        host = f"{subdomain}.{host}"
+    query = urlencode({"code": code})
+    return urlunsplit((parts.scheme, host, "/enter", query, ""))
+
+
 def get_email_verification_url(token: str, email: str) -> str:
     """Generates the email verification URL"""
     base_url = get_backend_url()

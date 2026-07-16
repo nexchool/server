@@ -317,6 +317,18 @@ def login():
                 )
 
     # Common success path (user and tenant are set)
+    return _finalize_login(user, tenant, is_god_login)
+
+
+def _finalize_login(user, tenant, is_god_login):
+    """Issue tokens, session, and cookie for an already-authenticated user in a
+    resolved tenant, and build the admin-web login response.
+
+    Shared by password login (above) and the one-time login-link redemption, so
+    both paths return an identical shape and honor the same god-login gates.
+    """
+    from datetime import datetime
+
     # Block suspended accounts on both login paths (tenant-specified and
     # cross-tenant search) before any token is issued. Platform admins are
     # not suspended in practice, so a single gate on is_suspended is enough.
@@ -464,6 +476,58 @@ def login():
         secure=current_app.config.get('SESSION_COOKIE_SECURE', not current_app.debug),
     )
     return response, status_code
+
+
+@auth_bp.route('/login-link/redeem', methods=['POST'])
+@limiter.limit("20 per minute")
+def login_link_redeem():
+    """Redeem a one-time platform-admin handoff code for a tenant god-login session.
+
+    Public by design: possession of a valid, unexpired, single-use code IS the
+    credential — only a platform admin can mint one via
+    ``POST /api/platform/tenants/<id>/login-link``. The code is consumed
+    atomically on first use. Returns the same shape as password login so
+    admin-web's session handling is unchanged.
+    """
+    from .handoff import redeem as redeem_handoff
+    from core.decorators.auth import _load_without_tenant_scope
+    from core.models import Tenant, TENANT_STATUS_ACTIVE
+
+    data = request.get_json(silent=True) or {}
+    code = (data.get('code') or '').strip()
+    payload = redeem_handoff(code)
+    if not payload:
+        return error_response(
+            error='InvalidLoginLink',
+            message='This login link is invalid or has expired. Generate a new one from the panel.',
+            status_code=401,
+        )
+
+    # Identity comes from the code, not the request tenant. Load the platform
+    # admin unscoped (their User row lives in their home tenant) and the target.
+    user = _load_without_tenant_scope(
+        lambda: User.query.filter_by(
+            id=payload['admin_id'], is_platform_admin=True
+        ).filter(User.deleted_at.is_(None)).first()
+    )
+    # Only ACTIVE tenants, mirroring resolve_tenant_for_auth on the password
+    # login path — a suspended/deleted tenant blocks login for everyone,
+    # super-admin included. Un-suspend from the panel first.
+    tenant = (
+        Tenant.query.filter_by(
+            id=payload['tenant_id'], status=TENANT_STATUS_ACTIVE
+        ).first()
+    )
+    if not user or not tenant:
+        return error_response(
+            error='InvalidLoginLink',
+            message='This login link is invalid or has expired. Generate a new one from the panel.',
+            status_code=401,
+        )
+
+    g.tenant_id = tenant.id
+    g.tenant = tenant
+    return _finalize_login(user, tenant, is_god_login=True)
 
 
 # ==================== LOGOUT ====================
