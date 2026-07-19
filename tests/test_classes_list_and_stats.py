@@ -205,6 +205,39 @@ def test_pages_do_not_overlap(ctx, populated):
     assert len(ids) == 3
 
 
+def test_paging_is_stable_when_every_row_ties_on_the_sort_key(
+    ctx, db_session, tenant, unit, programme, grades, active_year
+):
+    """Sorting by a count ties every empty class together, and section repeats
+    across grades — without a unique final tiebreaker the DB may order ties
+    differently per query and drop or repeat rows between pages."""
+    from modules.grades.models import Grade
+
+    # Distinct grades (the unique constraint spans grade+section), but all tie
+    # on student_count = 0 and on section "A" — so only Class.id separates them.
+    for i in range(8):
+        grade = Grade(
+            id=_new_id("g-"), tenant_id=tenant.id,
+            name=f"Tie-{uuid.uuid4().hex[:6]}", sequence=100 + i,
+        )
+        db_session.add(grade)
+        db_session.flush()
+        _make_class(
+            db_session, tenant, section="A", unit=unit, programme=programme,
+            grade=grade, year=active_year,
+        )
+        db_session.flush()
+
+    seen = []
+    for page in (1, 2, 3, 4):
+        result = class_services.get_all_classes(
+            sort_by="student_count", sort_dir="desc", page=page, per_page=2
+        )
+        seen.extend(c["id"] for c in result["items"])
+
+    assert len(seen) == len(set(seen)) == 8
+
+
 # ---------------------------------------------------------------------------
 # Counts
 # ---------------------------------------------------------------------------
@@ -226,6 +259,76 @@ def test_class_with_no_students_reports_zero_not_null(ctx, populated):
 
     assert row["student_count"] == 0
     assert row["teacher_count"] == 0
+
+
+def _make_teacher(db_session, tenant, name="Teacher"):
+    """Returns (teacher_profile, user) — the two ids teachers are reached by."""
+    from modules.teachers.models import Teacher
+
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        id=_new_id("u-"), tenant_id=tenant.id, email=f"{suffix}@test.school",
+        password_hash="x" * 60, name=name,
+    )
+    db_session.add(user)
+    db_session.flush()
+    teacher = Teacher(
+        id=_new_id("t-"), tenant_id=tenant.id, user_id=user.id,
+        employee_id=f"EMP-{suffix}",
+    )
+    db_session.add(teacher)
+    db_session.flush()
+    return teacher, user
+
+
+def test_teacher_count_includes_a_class_teacher_set_on_the_class(
+    ctx, db_session, tenant, populated
+):
+    """create_class/update_class set classes.teacher_id without a junction row,
+    so counting class_teachers alone showed 0 teachers beside a teacher name."""
+    nursery_a, _, _ = populated
+    _, user = _make_teacher(db_session, tenant)
+    nursery_a.teacher_id = user.id
+    db_session.add(nursery_a)
+    db_session.flush()
+
+    row = next(
+        c for c in class_services.get_all_classes()["items"] if c["id"] == nursery_a.id
+    )
+    assert row["teacher_name"] is not None
+    assert row["teacher_count"] == 1
+
+
+def test_teacher_counted_once_when_class_teacher_and_subject_teacher(
+    ctx, db_session, tenant, populated
+):
+    """The two routes use different id spaces; the union must still dedupe."""
+    nursery_a, _, _ = populated
+    teacher, user = _make_teacher(db_session, tenant)
+    nursery_a.teacher_id = user.id
+    db_session.add(nursery_a)
+    db_session.add(ClassTeacher(
+        id=_new_id("ct-"), tenant_id=tenant.id,
+        class_id=nursery_a.id, teacher_id=teacher.id,
+    ))
+    db_session.flush()
+
+    row = next(
+        c for c in class_services.get_all_classes()["items"] if c["id"] == nursery_a.id
+    )
+    assert row["teacher_count"] == 1
+
+
+def test_stats_counts_a_class_teacher_set_on_the_class(
+    ctx, db_session, tenant, populated
+):
+    nursery_a, _, _ = populated
+    _, user = _make_teacher(db_session, tenant)
+    nursery_a.teacher_id = user.id
+    db_session.add(nursery_a)
+    db_session.flush()
+
+    assert class_services.get_classes_stats()["total_teachers"] == 1
 
 
 def test_counts_ignore_other_tenants_rows(ctx, db_session, tenant, populated):

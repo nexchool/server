@@ -201,6 +201,41 @@ SEARCH_FIELDS = {"all", "name", "section", "grade", "programme", "branch"}
 MAX_PER_PAGE = 100
 
 
+def _teacher_links(tenant_id: str):
+    """(class_id, user_id) for every teacher attached to a class, deduplicated.
+
+    A class reaches its teachers two ways and both have to be counted:
+
+    - `class_teachers` rows — subject-teacher assignments, keyed by `teachers.id`.
+    - `classes.teacher_id` — the class teacher, keyed by `users.id`.
+
+    `assign_teacher_to_class` writes both, but `create_class` / `update_class`
+    set only `classes.teacher_id`, so a class whose teacher came from the normal
+    form has no junction row at all. Counting the junction alone reported
+    `teacher_count: 0` next to a populated `teacher_name` on the same row.
+
+    The two columns point at different tables, so they're unioned in *user* id
+    space — `teachers.user_id` is the common denominator — and UNION dedupes a
+    teacher who is both class teacher and subject teacher.
+    """
+    from modules.teachers.models import Teacher
+
+    via_junction = (
+        db.session.query(
+            ClassTeacher.class_id.label("class_id"),
+            Teacher.user_id.label("user_id"),
+        )
+        .join(Teacher, Teacher.id == ClassTeacher.teacher_id)
+        .filter(ClassTeacher.tenant_id == tenant_id)
+    )
+    via_class_teacher = db.session.query(
+        Class.id.label("class_id"),
+        Class.teacher_id.label("user_id"),
+    ).filter(Class.tenant_id == tenant_id, Class.teacher_id.isnot(None))
+
+    return via_junction.union(via_class_teacher)
+
+
 def _count_subqueries(tenant_id: str):
     """Per-class student/teacher count subqueries, grouped in SQL.
 
@@ -223,13 +258,14 @@ def _count_subqueries(tenant_id: str):
         .group_by(Student.class_id)
         .subquery()
     )
+
+    links = _teacher_links(tenant_id).subquery()
     teacher_counts = (
         db.session.query(
-            ClassTeacher.class_id.label("class_id"),
-            func.count(ClassTeacher.id).label("count"),
+            links.c.class_id.label("class_id"),
+            func.count(distinct(links.c.user_id)).label("count"),
         )
-        .filter(ClassTeacher.tenant_id == tenant_id)
-        .group_by(ClassTeacher.class_id)
+        .group_by(links.c.class_id)
         .subquery()
     )
     return student_counts, teacher_counts
@@ -252,8 +288,12 @@ def _build_sort_order(sort_by: str, sort_dir: str, student_col, teacher_col):
     }.get(sort_by, Grade.sequence)
 
     primary = column.desc() if descending else column.asc()
-    # Section is the stable tiebreaker so paging can't reorder equal rows.
-    return [primary, Class.section.asc()]
+    # Section groups sensibly, but it is not unique — the same letter repeats
+    # across branches and programmes, and sorting by a count ties every empty
+    # class together. Without a unique final key Postgres is free to order ties
+    # differently between the count and the paged query, which silently skips
+    # or repeats rows across pages. Class.id is the guaranteed tiebreaker.
+    return [primary, Class.section.asc(), Class.id.asc()]
 
 
 def get_all_classes(
@@ -416,12 +456,13 @@ def get_classes_stats(
         .scalar()
     ) or 0
 
+    # Counts both attachment routes (see `_teacher_links`) in user-id space, so
+    # a class teacher set through the class form is included and a teacher who
+    # is both class teacher and subject teacher is counted once.
+    links = _teacher_links(tenant_id).subquery()
     total_teachers = (
-        db.session.query(func.count(distinct(ClassTeacher.teacher_id)))
-        .filter(
-            ClassTeacher.tenant_id == tenant_id,
-            ClassTeacher.class_id.in_(class_ids),
-        )
+        db.session.query(func.count(distinct(links.c.user_id)))
+        .filter(links.c.class_id.in_(class_ids))
         .scalar()
     ) or 0
 
