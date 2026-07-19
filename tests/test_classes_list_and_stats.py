@@ -260,6 +260,59 @@ def test_counts_ignore_other_tenants_rows(ctx, db_session, tenant, populated):
     assert row["student_count"] == 3
 
 
+def test_query_count_does_not_grow_with_the_number_of_classes(
+    flask_app, db_session, tenant, admin_user, unit, programme, active_year
+):
+    """The counts and relationships resolve in SQL, not per row.
+
+    Guards the N+1 this endpoint was rewritten to remove: it previously issued
+    two COUNTs plus six lazy relationship loads *per class*.
+    """
+    from sqlalchemy import event
+    from modules.grades.models import Grade
+
+    from core.database import db
+
+    def seed(n):
+        for _ in range(n):
+            grade = Grade(
+                id=_new_id("g-"), tenant_id=tenant.id,
+                name=f"G-{uuid.uuid4().hex[:6]}", sequence=1,
+            )
+            db_session.add(grade)
+            db_session.flush()
+            _make_class(
+                db_session, tenant, section="A", unit=unit,
+                programme=programme, grade=grade, year=active_year,
+            )
+
+    def count_statements(expected_rows):
+        statements = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            statements.append(statement)
+
+        with flask_app.test_request_context("/"):
+            g.tenant_id = tenant.id
+            g.current_user = admin_user
+            event.listen(db.engine, "before_cursor_execute", record)
+            try:
+                assert len(class_services.get_all_classes()["items"]) == expected_rows
+            finally:
+                event.remove(db.engine, "before_cursor_execute", record)
+        return len(statements)
+
+    seed(3)
+    few = count_statements(3)
+    seed(12)
+    many = count_statements(15)
+
+    # Five-fold the rows must not mean more queries. Bounded absolutely too,
+    # so this still fails if the whole thing regresses to per-row loads.
+    assert many <= few, f"query count grew with row count ({few} -> {many}): N+1"
+    assert many <= 4, f"expected a handful of queries for 15 classes, got {many}"
+
+
 # ---------------------------------------------------------------------------
 # Derived status
 # ---------------------------------------------------------------------------
