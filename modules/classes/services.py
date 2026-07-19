@@ -2,7 +2,9 @@ from shared.safe_error import safe_error
 import logging
 import uuid
 from typing import List, Dict, Optional
+from sqlalchemy import distinct, func, or_
 from sqlalchemy.exc import IntegrityError, DataError
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 
 from core.database import db
@@ -186,23 +188,125 @@ def create_class(
         }
 
 
+# Columns the client may sort by. Mapped to real ordering expressions in
+# `_build_sort_order` so `grade` sorts by Grade.sequence (Nursery < LKG < 1)
+# rather than lexicographically on the label.
+SORTABLE_COLUMNS = {
+    "name", "grade", "programme", "branch", "student_count", "teacher_count",
+}
+
+# Fields the client may target with `search`.
+SEARCH_FIELDS = {"all", "name", "section", "grade", "programme", "branch"}
+
+MAX_PER_PAGE = 100
+
+
+def _count_subqueries(tenant_id: str):
+    """Per-class student/teacher count subqueries, grouped in SQL.
+
+    Returns (student_counts, teacher_counts) subqueries keyed by class_id.
+
+    The tenant filter is written out explicitly rather than left to the
+    automatic scope in `core.database._tenant_scope_execute`: that hook uses
+    `with_loader_criteria`, which applies to ORM *entity* loads, and these are
+    column-level SELECTs with no entity to hang the criterion on. Without the
+    explicit filter these aggregates would count every tenant's rows.
+    """
+    from modules.students.models import Student
+
+    student_counts = (
+        db.session.query(
+            Student.class_id.label("class_id"),
+            func.count(Student.id).label("count"),
+        )
+        .filter(Student.tenant_id == tenant_id, Student.class_id.isnot(None))
+        .group_by(Student.class_id)
+        .subquery()
+    )
+    teacher_counts = (
+        db.session.query(
+            ClassTeacher.class_id.label("class_id"),
+            func.count(ClassTeacher.id).label("count"),
+        )
+        .filter(ClassTeacher.tenant_id == tenant_id)
+        .group_by(ClassTeacher.class_id)
+        .subquery()
+    )
+    return student_counts, teacher_counts
+
+
+def _build_sort_order(sort_by: str, sort_dir: str, student_col, teacher_col):
+    """Ordering expression list for the class list query."""
+    from modules.academic_programmes.models import AcademicProgramme
+    from modules.grades.models import Grade
+    from modules.school_units.models import SchoolUnit
+
+    descending = sort_dir == "desc"
+    column = {
+        "name": Class.name,
+        "grade": Grade.sequence,
+        "programme": AcademicProgramme.name,
+        "branch": SchoolUnit.name,
+        "student_count": student_col,
+        "teacher_count": teacher_col,
+    }.get(sort_by, Grade.sequence)
+
+    primary = column.desc() if descending else column.asc()
+    # Section is the stable tiebreaker so paging can't reorder equal rows.
+    return [primary, Class.section.asc()]
+
+
 def get_all_classes(
     academic_year_id: Optional[str] = None,
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
-) -> List[Dict]:
-    """List classes for the current tenant with optional structural filters.
+    search: Optional[str] = None,
+    search_field: str = "all",
+    sort_by: str = "grade",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+) -> Dict:
+    """List classes for the current tenant with filters, search, sort, paging.
 
-    All filters are AND-ed and applied alongside the existing tenant scope
-    that TenantBaseModel adds automatically.
+    Returns an envelope: {items, total, page, per_page, total_pages}. When
+    `page`/`per_page` are omitted every matching row is returned with
+    total_pages = 1, so callers that just want the full list (the structured
+    class pickers) keep working.
+
+    Each item carries `student_count`, `teacher_count` and a derived `status`
+    ("active" when the class sits in the tenant's active academic year, else
+    "archived" — `classes` has no status column of its own).
     """
     from core.branch_scope import filter_classes_by_branch
+    from modules.academic_programmes.models import AcademicProgramme
+    from modules.academics.academic_year.models import AcademicYear
+    from modules.grades.models import Grade
+    from modules.school_units.models import SchoolUnit
 
-    query = Class.query
-    # Branch scope backstop: restrict to allowed branches even if no client
+    tenant_id = get_tenant_id()
+    student_counts, teacher_counts = _count_subqueries(tenant_id)
+    student_col = func.coalesce(student_counts.c.count, 0)
+    teacher_col = func.coalesce(teacher_counts.c.count, 0)
+
+    query = (
+        db.session.query(Class, student_col, teacher_col, AcademicYear.is_active)
+        .outerjoin(student_counts, student_counts.c.class_id == Class.id)
+        .outerjoin(teacher_counts, teacher_counts.c.class_id == Class.id)
+        .outerjoin(Grade, Class.grade_id == Grade.id)
+        .outerjoin(AcademicProgramme, Class.programme_id == AcademicProgramme.id)
+        .outerjoin(SchoolUnit, Class.school_unit_id == SchoolUnit.id)
+        .outerjoin(AcademicYear, Class.academic_year_id == AcademicYear.id)
+        # Explicit tenant filter: this is a multi-entity query, so don't rely
+        # on the automatic scope alone (see `_count_subqueries`).
+        .filter(Class.tenant_id == tenant_id)
+    )
+
+    # Branch scope backstop: restrict to allowed branches even when no client
     # school_unit_id filter is supplied. No-op for unrestricted users.
     query = filter_classes_by_branch(query)
+
     if academic_year_id:
         query = query.filter(Class.academic_year_id == academic_year_id)
     if school_unit_id:
@@ -212,19 +316,121 @@ def get_all_classes(
     if grade_id:
         query = query.filter(Class.grade_id == grade_id)
 
-    classes = query.order_by(Class.name, Class.section).all()
+    term = (search or "").strip()
+    if term:
+        like = f"%{term}%"
+        by_field = {
+            "name": [Class.name.ilike(like), Class.section.ilike(like)],
+            "section": [Class.section.ilike(like)],
+            "grade": [Grade.name.ilike(like)],
+            "programme": [AcademicProgramme.name.ilike(like)],
+            "branch": [SchoolUnit.name.ilike(like)],
+        }
+        clauses = by_field.get(search_field) or [
+            c for group in by_field.values() for c in group
+        ]
+        query = query.filter(or_(*clauses))
 
-    result = []
-    for c in classes:
-        from modules.students.models import Student
-        student_count = Student.query.filter_by(class_id=c.id).count()
-        teacher_count = ClassTeacher.query.filter_by(class_id=c.id).count()
-        data = c.to_dict()
-        data['student_count'] = student_count
-        data['teacher_count'] = teacher_count
-        result.append(data)
+    # Eager-load what to_dict() touches; otherwise each row lazy-loads six
+    # relationships and we're back to the N+1 this query exists to kill.
+    query = query.options(
+        joinedload(Class.school_unit),
+        joinedload(Class.programme),
+        joinedload(Class.grade),
+        joinedload(Class.medium),
+        joinedload(Class.academic_year_ref),
+        joinedload(Class.teacher),
+    )
 
-    return result
+    total = query.order_by(None).count()
+
+    query = query.order_by(*_build_sort_order(sort_by, sort_dir, student_col, teacher_col))
+
+    if page and per_page:
+        query = query.limit(per_page).offset((page - 1) * per_page)
+        total_pages = (total + per_page - 1) // per_page if per_page else 1
+    else:
+        total_pages = 1
+
+    items = []
+    for cls, student_count, teacher_count, year_is_active in query.all():
+        data = cls.to_dict()
+        data["student_count"] = student_count or 0
+        data["teacher_count"] = teacher_count or 0
+        data["status"] = "active" if year_is_active else "archived"
+        items.append(data)
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page or 1,
+        "per_page": per_page or total,
+        "total_pages": total_pages,
+    }
+
+
+def get_classes_stats(
+    academic_year_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
+) -> Dict:
+    """Aggregate totals for the classes overview header.
+
+    Honours the same structural filters and branch scope as `get_all_classes`
+    so the header always describes the list under it. Computed in one grouped
+    pass rather than by summing the current page.
+
+    `total_teachers` counts *distinct* teachers across the matching classes —
+    one teacher taking four classes is one teacher, not four.
+    """
+    from core.branch_scope import filter_classes_by_branch
+    from modules.students.models import Student
+
+    tenant_id = get_tenant_id()
+
+    scoped = db.session.query(Class.id).filter(Class.tenant_id == tenant_id)
+    scoped = filter_classes_by_branch(scoped)
+    if academic_year_id:
+        scoped = scoped.filter(Class.academic_year_id == academic_year_id)
+    if school_unit_id:
+        scoped = scoped.filter(Class.school_unit_id == school_unit_id)
+    if programme_id:
+        scoped = scoped.filter(Class.programme_id == programme_id)
+    if grade_id:
+        scoped = scoped.filter(Class.grade_id == grade_id)
+
+    class_ids = [row[0] for row in scoped.all()]
+    total_classes = len(class_ids)
+    if not total_classes:
+        return {
+            "total_classes": 0,
+            "total_students": 0,
+            "total_teachers": 0,
+            "average_class_size": 0.0,
+        }
+
+    total_students = (
+        db.session.query(func.count(Student.id))
+        .filter(Student.tenant_id == tenant_id, Student.class_id.in_(class_ids))
+        .scalar()
+    ) or 0
+
+    total_teachers = (
+        db.session.query(func.count(distinct(ClassTeacher.teacher_id)))
+        .filter(
+            ClassTeacher.tenant_id == tenant_id,
+            ClassTeacher.class_id.in_(class_ids),
+        )
+        .scalar()
+    ) or 0
+
+    return {
+        "total_classes": total_classes,
+        "total_students": total_students,
+        "total_teachers": total_teachers,
+        "average_class_size": round(total_students / total_classes, 1),
+    }
 
 
 def get_class_by_id(class_id: str) -> Optional[Dict]:
