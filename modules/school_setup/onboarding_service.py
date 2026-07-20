@@ -22,30 +22,38 @@ class DerivationError(ValueError):
 
 
 def _resolve_extra_subjects(config, subjects_by_code, offerings_by_key):
-    """Append off-catalogue subjects.
+    """Append off-catalogue subjects, or extend a template subject to a grade
+    the template does not cover.
 
-    Additive only -- a code colliding with a template subject is still
-    rejected, so extra_subjects can never redefine what the board prescribes.
+    The rule is same-code-*different-name* is rejected, same-code-*same-name*
+    is reused: a code mapping to two names is the two-catalogues drift this
+    whole plan exists to remove, but a code mapping to the grades it's
+    actually taught at is just... a subject taught at more grades. `PE` at
+    Nursery is the same Physical Education as `PE` at Std 6, not a collision.
 
-    But it MAY originate an offering the template has none for: pre-primary
+    May also originate an offering the template has none for: pre-primary
     (Nursery/LKG/UKG) has no board syllabus anywhere in India, so those grades
     get their entire curriculum from here rather than from resolve_template.
-    That is the school's own invented curriculum, not the board's, which is
-    exactly what this escape hatch is for.
     """
     grade_names = {str(g["name"]) for g in config.get("grades", [])}
     for extra in config.get("extra_subjects", []):
         code = extra["code"]
-        if code in subjects_by_code:
-            raise DerivationError(
-                f"extra subject '{code}' collides with a template subject of the "
-                f"same code; pick a distinct code"
-            )
-        subjects_by_code[code] = {
-            "code": code,
-            "name": extra["name"],
-            "role": extra.get("role"),
-        }
+        existing = subjects_by_code.get(code)
+        if existing is not None:
+            if existing["name"] != extra["name"]:
+                raise DerivationError(
+                    f"extra subject '{code}' collides with an existing subject "
+                    f"of the same code but a different name: "
+                    f"'{existing['name']}' vs '{extra['name']}'"
+                )
+            # Same code, same name: this is the same subject taught at another
+            # grade, not a redefinition. Reuse the existing entry as-is.
+        else:
+            subjects_by_code[code] = {
+                "code": code,
+                "name": extra["name"],
+                "role": extra.get("role"),
+            }
         try:
             weekly = int(extra.get("weekly", 1))
         except (TypeError, ValueError) as e:

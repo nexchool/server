@@ -246,10 +246,40 @@ def test_extra_subject_targeting_an_undeclared_grade_is_rejected():
     assert "99" in str(exc.value)
 
 
-def test_extra_subject_collision_still_rejected_even_when_originating_an_offering():
-    """Regression guard: letting extra_subjects originate a new offering must
-    not loosen the code-collision check. A school cannot smuggle in a
-    redefinition of a board subject via a grade the template does not cover."""
+def test_extra_subject_same_code_and_name_as_template_extends_it_to_a_new_grade():
+    """Same code + same name is the same subject taught at another grade, not
+    a redefinition -- PE at Nursery is the same Physical Education as PE at
+    Std 6, not a collision. It must be reused, not rejected."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    cfg = _config(
+        grades=[
+            {"name": "Nursery", "sequence": 1},
+            {"name": "1", "sequence": 2},
+            {"name": "2", "sequence": 3},
+        ],
+        extra_subjects=[
+            {
+                "code": "GUJ",
+                "name": "Gujarati",  # matches the template subject's name exactly
+                "grades": ["Nursery"],
+                "programme": "GSEB-GUJ",
+                "weekly": 6,
+            }
+        ],
+    )
+    result = derive_config(cfg, resolver=_fake_resolver)
+
+    nursery = next(o for o in result["offerings"] if o["grade"] == "Nursery")
+    assert [s["code"] for s in nursery["subjects"]] == ["GUJ"]
+    # The template's own grades are unaffected by the extension.
+    grade1 = next(o for o in result["offerings"] if o["grade"] == "1")
+    assert [s["code"] for s in grade1["subjects"]] == ["GUJ"]
+
+
+def test_extra_subject_same_code_different_name_is_still_rejected():
+    """Same code, different name IS the real collision -- a code mapping to
+    two names is the two-catalogues drift this plan exists to remove."""
     from modules.school_setup.onboarding_service import (
         DerivationError,
         derive_config,
@@ -268,4 +298,30 @@ def test_extra_subject_collision_still_rejected_even_when_originating_an_offerin
     )
     with pytest.raises(DerivationError) as exc:
         derive_config(cfg, resolver=_fake_resolver)
-    assert "GUJ" in str(exc.value)
+    assert "Gujarati" in str(exc.value)
+    assert "Something Else" in str(exc.value)
+
+
+def test_extended_subject_appears_exactly_once_in_the_subjects_list():
+    """The extension path must reuse the existing subjects_by_code entry, not
+    add a second one -- one code must map to exactly one subjects[] row."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    cfg = _config(
+        grades=[
+            {"name": "Nursery", "sequence": 1},
+            {"name": "1", "sequence": 2},
+            {"name": "2", "sequence": 3},
+        ],
+        extra_subjects=[
+            {
+                "code": "GUJ",
+                "name": "Gujarati",
+                "grades": ["Nursery"],
+                "programme": "GSEB-GUJ",
+                "weekly": 6,
+            }
+        ],
+    )
+    result = derive_config(cfg, resolver=_fake_resolver)
+    assert [s["code"] for s in result["subjects"]].count("GUJ") == 1
