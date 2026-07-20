@@ -724,6 +724,13 @@ def platform_seed_preview(tenant_id):
     if err is not None:
         return err
 
+    from modules.school_setup import onboarding_service
+
+    try:
+        config = onboarding_service.derive_config(config)
+    except onboarding_service.DerivationError as e:
+        return error_response("ValidationError", str(e), 400)
+
     # Scope the preview's reads to the target tenant (the listener no-ops when
     # g.tenant_id is unset, which it is on platform routes).
     g.tenant_id = tenant.id
@@ -749,6 +756,13 @@ def platform_seed_apply(tenant_id):
     config, err = _parse_uploaded_config()
     if err is not None:
         return err
+
+    from modules.school_setup import onboarding_service
+
+    try:
+        config = onboarding_service.derive_config(config)
+    except onboarding_service.DerivationError as e:
+        return error_response("ValidationError", str(e), 400)
 
     g.tenant_id = tenant.id
     try:

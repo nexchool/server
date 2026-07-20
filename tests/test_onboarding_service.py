@@ -171,3 +171,13 @@ def test_the_original_config_is_not_mutated():
     derive_config(cfg, resolver=_fake_resolver)
     assert "subjects" not in cfg
     assert "offerings" not in cfg
+
+
+def test_derived_config_passes_seed_validation():
+    """The orchestrator's output is what _validate_config sees, so it must be
+    accepted -- otherwise every onboarding fails at the preview step."""
+    from modules.school_setup.onboarding_service import derive_config
+    from modules.school_setup.seed_service import _validate_config
+
+    derived = derive_config(_config(), resolver=_fake_resolver)
+    assert _validate_config(derived) == []

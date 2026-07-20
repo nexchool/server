@@ -238,6 +238,7 @@ def _ensure_programme(tenant_id, row):
         code=row["code"],
         medium=medium_str,
         medium_id=_resolve_medium_id(tenant_id, medium_str),
+        template_board_code=row.get("template_board_code"),
     )
     db.session.add(prog)
     db.session.flush()
