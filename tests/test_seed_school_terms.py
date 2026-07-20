@@ -99,3 +99,33 @@ def test_term_with_unparseable_dates_is_rejected_without_raising():
     config = _config_with_terms([{"name": "Term 1", "start": "not-a-date", "end": None}])
     errors = _validate_config(config)
     assert any("invalid start/end dates" in e for e in errors)
+
+
+def test_duplicate_term_codes_are_rejected():
+    """academic_terms also carries uq_academic_terms_year_code — two terms with
+    different names but the same code pass _ensure_term's name-scoped lookup
+    and blow up on the second flush's IntegrityError unless caught here."""
+    from modules.school_setup.seed_service import _validate_config
+
+    config = _config_with_terms(
+        [
+            {"name": "Term 1", "code": "T1", "start": "2026-06-01", "end": "2026-10-31"},
+            {"name": "Term 2", "code": "T1", "start": "2026-11-01", "end": "2027-03-31"},
+        ]
+    )
+    errors = _validate_config(config)
+    assert any("duplicate term code" in e for e in errors)
+
+
+def test_terms_that_both_omit_code_validate_cleanly():
+    """uq_academic_terms_year_code only enforces uniqueness WHERE code IS NOT
+    NULL, so two term rows both omitting a code are legal."""
+    from modules.school_setup.seed_service import _validate_config
+
+    config = _config_with_terms(
+        [
+            {"name": "Term 1", "start": "2026-06-01", "end": "2026-10-31"},
+            {"name": "Term 2", "start": "2026-11-01", "end": "2027-03-31"},
+        ]
+    )
+    assert _validate_config(config) == []

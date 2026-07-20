@@ -1,14 +1,14 @@
 """School onboarding seed service.
 
 Config-driven, idempotent seeding of a tenant's academic foundation:
-units -> programmes -> grades -> academic_year -> subjects -> subject_contexts
--> classes -> class_subjects.
+units -> programmes -> grades -> academic_year -> terms -> subjects ->
+subject_contexts -> classes -> class_subjects.
 
 Design notes:
 - Logic lives here (unit-testable); scripts/seed_school.py is a thin CLI wrapper.
 - Every _ensure_* helper is query-first (create-if-missing), so seed_school is
   safe to re-run. Natural keys: unit.code, programme.code, grade.name,
-  academic_year.name, subject.code.
+  academic_year.name, subject.code, term.name (scoped to its academic year).
 - Classes are created via the existing bulk_generate_classes service (it sets the
   unit/programme/grade FKs, parses streams, and is itself idempotent).
 - class_subjects are derived granularly from each class's (programme, grade)
@@ -126,8 +126,9 @@ def _validate_config(config: dict) -> list[str]:
             )
 
     # terms (optional) — must sit inside the academic year, not overlap, and
-    # carry unique names. Natural key is (academic_year, name), mirroring
-    # uq_academic_terms_year_name.
+    # carry unique names and (where given) unique codes. Natural keys are
+    # (academic_year, name) and (academic_year, code) where code IS NOT NULL,
+    # mirroring uq_academic_terms_year_name and uq_academic_terms_year_code.
     ay_start = ay_end = None
     ay_cfg = config.get("academic_year") or {}
     if ay_cfg.get("start") and ay_cfg.get("end"):
@@ -138,12 +139,18 @@ def _validate_config(config: dict) -> list[str]:
             ay_start = ay_end = None
 
     seen_term_names: set[str] = set()
+    seen_term_codes: set[str] = set()
     parsed_terms: list[tuple[str, object, object]] = []
     for term in config.get("terms", []):
         name = term.get("name")
         if name in seen_term_names:
             errors.append(f"duplicate term name '{name}'")
         seen_term_names.add(name)
+        code = term.get("code")
+        if code:
+            if code in seen_term_codes:
+                errors.append(f"duplicate term code '{code}'")
+            seen_term_codes.add(code)
         try:
             start = _parse_date(term["start"])
             end = _parse_date(term["end"])
