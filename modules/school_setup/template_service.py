@@ -66,6 +66,7 @@ def build_config_sections(items, programme_code: str) -> dict:
                 "code": code,
                 "weekly": DEFAULT_WEEKLY_PERIODS if weekly is None else int(weekly),
                 "type": "elective" if item.is_elective else "mandatory",
+                "exam_code": item.exam_code,
             }
         )
 

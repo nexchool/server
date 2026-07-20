@@ -25,6 +25,7 @@ def _item(
     role=None,
     stream=None,
     sort_order=0,
+    exam_code=None,
 ):
     return SimpleNamespace(
         grade_number=grade_number,
@@ -35,6 +36,7 @@ def _item(
         role=role,
         stream=stream,
         sort_order=sort_order,
+        exam_code=exam_code,
     )
 
 
@@ -195,3 +197,29 @@ def test_resolved_sections_pass_seed_config_validation():
         ],
     }
     assert _validate_config(config) == []
+
+
+def test_exam_code_is_carried_onto_the_offering():
+    """Task 2b split board paper numbers out of the identity code so they could be
+    preserved. Dropping them here would make that split lossy after all."""
+    from modules.school_setup.template_service import build_config_sections
+
+    items = [_item(10, "GUJ", "Gujarati", exam_code="01")]
+    result = build_config_sections(items, "GSEB-GUJ")
+    assert result["offerings"][0]["subjects"][0]["exam_code"] == "01"
+
+
+def test_exam_code_is_not_hoisted_onto_the_deduplicated_subject():
+    """The same subject carries different board numbers at different standards --
+    Gujarati is 01 at Std 10 and 001 at Std 12 -- so a single subjects[] entry
+    cannot hold it. That is why it lives on the offering."""
+    from modules.school_setup.template_service import build_config_sections
+
+    items = [
+        _item(10, "GUJ", "Gujarati", exam_code="01"),
+        _item(12, "GUJ", "Gujarati", exam_code="001"),
+    ]
+    result = build_config_sections(items, "GSEB-GUJ")
+    assert "exam_code" not in result["subjects"][0]
+    by_grade = {o["grade"]: o["subjects"][0]["exam_code"] for o in result["offerings"]}
+    assert by_grade == {"10": "01", "12": "001"}
