@@ -669,13 +669,32 @@ def _resolve_target_tenant(tenant_id):
 
 
 def _parse_uploaded_config():
-    """Parse the multipart 'file' field into a config dict, or (None, error_response)."""
+    """Parse the request body into a config dict, or (None, error_response).
+
+    Two transports, one contract:
+      * JSON body {"config": {...}} — the panel onboarding form.
+      * multipart 'file' field (YAML or JSON) — the scripts/seed_school.py
+        break-glass path.
+    """
     from modules.school_setup import seed_service
+
+    if request.is_json:
+        payload = request.get_json(silent=True) or {}
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            return None, error_response(
+                "ValidationError",
+                "config object is required in the JSON body",
+                400,
+            )
+        return config, None
 
     file = request.files.get("file")
     if file is None:
         return None, error_response(
-            "ValidationError", "file is required (multipart field 'file')", 400
+            "ValidationError",
+            "provide a JSON body with a config object, or a multipart 'file' field",
+            400,
         )
     try:
         return seed_service.parse_config_bytes(file.filename or "", file.read()), None
