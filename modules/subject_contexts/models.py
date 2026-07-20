@@ -108,6 +108,7 @@ class SubjectContext(TenantBaseModel):
             "subject_code": subject.code if subject else None,
             "display_name": self.display_name or (subject.name if subject else None),
             "short_code": self.short_code,
+            "exam_code": self.exam_code,
             "type": self.type,
             "role": self.role,
             "medium_id": self.medium_id,

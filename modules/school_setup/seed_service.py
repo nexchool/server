@@ -178,6 +178,7 @@ def _dry_run_plan(config: dict) -> dict:
         "programmes": len(config.get("programmes", [])),
         "grades": len(config.get("grades", [])),
         "academic_year": config["academic_year"]["name"],
+        "terms": len(config.get("terms", [])),
         "subjects": len(config.get("subjects", [])),
         "offering_lines": sum(len(o.get("subjects", [])) for o in config.get("offerings", [])),
         "class_cells": len(config.get("classes", [])),

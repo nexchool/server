@@ -111,6 +111,7 @@ class SubjectTemplateItem(db.Model):
             "stream": self.stream,
             "subject_name": self.subject_name,
             "subject_code": self.subject_code,
+            "exam_code": self.exam_code,
             "periods_per_week": self.periods_per_week,
             "is_elective": self.is_elective,
             "role": self.role,
