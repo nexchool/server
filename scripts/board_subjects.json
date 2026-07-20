@@ -23,7 +23,7 @@
           "subjects": [
             { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
             { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
-            { "name": "The World Around Us",    "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Environmental Studies",  "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
             { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 },
             { "name": "Physical Education",     "role": "co_curricular",   "compulsory": true,  "code": "PE",   "default_periods": 2 }
           ]
@@ -32,7 +32,7 @@
           "subjects": [
             { "name": "English",                "role": "first_language",  "compulsory": true,  "code": "ENG",  "default_periods": 6 },
             { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
-            { "name": "The World Around Us",    "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
+            { "name": "Environmental Studies",  "role": "core",            "compulsory": true,  "code": "EVS",  "default_periods": 4 },
             { "name": "Art Education",          "role": "co_curricular",   "compulsory": true,  "code": "ART",  "default_periods": 2 },
             { "name": "Physical Education",     "role": "co_curricular",   "compulsory": true,  "code": "PE",   "default_periods": 2 }
           ]
@@ -74,7 +74,7 @@
             { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
             { "name": "Sanskrit",               "role": "third_language",  "compulsory": true,  "code": "SAN",  "default_periods": 3 },
             { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
-            { "name": "Science",                "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
+            { "name": "Science and Technology", "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",         "role": "core",            "compulsory": true,  "code": "SST",  "default_periods": 5 }
           ]
         },
@@ -85,7 +85,7 @@
             { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
             { "name": "Sanskrit",               "role": "third_language",  "compulsory": true,  "code": "SAN",  "default_periods": 3 },
             { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
-            { "name": "Science",                "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
+            { "name": "Science and Technology", "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",         "role": "core",            "compulsory": true,  "code": "SST",  "default_periods": 5 }
           ]
         },
@@ -96,7 +96,7 @@
             { "name": "Hindi",                  "role": "second_language", "compulsory": true,  "code": "HIN",  "default_periods": 4 },
             { "name": "Sanskrit",               "role": "third_language",  "compulsory": true,  "code": "SAN",  "default_periods": 3 },
             { "name": "Mathematics",            "role": "core",            "compulsory": true,  "code": "MATH", "default_periods": 6 },
-            { "name": "Science",                "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
+            { "name": "Science and Technology", "role": "core",            "compulsory": true,  "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",         "role": "core",            "compulsory": true,  "code": "SST",  "default_periods": 5 }
           ]
         },
@@ -294,7 +294,7 @@
             { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "7": {
@@ -306,7 +306,7 @@
             { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "8": {
@@ -318,7 +318,7 @@
             { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "9": {
@@ -331,7 +331,7 @@
             { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gseb9_math_level" },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "10": {
@@ -344,7 +344,7 @@
             { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gseb10_math_level" },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "11": {
@@ -513,7 +513,7 @@
             { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "7": {
@@ -525,7 +525,7 @@
             { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "8": {
@@ -537,7 +537,7 @@
             { "name": "Mathematics",           "role": "core",            "compulsory": true, "code": "MATH", "default_periods": 6 },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "SCI",  "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "SST",  "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "9": {
@@ -550,7 +550,7 @@
             { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gsebguj9_math_level" },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "10": {
@@ -563,7 +563,7 @@
             { "name": "Basic Mathematics",    "role": "core", "compulsory": true, "code": "18", "default_periods": 6, "elective_group_key": "gsebguj10_math_level" },
             { "name": "Science and Technology","role": "core",            "compulsory": true, "code": "11", "default_periods": 6 },
             { "name": "Social Science",        "role": "core",            "compulsory": true, "code": "10", "default_periods": 5 },
-            { "name": "Health & Physical Education", "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
+            { "name": "Physical Education",        "role": "co_curricular", "compulsory": true, "code": "PE", "default_periods": 2 }
           ]
         },
         "11": {

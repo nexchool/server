@@ -17,6 +17,13 @@ def _load() -> dict:
         return json.load(fh)
 
 
+def _iter_subject_groups(node: dict) -> list[list[dict]]:
+    """Std 1-10 nodes keep a flat `subjects` list; Std 11-12 fan out per stream."""
+    if "subjects" in node:
+        return [node["subjects"]]
+    return [s["subjects"] for s in node["streams"].values()]
+
+
 def test_physical_education_present_for_std_6_to_10_in_both_gseb_boards():
     boards = _load()["boards"]
     for board in GSEB_BOARDS:
@@ -32,22 +39,26 @@ def test_physical_education_is_compulsory_with_periods():
         for standard in range(6, 11):
             subjects = boards[board]["standards"][str(standard)]["subjects"]
             pe = next(s for s in subjects if s["code"] == "PE")
-            assert pe["compulsory"] is True
-            assert pe["role"] == "co_curricular"
-            assert pe["default_periods"] >= 1
+            assert pe["compulsory"] is True, f"{board} Std {standard}: {pe}"
+            assert pe["role"] == "co_curricular", f"{board} Std {standard}: {pe}"
+            assert pe["default_periods"] >= 1, f"{board} Std {standard}: {pe}"
 
 
 def test_every_subject_has_a_code_and_name():
-    """seed_service._ensure_subject keys on code and raises KeyError without one."""
+    """Today, board_subjects.json is consumed only by
+    scripts/seed_subject_templates.py::_row(), which is defensive (entry.get("code"),
+    entry.get("name", "Unknown")) and would silently write "Unknown" rather than
+    fail. This test holds the source data itself to a stricter bar: an unnamed or
+    codeless subject is a data bug, not something to paper over downstream.
+    Planned: Task 4's template resolver will bridge this catalogue into
+    seed_service._ensure_subject, which keys on code and would raise KeyError
+    without one -- at that point a codeless entry stops being a data-quality nit
+    and starts being a hard failure.
+    """
     boards = _load()["boards"]
     for board_code, board in boards.items():
         for standard, node in board["standards"].items():
-            groups = (
-                [node["subjects"]]
-                if "subjects" in node
-                else [s["subjects"] for s in node["streams"].values()]
-            )
-            for subjects in groups:
+            for subjects in _iter_subject_groups(node):
                 for subject in subjects:
                     assert subject.get("code"), f"{board_code} Std {standard}: {subject}"
                     assert subject.get("name"), f"{board_code} Std {standard}: {subject}"
@@ -81,19 +92,15 @@ def test_std_1_to_10_roles_are_valid_context_roles():
 def test_only_std_11_12_electives_conflate_role_with_type():
     """The senior-secondary streams set role="elective", which is a CONTEXT_TYPE,
     not a CONTEXT_ROLE. The information is not lost -- compulsory: false already
-    carries it -- so the catalogue is left alone and the template resolver drops
-    the bogus role instead. This test pins the blast radius: if "elective" ever
-    appears as a role at Std 1-10, the resolver's assumption breaks."""
+    carries it -- so the catalogue is left alone today. Planned: Task 4's template
+    resolver will drop the bogus role rather than pass it through. This test pins
+    the blast radius in the meantime: if "elective" ever appears as a role at
+    Std 1-10, the resolver's future assumption breaks."""
     boards = _load()["boards"]
     offenders = []
     for board_code, board in boards.items():
         for standard, node in board["standards"].items():
-            groups = (
-                [node["subjects"]]
-                if "subjects" in node
-                else [s["subjects"] for s in node["streams"].values()]
-            )
-            for subjects in groups:
+            for subjects in _iter_subject_groups(node):
                 for subject in subjects:
                     if subject.get("role") == "elective":
                         offenders.append((board_code, int(standard)))
@@ -102,3 +109,17 @@ def test_only_std_11_12_electives_conflate_role_with_type():
         f"role='elective' leaked below Std 11: "
         f"{sorted({o for o in offenders if o[1] < 11})}"
     )
+
+
+def test_subject_codes_are_unique_within_each_group():
+    """Two entries sharing a code in one standard would silently collapse into a
+    single Subject at onboarding, because _ensure_subject matches on code alone."""
+    boards = _load()["boards"]
+    for board_code, board in boards.items():
+        for standard, node in board["standards"].items():
+            for subjects in _iter_subject_groups(node):
+                codes = [s["code"] for s in subjects]
+                duplicates = {c for c in codes if codes.count(c) > 1}
+                assert not duplicates, (
+                    f"{board_code} Std {standard}: duplicate codes {sorted(duplicates)}"
+                )
