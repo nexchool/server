@@ -1,11 +1,16 @@
-"""Tests for school_setup.template_service. Pure-Python — no Flask, no database.
+"""Tests for school_setup.template_service.
 
 `build_config_sections` takes any objects with the SubjectTemplateItem
-attributes, so tests use SimpleNamespace stubs.
+attributes, so its tests use SimpleNamespace stubs and need no database.
+`resolve_template` is the thin DB wrapper around it; its tests use the
+`db_session` fixture from tests/conftest.py like the hostel/tenant tests do.
+SubjectTemplateGroup/Item are global (not tenant-scoped), so no tenant
+fixture is needed.
 """
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -223,3 +228,95 @@ def test_exam_code_is_not_hoisted_onto_the_deduplicated_subject():
     assert "exam_code" not in result["subjects"][0]
     by_grade = {o["grade"]: o["subjects"][0]["exam_code"] for o in result["offerings"]}
     assert by_grade == {"10": "01", "12": "001"}
+
+
+def test_item_with_no_subject_code_is_rejected():
+    """subject_code is nullable on SubjectTemplateItem. Letting a None through
+    would collapse distinct null-code items into one bogus 'code: None' subject,
+    or worse, let _ensure_subject's `filter_by(code=None)` attach an offering to
+    an arbitrary one of several null-code subjects a tenant may hold (the unique
+    constraint on Subject.code only applies WHERE code IS NOT NULL)."""
+    from modules.school_setup.template_service import (
+        TemplateResolutionError,
+        build_config_sections,
+    )
+
+    items = [_item(9, None, "Mystery Subject")]
+    with pytest.raises(TemplateResolutionError) as exc:
+        build_config_sections(items, "GSEB-GUJ")
+    assert "grade 9" in str(exc.value)
+    assert "Mystery Subject" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# resolve_template — DB-backed. Uses db_session/tenant conventions from
+# tests/conftest.py. SubjectTemplateGroup/Item are global tables, so only
+# db_session is needed, no tenant fixture.
+# ---------------------------------------------------------------------------
+
+def _seed_stream_template(db_session):
+    """Create a template group with grade-11 items across three stream values:
+    NULL (stream-agnostic), 'Science', and 'Commerce'. Returns the board_code."""
+    from modules.school_setup.template_models import (
+        SubjectTemplateGroup,
+        SubjectTemplateItem,
+    )
+
+    board_code = f"test-board-{uuid.uuid4().hex[:8]}"
+    group = SubjectTemplateGroup(name="Test Board", board_code=board_code, is_active=True)
+    db_session.add(group)
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            SubjectTemplateItem(
+                template_group_id=group.id,
+                grade_number=11,
+                stream=None,
+                subject_name="English",
+                subject_code="ENG",
+                sort_order=0,
+            ),
+            SubjectTemplateItem(
+                template_group_id=group.id,
+                grade_number=11,
+                stream="Science",
+                subject_name="Physics",
+                subject_code="PHY",
+                sort_order=1,
+            ),
+            SubjectTemplateItem(
+                template_group_id=group.id,
+                grade_number=11,
+                stream="Commerce",
+                subject_name="Accountancy",
+                subject_code="ACC",
+                sort_order=2,
+            ),
+        ]
+    )
+    db_session.flush()
+    return board_code
+
+
+def test_resolve_template_with_stream_includes_null_and_matching_stream_items(db_session):
+    from modules.school_setup.template_service import resolve_template
+
+    board_code = _seed_stream_template(db_session)
+
+    result = resolve_template(board_code, "GSEB-GUJ", [11], stream="Science")
+    codes = {s["code"] for s in result["offerings"][0]["subjects"]}
+    assert codes == {"ENG", "PHY"}
+
+
+def test_resolve_template_without_stream_returns_only_null_stream_items(db_session):
+    """Std 1-10 items all have stream=None -- this is the branch they actually
+    exercise, so a refactor silently dropping the NULL-stream filter would break
+    every grade below Std 11 with nothing else in this file catching it."""
+    from modules.school_setup.template_service import resolve_template
+
+    board_code = _seed_stream_template(db_session)
+
+    result = resolve_template(board_code, "GSEB-GUJ", [11], stream=None)
+    codes = {s["code"] for s in result["offerings"][0]["subjects"]}
+    assert codes == {"ENG"}

@@ -50,6 +50,11 @@ def build_config_sections(items, programme_code: str) -> dict:
 
     for item in items:
         code = item.subject_code
+        if code is None:
+            raise TemplateResolutionError(
+                f"template item for grade {item.grade_number} "
+                f"('{item.subject_name}') has no subject_code"
+            )
         name = item.subject_name
         existing = subjects.get(code)
         if existing is None:
