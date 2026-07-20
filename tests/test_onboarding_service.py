@@ -181,3 +181,91 @@ def test_derived_config_passes_seed_validation():
 
     derived = derive_config(_config(), resolver=_fake_resolver)
     assert _validate_config(derived) == []
+
+
+# --- pre-primary grades: no board syllabus, so extra_subjects is the only ---
+# --- source of curriculum for them (Nursery/LKG/UKG have no template row). --
+
+
+def test_non_numeric_grade_is_excluded_from_template_resolution():
+    """Nursery has no board syllabus anywhere in India, so it must not reach
+    the resolver, and its absence from grade_numbers must not raise."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    cfg = _config(
+        grades=[{"name": "Nursery", "sequence": 1}, {"name": "1", "sequence": 2}]
+    )
+    result = derive_config(cfg, resolver=_fake_resolver)
+    # Only "1" reaches the template; Nursery gets no offering from it.
+    assert [o["grade"] for o in result["offerings"]] == ["1"]
+
+
+def test_extra_subjects_originate_an_offering_for_a_grade_the_template_has_none_for():
+    """Pre-primary is the school's own invented curriculum, not the board's --
+    extra_subjects is the only way such a grade gets any curriculum at all."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    cfg = _config(
+        grades=[{"name": "Nursery", "sequence": 1}, {"name": "1", "sequence": 2}],
+        extra_subjects=[
+            {
+                "code": "NUR-GUJ",
+                "name": "Gujarati (Nursery)",
+                "grades": ["Nursery"],
+                "programme": "GSEB-GUJ",
+                "weekly": 6,
+            }
+        ],
+    )
+    result = derive_config(cfg, resolver=_fake_resolver)
+    nursery = next(o for o in result["offerings"] if o["grade"] == "Nursery")
+    assert [s["code"] for s in nursery["subjects"]] == ["NUR-GUJ"]
+
+
+def test_extra_subject_targeting_an_undeclared_grade_is_rejected():
+    """A typo in extra_subjects[].grades must not silently originate an
+    offering for a grade that was never declared in this config's grades."""
+    from modules.school_setup.onboarding_service import (
+        DerivationError,
+        derive_config,
+    )
+
+    cfg = _config(
+        extra_subjects=[
+            {
+                "code": "ROBO",
+                "name": "Robotics",
+                "grades": ["99"],
+                "programme": "GSEB-GUJ",
+            }
+        ]
+    )
+    with pytest.raises(DerivationError) as exc:
+        derive_config(cfg, resolver=_fake_resolver)
+    assert "ROBO" in str(exc.value)
+    assert "99" in str(exc.value)
+
+
+def test_extra_subject_collision_still_rejected_even_when_originating_an_offering():
+    """Regression guard: letting extra_subjects originate a new offering must
+    not loosen the code-collision check. A school cannot smuggle in a
+    redefinition of a board subject via a grade the template does not cover."""
+    from modules.school_setup.onboarding_service import (
+        DerivationError,
+        derive_config,
+    )
+
+    cfg = _config(
+        grades=[{"name": "Nursery", "sequence": 1}, {"name": "1", "sequence": 2}],
+        extra_subjects=[
+            {
+                "code": "GUJ",
+                "name": "Something Else",
+                "grades": ["Nursery"],
+                "programme": "GSEB-GUJ",
+            }
+        ],
+    )
+    with pytest.raises(DerivationError) as exc:
+        derive_config(cfg, resolver=_fake_resolver)
+    assert "GUJ" in str(exc.value)
