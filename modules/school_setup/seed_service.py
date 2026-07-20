@@ -29,6 +29,7 @@ from datetime import date, datetime
 from core.database import db
 from modules.academic_programmes.models import AcademicProgramme
 from modules.academics.academic_year.models import AcademicYear
+from modules.academics.backbone.models import AcademicTerm
 from modules.classes.models import Class, ClassSubject
 from modules.grades.models import Grade
 from modules.mediums.models import Medium
@@ -123,6 +124,44 @@ def _validate_config(config: dict) -> list[str]:
                 f"class ({cl['unit']}/{cl['programme']}/grade {cl['grade']}) has no "
                 f"subject offering for (programme {cl['programme']}, grade {cl['grade']})"
             )
+
+    # terms (optional) — must sit inside the academic year, not overlap, and
+    # carry unique names. Natural key is (academic_year, name), mirroring
+    # uq_academic_terms_year_name.
+    ay_start = ay_end = None
+    ay_cfg = config.get("academic_year") or {}
+    if ay_cfg.get("start") and ay_cfg.get("end"):
+        try:
+            ay_start = _parse_date(ay_cfg["start"])
+            ay_end = _parse_date(ay_cfg["end"])
+        except (ValueError, TypeError):
+            ay_start = ay_end = None
+
+    seen_term_names: set[str] = set()
+    parsed_terms: list[tuple[str, object, object]] = []
+    for term in config.get("terms", []):
+        name = term.get("name")
+        if name in seen_term_names:
+            errors.append(f"duplicate term name '{name}'")
+        seen_term_names.add(name)
+        try:
+            start = _parse_date(term["start"])
+            end = _parse_date(term["end"])
+        except (KeyError, ValueError, TypeError, AttributeError):
+            errors.append(f"term '{name}' has invalid start/end dates")
+            continue
+        if start > end:
+            errors.append(f"term '{name}' starts after it ends")
+            continue
+        if ay_start and (start < ay_start or end > ay_end):
+            errors.append(f"term '{name}' falls outside the academic year")
+        parsed_terms.append((name, start, end))
+
+    parsed_terms.sort(key=lambda t: t[1])
+    for earlier, later in zip(parsed_terms, parsed_terms[1:]):
+        if later[1] <= earlier[2]:
+            errors.append(f"terms '{earlier[0]}' and '{later[0]}' overlap")
+
     return errors
 
 
@@ -242,6 +281,34 @@ def _ensure_year(tenant_id, ay):
     db.session.add(year)
     db.session.flush()
     return year, True
+
+
+def _ensure_term(tenant_id, academic_year_id, row, sequence):
+    """Upsert one AcademicTerm. Natural key: (academic_year, name)."""
+    name = row["name"]
+    term = (
+        AcademicTerm.query.filter_by(
+            tenant_id=tenant_id, academic_year_id=academic_year_id, name=name
+        )
+        .filter(AcademicTerm.deleted_at.is_(None))
+        .first()
+    )
+    if term:
+        return term, False
+    term = AcademicTerm(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
+        academic_year_id=academic_year_id,
+        name=name,
+        code=row.get("code"),
+        sequence=int(row.get("sequence", sequence)),
+        start_date=_parse_date(row["start"]),
+        end_date=_parse_date(row["end"]),
+        is_active=True,
+    )
+    db.session.add(term)
+    db.session.flush()
+    return term, True
 
 
 def _ensure_subject(tenant_id, row):
@@ -424,6 +491,12 @@ def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
 
     year, _created = _ensure_year(tenant_id, config["academic_year"])
 
+    terms_created = 0
+    for index, term_row in enumerate(config.get("terms", []), start=1):
+        _term, created = _ensure_term(tenant_id, year.id, term_row, index)
+        if created:
+            terms_created += 1
+
     subj_by_code = {}
     for row in config.get("subjects", []):
         subj, _created = _ensure_subject(tenant_id, row)
@@ -483,6 +556,7 @@ def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
             "created": class_result.get("created_count", 0),
             "skipped": class_result.get("skipped_count", 0),
         },
+        "terms": {"created": terms_created},
         "class_subjects": cs_result,
         "status": status,
         "setup_complete": completed,
@@ -577,6 +651,20 @@ def preview_seed(tenant_id, config, active_subdomain=None) -> dict:
         "active": bool(ay.get("active", True)),
     }
 
+    ex_terms: set[str] = set()
+    if ay_name in ex_years:
+        ex_terms = {
+            t.name
+            for t in AcademicTerm.query.filter_by(
+                tenant_id=tenant_id, academic_year_id=ex_years[ay_name]
+            )
+            .filter(AcademicTerm.deleted_at.is_(None))
+            .all()
+        }
+    terms = _simple(
+        config.get("terms", []), "name", lambda r: r.get("name") in ex_terms
+    )
+
     # offerings -> subject_contexts (existing iff programme+grade+subject all exist
     # AND a context row already links them)
     ex_ctx = {
@@ -651,6 +739,7 @@ def preview_seed(tenant_id, config, active_subdomain=None) -> dict:
             "grades": grades,
             "subjects": subjects,
             "offerings": offerings,
+            "terms": terms,
             "classes": classes,
         },
     }
