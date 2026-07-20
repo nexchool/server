@@ -45,6 +45,11 @@ class SubjectContext(TenantBaseModel):
     )
     display_name = db.Column(db.String(160), nullable=True)
     short_code = db.Column(db.String(32), nullable=True)
+    exam_code = db.Column(
+        db.String(20),
+        nullable=True,
+        comment="Board paper number for this (programme, grade, subject).",
+    )
     type = db.Column(db.String(16), nullable=False, default="mandatory")
     role = db.Column(db.String(32), nullable=True)
     medium_id = db.Column(

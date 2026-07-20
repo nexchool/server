@@ -111,6 +111,22 @@ def test_only_std_11_12_electives_conflate_role_with_type():
     )
 
 
+def test_each_subject_code_maps_to_exactly_one_name():
+    """_ensure_subject matches on code alone and returns any existing row without
+    updating its name, so two names sharing one code means the name a tenant gets
+    depends on which board seeded first. Board-agnostic mnemonics (Task 2b) fix
+    this; this test keeps it fixed."""
+    boards = _load()["boards"]
+    names_by_code: dict[str, set[str]] = {}
+    for board_code, board in boards.items():
+        for standard, node in board["standards"].items():
+            for subjects in _iter_subject_groups(node):
+                for subject in subjects:
+                    names_by_code.setdefault(subject["code"], set()).add(subject["name"])
+    conflicts = {c: sorted(n) for c, n in names_by_code.items() if len(n) > 1}
+    assert not conflicts, f"codes with multiple names: {conflicts}"
+
+
 def test_subject_codes_are_unique_within_each_group():
     """Two entries sharing a code in one standard would silently collapse into a
     single Subject once Task 4's template resolver bridges this catalogue into

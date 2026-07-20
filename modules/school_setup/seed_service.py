@@ -296,6 +296,7 @@ def _ensure_subject_context(
         type=offered.get("type", "mandatory"),
         role=offered.get("role"),
         short_code=offered.get("short_code"),
+        exam_code=offered.get("exam_code"),
         sort_order=int(offered.get("sort_order", sort_order)),
         default_weekly_periods=int(offered.get("weekly", DEFAULT_WEEKLY_PERIODS)),
         is_active=True,
