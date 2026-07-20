@@ -3,25 +3,10 @@ truth for board curriculum. Pure-Python: reads the JSON file directly.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-SERVER_DIR = Path(__file__).resolve().parent.parent
-CATALOGUE = SERVER_DIR / "scripts" / "board_subjects.json"
+from tests.board_subjects_helpers import iter_subject_groups as _iter_subject_groups
+from tests.board_subjects_helpers import load_catalogue as _load
 
 GSEB_BOARDS = ("gseb_gujarati", "gseb_english")
-
-
-def _load() -> dict:
-    with CATALOGUE.open() as fh:
-        return json.load(fh)
-
-
-def _iter_subject_groups(node: dict) -> list[list[dict]]:
-    """Std 1-10 nodes keep a flat `subjects` list; Std 11-12 fan out per stream."""
-    if "subjects" in node:
-        return [node["subjects"]]
-    return [s["subjects"] for s in node["streams"].values()]
 
 
 def test_physical_education_present_for_std_6_to_10_in_both_gseb_boards():

@@ -5,32 +5,15 @@ carries the board's paper number and may repeat across boards without colliding.
 """
 from __future__ import annotations
 
-import json
 import re
-from pathlib import Path
 
-SERVER_DIR = Path(__file__).resolve().parent.parent
-CATALOGUE = SERVER_DIR / "scripts" / "board_subjects.json"
+from tests.board_subjects_helpers import iter_subjects as _all_subjects
 
-
-def _load() -> dict:
-    with CATALOGUE.open() as fh:
-        return json.load(fh)
-
-
-def _iter_subject_groups(node: dict) -> list[list[dict]]:
-    """Std 1-10 nodes keep a flat `subjects` list; Std 11-12 fan out per stream."""
-    if "subjects" in node:
-        return [node["subjects"]]
-    return [s["subjects"] for s in node["streams"].values()]
-
-
-def _all_subjects():
-    for board_code, board in _load()["boards"].items():
-        for standard, node in board["standards"].items():
-            for subjects in _iter_subject_groups(node):
-                for subject in subjects:
-                    yield board_code, int(standard), subject
+# Every board paper number the catalogue carried before codes became
+# board-agnostic. Asserting the exact figure is deliberate: the catalogue is
+# hand-edited static data, so a drop here is an edit that silently discarded
+# board metadata, not incidental drift.
+EXPECTED_EXAM_CODES = 160
 
 
 def test_no_subject_code_is_a_bare_number():
@@ -74,10 +57,12 @@ def test_exam_codes_are_preserved_where_the_board_issues_one():
         for b, std, s in _all_subjects()
         if s.get("exam_code")
     ]
-    assert len(with_exam) >= 40, (
-        f"expected the board paper numbers to survive the remap, found {len(with_exam)}"
+    assert len(with_exam) == EXPECTED_EXAM_CODES, (
+        f"expected {EXPECTED_EXAM_CODES} board paper numbers to survive the remap, "
+        f"found {len(with_exam)}"
     )
-    assert all(re.fullmatch(r"\d+", code) for _b, _s, _n, code in with_exam)
+    malformed = [(b, std, n, c) for b, std, n, c in with_exam if not re.fullmatch(r"\d+", c)]
+    assert not malformed, f"exam_code must be a bare board number: {malformed}"
 
 
 def test_exam_codes_may_repeat_across_boards_without_colliding():
@@ -87,8 +72,11 @@ def test_exam_codes_may_repeat_across_boards_without_colliding():
     for board, _standard, s in _all_subjects():
         if s.get("exam_code"):
             boards_by_exam.setdefault(s["exam_code"], set()).add(board)
-    assert any(len(b) > 1 for b in boards_by_exam.values()), (
-        "expected at least one exam_code shared across boards"
+    shared = {code: sorted(b) for code, b in boards_by_exam.items() if len(b) > 1}
+    assert shared, (
+        "expected at least one exam_code shared across boards — 054 is Business "
+        "Studies in CBSE and Physics in GSEB, which is exactly why it cannot be "
+        "an identity code"
     )
 
 
