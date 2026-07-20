@@ -113,7 +113,9 @@ def test_only_std_11_12_electives_conflate_role_with_type():
 
 def test_subject_codes_are_unique_within_each_group():
     """Two entries sharing a code in one standard would silently collapse into a
-    single Subject at onboarding, because _ensure_subject matches on code alone."""
+    single Subject once Task 4's template resolver bridges this catalogue into
+    seed_service._ensure_subject, which matches on code alone. Catching it here
+    keeps the source data honest in the meantime."""
     boards = _load()["boards"]
     for board_code, board in boards.items():
         for standard, node in board["standards"].items():
