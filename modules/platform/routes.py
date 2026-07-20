@@ -10,6 +10,7 @@ import logging
 from flask import request, g
 
 from modules.platform import platform_bp
+from core.database import db
 from core.decorators import auth_required, platform_admin_required
 from core.extensions import limiter
 from shared.helpers import success_response, error_response, not_found_response, validation_error_response
@@ -790,6 +791,73 @@ def platform_seed_apply(tenant_id):
         ),
         status_code=201,
     )
+
+
+@platform_bp.route("/tenants/<tenant_id>/onboarding-draft", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_get_onboarding_draft(tenant_id):
+    """GET the in-progress onboarding config, or an empty draft if none exists."""
+    from modules.school_setup.models import TenantOnboardingDraft
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    draft = TenantOnboardingDraft.query.filter_by(tenant_id=tenant.id).first()
+    return success_response(
+        data={
+            "config": draft.config if draft else None,
+            "updated_at": draft.updated_at.isoformat() if draft else None,
+        }
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/onboarding-draft", methods=["PUT"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_put_onboarding_draft(tenant_id):
+    """Upsert the in-progress onboarding config. Autosaved by the panel form."""
+    from modules.school_setup.models import TenantOnboardingDraft
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    payload = request.get_json(silent=True) or {}
+    config = payload.get("config")
+    if not isinstance(config, dict):
+        return error_response(
+            "ValidationError", "config object is required in the JSON body", 400
+        )
+
+    draft = TenantOnboardingDraft.query.filter_by(tenant_id=tenant.id).first()
+    if draft is None:
+        draft = TenantOnboardingDraft(tenant_id=tenant.id)
+        db.session.add(draft)
+    draft.config = config
+    draft.updated_by = g.current_user.id
+    db.session.commit()
+    return success_response(data={"updated_at": draft.updated_at.isoformat()})
+
+
+@platform_bp.route("/tenants/<tenant_id>/onboarding-draft", methods=["DELETE"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_delete_onboarding_draft(tenant_id):
+    """Discard the draft — called after a successful apply, or on operator reset."""
+    from modules.school_setup.models import TenantOnboardingDraft
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    TenantOnboardingDraft.query.filter_by(tenant_id=tenant.id).delete()
+    db.session.commit()
+    return success_response(data={"deleted": True})
 
 
 @platform_bp.route("/tenants/<tenant_id>/login-link", methods=["POST"])
