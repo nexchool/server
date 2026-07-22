@@ -707,6 +707,96 @@ def _parse_uploaded_config():
         )
 
 
+def _parse_resolve_payload():
+    """Validate a template-resolve body, or (None, error_response).
+
+    Kept out of the route so it is testable without a request context, matching
+    _parse_uploaded_config's shape.
+    """
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        # Valid JSON (e.g. a bare list or string) is still a malformed body for
+        # this endpoint -- a client mistake is a 400, never a 500.
+        return None, error_response(
+            "ValidationError", "request body must be a JSON object", 400
+        )
+    board_code = payload.get("board_code")
+    programme_code = payload.get("programme_code")
+    grades = payload.get("grades")
+
+    if not board_code or not isinstance(board_code, str):
+        return None, error_response("ValidationError", "board_code is required", 400)
+    if not programme_code or not isinstance(programme_code, str):
+        return None, error_response(
+            "ValidationError", "programme_code is required", 400
+        )
+    if not isinstance(grades, list) or not grades:
+        return None, error_response(
+            "ValidationError", "grades must be a non-empty list of integers", 400
+        )
+    try:
+        grade_numbers = sorted({int(g) for g in grades})
+    except (TypeError, ValueError):
+        return None, error_response(
+            "ValidationError", "grades must be a non-empty list of integers", 400
+        )
+
+    return (
+        {
+            "board_code": board_code,
+            "programme_code": programme_code,
+            "grades": grade_numbers,
+            "stream": payload.get("stream"),
+        },
+        None,
+    )
+
+
+@platform_bp.route("/subject-templates", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_list_subject_templates():
+    """List the active board templates the onboarding form can start from."""
+    from modules.school_setup.template_models import SubjectTemplateGroup
+
+    groups = (
+        SubjectTemplateGroup.query.filter_by(is_active=True)
+        .order_by(SubjectTemplateGroup.name)
+        .all()
+    )
+    return success_response(data=[g.to_dict() for g in groups])
+
+
+@platform_bp.route("/subject-templates/resolve", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def platform_resolve_subject_template():
+    """Expand a board template into config-shaped subjects + offerings.
+
+    Read-only preview for the form's Subjects section. The result is never
+    stored -- derive_config re-runs it at apply time.
+    """
+    from modules.school_setup import template_service
+
+    payload, err = _parse_resolve_payload()
+    if err is not None:
+        return err
+
+    try:
+        resolved = template_service.resolve_template(
+            payload["board_code"],
+            payload["programme_code"],
+            payload["grades"],
+            stream=payload["stream"],
+        )
+    except template_service.TemplateResolutionError as e:
+        return error_response("ValidationError", str(e), 400)
+
+    return success_response(data=resolved)
+
+
 @platform_bp.route("/tenants/<tenant_id>/seed/preview", methods=["POST"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required
