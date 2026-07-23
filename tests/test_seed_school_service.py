@@ -31,6 +31,15 @@ def test_validate_config_passes_for_complete_config():
     assert _validate_config(_good_config()) == []
 
 
+def test_validate_config_does_not_require_template_board_code():
+    """Template awareness belongs in the orchestrator. _validate_config must stay
+    a pure structural check so the preview endpoint can run on any config shape."""
+    from modules.school_setup.seed_service import _validate_config
+
+    config = _good_config()
+    assert _validate_config(config) == []
+
+
 def test_validate_config_flags_class_without_offering():
     from modules.school_setup.seed_service import _validate_config
 

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from app import create_app
 from core.models import Tenant
+from modules.school_setup import onboarding_service
 from modules.school_setup.seed_service import SeedValidationError, seed_school
 
 
@@ -94,6 +95,11 @@ def main() -> int:
     app = create_app()
     with app.app_context():
         tenant = _resolve_tenant(subdomain)
+        try:
+            config = onboarding_service.derive_config(config)
+        except onboarding_service.DerivationError as exc:
+            print(f"Derivation failed: {exc}")
+            return 1
         try:
             result = seed_school(
                 tenant.id,

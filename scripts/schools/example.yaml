@@ -5,6 +5,11 @@
 # In-app Onboarding upload: this applies to the school you are operating in —
 # `tenant.subdomain` is only a label (a mismatch is shown in the preview).
 # CLI (scripts/seed_school.py): `tenant.subdomain` selects the target tenant.
+#
+# Subjects and offerings are DERIVED from each programme's `template_board_code`
+# (subject_template_groups) and must NOT be declared here -- the seed script
+# rejects any config that carries a `subjects:` or `offerings:` block. Valid
+# board codes: gseb_gujarati, gseb_english, cbse.
 tenant:
   subdomain: your-school-subdomain   # CLI target; ignored by the in-app upload
 
@@ -18,46 +23,12 @@ units:
   - { code: MN, name: "Main Campus" }
 
 programmes:
-  - { code: GSEB-GUJ, name: "GSEB Gujarati", board: GSEB, medium: Gujarati }
-  - { code: CBSE-ENG, name: "CBSE English", board: CBSE, medium: English }
+  - { code: GSEB-GUJ, name: "GSEB Gujarati", board: GSEB, medium: Gujarati, template_board_code: gseb_gujarati }
+  - { code: CBSE-ENG, name: "CBSE English", board: CBSE, medium: English, template_board_code: cbse }
 
 grades:
   - { name: "1", sequence: 1 }
   - { name: "2", sequence: 2 }
-
-subjects:
-  - { code: MATH, name: Mathematics }
-  - { code: GUJ,  name: Gujarati }
-  - { code: ENG,  name: English }
-  - { code: EVS,  name: "Environmental Studies" }
-
-# SubjectContext: which subjects each (programme, grade) offers + weekly periods.
-# Every (programme, grade) used in `classes` MUST have an offering here.
-offerings:
-  - programme: GSEB-GUJ
-    grade: "1"
-    subjects:
-      - { code: MATH, weekly: 6, type: mandatory }
-      - { code: GUJ,  weekly: 6, type: mandatory }
-      - { code: EVS,  weekly: 4, type: mandatory }
-  - programme: GSEB-GUJ
-    grade: "2"
-    subjects:
-      - { code: MATH, weekly: 6, type: mandatory }
-      - { code: GUJ,  weekly: 6, type: mandatory }
-      - { code: EVS,  weekly: 4, type: mandatory }
-  - programme: CBSE-ENG
-    grade: "1"
-    subjects:
-      - { code: MATH, weekly: 6, type: mandatory }
-      - { code: ENG,  weekly: 6, type: mandatory }
-      - { code: EVS,  weekly: 4, type: mandatory }
-  - programme: CBSE-ENG
-    grade: "2"
-    subjects:
-      - { code: MATH, weekly: 6, type: mandatory }
-      - { code: ENG,  weekly: 6, type: mandatory }
-      - { code: EVS,  weekly: 4, type: mandatory }
 
 # Classes -> bulk_generate_classes cells. Grade 11-12 streams via section
 # prefix: "Sci-A", "Com-B", "Arts-A", "Voc-A".

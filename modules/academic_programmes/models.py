@@ -56,6 +56,12 @@ class AcademicProgramme(TenantBaseModel):
         index=True,
     )
     code = db.Column(db.String(32), nullable=False, index=True)
+    template_board_code = db.Column(
+        db.String(30),
+        nullable=True,
+        comment="subject_template_groups.board_code this programme's curriculum "
+        "derives from. Null = no template source recorded.",
+    )
 
     status = db.Column(
         db.String(20),

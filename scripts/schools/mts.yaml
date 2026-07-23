@@ -5,29 +5,18 @@
 #         exec api python scripts/seed_school.py scripts/schools/mts.yaml --dry-run
 #       (drop --dry-run to apply)
 #
-# SUBJECT CODES
-#   "code" is the unique key in the subjects table.
-#   - Codes marked  ⚠GSEB  are GSEB SSC (Std 9–10) exam codes found via web
-#     research and are NOT verified against the official GSEB PDF. CONFIRM each
-#     against the school's official list and correct before relying on them.
-#       source: https://www.shiksha.com/boards/gseb-ssc-board-syllabus
-#               https://school.careers360.com/boards/gseb/gseb-ssc-time-table
-#   - Other codes (HIN, SANS, EVS, COMP, ART, PE, ACT) are internal — GSEB does
-#     not publish board exam codes for pre-SSC / non-exam subjects.
-#   All codes are quoted so YAML keeps leading zeros / treats them as strings.
+# Subjects and offerings for Std 1-10 are DERIVED from the programme's
+# `template_board_code` (subject_template_groups) and must NOT be declared
+# here -- the seed script rejects any config that carries a `subjects:` or
+# `offerings:` block.
 #
-# ROLES (real-board model — SubjectContext.role)
-#   first_language=Gujarati · second_language=English · third_language=Hindi/Sanskrit
-#   core=Maths/Science/Social Science/EVS · co_curricular=Computer/Art/PE/Activity
-#   Declared ONCE per subject below; every offering inherits it. Override per
-#   (programme, grade) by adding role/short_code/type on an offering line.
-#
-# ASSUMPTIONS (adjust to MTS's actual scheme):
-#   - English from Nursery (GSEB mandates English from Std 1; many schools earlier).
-#   - EVS (Paryavaran) in Std 1–5; splits into Science + Social Science from Std 6.
-#   - Hindi from Std 5; Sanskrit (third language) Std 6–8.
-#   - Std 9–10 third language = Hindi; Mathematics uses the SSC "Standard" code
-#     (Std 10 Standard vs Basic Maths can be modelled later as elective variants).
+# PRE-PRIMARY (Nursery/LKG/UKG) via extra_subjects
+#   GSEB publishes no syllabus below Std 1 -- there is no board template to
+#   derive from, so MTS's own pre-primary curriculum is expressed below as
+#   extra_subjects. GUJ/MATH/ENG/PE reuse the exact codes+names the
+#   gseb_gujarati template already uses at Std 1+ (same subject, extended to
+#   more grades, not a new one); ART/ACT are school-defined co-curricular
+#   subjects the template has no code for at all.
 # =============================================================================
 
 tenant:
@@ -43,7 +32,7 @@ units:
   - { code: "MTS", name: "Mother Teresa School" }
 
 programmes:
-  - { code: "GSEB-GUJ", name: "GSEB Gujarati", board: "GSEB", medium: "Gujarati" }
+  - { code: "GSEB-GUJ", name: "GSEB Gujarati", board: "GSEB", medium: "Gujarati", template_board_code: "gseb_gujarati" }
 
 grades:
   - { name: "Nursery", sequence: 1 }
@@ -60,159 +49,22 @@ grades:
   - { name: "9",       sequence: 12 }
   - { name: "10",      sequence: 13 }
 
-# Master subject list. role + short_code declared once; offerings inherit them.
-subjects:
-  - { code: "01",   name: "Gujarati (First Language)", description: "ગુજરાતી (પ્રથમ ભાષા)",  subject_type: language,      role: first_language,  short_code: "GUJ" }   # ⚠GSEB SSC
-  - { code: "16",   name: "English (Second Language)", description: "અંગ્રેજી (દ્વિતીય ભાષા)", subject_type: language,      role: second_language, short_code: "ENG" }   # ⚠GSEB SSC
-  - { code: "HIN",  name: "Hindi (Third Language)",    description: "હિન્દી (તૃતીય ભાષા)",     subject_type: language,      role: third_language,  short_code: "HIN" }
-  - { code: "SANS", name: "Sanskrit (Third Language)", description: "સંસ્કૃત",                 subject_type: language,      role: third_language,  short_code: "SAN" }
-  - { code: "12",   name: "Mathematics",               description: "ગણિત",                    subject_type: core,          role: core,            short_code: "MATH" }  # ⚠GSEB SSC (Standard)
-  - { code: "11",   name: "Science & Technology",      description: "વિજ્ઞાન અને ટેકનોલોજી",  subject_type: core,          role: core,            short_code: "SCI" }   # ⚠GSEB SSC
-  - { code: "10",   name: "Social Science",            description: "સામાજિક વિજ્ઞાન",         subject_type: core,          role: core,            short_code: "SST" }   # ⚠GSEB SSC
-  - { code: "EVS",  name: "Environmental Studies",     description: "પર્યાવરણ",                subject_type: core,          role: core,            short_code: "EVS" }
-  - { code: "COMP", name: "Computer",                  description: "કમ્પ્યુટર",               subject_type: co_curricular, role: co_curricular,   short_code: "COMP" }
-  - { code: "ART",  name: "Drawing & Art",             description: "ચિત્રકામ",                subject_type: co_curricular, role: co_curricular,   short_code: "ART" }
-  - { code: "PE",   name: "Physical Education",        description: "શારીરિક શિક્ષણ",          subject_type: co_curricular, role: co_curricular,   short_code: "PE" }
-  - { code: "ACT",  name: "Activity & Readiness",      description: "પ્રવૃત્તિ",               subject_type: co_curricular, role: co_curricular,   short_code: "ACT" }
-
-# Which subjects each (programme, grade) offers + weekly periods.
-# List order drives sort_order; role/short_code inherited from subjects[] above.
-offerings:
-  - programme: "GSEB-GUJ"
-    grade: "Nursery"
-    subjects:
-      - { code: "01",  weekly: 6 }
-      - { code: "12",  weekly: 5 }
-      - { code: "16",  weekly: 3 }
-      - { code: "ACT", weekly: 5 }
-      - { code: "ART", weekly: 3 }
-      - { code: "PE",  weekly: 3 }
-  - programme: "GSEB-GUJ"
-    grade: "LKG"
-    subjects:
-      - { code: "01",  weekly: 6 }
-      - { code: "12",  weekly: 5 }
-      - { code: "16",  weekly: 4 }
-      - { code: "ACT", weekly: 5 }
-      - { code: "ART", weekly: 3 }
-      - { code: "PE",  weekly: 3 }
-  - programme: "GSEB-GUJ"
-    grade: "UKG"
-    subjects:
-      - { code: "01",  weekly: 6 }
-      - { code: "12",  weekly: 6 }
-      - { code: "16",  weekly: 4 }
-      - { code: "ACT", weekly: 4 }
-      - { code: "ART", weekly: 3 }
-      - { code: "PE",  weekly: 3 }
-  - programme: "GSEB-GUJ"
-    grade: "1"
-    subjects:
-      - { code: "01",   weekly: 7 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "EVS",  weekly: 4 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "ART",  weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "2"
-    subjects:
-      - { code: "01",   weekly: 7 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "EVS",  weekly: 4 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "ART",  weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "3"
-    subjects:
-      - { code: "01",   weekly: 7 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "EVS",  weekly: 5 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "ART",  weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "4"
-    subjects:
-      - { code: "01",   weekly: 7 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "EVS",  weekly: 5 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "ART",  weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "5"
-    subjects:
-      - { code: "01",   weekly: 6 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "EVS",  weekly: 5 }
-      - { code: "HIN",  weekly: 4 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "ART",  weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "6"
-    subjects:
-      - { code: "01",   weekly: 6 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "11",   weekly: 5 }
-      - { code: "10",   weekly: 5 }
-      - { code: "HIN",  weekly: 4 }
-      - { code: "SANS", weekly: 3 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "7"
-    subjects:
-      - { code: "01",   weekly: 6 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "11",   weekly: 5 }
-      - { code: "10",   weekly: 5 }
-      - { code: "HIN",  weekly: 4 }
-      - { code: "SANS", weekly: 3 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "8"
-    subjects:
-      - { code: "01",   weekly: 6 }
-      - { code: "12",   weekly: 6 }
-      - { code: "16",   weekly: 5 }
-      - { code: "11",   weekly: 5 }
-      - { code: "10",   weekly: 5 }
-      - { code: "HIN",  weekly: 4 }
-      - { code: "SANS", weekly: 3 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "9"
-    subjects:
-      - { code: "01",   weekly: 6 }
-      - { code: "16",   weekly: 6 }
-      - { code: "12",   weekly: 6 }
-      - { code: "11",   weekly: 6 }
-      - { code: "10",   weekly: 6 }
-      - { code: "HIN",  weekly: 4 }
-      - { code: "COMP", weekly: 2 }
-      - { code: "PE",   weekly: 2 }
-  - programme: "GSEB-GUJ"
-    grade: "10"
-    subjects:
-      - { code: "01",  weekly: 6 }
-      - { code: "16",  weekly: 6 }
-      - { code: "12",  weekly: 6 }
-      - { code: "11",  weekly: 6 }
-      - { code: "10",  weekly: 6 }
-      - { code: "HIN", weekly: 4 }
-      - { code: "PE",  weekly: 2 }
+# Pre-primary curriculum. weekly periods carried over unchanged from what MTS
+# already taught; codes/names remapped onto the catalogue (01->GUJ,
+# 12->MATH, 16->ENG) so GUJ/MATH/ENG extend the same template subject rather
+# than creating a second row for it (same code + same name = extension, not
+# a redefinition). ART/ACT keep MTS's own names -- the template has no such
+# codes for this board at any grade.
+extra_subjects:
+  - { code: "GUJ",  name: "Gujarati",               programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 6, type: mandatory }
+  - { code: "MATH", name: "Mathematics",             programme: "GSEB-GUJ", grades: ["Nursery", "LKG"],        weekly: 5, type: mandatory }
+  - { code: "MATH", name: "Mathematics",             programme: "GSEB-GUJ", grades: ["UKG"],                   weekly: 6, type: mandatory }
+  - { code: "ENG",  name: "English",                 programme: "GSEB-GUJ", grades: ["Nursery"],               weekly: 3, type: mandatory }
+  - { code: "ENG",  name: "English",                 programme: "GSEB-GUJ", grades: ["LKG", "UKG"],            weekly: 4, type: mandatory }
+  - { code: "ACT",  name: "Activity & Readiness",    programme: "GSEB-GUJ", grades: ["Nursery", "LKG"],        weekly: 5, type: mandatory, role: co_curricular }
+  - { code: "ACT",  name: "Activity & Readiness",    programme: "GSEB-GUJ", grades: ["UKG"],                   weekly: 4, type: mandatory, role: co_curricular }
+  - { code: "ART",  name: "Drawing & Art",           programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"],  weekly: 3, type: mandatory, role: co_curricular }
+  - { code: "PE",   name: "Physical Education",      programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 3, type: mandatory }
 
 # One class per grade, sections A and B.
 classes:
