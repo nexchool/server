@@ -78,6 +78,22 @@ def db_session(flask_app, _db_engine):
     Yields the global `db.session` proxy; this works because we replace
     its bind with our transactional connection and override the session
     factory for the duration of the test. Standard pattern for Flask-SQLAlchemy.
+
+    Two things are required together, or writes leak into the real dev
+    database (this is how thousands of "Test School" tenants ended up in
+    local Postgres):
+
+    1. `flask_sqlalchemy.session.Session.get_bind()` always prefers
+       `db.engines[None]` over any `bind=` passed to `session.configure()` —
+       it never even reaches SQLAlchemy's own bind resolution. So merely
+       configuring the session's bind is silently ignored for ordinary
+       queries; we also have to swap the registered engine for our
+       transactional connection so `get_bind()` actually returns it.
+    2. `join_transaction_mode="create_savepoint"` — route handlers exercised
+       via `flask_app.test_client()` call `db.session.commit()` for real.
+       Without this, that commit ends our outer transaction early and the
+       row is permanently written instead of rolling back on teardown. With
+       it, an inner commit only releases a SAVEPOINT.
     """
     from core.database import db
 
@@ -85,11 +101,15 @@ def db_session(flask_app, _db_engine):
         connection = _db_engine.connect()
         outer_transaction = connection.begin()
 
+        engines = db._app_engines[flask_app]
+        original_engine = engines[None]
+        engines[None] = connection
+
         # Bind the session to the test connection so all queries see
         # the in-progress (uncommitted) state.
         original_bind = db.session.get_bind()
         db.session.remove()
-        db.session.configure(bind=connection)
+        db.session.configure(bind=connection, join_transaction_mode="create_savepoint")
 
         try:
             yield db.session
@@ -98,6 +118,7 @@ def db_session(flask_app, _db_engine):
             db.session.close()
             outer_transaction.rollback()
             connection.close()
+            engines[None] = original_engine
             # Restore the original bind so other tests / fixtures aren't
             # left with a closed connection.
             db.session.configure(bind=original_bind)
