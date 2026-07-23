@@ -46,7 +46,7 @@ def test_cbse_template_loaded_from_json():
     grade_1 = next(row for row in cbse_items if row["grade"] == 1 and row["stream"] is None)
     subject_names = {s["subject_name"] for s in grade_1["subjects"]}
     assert "English" in subject_names
-    assert "The World Around Us" in subject_names
+    assert "Environmental Studies" in subject_names
 
 
 def test_language_scope_is_gujarat_only():

@@ -3,6 +3,9 @@
 from datetime import datetime, timezone
 import uuid
 
+from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
+
 from core.database import db
 
 
@@ -57,4 +60,41 @@ class DataPurgeLog(db.Model):
         db.DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TenantOnboardingDraft(db.Model):
+    """In-progress onboarding config for one tenant, autosaved by the panel form.
+
+    Deliberately not a TenantBaseModel: platform routes run without g.tenant_id,
+    so the tenant-scoping listener must not touch these queries. Same reasoning
+    as SetupModuleEvent above.
+
+    Server-side rather than browser storage so that a draft survives a switched
+    machine, and so an operator's actual input is inspectable when they report a
+    problem.
+    """
+
+    __tablename__ = "tenant_onboarding_drafts"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id = db.Column(
+        db.String(36),
+        db.ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    config = db.Column(JSONB, nullable=False)
+    updated_by = db.Column(
+        db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+        onupdate=datetime.utcnow,
     )

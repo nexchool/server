@@ -49,6 +49,7 @@ def _row(entry: dict, default_medium: str | None) -> dict:
     return {
         "subject_name": _truncate(entry.get("name", "Unknown"), _NAME_MAX),
         "subject_code": _truncate(entry.get("code"), _CODE_MAX),
+        "exam_code": _truncate(entry.get("exam_code"), _CODE_MAX),
         "periods_per_week": entry.get("default_periods", 5),
         "is_elective": not entry.get("compulsory", True)
             or "elective" in (entry.get("role") or "").lower(),

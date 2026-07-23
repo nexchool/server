@@ -66,6 +66,11 @@ class SubjectTemplateItem(db.Model):
     )
     subject_name = db.Column(db.String(100), nullable=False)
     subject_code = db.Column(db.String(20), nullable=True)
+    exam_code = db.Column(
+        db.String(20),
+        nullable=True,
+        comment="Board paper number (GSEB SSC/HSC, CBSE). Metadata, never identity.",
+    )
     periods_per_week = db.Column(db.Integer, nullable=True, default=5)
     is_elective = db.Column(db.Boolean, nullable=False, default=False)
     role = db.Column(
@@ -106,6 +111,7 @@ class SubjectTemplateItem(db.Model):
             "stream": self.stream,
             "subject_name": self.subject_name,
             "subject_code": self.subject_code,
+            "exam_code": self.exam_code,
             "periods_per_week": self.periods_per_week,
             "is_elective": self.is_elective,
             "role": self.role,
