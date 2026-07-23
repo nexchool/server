@@ -183,7 +183,7 @@ def test_classes_list_restricted_sees_only_unit_a(flask_app, db_session, tenant,
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = restricted_user
-        rows = class_services.get_all_classes()
+        rows = class_services.get_all_classes()["items"]
         ids = {c["id"] for c in rows}
         assert class_a.id in ids
         assert class_b.id not in ids
@@ -194,7 +194,7 @@ def test_classes_list_unrestricted_sees_all(flask_app, db_session, tenant, class
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = unrestricted_user
-        ids = {c["id"] for c in class_services.get_all_classes()}
+        ids = {c["id"] for c in class_services.get_all_classes()["items"]}
         assert class_a.id in ids
         assert class_b.id in ids
 
@@ -532,7 +532,7 @@ def test_unrestricted_counts_unchanged(flask_app, db_session, tenant, classes, s
         g.tenant_id = tenant.id
         g.current_user = unrestricted_user
 
-        class_rows = class_services.get_all_classes()
+        class_rows = class_services.get_all_classes()["items"]
         student_rows = student_services.list_students()["items"]
         unit_rows = su_services.list_school_units(tenant.id)
 

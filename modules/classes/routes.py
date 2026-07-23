@@ -1,5 +1,6 @@
 import logging
-from flask import g, request
+from datetime import datetime
+from flask import g, request, Response
 from modules.classes import classes_bp
 from core.decorators import (
     require_permission,
@@ -36,30 +37,163 @@ PERM_DELETE = 'class.delete'
 PERM_CS_MANAGE = 'class_subject.manage'
 
 
+def _parse_int_param(raw, default=None, minimum=None, maximum=None):
+    if raw is None or raw == '':
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and val < minimum:
+        val = minimum
+    if maximum is not None and val > maximum:
+        val = maximum
+    return val
+
+
+def _list_filters_from_request():
+    """Shared filter/search/sort parsing for the list and export endpoints.
+
+    Returns (kwargs, error_response). `error_response` is non-None when a param
+    failed validation and the caller should return it as-is.
+    """
+    search_field = request.args.get('search_field', 'all')
+    if search_field not in services.SEARCH_FIELDS:
+        return None, validation_error_response({
+            'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
+        })
+
+    sort_by = request.args.get('sort_by', 'grade')
+    if sort_by not in services.SORTABLE_COLUMNS:
+        return None, validation_error_response({
+            'sort_by': f"must be one of: {', '.join(sorted(services.SORTABLE_COLUMNS))}"
+        })
+
+    sort_dir = request.args.get('sort_dir', 'asc')
+    if sort_dir not in ('asc', 'desc'):
+        return None, validation_error_response({'sort_dir': "must be 'asc' or 'desc'"})
+
+    school_unit_id = request.args.get('school_unit_id') or None
+    # Branch scope: a restricted sub-admin may not query a unit outside their
+    # branches (403). No-op for unrestricted users. The service applies the
+    # branch backstop filter regardless of this param.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
+
+    return dict(
+        academic_year_id=request.args.get('academic_year_id') or None,
+        school_unit_id=school_unit_id,
+        programme_id=request.args.get('programme_id') or None,
+        grade_id=request.args.get('grade_id') or None,
+        search=request.args.get('search') or None,
+        search_field=search_field,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    ), None
+
+
 @classes_bp.route('/', methods=['GET'])
 @tenant_required
 @auth_required
 @require_feature('class_management')
 @require_permission(PERM_READ)
 def get_classes():
-    """List classes with optional structural filters.
+    """Filterable, searchable, sortable, paginated list of classes.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
+    Omitting `page`/`per_page` returns every matching row (total_pages = 1),
+    which is what the structured class pickers rely on.
 
     Query params:
-        academic_year_id, school_unit_id, programme_id, grade_id
+        academic_year_id, school_unit_id, programme_id, grade_id,
+        search, search_field, sort_by, sort_dir, page, per_page
     """
-    school_unit_id = request.args.get('school_unit_id')
-    # Branch scope: a restricted sub-admin may not query a unit outside their
-    # branches (403). No-op for unrestricted users. The service applies the
-    # branch backstop filter regardless of this param.
+    filters, err = _list_filters_from_request()
+    if err:
+        return err
+
+    result = services.get_all_classes(
+        page=_parse_int_param(request.args.get('page'), default=None, minimum=1),
+        per_page=_parse_int_param(
+            request.args.get('per_page'), default=None, minimum=1,
+            maximum=services.MAX_PER_PAGE,
+        ),
+        **filters,
+    )
+    return success_response(data=result)
+
+
+@classes_bp.route('/stats', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('class_management')
+@require_permission(PERM_READ)
+def get_classes_stats():
+    """Aggregate totals for the classes overview header.
+
+    Honours the same structural filters as the list endpoint so the header
+    always describes the list beneath it.
+
+    Query params: academic_year_id, school_unit_id, programme_id, grade_id
+    """
+    school_unit_id = request.args.get('school_unit_id') or None
     if school_unit_id:
         assert_unit_allowed(school_unit_id)
-    classes = services.get_all_classes(
-        academic_year_id=request.args.get('academic_year_id'),
+
+    stats = services.get_classes_stats(
+        academic_year_id=request.args.get('academic_year_id') or None,
         school_unit_id=school_unit_id,
-        programme_id=request.args.get('programme_id'),
-        grade_id=request.args.get('grade_id'),
+        programme_id=request.args.get('programme_id') or None,
+        grade_id=request.args.get('grade_id') or None,
     )
-    return success_response(data=classes)
+    return success_response(data=stats)
+
+
+@classes_bp.route('/export', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('class_management')
+@require_permission(PERM_READ)
+def export_classes():
+    """Export the filtered class list as CSV.
+
+    Accepts the same filter/search/sort params as the list endpoint;
+    pagination is ignored so every matching row is exported.
+    """
+    import csv
+    from io import StringIO
+
+    filters, err = _list_filters_from_request()
+    if err:
+        return err
+
+    result = services.get_all_classes(page=None, per_page=None, **filters)
+
+    columns = [
+        ('grade_name', 'Grade'),
+        ('section', 'Section'),
+        ('programme_name', 'Programme'),
+        ('school_unit_name', 'Branch'),
+        ('medium_name', 'Medium'),
+        ('stream', 'Stream'),
+        ('teacher_name', 'Class Teacher'),
+        ('student_count', 'Students'),
+        ('teacher_count', 'Teachers'),
+        ('academic_year', 'Academic Year'),
+        ('status', 'Status'),
+    ]
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([label for _, label in columns])
+    for item in result.get('items', []):
+        writer.writerow(['' if item.get(k) is None else item.get(k) for k, _ in columns])
+
+    filename = f"classes_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    return Response(
+        buf.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 @classes_bp.route('/', methods=['POST'])
