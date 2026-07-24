@@ -30,6 +30,10 @@ from shared.helpers import (
 
 from modules.academics import academics_bp
 from modules.academics.backbone.models import AcademicTerm
+from modules.academics.calendar.activity import (
+    audit_calendar_action,
+    notify_calendar_change,
+)
 
 
 PERM_READ = "academic_term.read"
@@ -180,6 +184,12 @@ def create_academic_term():
             is_active=bool(data.get("is_active", True)),
         )
         db.session.add(term)
+        db.session.flush()
+        audit_calendar_action(
+            "semester_created", "academic_term", term.id,
+            f"Semester '{term.name}' added ({term.start_date} – {term.end_date})",
+            g.tenant_id,
+        )
         db.session.commit()
         return success_response(
             data=_term_to_dict(term),
@@ -277,6 +287,17 @@ def update_academic_term(term_id):
         term.is_active = bool(data["is_active"])
 
     try:
+        audit_calendar_action(
+            "semester_updated", "academic_term", term.id,
+            f"Semester '{term.name}' updated ({term.start_date} – {term.end_date})",
+            g.tenant_id,
+        )
+        notify_calendar_change(
+            "Semester updated",
+            f"{term.name}: {term.start_date} – {term.end_date}",
+            g.tenant_id,
+            {"academic_term_id": term.id, "academic_year_id": term.academic_year_id},
+        )
         db.session.commit()
         return success_response(
             data=_term_to_dict(term),
@@ -322,6 +343,11 @@ def delete_academic_term(term_id):
         # `deleted_at` partial-unique pattern used elsewhere in academics).
         term.deleted_at = db.func.now()
         term.is_active = False
+        audit_calendar_action(
+            "semester_deleted", "academic_term", term.id,
+            f"Semester '{term.name}' removed",
+            g.tenant_id,
+        )
         db.session.commit()
         return success_response(message="Term deleted successfully")
     except Exception as e:

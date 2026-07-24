@@ -37,6 +37,7 @@ from shared.helpers import (
 )
 
 from . import services
+from .activity import resolve_user_names
 from .services import CalendarValidationError
 
 PERM_READ = "academic_calendar.read"
@@ -170,7 +171,7 @@ def list_exam_windows():
     if err:
         return err
     windows = services.list_exam_windows(academic_year_id)
-    return success_response(data=[w.to_dict() for w in windows])
+    return success_response(data=resolve_user_names([w.to_dict() for w in windows]))
 
 
 @academics_bp.route("/calendar/exam-windows", methods=["POST"], strict_slashes=False)
@@ -234,7 +235,7 @@ def list_school_events():
     if err:
         return err
     events = services.list_school_events(academic_year_id)
-    return success_response(data=[e.to_dict() for e in events])
+    return success_response(data=resolve_user_names([e.to_dict() for e in events]))
 
 
 @academics_bp.route("/calendar/events", methods=["POST"], strict_slashes=False)

@@ -383,6 +383,90 @@ def test_publish_materializes_nth_saturdays_and_snapshots(db_session, tenant, ye
 
 
 # ---------------------------------------------------------------------------
+# Dashboard additions: duplicates, semester markers, per-type stats, audit
+# ---------------------------------------------------------------------------
+
+def test_duplicate_event_name_on_same_date_rejected(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.services import CalendarValidationError
+
+    services.create_school_event(
+        year.id, {"name": "Sports Day", "event_date": "2026-06-19"}
+    )
+    with pytest.raises(CalendarValidationError):
+        services.create_school_event(
+            year.id, {"name": "sports day", "event_date": "2026-06-19"}
+        )
+    # Same name on a different date is fine.
+    services.create_school_event(
+        year.id, {"name": "Sports Day", "event_date": "2026-06-20"}
+    )
+
+
+def test_days_feed_semester_markers(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    cal = services.get_or_create_calendar(year.id)
+    _add_term(db_session, tenant, year, "Term 1", "2026-06-01", "2026-06-15")
+
+    feed = {d["date"]: d for d in services.get_days_feed(cal)}
+    assert feed["2026-06-01"]["semester_start"] == "Term 1"
+    assert feed["2026-06-15"]["semester_end"] == "Term 1"
+    assert feed["2026-06-10"]["semester_start"] is None
+
+
+def test_summary_events_by_type(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    cal = services.get_or_create_calendar(year.id)
+    services.create_school_event(
+        year.id, {"name": "Staff Training", "event_type": "training",
+                  "event_date": "2026-06-19"}
+    )
+    services.create_school_event(
+        year.id, {"name": "PTM", "event_type": "meeting", "event_date": "2026-06-20"}
+    )
+    summary = services.compute_summary(cal)
+    assert summary["events_by_type"] == {"training": 1, "meeting": 1}
+
+
+def test_event_mutations_write_audit_log(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.audit.models import TenantAuditLog
+
+    event = services.create_school_event(
+        year.id, {"name": "Annual Function", "event_date": "2026-06-19"}
+    )
+    services.update_school_event(event.id, {"event_date": "2026-06-20"})
+    services.delete_school_event(event.id)
+
+    actions = [
+        row.action
+        for row in TenantAuditLog.query.filter(
+            TenantAuditLog.tenant_id == tenant.id,
+            TenantAuditLog.resource_id == event.id,
+        ).all()
+    ]
+    assert actions == [
+        "school_event_created", "school_event_updated", "school_event_deleted",
+    ]
+
+
+def test_holiday_create_records_creator(db_session, tenant, year, request_ctx):
+    from modules.holidays import services as holiday_services
+
+    result = holiday_services.create_holiday(
+        {"name": "Founders Day", "holiday_type": "public",
+         "start_date": "2026-06-10", "academic_year_id": year.id},
+        tenant.id,
+    )
+    assert result["success"] is True
+    # No authenticated user in this context — created_by stays null but the
+    # field is present in the payload for the dashboard.
+    assert "created_by" in result["data"]
+
+
+# ---------------------------------------------------------------------------
 # Tenant isolation
 # ---------------------------------------------------------------------------
 

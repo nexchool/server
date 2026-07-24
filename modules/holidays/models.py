@@ -58,6 +58,10 @@ class Holiday(TenantBaseModel):
         server_default="entire_school",
     )
 
+    # Audit snapshots (user ids); resolved to names by the API layer.
+    created_by = db.Column(db.String(36), nullable=True)
+    updated_by = db.Column(db.String(36), nullable=True)
+
     # Date range fields (both nullable to allow pure recurring with no fixed date)
     start_date = db.Column(db.Date, nullable=True, index=True)
     end_date = db.Column(db.Date, nullable=True, index=True)
@@ -149,6 +153,9 @@ class Holiday(TenantBaseModel):
             "recurring_day_name": self.recurring_day_name,
             # Smart flags
             "falls_on_sunday": self.falls_on_sunday,
+            # Audit
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
             # Relations
             "academic_year_id": self.academic_year_id,
             "academic_year_name": (

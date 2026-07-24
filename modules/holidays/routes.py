@@ -70,7 +70,9 @@ def list_holidays():
         offset=offset,
     )
     if result["success"]:
-        return success_response(data=result["data"])
+        from modules.academics.calendar.activity import resolve_user_names
+
+        return success_response(data=resolve_user_names(result["data"]))
     return error_response("FetchError", result["error"], 400)
 
 

@@ -16,6 +16,26 @@ from core.database import db
 from .models import Holiday, HOLIDAY_TYPES, HOLIDAY_APPLIES_TO, DAY_NAMES
 
 
+def _activity():
+    """Calendar activity hooks, imported lazily: the academics package pulls
+    in blueprints that transitively import this module at startup."""
+    from modules.academics.calendar import activity
+
+    return activity
+
+
+def _holiday_label(h: Holiday) -> str:
+    return "Vacation" if h.holiday_type == "vacation" else "Holiday"
+
+
+def _holiday_dates(h: Holiday) -> str:
+    if h.is_recurring:
+        return f"every {h.recurring_day_name}"
+    if h.end_date and h.end_date != h.start_date:
+        return f"{h.start_date} – {h.end_date}"
+    return str(h.start_date)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -487,8 +507,25 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
             recurring_day_of_week=recurring_day_of_week,
             academic_year_id=academic_year_id,
             tenant_id=tenant_id,
+            created_by=_activity().actor_user_id(),
         )
-        holiday.save()
+        db.session.add(holiday)
+        db.session.flush()
+        label = _holiday_label(holiday)
+        _activity().audit_calendar_action(
+            f"{label.lower()}_created", "holiday", holiday.id,
+            f"{label} '{holiday.name}' added ({_holiday_dates(holiday)})",
+            tenant_id,
+        )
+        # Weekly-off rows are wizard-managed plumbing — not announcement-worthy.
+        if holiday.holiday_type != "weekly_off":
+            _activity().notify_calendar_change(
+                f"{label} added",
+                f"{holiday.name}: {_holiday_dates(holiday)}",
+                tenant_id,
+                {"holiday_id": holiday.id, "academic_year_id": academic_year_id},
+            )
+        db.session.commit()
 
         result = holiday.to_dict()
         if falls_on_weekly_off:
@@ -612,6 +649,20 @@ def update_holiday(holiday_id: str, data: dict, tenant_id: str) -> Dict:
         if not h.is_recurring and h.start_date:
             falls_on_weekly_off = _check_sunday_collision(h.start_date, tenant_id)
 
+        h.updated_by = _activity().actor_user_id()
+        label = _holiday_label(h)
+        _activity().audit_calendar_action(
+            f"{label.lower()}_updated", "holiday", h.id,
+            f"{label} '{h.name}' updated ({_holiday_dates(h)})",
+            tenant_id,
+        )
+        if h.holiday_type != "weekly_off":
+            _activity().notify_calendar_change(
+                f"{label} updated",
+                f"{h.name}: {_holiday_dates(h)}",
+                tenant_id,
+                {"holiday_id": h.id, "academic_year_id": h.academic_year_id},
+            )
         h.save()
         result = h.to_dict()
         if falls_on_weekly_off:
@@ -633,6 +684,20 @@ def delete_holiday(holiday_id: str, tenant_id: str) -> Dict:
         if not h:
             return {"success": False, "error": "Holiday not found", "not_found": True}
         name = h.name
+        label = _holiday_label(h)
+        dates = _holiday_dates(h)
+        _activity().audit_calendar_action(
+            f"{label.lower()}_deleted", "holiday", h.id,
+            f"{label} '{name}' ({dates}) removed",
+            tenant_id,
+        )
+        if h.holiday_type != "weekly_off":
+            _activity().notify_calendar_change(
+                f"{label} removed",
+                f"{name} ({dates}) was removed",
+                tenant_id,
+                {"academic_year_id": h.academic_year_id},
+            )
         h.delete()
         return {"success": True, "message": f"Holiday '{name}' deleted."}
     except Exception as exc:

@@ -145,6 +145,8 @@ class ExamWindow(TenantBaseModel):
     # List of class ids the window applies to; empty/null → all classes.
     applicable_class_ids = db.Column(JSONB, nullable=True)
     description = db.Column(db.Text, nullable=True)
+    created_by = db.Column(db.String(36), nullable=True)
+    updated_by = db.Column(db.String(36), nullable=True)
     created_at = db.Column(
         db.DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -174,6 +176,8 @@ class ExamWindow(TenantBaseModel):
             "duration_days": self.duration_days,
             "applicable_class_ids": self.applicable_class_ids or [],
             "description": self.description,
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -205,6 +209,8 @@ class SchoolEvent(TenantBaseModel):
         db.String(20), nullable=False, default="entire_school",
         server_default=text("'entire_school'"),
     )
+    created_by = db.Column(db.String(36), nullable=True)
+    updated_by = db.Column(db.String(36), nullable=True)
     created_at = db.Column(
         db.DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -226,6 +232,8 @@ class SchoolEvent(TenantBaseModel):
             "event_date": self.event_date.isoformat() if self.event_date else None,
             "description": self.description,
             "applies_to": self.applies_to,
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -18,6 +18,11 @@ from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import AcademicTerm
 from modules.holidays.models import Holiday
 
+from .activity import (
+    actor_user_id,
+    audit_calendar_action,
+    notify_calendar_change,
+)
 from .models import (
     AcademicCalendar,
     EXAM_TYPES,
@@ -258,9 +263,24 @@ def create_exam_window(academic_year_id: str, data: Dict[str, Any]) -> ExamWindo
     year = _get_year(academic_year_id)
     payload = _validate_exam_payload(data, year)
     window = ExamWindow(
-        tenant_id=g.tenant_id, academic_year_id=academic_year_id, **payload
+        tenant_id=g.tenant_id,
+        academic_year_id=academic_year_id,
+        created_by=actor_user_id(),
+        **payload,
     )
     db.session.add(window)
+    db.session.flush()
+    audit_calendar_action(
+        "exam_window_created", "exam_window", window.id,
+        f"Exam window '{window.name}' scheduled {window.start_date} – {window.end_date}",
+        g.tenant_id,
+    )
+    notify_calendar_change(
+        "Examination scheduled",
+        f"{window.name}: {window.start_date} – {window.end_date}",
+        g.tenant_id,
+        {"exam_window_id": window.id, "academic_year_id": academic_year_id},
+    )
     db.session.commit()
     return window
 
@@ -276,6 +296,18 @@ def update_exam_window(window_id: str, data: Dict[str, Any]) -> ExamWindow:
     payload = _validate_exam_payload(merged, year, exclude_id=window_id)
     for key, value in payload.items():
         setattr(window, key, value)
+    window.updated_by = actor_user_id()
+    audit_calendar_action(
+        "exam_window_updated", "exam_window", window.id,
+        f"Exam window '{window.name}' updated ({window.start_date} – {window.end_date})",
+        g.tenant_id,
+    )
+    notify_calendar_change(
+        "Examination updated",
+        f"{window.name}: {window.start_date} – {window.end_date}",
+        g.tenant_id,
+        {"exam_window_id": window.id, "academic_year_id": window.academic_year_id},
+    )
     db.session.commit()
     return window
 
@@ -286,6 +318,17 @@ def delete_exam_window(window_id: str) -> bool:
     ).first()
     if not window:
         return False
+    audit_calendar_action(
+        "exam_window_deleted", "exam_window", window.id,
+        f"Exam window '{window.name}' removed",
+        g.tenant_id,
+    )
+    notify_calendar_change(
+        "Examination removed",
+        f"{window.name} ({window.start_date} – {window.end_date}) was removed",
+        g.tenant_id,
+        {"academic_year_id": window.academic_year_id},
+    )
     db.session.delete(window)
     db.session.commit()
     return True
@@ -306,7 +349,9 @@ def list_school_events(academic_year_id: str) -> List[SchoolEvent]:
     )
 
 
-def _validate_event_payload(data: Dict[str, Any], year: AcademicYear) -> Dict[str, Any]:
+def _validate_event_payload(
+    data: Dict[str, Any], year: AcademicYear, exclude_id: Optional[str] = None
+) -> Dict[str, Any]:
     errors: Dict[str, str] = {}
     name = (data.get("name") or "").strip()
     if not name:
@@ -329,6 +374,19 @@ def _validate_event_payload(data: Dict[str, Any], year: AcademicYear) -> Dict[st
     if errors:
         raise CalendarValidationError(errors)
 
+    dup_query = SchoolEvent.query.filter(
+        SchoolEvent.tenant_id == g.tenant_id,
+        SchoolEvent.academic_year_id == year.id,
+        SchoolEvent.event_date == event_date,
+        db.func.lower(SchoolEvent.name) == name.lower(),
+    )
+    if exclude_id:
+        dup_query = dup_query.filter(SchoolEvent.id != exclude_id)
+    if dup_query.first():
+        raise CalendarValidationError(
+            {"name": f"An event named '{name}' already exists on {event_date}."}
+        )
+
     return {
         "name": name,
         "event_type": event_type,
@@ -342,9 +400,24 @@ def create_school_event(academic_year_id: str, data: Dict[str, Any]) -> SchoolEv
     year = _get_year(academic_year_id)
     payload = _validate_event_payload(data, year)
     event = SchoolEvent(
-        tenant_id=g.tenant_id, academic_year_id=academic_year_id, **payload
+        tenant_id=g.tenant_id,
+        academic_year_id=academic_year_id,
+        created_by=actor_user_id(),
+        **payload,
     )
     db.session.add(event)
+    db.session.flush()
+    audit_calendar_action(
+        "school_event_created", "school_event", event.id,
+        f"School event '{event.name}' added on {event.event_date}",
+        g.tenant_id,
+    )
+    notify_calendar_change(
+        "School event added",
+        f"{event.name} on {event.event_date}",
+        g.tenant_id,
+        {"school_event_id": event.id, "academic_year_id": academic_year_id},
+    )
     db.session.commit()
     return event
 
@@ -357,9 +430,21 @@ def update_school_event(event_id: str, data: Dict[str, Any]) -> SchoolEvent:
         raise CalendarValidationError({"id": "School event not found."})
     year = _get_year(event.academic_year_id)
     merged = {**event.to_dict(), **data}
-    payload = _validate_event_payload(merged, year)
+    payload = _validate_event_payload(merged, year, exclude_id=event_id)
     for key, value in payload.items():
         setattr(event, key, value)
+    event.updated_by = actor_user_id()
+    audit_calendar_action(
+        "school_event_updated", "school_event", event.id,
+        f"School event '{event.name}' updated ({event.event_date})",
+        g.tenant_id,
+    )
+    notify_calendar_change(
+        "School event updated",
+        f"{event.name} on {event.event_date}",
+        g.tenant_id,
+        {"school_event_id": event.id, "academic_year_id": event.academic_year_id},
+    )
     db.session.commit()
     return event
 
@@ -370,6 +455,17 @@ def delete_school_event(event_id: str) -> bool:
     ).first()
     if not event:
         return False
+    audit_calendar_action(
+        "school_event_deleted", "school_event", event.id,
+        f"School event '{event.name}' ({event.event_date}) removed",
+        g.tenant_id,
+    )
+    notify_calendar_change(
+        "School event removed",
+        f"{event.name} on {event.event_date} was removed",
+        g.tenant_id,
+        {"academic_year_id": event.academic_year_id},
+    )
     db.session.delete(event)
     db.session.commit()
     return True
@@ -492,17 +588,13 @@ def compute_summary(cal: AcademicCalendar) -> Dict[str, Any]:
     vacation_dates = set(vacation_map.keys())
     non_working = weekly_off | holiday_dates | vacation_dates
 
-    terms = (
-        AcademicTerm.query.filter(
-            AcademicTerm.tenant_id == g.tenant_id,
-            AcademicTerm.academic_year_id == year.id,
-            AcademicTerm.deleted_at.is_(None),
-        )
-        .order_by(AcademicTerm.sequence)
-        .all()
-    )
+    terms = _list_terms(year.id)
     events = list_school_events(year.id)
     exam_windows = list_exam_windows(year.id)
+
+    events_by_type: Dict[str, int] = {}
+    for e in events:
+        events_by_type[e.event_type] = events_by_type.get(e.event_type, 0) + 1
 
     return {
         "academic_year": year.to_dict(),
@@ -515,21 +607,40 @@ def compute_summary(cal: AcademicCalendar) -> Dict[str, Any]:
         "semester_count": len(terms),
         "exam_window_count": len(exam_windows),
         "event_count": len(events),
+        "events_by_type": events_by_type,
         "weekly_holidays_config": cal.weekly_config,
     }
+
+
+def _list_terms(academic_year_id: str) -> List[AcademicTerm]:
+    return (
+        AcademicTerm.query.filter(
+            AcademicTerm.tenant_id == g.tenant_id,
+            AcademicTerm.academic_year_id == academic_year_id,
+            AcademicTerm.deleted_at.is_(None),
+        )
+        .order_by(AcademicTerm.sequence)
+        .all()
+    )
 
 
 def get_days_feed(cal: AcademicCalendar) -> List[Dict[str, Any]]:
     """Per-day classification for the calendar view, covering the whole year.
 
     day_type priority: vacation > public_holiday > weekly_holiday > working.
-    Exams and events are markers, not day types (they don't stop a day being
-    a working day).
+    Exams, events and semester boundaries are markers, not day types (they
+    don't stop a day being a working day).
     """
     year = _get_year(cal.academic_year_id)
     weekly_off, holiday_map, vacation_map, exam_dates, event_dates = _collect_day_sets(
         year, cal
     )
+
+    semester_starts: Dict[date, str] = {}
+    semester_ends: Dict[date, str] = {}
+    for term in _list_terms(year.id):
+        semester_starts[term.start_date] = term.name
+        semester_ends[term.end_date] = term.name
 
     feed: List[Dict[str, Any]] = []
     for d in _iter_dates(year.start_date, year.end_date):
@@ -547,6 +658,8 @@ def get_days_feed(cal: AcademicCalendar) -> List[Dict[str, Any]]:
                 "day_type": day_type,
                 "has_exam": d in exam_dates,
                 "has_event": d in event_dates,
+                "semester_start": semester_starts.get(d),
+                "semester_end": semester_ends.get(d),
                 "holidays": holiday_map.get(d, []) + vacation_map.get(d, []),
             }
         )
@@ -659,5 +772,18 @@ def publish_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> Dict[str,
 
     summary = compute_summary(cal)
     cal.published_summary = summary
+    audit_calendar_action(
+        "calendar_published", "academic_calendar", cal.id,
+        f"Academic calendar for {year.name} published "
+        f"({summary['working_days']} working days)",
+        g.tenant_id,
+        meta={"working_days": summary["working_days"]},
+    )
+    notify_calendar_change(
+        "Academic calendar published",
+        f"The academic calendar for {year.name} is now active.",
+        g.tenant_id,
+        {"academic_year_id": year.id},
+    )
     db.session.commit()
     return summary
