@@ -19,7 +19,9 @@ Academic Calendar Routes — /api/academics/calendar
     DELETE /calendar/events/<id>
 """
 
-from flask import g, request
+from io import BytesIO
+
+from flask import g, request, send_file
 
 from core.decorators import (
     auth_required,
@@ -36,7 +38,7 @@ from shared.helpers import (
     validation_error_response,
 )
 
-from . import services
+from . import export_services, services
 from .activity import resolve_user_names
 from .services import CalendarValidationError
 
@@ -135,6 +137,37 @@ def get_calendar_days(calendar_id):
         return success_response(data=services.get_days_feed(cal))
     except CalendarValidationError as e:
         return validation_error_response(e.errors)
+
+
+@academics_bp.route("/calendar/<calendar_id>/export", methods=["GET"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_any_permission(PERM_READ, PERM_MANAGE)
+def export_calendar_document(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+
+    fmt = (request.args.get("format") or "csv").strip().lower()
+    # sections: repeated ?sections=a&sections=b or a single comma-joined value.
+    sections = request.args.getlist("sections") or None
+    if sections and len(sections) == 1 and "," in sections[0]:
+        sections = [s.strip() for s in sections[0].split(",")]
+
+    try:
+        content, mimetype, filename = export_services.export_calendar(cal, fmt, sections)
+    except ValueError as e:
+        return validation_error_response({"format": str(e)})
+    except export_services.ExportUnavailableError as e:
+        return error_response("export_unavailable", message=str(e), status_code=503)
+
+    return send_file(
+        BytesIO(content),
+        mimetype=mimetype,
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @academics_bp.route("/calendar/<calendar_id>/publish", methods=["POST"])

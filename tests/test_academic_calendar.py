@@ -642,3 +642,119 @@ def test_holiday_service_rejects_overlapping_vacations(db_session, tenant, year,
         tenant.id,
     )
     assert normal["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# Export (CSV / Excel / PDF)
+# ---------------------------------------------------------------------------
+
+def _full_calendar(db_session, tenant, year, services, holiday_services):
+    """A calendar with one of every section, for export assertions."""
+    cal = _configured_calendar(services, year)
+    holiday_services.create_holiday(
+        {"name": "Founders Day", "holiday_type": "public",
+         "start_date": "2026-06-10", "academic_year_id": year.id},
+        tenant.id,
+    )
+    holiday_services.create_holiday(
+        {"name": "Summer Break", "holiday_type": "vacation",
+         "start_date": "2026-06-15", "end_date": "2026-06-18",
+         "academic_year_id": year.id},
+        tenant.id,
+    )
+    _add_term(db_session, tenant, year, "Semester 1", "2026-06-01", "2026-06-30")
+    services.create_exam_window(
+        year.id,
+        {"name": "Unit Test 1", "exam_type": "unit_test",
+         "start_date": "2026-06-22", "end_date": "2026-06-24"},
+    )
+    services.create_school_event(
+        year.id, {"name": "Sports Day", "event_type": "activity", "event_date": "2026-06-19"}
+    )
+    return cal
+
+
+def test_build_export_payload_covers_all_sections(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, export_services
+    from modules.academics.calendar import holiday_services
+
+    cal = _full_calendar(db_session, tenant, year, services, holiday_services)
+    payload = export_services.build_export_payload(cal)
+
+    assert payload["year_label"] == year.name
+    assert payload["summary"]["semester_count"] == 1
+    assert [h["name"] for h in payload["public_holidays"]] == ["Founders Day"]
+    assert [v["name"] for v in payload["vacations"]] == ["Summer Break"]
+    assert [s["name"] for s in payload["semesters"]] == ["Semester 1"]
+    assert [x["name"] for x in payload["exam_windows"]] == ["Unit Test 1"]
+    assert [e["name"] for e in payload["events"]] == ["Sports Day"]
+    # Sunday is weekly-off (day 6) plus 2nd/4th Saturday.
+    assert "Sunday" in payload["weekly_holidays"]
+
+
+def test_export_csv_contains_every_section(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, export_services
+    from modules.academics.calendar import holiday_services
+
+    cal = _full_calendar(db_session, tenant, year, services, holiday_services)
+    content, mimetype, filename = export_services.export_calendar(cal, "csv")
+
+    assert mimetype == "text/csv"
+    assert filename.endswith(".csv")
+    text = content.decode("utf-8-sig")
+    for token in ("Overview", "Public Holidays", "Founders Day", "Vacations",
+                  "Summer Break", "Semesters", "Examination Windows",
+                  "Unit Test 1", "School Events", "Sports Day"):
+        assert token in text
+
+
+def test_export_excel_is_a_valid_workbook(db_session, tenant, year, request_ctx):
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from modules.academics.calendar import services, export_services
+    from modules.academics.calendar import holiday_services
+
+    cal = _full_calendar(db_session, tenant, year, services, holiday_services)
+    content, mimetype, filename = export_services.export_calendar(cal, "excel")
+
+    assert filename.endswith(".xlsx")
+    assert content[:2] == b"PK"  # xlsx is a zip
+    wb = load_workbook(BytesIO(content))
+    assert "Overview" in wb.sheetnames
+    assert "Public Holidays" in wb.sheetnames
+    assert "School Events" in wb.sheetnames
+
+
+def test_export_sections_filter_narrows_output(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, export_services
+    from modules.academics.calendar import holiday_services
+
+    cal = _full_calendar(db_session, tenant, year, services, holiday_services)
+    content, _, _ = export_services.export_calendar(cal, "csv", sections=["events"])
+    text = content.decode("utf-8-sig")
+    assert "Sports Day" in text          # requested section present
+    assert "Founders Day" not in text    # public holidays excluded
+    assert "Unit Test 1" not in text     # exam windows excluded
+
+
+def test_export_rejects_unknown_format(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, export_services
+    from modules.academics.calendar import holiday_services
+
+    cal = _full_calendar(db_session, tenant, year, services, holiday_services)
+    with pytest.raises(ValueError):
+        export_services.export_calendar(cal, "json")
+
+
+def test_export_pdf_when_weasyprint_available(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, export_services
+    from modules.academics.calendar import holiday_services
+
+    if not export_services.HAS_WEASYPRINT:
+        pytest.skip("WeasyPrint not available in this environment")
+
+    cal = _full_calendar(db_session, tenant, year, services, holiday_services)
+    content, mimetype, filename = export_services.export_calendar(cal, "pdf")
+    assert mimetype == "application/pdf"
+    assert filename.endswith(".pdf")
+    assert content[:4] == b"%PDF"
