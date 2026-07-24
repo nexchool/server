@@ -415,6 +415,10 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
 
         if not name:
             errors["name"] = "Name is required."
+        elif len(name) > 120:
+            errors["name"] = "Name must be 120 characters or fewer."
+        if description and len(description) > 1000:
+            errors["description"] = "Description must be 1000 characters or fewer."
         if not _validate_type(holiday_type):
             errors["holiday_type"] = f"Must be one of: {', '.join(HOLIDAY_TYPES)}."
         if applies_to not in HOLIDAY_APPLIES_TO:

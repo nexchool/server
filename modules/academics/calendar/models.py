@@ -47,6 +47,18 @@ EVENT_TYPES = ("activity", "event", "meeting", "celebration", "training", "other
 
 APPLIES_TO_VALUES = ("entire_school", "students", "teachers", "staff")
 
+# Lifecycle status shared by exam windows and school events. Only LIVE_STATUS
+# rows drive the calendar (day classification, working-day math, summary);
+# the rest stay editable in the list view but are off the live calendar.
+EVENT_STATUSES = ("draft", "active", "archived", "cancelled")
+LIVE_STATUS = "active"
+# Statuses that free up their dates (excluded from overlap/duplicate checks).
+INACTIVE_STATUSES = ("archived", "cancelled")
+
+# Field-length limits enforced for names/descriptions across calendar events.
+EVENT_NAME_MAX = 120
+EVENT_DESCRIPTION_MAX = 1000
+
 
 def default_weekly_holidays_config() -> dict:
     return {
@@ -140,6 +152,10 @@ class ExamWindow(TenantBaseModel):
     )
     name = db.Column(db.String(120), nullable=False)
     exam_type = db.Column(db.String(20), nullable=False, default="other")
+    status = db.Column(
+        db.String(20), nullable=False, default="active",
+        server_default=text("'active'"),
+    )
     start_date = db.Column(db.Date, nullable=False, index=True)
     end_date = db.Column(db.Date, nullable=False)
     # List of class ids the window applies to; empty/null → all classes.
@@ -171,6 +187,7 @@ class ExamWindow(TenantBaseModel):
             "academic_year_id": self.academic_year_id,
             "name": self.name,
             "exam_type": self.exam_type,
+            "status": self.status,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
             "duration_days": self.duration_days,
@@ -203,6 +220,10 @@ class SchoolEvent(TenantBaseModel):
     )
     name = db.Column(db.String(120), nullable=False)
     event_type = db.Column(db.String(20), nullable=False, default="event")
+    status = db.Column(
+        db.String(20), nullable=False, default="active",
+        server_default=text("'active'"),
+    )
     event_date = db.Column(db.Date, nullable=False, index=True)
     description = db.Column(db.Text, nullable=True)
     applies_to = db.Column(
@@ -229,6 +250,7 @@ class SchoolEvent(TenantBaseModel):
             "academic_year_id": self.academic_year_id,
             "name": self.name,
             "event_type": self.event_type,
+            "status": self.status,
             "event_date": self.event_date.isoformat() if self.event_date else None,
             "description": self.description,
             "applies_to": self.applies_to,

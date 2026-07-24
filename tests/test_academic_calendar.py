@@ -467,6 +467,95 @@ def test_holiday_create_records_creator(db_session, tenant, year, request_ctx):
 
 
 # ---------------------------------------------------------------------------
+# Event status lifecycle (Story 3)
+# ---------------------------------------------------------------------------
+
+def test_event_status_defaults_active_and_validates(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.services import CalendarValidationError
+
+    event = services.create_school_event(
+        year.id, {"name": "Sports Day", "event_date": "2026-06-19"}
+    )
+    assert event.status == "active"
+
+    with pytest.raises(CalendarValidationError):
+        services.create_school_event(
+            year.id,
+            {"name": "Bad", "event_date": "2026-06-20", "status": "nonsense"},
+        )
+
+
+def test_non_active_events_excluded_from_summary_and_feed(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    cal = services.get_or_create_calendar(year.id)
+    services.create_school_event(
+        year.id, {"name": "Confirmed Day", "event_date": "2026-06-10"}
+    )
+    services.create_school_event(
+        year.id,
+        {"name": "Tentative Day", "event_date": "2026-06-11", "status": "draft"},
+    )
+    services.create_exam_window(
+        year.id,
+        {"name": "Cancelled Exam", "start_date": "2026-06-15",
+         "end_date": "2026-06-16", "status": "cancelled"},
+    )
+
+    summary = services.compute_summary(cal)
+    assert summary["event_count"] == 1        # draft excluded
+    assert summary["exam_days"] == 0          # cancelled exam reserves no days
+
+    feed = {d["date"]: d for d in services.get_days_feed(cal)}
+    assert feed["2026-06-10"]["has_event"] is True
+    assert feed["2026-06-11"]["has_event"] is False   # draft
+    assert feed["2026-06-15"]["has_exam"] is False    # cancelled
+
+
+def test_cancelled_exam_frees_overlapping_dates(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    first = services.create_exam_window(
+        year.id, {"name": "Mid Term", "start_date": "2026-06-08", "end_date": "2026-06-12"}
+    )
+    # Overlapping window is normally rejected …
+    services.update_exam_window(first.id, {"status": "cancelled"})
+    # … but once the first is cancelled, its dates are free again.
+    services.create_exam_window(
+        year.id, {"name": "Mid Term Retry", "start_date": "2026-06-10", "end_date": "2026-06-14"}
+    )
+
+
+def test_cancelled_event_does_not_block_duplicate_name(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    event = services.create_school_event(
+        year.id, {"name": "Sports Day", "event_date": "2026-06-19"}
+    )
+    services.update_school_event(event.id, {"status": "cancelled"})
+    # Same name+date now allowed because the original is cancelled.
+    services.create_school_event(
+        year.id, {"name": "Sports Day", "event_date": "2026-06-19"}
+    )
+
+
+def test_event_name_and_description_length_validated(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.services import CalendarValidationError
+
+    with pytest.raises(CalendarValidationError):
+        services.create_school_event(
+            year.id, {"name": "x" * 121, "event_date": "2026-06-19"}
+        )
+    with pytest.raises(CalendarValidationError):
+        services.create_school_event(
+            year.id,
+            {"name": "Ok", "event_date": "2026-06-19", "description": "y" * 1001},
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tenant isolation
 # ---------------------------------------------------------------------------
 

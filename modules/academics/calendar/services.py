@@ -25,9 +25,14 @@ from .activity import (
 )
 from .models import (
     AcademicCalendar,
+    EVENT_DESCRIPTION_MAX,
+    EVENT_NAME_MAX,
+    EVENT_STATUSES,
     EXAM_TYPES,
     EVENT_TYPES,
     APPLIES_TO_VALUES,
+    INACTIVE_STATUSES,
+    LIVE_STATUS,
     ExamWindow,
     SchoolEvent,
     TOTAL_WIZARD_STEPS,
@@ -168,27 +173,53 @@ def _sync_weekly_holiday_rows(academic_year_id: str, days: List[int]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Shared field validation
+# ---------------------------------------------------------------------------
+
+def _validate_name_status_description(
+    data: Dict[str, Any], errors: Dict[str, str]
+) -> Tuple[str, str, Optional[str]]:
+    """Validate the name / status / description fields common to every calendar
+    event and return the cleaned values (errors is mutated in place)."""
+    name = (data.get("name") or "").strip()
+    if not name:
+        errors["name"] = "Name is required."
+    elif len(name) > EVENT_NAME_MAX:
+        errors["name"] = f"Name must be {EVENT_NAME_MAX} characters or fewer."
+
+    status = (data.get("status") or LIVE_STATUS).strip()
+    if status not in EVENT_STATUSES:
+        errors["status"] = f"Status must be one of: {', '.join(EVENT_STATUSES)}."
+
+    description = (data.get("description") or "").strip()
+    if len(description) > EVENT_DESCRIPTION_MAX:
+        errors["description"] = (
+            f"Description must be {EVENT_DESCRIPTION_MAX} characters or fewer."
+        )
+    return name, status, description or None
+
+
+# ---------------------------------------------------------------------------
 # Exam windows
 # ---------------------------------------------------------------------------
 
-def list_exam_windows(academic_year_id: str) -> List[ExamWindow]:
-    return (
-        ExamWindow.query.filter(
-            ExamWindow.tenant_id == g.tenant_id,
-            ExamWindow.academic_year_id == academic_year_id,
-        )
-        .order_by(ExamWindow.start_date)
-        .all()
+def list_exam_windows(
+    academic_year_id: str, active_only: bool = False
+) -> List[ExamWindow]:
+    query = ExamWindow.query.filter(
+        ExamWindow.tenant_id == g.tenant_id,
+        ExamWindow.academic_year_id == academic_year_id,
     )
+    if active_only:
+        query = query.filter(ExamWindow.status == LIVE_STATUS)
+    return query.order_by(ExamWindow.start_date).all()
 
 
 def _validate_exam_payload(
     data: Dict[str, Any], year: AcademicYear, exclude_id: Optional[str] = None
 ) -> Dict[str, Any]:
     errors: Dict[str, str] = {}
-    name = (data.get("name") or "").strip()
-    if not name:
-        errors["name"] = "Exam name is required."
+    name, status, description = _validate_name_status_description(data, errors)
 
     exam_type = (data.get("exam_type") or "other").strip()
     if exam_type not in EXAM_TYPES:
@@ -219,10 +250,11 @@ def _validate_exam_payload(
     return {
         "name": name,
         "exam_type": exam_type,
+        "status": status,
         "start_date": start,
         "end_date": end,
         "applicable_class_ids": class_ids,
-        "description": (data.get("description") or "").strip() or None,
+        "description": description,
     }
 
 
@@ -238,6 +270,7 @@ def _check_exam_overlap(
     query = ExamWindow.query.filter(
         ExamWindow.tenant_id == g.tenant_id,
         ExamWindow.academic_year_id == academic_year_id,
+        ExamWindow.status.notin_(INACTIVE_STATUSES),
         ExamWindow.start_date <= end,
         ExamWindow.end_date >= start,
     )
@@ -338,24 +371,23 @@ def delete_exam_window(window_id: str) -> bool:
 # School events
 # ---------------------------------------------------------------------------
 
-def list_school_events(academic_year_id: str) -> List[SchoolEvent]:
-    return (
-        SchoolEvent.query.filter(
-            SchoolEvent.tenant_id == g.tenant_id,
-            SchoolEvent.academic_year_id == academic_year_id,
-        )
-        .order_by(SchoolEvent.event_date)
-        .all()
+def list_school_events(
+    academic_year_id: str, active_only: bool = False
+) -> List[SchoolEvent]:
+    query = SchoolEvent.query.filter(
+        SchoolEvent.tenant_id == g.tenant_id,
+        SchoolEvent.academic_year_id == academic_year_id,
     )
+    if active_only:
+        query = query.filter(SchoolEvent.status == LIVE_STATUS)
+    return query.order_by(SchoolEvent.event_date).all()
 
 
 def _validate_event_payload(
     data: Dict[str, Any], year: AcademicYear, exclude_id: Optional[str] = None
 ) -> Dict[str, Any]:
     errors: Dict[str, str] = {}
-    name = (data.get("name") or "").strip()
-    if not name:
-        errors["name"] = "Event name is required."
+    name, status, description = _validate_name_status_description(data, errors)
 
     event_type = (data.get("event_type") or "event").strip()
     if event_type not in EVENT_TYPES:
@@ -378,6 +410,7 @@ def _validate_event_payload(
         SchoolEvent.tenant_id == g.tenant_id,
         SchoolEvent.academic_year_id == year.id,
         SchoolEvent.event_date == event_date,
+        SchoolEvent.status.notin_(INACTIVE_STATUSES),
         db.func.lower(SchoolEvent.name) == name.lower(),
     )
     if exclude_id:
@@ -390,9 +423,10 @@ def _validate_event_payload(
     return {
         "name": name,
         "event_type": event_type,
+        "status": status,
         "event_date": event_date,
         "applies_to": applies_to,
-        "description": (data.get("description") or "").strip() or None,
+        "description": description,
     }
 
 
@@ -563,14 +597,14 @@ def _collect_day_sets(
                 target.setdefault(d, []).append(info)
 
     exam_dates: Set[date] = set()
-    for w in list_exam_windows(year.id):
+    for w in list_exam_windows(year.id, active_only=True):
         for d in _iter_dates(w.start_date, w.end_date):
             if year.start_date <= d <= year.end_date:
                 exam_dates.add(d)
 
     event_dates: Set[date] = {
         e.event_date
-        for e in list_school_events(year.id)
+        for e in list_school_events(year.id, active_only=True)
         if year.start_date <= e.event_date <= year.end_date
     }
 
@@ -589,8 +623,8 @@ def compute_summary(cal: AcademicCalendar) -> Dict[str, Any]:
     non_working = weekly_off | holiday_dates | vacation_dates
 
     terms = _list_terms(year.id)
-    events = list_school_events(year.id)
-    exam_windows = list_exam_windows(year.id)
+    events = list_school_events(year.id, active_only=True)
+    exam_windows = list_exam_windows(year.id, active_only=True)
 
     events_by_type: Dict[str, int] = {}
     for e in events:
