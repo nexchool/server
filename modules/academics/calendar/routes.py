@@ -42,8 +42,18 @@ from . import export_services, import_services, services
 from .activity import resolve_user_names
 from .services import CalendarValidationError
 
-PERM_READ = "academic_calendar.read"
-PERM_MANAGE = "academic_calendar.manage"
+# Granular per-action permissions. `manage` is a superset of every
+# `academic_calendar.*` (rbac.services.has_permission), so a holder of
+# `academic_calendar.manage` (the Admin role) passes all of these routes.
+PERM_READ = "academic_calendar.read"        # View
+PERM_MANAGE = "academic_calendar.manage"    # superset
+PERM_CREATE = "academic_calendar.create"
+PERM_EDIT = "academic_calendar.edit"
+PERM_DELETE = "academic_calendar.delete"
+PERM_ARCHIVE = "academic_calendar.archive"
+PERM_EXPORT = "academic_calendar.export"
+PERM_IMPORT = "academic_calendar.import"
+PERM_SETTINGS = "academic_calendar.settings"
 
 
 def _require_year_id():
@@ -76,7 +86,7 @@ def get_calendar_state():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_CREATE)
 def create_calendar_draft():
     data = request.get_json() or {}
     academic_year_id = (data.get("academic_year_id") or "").strip()
@@ -97,7 +107,7 @@ def create_calendar_draft():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def update_calendar_state(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -143,7 +153,7 @@ def get_calendar_days(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
+@require_permission(PERM_EXPORT)
 def export_calendar_document(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -174,7 +184,7 @@ def export_calendar_document(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def publish_calendar(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -202,7 +212,7 @@ def _current_user_id():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_DELETE)
 def delete_calendar(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -218,7 +228,7 @@ def delete_calendar(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_ARCHIVE)
 def archive_calendar(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -234,7 +244,7 @@ def archive_calendar(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_ARCHIVE)
 def restore_calendar(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -250,7 +260,7 @@ def restore_calendar(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_SETTINGS)
 def update_calendar_preferences(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -270,7 +280,7 @@ def update_calendar_preferences(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
+@require_permission(PERM_IMPORT)
 def import_template(calendar_id):
     import_type = (request.args.get("type") or "").strip()
     try:
@@ -289,7 +299,7 @@ def import_template(calendar_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_IMPORT)
 def import_calendar_data(calendar_id):
     cal = services.get_calendar(calendar_id)
     if not cal:
@@ -337,7 +347,7 @@ def list_exam_windows():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def create_exam_window():
     data = request.get_json() or {}
     academic_year_id = (data.get("academic_year_id") or "").strip()
@@ -358,7 +368,7 @@ def create_exam_window():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def update_exam_window(window_id):
     try:
         window = services.update_exam_window(window_id, request.get_json() or {})
@@ -373,7 +383,7 @@ def update_exam_window(window_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def delete_exam_window(window_id):
     if not services.delete_exam_window(window_id):
         return not_found_response("Exam window not found")
@@ -401,7 +411,7 @@ def list_school_events():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def create_school_event():
     data = request.get_json() or {}
     academic_year_id = (data.get("academic_year_id") or "").strip()
@@ -422,7 +432,7 @@ def create_school_event():
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def update_school_event(event_id):
     try:
         event = services.update_school_event(event_id, request.get_json() or {})
@@ -437,7 +447,7 @@ def update_school_event(event_id):
 @tenant_required
 @auth_required
 @require_feature("academic_calendar")
-@require_permission(PERM_MANAGE)
+@require_permission(PERM_EDIT)
 def delete_school_event(event_id):
     if not services.delete_school_event(event_id):
         return not_found_response("School event not found")

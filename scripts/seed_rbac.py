@@ -199,6 +199,17 @@ PERMISSIONS = [
     ('academic_term.manage', 'Manage academic terms'),
     ('academic_calendar.read', 'View the academic calendar (events, exams, summary)'),
     ('academic_calendar.manage', 'Configure and publish the academic calendar'),
+    # Granular per-action calendar permissions. `manage` is a superset of all of
+    # these (rbac.services.has_permission), so the Admin role keeps full access.
+    ('academic_calendar.create', 'Create an academic calendar'),
+    ('academic_calendar.edit', 'Edit calendar setup, events, exams and semesters'),
+    ('academic_calendar.delete', 'Delete a draft academic calendar'),
+    ('academic_calendar.archive', 'Archive or restore an academic calendar'),
+    ('academic_calendar.duplicate', 'Duplicate an academic calendar'),
+    ('academic_calendar.export', 'Export the academic calendar (PDF/Excel/CSV)'),
+    ('academic_calendar.import', 'Import calendar data from a template'),
+    ('academic_calendar.print', 'Print the academic calendar'),
+    ('academic_calendar.settings', 'Manage academic calendar preferences'),
 
     # School setup flow
     ('school_setup.read', 'View school setup state and validation'),

@@ -201,6 +201,44 @@ def test_finance_operate_excludes_manage_and_refund(db_session, seeded_tenant, m
     assert has_permission(user.id, "finance.manage") is False
 
 
+def test_academic_calendar_view_excludes_write_actions(db_session, seeded_tenant, mock_dispatch):
+    from modules.auth.models import User
+    from modules.rbac.services import has_permission
+
+    email = _email()
+    _create(seeded_tenant, email=email, modules=[{"key": "academic_calendar", "level": "view"}])
+    user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
+
+    assert has_permission(user.id, "academic_calendar.read") is True
+    # View grants none of the write/utility actions.
+    for action in ("edit", "create", "delete", "archive", "export", "import", "settings"):
+        assert has_permission(user.id, f"academic_calendar.{action}") is False
+
+
+def test_academic_calendar_edit_grants_utilities_but_not_delete(db_session, seeded_tenant, mock_dispatch):
+    from modules.auth.models import User
+    from modules.rbac.services import has_permission
+
+    email = _email()
+    _create(seeded_tenant, email=email, modules=[{"key": "academic_calendar", "level": "edit"}])
+    user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
+
+    # Edit level covers create/edit/archive plus the utilities…
+    for action in ("edit", "create", "archive", "export", "import", "print", "settings"):
+        assert has_permission(user.id, f"academic_calendar.{action}") is True
+    # …but deleting a draft stays behind the explicit toggle.
+    assert has_permission(user.id, "academic_calendar.delete") is False
+
+    email2 = _email()
+    _create(
+        seeded_tenant,
+        email=email2,
+        modules=[{"key": "academic_calendar", "level": "edit", "delete": True}],
+    )
+    user2 = User.get_user_by_email(email2, tenant_id=seeded_tenant.id)
+    assert has_permission(user2.id, "academic_calendar.delete") is True
+
+
 # ---------------------------------------------------------------------------
 # List
 # ---------------------------------------------------------------------------
