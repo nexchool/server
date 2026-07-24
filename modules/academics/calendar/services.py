@@ -21,8 +21,13 @@ from .holidays import Holiday
 from .activity import (
     actor_user_id,
     audit_calendar_action,
+    diff_changes,
     notify_calendar_change,
 )
+
+# Fields whose changes are tracked in the audit "Previous/Updated Value" diff.
+_EXAM_DIFF_FIELDS = ("name", "exam_type", "status", "start_date", "end_date", "description")
+_EVENT_DIFF_FIELDS = ("name", "event_type", "status", "event_date", "applies_to", "description")
 from .models import (
     AcademicCalendar,
     EVENT_DESCRIPTION_MAX,
@@ -328,7 +333,8 @@ def update_exam_window(window_id: str, data: Dict[str, Any]) -> ExamWindow:
     if not window:
         raise CalendarValidationError({"id": "Exam window not found."})
     year = _get_year(window.academic_year_id)
-    merged = {**window.to_dict(), **data}
+    before = window.to_dict()
+    merged = {**before, **data}
     payload = _validate_exam_payload(merged, year, exclude_id=window_id)
     for key, value in payload.items():
         setattr(window, key, value)
@@ -337,6 +343,8 @@ def update_exam_window(window_id: str, data: Dict[str, Any]) -> ExamWindow:
         "exam_window_updated", "exam_window", window.id,
         f"Exam window '{window.name}' updated ({window.start_date} – {window.end_date})",
         g.tenant_id,
+        academic_year_id=window.academic_year_id,
+        changes=diff_changes(before, window.to_dict(), _EXAM_DIFF_FIELDS),
     )
     notify_calendar_change(
         "Examination updated",
@@ -469,7 +477,8 @@ def update_school_event(event_id: str, data: Dict[str, Any]) -> SchoolEvent:
     if not event:
         raise CalendarValidationError({"id": "School event not found."})
     year = _get_year(event.academic_year_id)
-    merged = {**event.to_dict(), **data}
+    before = event.to_dict()
+    merged = {**before, **data}
     payload = _validate_event_payload(merged, year, exclude_id=event_id)
     for key, value in payload.items():
         setattr(event, key, value)
@@ -478,6 +487,8 @@ def update_school_event(event_id: str, data: Dict[str, Any]) -> SchoolEvent:
         "school_event_updated", "school_event", event.id,
         f"School event '{event.name}' updated ({event.event_date})",
         g.tenant_id,
+        academic_year_id=event.academic_year_id,
+        changes=diff_changes(before, event.to_dict(), _EVENT_DIFF_FIELDS),
     )
     notify_calendar_change(
         "School event updated",
@@ -817,6 +828,7 @@ def publish_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> Dict[str,
         f"Academic calendar for {year.name} published "
         f"({summary['working_days']} working days)",
         g.tenant_id,
+        academic_year_id=cal.academic_year_id,
         meta={"working_days": summary["working_days"]},
     )
     notify_calendar_change(
@@ -854,6 +866,7 @@ def delete_calendar(cal: AcademicCalendar) -> None:
         "calendar_deleted", "academic_calendar", cal.id,
         f"Draft academic calendar for {year.name} deleted",
         g.tenant_id,
+        academic_year_id=cal.academic_year_id,
     )
     db.session.delete(cal)
     db.session.commit()
@@ -875,6 +888,8 @@ def archive_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> AcademicC
         "calendar_archived", "academic_calendar", cal.id,
         f"Academic calendar for {year.name} archived",
         g.tenant_id,
+        academic_year_id=cal.academic_year_id,
+        changes={"status": {"from": "published", "to": "archived"}},
     )
     db.session.commit()
     return cal
@@ -894,6 +909,8 @@ def restore_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> AcademicC
         "calendar_restored", "academic_calendar", cal.id,
         f"Academic calendar for {year.name} restored",
         g.tenant_id,
+        academic_year_id=cal.academic_year_id,
+        changes={"status": {"from": "archived", "to": "published"}},
     )
     db.session.commit()
     return cal
@@ -904,6 +921,7 @@ def update_preferences(cal: AcademicCalendar, data: Dict[str, Any]) -> AcademicC
     from .models import CALENDAR_PREFERENCE_OPTIONS, default_calendar_preferences
 
     errors: Dict[str, str] = {}
+    before = cal.prefs  # fresh dict: defaults + currently stored
     merged = cal.prefs  # defaults + currently stored
 
     for key, allowed in CALENDAR_PREFERENCE_OPTIONS.items():
@@ -926,6 +944,78 @@ def update_preferences(cal: AcademicCalendar, data: Dict[str, Any]) -> AcademicC
     if errors:
         raise CalendarValidationError(errors)
 
-    cal.preferences = {k: merged[k] for k in default_calendar_preferences()}
+    after = {k: merged[k] for k in default_calendar_preferences()}
+    cal.preferences = after
+    changes = diff_changes(before, after, list(default_calendar_preferences()))
+    if changes:
+        audit_calendar_action(
+            "preferences_updated", "academic_calendar", cal.id,
+            "Calendar preferences updated",
+            g.tenant_id,
+            academic_year_id=cal.academic_year_id,
+            changes=changes,
+        )
     db.session.commit()
     return cal
+
+
+# ---------------------------------------------------------------------------
+# Activity log: read-side events + per-calendar feed
+# ---------------------------------------------------------------------------
+
+def record_calendar_activity(
+    cal: AcademicCalendar, action: str, description: str, meta: Optional[Dict] = None
+) -> None:
+    """Audit a read-side activity (export/print) and commit it."""
+    audit_calendar_action(
+        action, "academic_calendar", cal.id, description, g.tenant_id,
+        academic_year_id=cal.academic_year_id, meta=meta,
+    )
+    db.session.commit()
+
+
+def list_calendar_activity(
+    cal: AcademicCalendar, page: int = 1, page_size: int = 20
+) -> Dict[str, Any]:
+    """Paginated activity history for one calendar's academic year, newest first.
+
+    Reads the append-only tenant_audit_logs (module='academic_calendar'), scoped
+    to this year via audit meta; legacy rows without a year are included."""
+    from sqlalchemy import or_
+    from modules.audit.models import TenantAuditLog
+
+    # `meta` is a generic JSON column; use the postgres ->> operator for text.
+    year_expr = TenantAuditLog.meta.op("->>")("academic_year_id")
+    query = (
+        TenantAuditLog.query.filter(
+            TenantAuditLog.tenant_id == g.tenant_id,
+            TenantAuditLog.module == "academic_calendar",
+            or_(year_expr == cal.academic_year_id, year_expr.is_(None)),
+        )
+        .order_by(TenantAuditLog.created_at.desc())
+    )
+    total = query.count()
+    rows = query.limit(page_size).offset((page - 1) * page_size).all()
+    items = [
+        {
+            "id": r.id,
+            "action": r.action,
+            "resource_type": r.resource_type,
+            "resource_id": r.resource_id,
+            "description": r.description,
+            "actor_name": r.actor_name,
+            "actor_role": r.actor_role,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "meta": r.meta,
+        }
+        for r in rows
+    ]
+    return {
+        "items": items,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_items": total,
+            "total_pages": (total + page_size - 1) // page_size if page_size else 1,
+        },
+    }

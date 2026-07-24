@@ -79,6 +79,31 @@ def notify_calendar_change(
         )
 
 
+def _client_ip() -> Optional[str]:
+    """Best-effort client IP (first X-Forwarded-For hop, else remote_addr)."""
+    try:
+        from flask import request
+
+        if not request:
+            return None
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.remote_addr
+    except Exception:
+        return None
+
+
+def diff_changes(before: Dict, after: Dict, fields: Iterable[str]) -> Dict[str, Dict]:
+    """Return {field: {"from": old, "to": new}} for fields that changed."""
+    changes: Dict[str, Dict] = {}
+    for field in fields:
+        old, new = before.get(field), after.get(field)
+        if old != new:
+            changes[field] = {"from": old, "to": new}
+    return changes
+
+
 def audit_calendar_action(
     action: str,
     resource_type: str,
@@ -86,12 +111,30 @@ def audit_calendar_action(
     description: str,
     tenant_id: str,
     meta: Optional[Dict] = None,
+    academic_year_id: Optional[str] = None,
+    changes: Optional[Dict] = None,
+    remarks: Optional[str] = None,
 ) -> None:
-    """Append a tenant audit entry (committed with the caller's transaction)."""
+    """Append a tenant audit entry (committed with the caller's transaction).
+
+    Enriches `meta` with the academic year (so per-calendar activity feeds can
+    scope by year), a changed-fields diff, free-text remarks, and the client IP.
+    """
     try:
         from modules.audit.services import log_tenant_action
 
         user_id, user_name = _actor()
+        full_meta: Dict = dict(meta or {})
+        if academic_year_id:
+            full_meta["academic_year_id"] = academic_year_id
+        if changes:
+            full_meta["changes"] = changes
+        if remarks:
+            full_meta["remarks"] = remarks
+        ip = _client_ip()
+        if ip:
+            full_meta["ip"] = ip
+
         log_tenant_action(
             module="academic_calendar",
             action=action,
@@ -102,7 +145,7 @@ def audit_calendar_action(
             actor_name=user_name,
             actor_role="admin" if user_id else "system",
             resource_id=resource_id,
-            meta=meta,
+            meta=full_meta or None,
         )
     except Exception as exc:
         current_app.logger.warning(

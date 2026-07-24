@@ -895,3 +895,50 @@ def test_import_rejects_unknown_type(db_session, tenant, year, request_ctx):
     cal = services.get_or_create_calendar(year.id)
     with pytest.raises(import_services.ImportValidationError):
         import_services.import_rows(cal, "teachers", "name\nx\n")
+
+
+# ---------------------------------------------------------------------------
+# Audit enrichment + activity feed
+# ---------------------------------------------------------------------------
+
+def test_event_update_records_changed_fields_diff(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.audit.models import TenantAuditLog
+
+    ev = services.create_school_event(
+        year.id, {"name": "Sports Day", "event_date": "2026-06-19"}
+    )
+    services.update_school_event(
+        ev.id, {"name": "Annual Sports Day", "event_date": "2026-06-20"}
+    )
+
+    log = (
+        TenantAuditLog.query.filter_by(
+            tenant_id=tenant.id, action="school_event_updated"
+        )
+        .order_by(TenantAuditLog.created_at.desc())
+        .first()
+    )
+    assert log is not None
+    changes = (log.meta or {}).get("changes", {})
+    assert changes["name"]["from"] == "Sports Day"
+    assert changes["name"]["to"] == "Annual Sports Day"
+    assert changes["event_date"]["from"] == "2026-06-19"
+
+
+def test_activity_feed_newest_first(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    cal = services.get_or_create_calendar(year.id)
+    services.create_school_event(year.id, {"name": "Event A", "event_date": "2026-06-10"})
+    services.record_calendar_activity(
+        cal, "export_completed", "Calendar exported as PDF", {"format": "pdf"}
+    )
+
+    feed = services.list_calendar_activity(cal, page=1, page_size=50)
+    actions = [i["action"] for i in feed["items"]]
+    assert "export_completed" in actions
+    assert "school_event_created" in actions
+    # Latest activity first.
+    assert feed["items"][0]["action"] == "export_completed"
+    assert feed["pagination"]["total_items"] >= 2

@@ -128,9 +128,10 @@ def import_rows(cal, import_type: str, file_text: str) -> dict:
     if imported:
         year_name = cal.academic_year.name if cal.academic_year else year_id
         activity.audit_calendar_action(
-            "calendar_import", "academic_calendar", cal.id,
+            "import_completed", "academic_calendar", cal.id,
             f"Imported {imported} {_LABEL[import_type]} into {year_name}",
             g.tenant_id,
+            academic_year_id=cal.academic_year_id,
             meta={"import_type": import_type, "imported": imported, "skipped": len(errors)},
         )
         activity.notify_calendar_change(

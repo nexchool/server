@@ -53,6 +53,7 @@ PERM_DELETE = "academic_calendar.delete"
 PERM_ARCHIVE = "academic_calendar.archive"
 PERM_EXPORT = "academic_calendar.export"
 PERM_IMPORT = "academic_calendar.import"
+PERM_PRINT = "academic_calendar.print"
 PERM_SETTINGS = "academic_calendar.settings"
 
 
@@ -172,12 +173,48 @@ def export_calendar_document(calendar_id):
     except export_services.ExportUnavailableError as e:
         return error_response("export_unavailable", message=str(e), status_code=503)
 
+    services.record_calendar_activity(
+        cal, "export_completed", f"Calendar exported as {fmt.upper()}", {"format": fmt}
+    )
     return send_file(
         BytesIO(content),
         mimetype=mimetype,
         as_attachment=True,
         download_name=filename,
     )
+
+
+@academics_bp.route("/calendar/<calendar_id>/print-log", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_permission(PERM_PRINT)
+def log_calendar_print(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+    mode = (request.get_json() or {}).get("mode") or "full"
+    services.record_calendar_activity(
+        cal, "print_executed", f"Calendar printed ({mode})", {"mode": mode}
+    )
+    return success_response(message="Print recorded")
+
+
+@academics_bp.route("/calendar/<calendar_id>/activity", methods=["GET"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_any_permission(PERM_READ, PERM_MANAGE)
+def get_calendar_activity(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        page_size = min(100, max(1, int(request.args.get("page_size", 20))))
+    except (TypeError, ValueError):
+        page, page_size = 1, 20
+    return success_response(data=services.list_calendar_activity(cal, page, page_size))
 
 
 @academics_bp.route("/calendar/<calendar_id>/publish", methods=["POST"])
