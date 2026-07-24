@@ -46,14 +46,14 @@ def count_dependencies(tenant_id: str, year_id: str) -> Dict[str, int]:
       - fee_structures     (modules.finance.models.FeeStructure)
       - transport_enrollments (modules.transport.models.TransportEnrollment)
       - transport_fee_plans   (modules.transport.models.TransportFeePlan)
-      - holidays           (modules.holidays.models.Holiday)
+      - holidays           (modules.academics.calendar.holidays.Holiday)
     """
     from modules.classes.models import Class
     from modules.students.models import Student
     from modules.academics.backbone.models import AcademicTerm, StudentClassEnrollment
     from modules.finance.models import FeeStructure
     from modules.transport.models import TransportEnrollment, TransportFeePlan
-    from modules.holidays.models import Holiday
+    from modules.academics.calendar.holidays import Holiday
 
     counts: Dict[str, int] = {}
 

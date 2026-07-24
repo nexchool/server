@@ -139,7 +139,7 @@ def register_blueprints(app: Flask):
     from modules.subjects import subjects_bp
     from modules.timetable import timetable_bp
     from modules.schedule import schedule_bp
-    from modules.holidays import holidays_bp
+    from modules.academics.calendar.holiday_routes import holidays_bp
     from modules.fees import fees_bp
     from modules.transport import transport_bp
     from modules.devices import devices_bp

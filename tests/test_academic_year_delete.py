@@ -174,7 +174,7 @@ def test_count_dependencies_returns_all_expected_keys(monkeypatch):
         patch("modules.finance.models.FeeStructure", fake_fee_structure),
         patch("modules.transport.models.TransportEnrollment", fake_transport_enrollment),
         patch("modules.transport.models.TransportFeePlan", fake_transport_fee_plan),
-        patch("modules.holidays.models.Holiday", fake_holiday),
+        patch("modules.academics.calendar.holidays.Holiday", fake_holiday),
     ):
         deps = services.count_dependencies("tenant-1", "year-1")
 

@@ -16,7 +16,7 @@ from flask import g
 from core.database import db
 from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import AcademicTerm
-from modules.holidays.models import Holiday
+from .holidays import Holiday
 
 from .activity import (
     actor_user_id,
@@ -145,7 +145,7 @@ def _validate_weekly_config(raw: Any) -> Dict[str, Any]:
 
 def _sync_weekly_holiday_rows(academic_year_id: str, days: List[int]) -> None:
     """Upsert recurring weekly_off Holiday rows to match the selected weekdays."""
-    from modules.holidays.models import DAY_NAMES
+    from .holidays import DAY_NAMES
 
     existing = Holiday.query.filter(
         Holiday.tenant_id == g.tenant_id,

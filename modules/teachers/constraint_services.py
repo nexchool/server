@@ -31,7 +31,7 @@ from .models import (
     DEFAULT_POLICY_SETTINGS,
 )
 from modules.subjects.models import Subject
-from modules.holidays.services import get_working_days_info_for_range
+from modules.academics.calendar.holiday_services import get_working_days_info_for_range
 from modules.notifications.realtime_pub import InboxRealtimeEvent, publish_inbox_event
 
 _log = logging.getLogger(__name__)

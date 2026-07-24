@@ -99,7 +99,7 @@ def test_current_step_never_moves_backwards(db_session, tenant, year, request_ct
 
 def test_weekly_config_syncs_recurring_holiday_rows(db_session, tenant, year, request_ctx):
     from modules.academics.calendar import services
-    from modules.holidays.models import Holiday
+    from modules.academics.calendar.holidays import Holiday
 
     cal = services.get_or_create_calendar(year.id)
     services.update_calendar(
@@ -228,7 +228,7 @@ def _configured_calendar(services, year):
 
 
 def _add_holiday(db_session, tenant, year, name, start, end=None, holiday_type="public"):
-    from modules.holidays.models import Holiday
+    from modules.academics.calendar.holidays import Holiday
 
     h = Holiday(
         tenant_id=tenant.id,
@@ -347,7 +347,7 @@ def test_publish_rejects_overlapping_vacations(db_session, tenant, year, request
 
 def test_publish_materializes_nth_saturdays_and_snapshots(db_session, tenant, year, request_ctx):
     from modules.academics.calendar import services
-    from modules.holidays.models import Holiday
+    from modules.academics.calendar.holidays import Holiday
 
     cal = _configured_calendar(services, year)
     _add_term(db_session, tenant, year, "Term 1", "2026-06-01", "2026-06-15")
@@ -453,7 +453,7 @@ def test_event_mutations_write_audit_log(db_session, tenant, year, request_ctx):
 
 
 def test_holiday_create_records_creator(db_session, tenant, year, request_ctx):
-    from modules.holidays import services as holiday_services
+    from modules.academics.calendar import holiday_services
 
     result = holiday_services.create_holiday(
         {"name": "Founders Day", "holiday_type": "public",
@@ -616,7 +616,7 @@ def test_term_dates_validated_against_year_and_siblings(db_session, tenant, year
 # ---------------------------------------------------------------------------
 
 def test_holiday_service_rejects_overlapping_vacations(db_session, tenant, year, request_ctx):
-    from modules.holidays import services as holiday_services
+    from modules.academics.calendar import holiday_services
 
     first = holiday_services.create_holiday(
         {"name": "Summer Break", "holiday_type": "vacation",

@@ -15,7 +15,7 @@ from shared.helpers import (
     not_found_response,
     validation_error_response,
 )
-from modules.holidays.services import calendar_range_summary
+from modules.academics.calendar.holiday_services import calendar_range_summary
 
 from . import services
 

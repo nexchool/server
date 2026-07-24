@@ -9,7 +9,7 @@ from datetime import date
 from unittest.mock import MagicMock
 
 import core.feature_flags as ff_mod
-import modules.holidays.services as holidays_services
+import modules.academics.calendar.holiday_services as holidays_services
 
 
 def test_get_holiday_for_date_returns_none_when_feature_off(monkeypatch):

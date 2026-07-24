@@ -13,15 +13,8 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from core.database import db
-from .models import Holiday, HOLIDAY_TYPES, HOLIDAY_APPLIES_TO, DAY_NAMES
-
-
-def _activity():
-    """Calendar activity hooks, imported lazily: the academics package pulls
-    in blueprints that transitively import this module at startup."""
-    from modules.academics.calendar import activity
-
-    return activity
+from . import activity
+from .holidays import Holiday, HOLIDAY_TYPES, HOLIDAY_APPLIES_TO, DAY_NAMES
 
 
 def _holiday_label(h: Holiday) -> str:
@@ -511,19 +504,19 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
             recurring_day_of_week=recurring_day_of_week,
             academic_year_id=academic_year_id,
             tenant_id=tenant_id,
-            created_by=_activity().actor_user_id(),
+            created_by=activity.actor_user_id(),
         )
         db.session.add(holiday)
         db.session.flush()
         label = _holiday_label(holiday)
-        _activity().audit_calendar_action(
+        activity.audit_calendar_action(
             f"{label.lower()}_created", "holiday", holiday.id,
             f"{label} '{holiday.name}' added ({_holiday_dates(holiday)})",
             tenant_id,
         )
         # Weekly-off rows are wizard-managed plumbing — not announcement-worthy.
         if holiday.holiday_type != "weekly_off":
-            _activity().notify_calendar_change(
+            activity.notify_calendar_change(
                 f"{label} added",
                 f"{holiday.name}: {_holiday_dates(holiday)}",
                 tenant_id,
@@ -653,15 +646,15 @@ def update_holiday(holiday_id: str, data: dict, tenant_id: str) -> Dict:
         if not h.is_recurring and h.start_date:
             falls_on_weekly_off = _check_sunday_collision(h.start_date, tenant_id)
 
-        h.updated_by = _activity().actor_user_id()
+        h.updated_by = activity.actor_user_id()
         label = _holiday_label(h)
-        _activity().audit_calendar_action(
+        activity.audit_calendar_action(
             f"{label.lower()}_updated", "holiday", h.id,
             f"{label} '{h.name}' updated ({_holiday_dates(h)})",
             tenant_id,
         )
         if h.holiday_type != "weekly_off":
-            _activity().notify_calendar_change(
+            activity.notify_calendar_change(
                 f"{label} updated",
                 f"{h.name}: {_holiday_dates(h)}",
                 tenant_id,
@@ -690,13 +683,13 @@ def delete_holiday(holiday_id: str, tenant_id: str) -> Dict:
         name = h.name
         label = _holiday_label(h)
         dates = _holiday_dates(h)
-        _activity().audit_calendar_action(
+        activity.audit_calendar_action(
             f"{label.lower()}_deleted", "holiday", h.id,
             f"{label} '{name}' ({dates}) removed",
             tenant_id,
         )
         if h.holiday_type != "weekly_off":
-            _activity().notify_calendar_change(
+            activity.notify_calendar_change(
                 f"{label} removed",
                 f"{name} ({dates}) was removed",
                 tenant_id,

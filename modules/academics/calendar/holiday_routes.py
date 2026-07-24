@@ -11,9 +11,8 @@ REST endpoints:
     DELETE /api/holidays/<id>        — delete
 """
 
-from flask import request, g
+from flask import request, g, Blueprint
 
-from modules.holidays import holidays_bp
 from core.decorators import (
     auth_required,
     tenant_required,
@@ -27,7 +26,11 @@ from shared.helpers import (
     not_found_response,
     validation_error_response,
 )
-from . import services
+from . import holiday_services as services
+
+# Holidays are managed as part of the Academic Calendar but keep their own
+# /api/holidays surface so existing consumers stay unchanged.
+holidays_bp = Blueprint("holidays", __name__)
 
 PERM_READ = "holiday.read"
 PERM_CREATE = "holiday.create"
@@ -70,7 +73,7 @@ def list_holidays():
         offset=offset,
     )
     if result["success"]:
-        from modules.academics.calendar.activity import resolve_user_names
+        from .activity import resolve_user_names
 
         return success_response(data=resolve_user_names(result["data"]))
     return error_response("FetchError", result["error"], 400)
