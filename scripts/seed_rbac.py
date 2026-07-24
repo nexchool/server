@@ -197,6 +197,8 @@ PERMISSIONS = [
     ('religion.manage', 'Manage religion master'),
     ('academic_term.read', 'View academic terms'),
     ('academic_term.manage', 'Manage academic terms'),
+    ('academic_calendar.read', 'View the academic calendar (events, exams, summary)'),
+    ('academic_calendar.manage', 'Configure and publish the academic calendar'),
 
     # School setup flow
     ('school_setup.read', 'View school setup state and validation'),
@@ -269,6 +271,8 @@ ROLES = {
             'grade.manage',
             'religion.manage',
             'academic_term.manage',
+            'academic_calendar.read',
+            'academic_calendar.manage',
             # Audit log
             'audit_log.view',
             # Sub-admin management
@@ -312,6 +316,7 @@ ROLES = {
             'programme.read',
             'grade.read',
             'academic_term.read',
+            'academic_calendar.read',
             'school_setup.read',
         ]
     },

@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from core.database import db
-from .models import Holiday, HOLIDAY_TYPES, DAY_NAMES
+from .models import Holiday, HOLIDAY_TYPES, HOLIDAY_APPLIES_TO, DAY_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +347,32 @@ def get_recurring_holidays(tenant_id: str) -> Dict:
 # Write
 # ---------------------------------------------------------------------------
 
+def _find_vacation_overlap(
+    tenant_id: str,
+    start_date,
+    end_date,
+    academic_year_id,
+    exclude_id: str | None = None,
+):
+    """Return an existing vacation whose date range overlaps, if any.
+
+    Only vacation-type ranges are checked against each other — regular
+    holidays may legitimately share dates with anything.
+    """
+    query = Holiday.query.filter(
+        Holiday.tenant_id == tenant_id,
+        Holiday.holiday_type == "vacation",
+        Holiday.is_recurring.is_(False),
+        Holiday.start_date <= (end_date or start_date),
+        db.func.coalesce(Holiday.end_date, Holiday.start_date) >= start_date,
+    )
+    if academic_year_id:
+        query = query.filter(Holiday.academic_year_id == academic_year_id)
+    if exclude_id:
+        query = query.filter(Holiday.id != exclude_id)
+    return query.first()
+
+
 def create_holiday(data: dict, tenant_id: str) -> Dict:
     """
     Create a holiday (single-day, range, or recurring).
@@ -354,7 +380,7 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
     Required for non-recurring: name, start_date
     Required for recurring:     name, recurring_day_of_week
     Optional everywhere:        description, holiday_type, academic_year_id,
-                                end_date (range), is_recurring
+                                end_date (range), is_recurring, applies_to
     """
     try:
         name = (data.get("name") or "").strip()
@@ -363,6 +389,7 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
         academic_year_id = data.get("academic_year_id") or None
         is_recurring = bool(data.get("is_recurring", False))
         recurring_day_of_week = data.get("recurring_day_of_week")
+        applies_to = (data.get("applies_to") or "entire_school").strip()
 
         errors: dict = {}
 
@@ -370,6 +397,8 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
             errors["name"] = "Name is required."
         if not _validate_type(holiday_type):
             errors["holiday_type"] = f"Must be one of: {', '.join(HOLIDAY_TYPES)}."
+        if applies_to not in HOLIDAY_APPLIES_TO:
+            errors["applies_to"] = f"Must be one of: {', '.join(HOLIDAY_APPLIES_TO)}."
 
         if is_recurring:
             if recurring_day_of_week is None:
@@ -429,6 +458,18 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
                     "success": False,
                     "error": f"A holiday named '{name}' already exists on {start_date.isoformat()}.",
                 }
+            if holiday_type == "vacation":
+                overlap = _find_vacation_overlap(
+                    tenant_id, start_date, end_date, academic_year_id
+                )
+                if overlap:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Dates overlap existing vacation '{overlap.name}' "
+                            f"({overlap.start_date} – {overlap.end_date or overlap.start_date})."
+                        ),
+                    }
 
         # --- Sunday collision warning ---
         falls_on_weekly_off = False
@@ -439,6 +480,7 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
             name=name,
             description=description,
             holiday_type=holiday_type,
+            applies_to=applies_to,
             start_date=start_date,
             end_date=end_date,
             is_recurring=is_recurring,
@@ -493,6 +535,13 @@ def update_holiday(holiday_id: str, data: dict, tenant_id: str) -> Dict:
         if "academic_year_id" in data:
             h.academic_year_id = data["academic_year_id"] or None
 
+        if "applies_to" in data:
+            at = (data["applies_to"] or "").strip()
+            if at not in HOLIDAY_APPLIES_TO:
+                errors["applies_to"] = f"Must be one of: {', '.join(HOLIDAY_APPLIES_TO)}."
+            else:
+                h.applies_to = at
+
         if "is_recurring" in data:
             h.is_recurring = bool(data["is_recurring"])
 
@@ -544,6 +593,19 @@ def update_holiday(holiday_id: str, data: dict, tenant_id: str) -> Dict:
                     "success": False,
                     "error": f"Another holiday named '{h.name}' already exists on {h.start_date.isoformat()}.",
                 }
+            if h.holiday_type == "vacation" and h.start_date:
+                overlap = _find_vacation_overlap(
+                    tenant_id, h.start_date, h.end_date, h.academic_year_id,
+                    exclude_id=holiday_id,
+                )
+                if overlap:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Dates overlap existing vacation '{overlap.name}' "
+                            f"({overlap.start_date} – {overlap.end_date or overlap.start_date})."
+                        ),
+                    }
 
         # Sunday collision
         falls_on_weekly_off = False

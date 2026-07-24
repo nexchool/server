@@ -21,7 +21,10 @@ import uuid
 from core.database import db
 from core.models import TenantBaseModel
 
-HOLIDAY_TYPES = ("public", "school", "regional", "optional", "weekly_off")
+HOLIDAY_TYPES = ("public", "national", "school", "regional", "optional", "weekly_off", "vacation")
+
+# Audience a holiday applies to; "entire_school" is the default for all rows.
+HOLIDAY_APPLIES_TO = ("entire_school", "students", "teachers", "staff")
 
 # Python weekday(): 0=Mon … 6=Sun
 DAY_NAMES = {
@@ -48,6 +51,12 @@ class Holiday(TenantBaseModel):
     description = db.Column(db.Text, nullable=True)
 
     holiday_type = db.Column(db.String(20), nullable=False, default="school")
+
+    # Audience the holiday applies to (entire_school by default).
+    applies_to = db.Column(
+        db.String(20), nullable=False, default="entire_school",
+        server_default="entire_school",
+    )
 
     # Date range fields (both nullable to allow pure recurring with no fixed date)
     start_date = db.Column(db.Date, nullable=True, index=True)
@@ -128,6 +137,7 @@ class Holiday(TenantBaseModel):
             "name": self.name,
             "description": self.description,
             "holiday_type": self.holiday_type,
+            "applies_to": self.applies_to,
             # Date fields
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
