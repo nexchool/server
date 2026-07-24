@@ -27,7 +27,27 @@ from sqlalchemy.dialects.postgresql import JSONB
 from core.database import db
 from core.models import TenantBaseModel
 
-CALENDAR_STATUSES = ("draft", "published")
+CALENDAR_STATUSES = ("draft", "published", "archived")
+
+# Allowed values for each per-calendar preference (validated in services).
+CALENDAR_PREFERENCE_OPTIONS = {
+    "default_view": ("month", "week", "list"),
+    "week_start": ("monday", "sunday"),
+    "date_format": ("dd_mmm_yyyy", "yyyy_mm_dd", "mm_dd_yyyy"),
+    "time_format": ("24h", "12h"),
+    "default_event_color": ("amber", "blue", "green", "red", "violet", "gray"),
+}
+
+
+def default_calendar_preferences() -> dict:
+    return {
+        "default_view": "month",
+        "default_month": None,       # yyyy-mm; null = current month
+        "week_start": "monday",
+        "date_format": "dd_mmm_yyyy",
+        "time_format": "24h",
+        "default_event_color": "amber",
+    }
 
 # Wizard steps, in order. current_step holds the furthest step reached (1-based).
 WIZARD_STEPS = (
@@ -97,6 +117,10 @@ class AcademicCalendar(TenantBaseModel):
     published_summary = db.Column(JSONB, nullable=True)
     published_at = db.Column(db.DateTime(timezone=True), nullable=True)
     published_by = db.Column(db.String(36), nullable=True)
+    archived_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    archived_by = db.Column(db.String(36), nullable=True)
+    # Per-calendar UI preferences (default view/month, week start, formats, color).
+    preferences = db.Column(JSONB, nullable=True)
     created_at = db.Column(
         db.DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -115,6 +139,12 @@ class AcademicCalendar(TenantBaseModel):
         base.update(self.weekly_holidays_config or {})
         return base
 
+    @property
+    def prefs(self) -> dict:
+        base = default_calendar_preferences()
+        base.update(self.preferences or {})
+        return base
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -124,9 +154,12 @@ class AcademicCalendar(TenantBaseModel):
             "current_step": self.current_step,
             "total_steps": TOTAL_WIZARD_STEPS,
             "weekly_holidays_config": self.weekly_config,
+            "preferences": self.prefs,
             "published_summary": self.published_summary,
             "published_at": self.published_at.isoformat() if self.published_at else None,
             "published_by": self.published_by,
+            "archived_at": self.archived_at.isoformat() if self.archived_at else None,
+            "archived_by": self.archived_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

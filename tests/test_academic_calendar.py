@@ -758,3 +758,140 @@ def test_export_pdf_when_weasyprint_available(db_session, tenant, year, request_
     assert mimetype == "application/pdf"
     assert filename.endswith(".pdf")
     assert content[:4] == b"%PDF"
+
+
+# ---------------------------------------------------------------------------
+# Admin lifecycle: delete / archive / restore / preferences
+# ---------------------------------------------------------------------------
+
+def _published_calendar(db_session, services, year):
+    cal = _configured_calendar(services, year)
+    cal.status = "published"
+    db_session.commit()
+    return cal
+
+
+def test_delete_draft_calendar(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    cal = services.get_or_create_calendar(year.id)
+    services.delete_calendar(cal)
+    assert services.get_calendar(cal.id) is None
+
+
+def test_delete_rejects_published_calendar(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.services import CalendarValidationError
+
+    cal = _published_calendar(db_session, services, year)
+    with pytest.raises(CalendarValidationError):
+        services.delete_calendar(cal)
+    assert services.get_calendar(cal.id) is not None
+
+
+def test_archive_then_restore(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+
+    cal = _published_calendar(db_session, services, year)
+    services.archive_calendar(cal, "user-1")
+    assert cal.status == "archived"
+    assert cal.archived_at is not None
+    assert cal.archived_by == "user-1"
+
+    services.restore_calendar(cal, "user-1")
+    assert cal.status == "published"
+    assert cal.archived_at is None
+
+
+def test_archive_rejects_draft(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.services import CalendarValidationError
+
+    cal = services.get_or_create_calendar(year.id)
+    with pytest.raises(CalendarValidationError):
+        services.archive_calendar(cal, "user-1")
+
+
+def test_update_preferences_valid_and_invalid(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.services import CalendarValidationError
+
+    cal = services.get_or_create_calendar(year.id)
+    assert cal.prefs["default_view"] == "month"  # default
+
+    services.update_preferences(cal, {"default_view": "week", "week_start": "sunday",
+                                       "default_month": "2026-06"})
+    assert cal.preferences["default_view"] == "week"
+    assert cal.preferences["week_start"] == "sunday"
+    assert cal.preferences["default_month"] == "2026-06"
+
+    with pytest.raises(CalendarValidationError):
+        services.update_preferences(cal, {"default_view": "spiral"})
+    with pytest.raises(CalendarValidationError):
+        services.update_preferences(cal, {"default_month": "June"})
+
+
+# ---------------------------------------------------------------------------
+# Import (template + row validation)
+# ---------------------------------------------------------------------------
+
+def test_import_template_has_header_and_sample(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import import_services
+
+    csv_bytes = import_services.import_template_csv("events")
+    text = csv_bytes.decode("utf-8-sig")
+    assert "name,event_type,event_date" in text.splitlines()[0]
+    assert len(text.strip().splitlines()) == 2  # header + one sample
+
+
+def test_import_events_valid_and_invalid_rows(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, import_services
+
+    cal = services.get_or_create_calendar(year.id)
+    csv_text = (
+        "name,event_type,event_date,applies_to,description\n"
+        "Sports Day,activity,2026-06-19,entire_school,Fun\n"
+        "Bad Row,event,not-a-date,,\n"
+        "Annual Day,celebration,2026-06-25,,\n"
+    )
+    report = import_services.import_rows(cal, "events", csv_text)
+    assert report["total"] == 3
+    assert report["imported"] == 2
+    assert report["skipped"] == 1
+    assert report["errors"][0]["row"] == 3
+    assert report["errors"][0]["field"] == "event_date"
+
+    names = {e.name for e in services.list_school_events(year.id)}
+    assert {"Sports Day", "Annual Day"} <= names
+    assert "Bad Row" not in names
+
+
+def test_import_holidays_reports_duplicate(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, import_services
+
+    cal = _configured_calendar(services, year)
+    csv_text = (
+        "name,holiday_type,start_date,end_date,applies_to,description\n"
+        "Republic Day,national,2026-06-10,,entire_school,\n"
+        "Republic Day,national,2026-06-10,,entire_school,\n"  # duplicate name+date
+    )
+    report = import_services.import_rows(cal, "public_holidays", csv_text)
+    assert report["imported"] == 1
+    assert report["skipped"] == 1
+    assert report["errors"][0]["row"] == 3
+
+
+def test_import_rejects_missing_required_column(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, import_services
+
+    cal = services.get_or_create_calendar(year.id)
+    with pytest.raises(import_services.ImportValidationError):
+        import_services.import_rows(cal, "events", "name,notes\nSports Day,fun\n")
+
+
+def test_import_rejects_unknown_type(db_session, tenant, year, request_ctx):
+    from modules.academics.calendar import services, import_services
+
+    cal = services.get_or_create_calendar(year.id)
+    with pytest.raises(import_services.ImportValidationError):
+        import_services.import_rows(cal, "teachers", "name\nx\n")

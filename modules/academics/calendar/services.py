@@ -292,7 +292,9 @@ def _check_exam_overlap(
             )
 
 
-def create_exam_window(academic_year_id: str, data: Dict[str, Any]) -> ExamWindow:
+def create_exam_window(
+    academic_year_id: str, data: Dict[str, Any], silent: bool = False
+) -> ExamWindow:
     year = _get_year(academic_year_id)
     payload = _validate_exam_payload(data, year)
     window = ExamWindow(
@@ -303,17 +305,18 @@ def create_exam_window(academic_year_id: str, data: Dict[str, Any]) -> ExamWindo
     )
     db.session.add(window)
     db.session.flush()
-    audit_calendar_action(
-        "exam_window_created", "exam_window", window.id,
-        f"Exam window '{window.name}' scheduled {window.start_date} – {window.end_date}",
-        g.tenant_id,
-    )
-    notify_calendar_change(
-        "Examination scheduled",
-        f"{window.name}: {window.start_date} – {window.end_date}",
-        g.tenant_id,
-        {"exam_window_id": window.id, "academic_year_id": academic_year_id},
-    )
+    if not silent:
+        audit_calendar_action(
+            "exam_window_created", "exam_window", window.id,
+            f"Exam window '{window.name}' scheduled {window.start_date} – {window.end_date}",
+            g.tenant_id,
+        )
+        notify_calendar_change(
+            "Examination scheduled",
+            f"{window.name}: {window.start_date} – {window.end_date}",
+            g.tenant_id,
+            {"exam_window_id": window.id, "academic_year_id": academic_year_id},
+        )
     db.session.commit()
     return window
 
@@ -430,7 +433,9 @@ def _validate_event_payload(
     }
 
 
-def create_school_event(academic_year_id: str, data: Dict[str, Any]) -> SchoolEvent:
+def create_school_event(
+    academic_year_id: str, data: Dict[str, Any], silent: bool = False
+) -> SchoolEvent:
     year = _get_year(academic_year_id)
     payload = _validate_event_payload(data, year)
     event = SchoolEvent(
@@ -441,17 +446,18 @@ def create_school_event(academic_year_id: str, data: Dict[str, Any]) -> SchoolEv
     )
     db.session.add(event)
     db.session.flush()
-    audit_calendar_action(
-        "school_event_created", "school_event", event.id,
-        f"School event '{event.name}' added on {event.event_date}",
-        g.tenant_id,
-    )
-    notify_calendar_change(
-        "School event added",
-        f"{event.name} on {event.event_date}",
-        g.tenant_id,
-        {"school_event_id": event.id, "academic_year_id": academic_year_id},
-    )
+    if not silent:
+        audit_calendar_action(
+            "school_event_created", "school_event", event.id,
+            f"School event '{event.name}' added on {event.event_date}",
+            g.tenant_id,
+        )
+        notify_calendar_change(
+            "School event added",
+            f"{event.name} on {event.event_date}",
+            g.tenant_id,
+            {"school_event_id": event.id, "academic_year_id": academic_year_id},
+        )
     db.session.commit()
     return event
 
@@ -821,3 +827,105 @@ def publish_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> Dict[str,
     )
     db.session.commit()
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Admin lifecycle: delete draft, archive, restore, preferences
+# ---------------------------------------------------------------------------
+
+def _valid_month(value: str) -> bool:
+    try:
+        year_part, month_part = value.split("-")
+        return len(year_part) == 4 and 1 <= int(month_part) <= 12
+    except (ValueError, AttributeError):
+        return False
+
+
+def delete_calendar(cal: AcademicCalendar) -> None:
+    """Delete a DRAFT calendar (discards wizard state). Published/archived
+    calendars cannot be deleted. The year's holidays/events are year-scoped and
+    are intentionally left intact."""
+    if cal.status != "draft":
+        raise CalendarValidationError(
+            {"status": "Only draft calendars can be deleted."}
+        )
+    year = _get_year(cal.academic_year_id)
+    audit_calendar_action(
+        "calendar_deleted", "academic_calendar", cal.id,
+        f"Draft academic calendar for {year.name} deleted",
+        g.tenant_id,
+    )
+    db.session.delete(cal)
+    db.session.commit()
+
+
+def archive_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> AcademicCalendar:
+    """Archive a published calendar; archived calendars are read-only."""
+    if cal.status != "published":
+        raise CalendarValidationError(
+            {"status": "Only published calendars can be archived."}
+        )
+    from datetime import datetime, timezone
+
+    year = _get_year(cal.academic_year_id)
+    cal.status = "archived"
+    cal.archived_at = datetime.now(timezone.utc)
+    cal.archived_by = user_id
+    audit_calendar_action(
+        "calendar_archived", "academic_calendar", cal.id,
+        f"Academic calendar for {year.name} archived",
+        g.tenant_id,
+    )
+    db.session.commit()
+    return cal
+
+
+def restore_calendar(cal: AcademicCalendar, user_id: Optional[str]) -> AcademicCalendar:
+    """Restore an archived calendar back to published (editable again)."""
+    if cal.status != "archived":
+        raise CalendarValidationError(
+            {"status": "Only archived calendars can be restored."}
+        )
+    year = _get_year(cal.academic_year_id)
+    cal.status = "published"
+    cal.archived_at = None
+    cal.archived_by = None
+    audit_calendar_action(
+        "calendar_restored", "academic_calendar", cal.id,
+        f"Academic calendar for {year.name} restored",
+        g.tenant_id,
+    )
+    db.session.commit()
+    return cal
+
+
+def update_preferences(cal: AcademicCalendar, data: Dict[str, Any]) -> AcademicCalendar:
+    """Validate + merge per-calendar UI preferences, dropping unknown keys."""
+    from .models import CALENDAR_PREFERENCE_OPTIONS, default_calendar_preferences
+
+    errors: Dict[str, str] = {}
+    merged = cal.prefs  # defaults + currently stored
+
+    for key, allowed in CALENDAR_PREFERENCE_OPTIONS.items():
+        if key in data:
+            value = data.get(key)
+            if value not in allowed:
+                errors[key] = f"Must be one of: {', '.join(allowed)}."
+            else:
+                merged[key] = value
+
+    if "default_month" in data:
+        raw = data.get("default_month")
+        if raw in (None, ""):
+            merged["default_month"] = None
+        elif isinstance(raw, str) and _valid_month(raw):
+            merged["default_month"] = raw
+        else:
+            errors["default_month"] = "Must be a yyyy-mm value or null."
+
+    if errors:
+        raise CalendarValidationError(errors)
+
+    cal.preferences = {k: merged[k] for k in default_calendar_preferences()}
+    db.session.commit()
+    return cal

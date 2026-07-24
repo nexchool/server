@@ -386,7 +386,7 @@ def _find_vacation_overlap(
     return query.first()
 
 
-def create_holiday(data: dict, tenant_id: str) -> Dict:
+def create_holiday(data: dict, tenant_id: str, silent: bool = False) -> Dict:
     """
     Create a holiday (single-day, range, or recurring).
 
@@ -394,6 +394,9 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
     Required for recurring:     name, recurring_day_of_week
     Optional everywhere:        description, holiday_type, academic_year_id,
                                 end_date (range), is_recurring, applies_to
+
+    `silent` skips the per-row audit + notification (used by bulk import, which
+    emits a single summary instead).
     """
     try:
         name = (data.get("name") or "").strip()
@@ -509,19 +512,20 @@ def create_holiday(data: dict, tenant_id: str) -> Dict:
         db.session.add(holiday)
         db.session.flush()
         label = _holiday_label(holiday)
-        activity.audit_calendar_action(
-            f"{label.lower()}_created", "holiday", holiday.id,
-            f"{label} '{holiday.name}' added ({_holiday_dates(holiday)})",
-            tenant_id,
-        )
-        # Weekly-off rows are wizard-managed plumbing — not announcement-worthy.
-        if holiday.holiday_type != "weekly_off":
-            activity.notify_calendar_change(
-                f"{label} added",
-                f"{holiday.name}: {_holiday_dates(holiday)}",
+        if not silent:
+            activity.audit_calendar_action(
+                f"{label.lower()}_created", "holiday", holiday.id,
+                f"{label} '{holiday.name}' added ({_holiday_dates(holiday)})",
                 tenant_id,
-                {"holiday_id": holiday.id, "academic_year_id": academic_year_id},
             )
+            # Weekly-off rows are wizard-managed plumbing — not announcement-worthy.
+            if holiday.holiday_type != "weekly_off":
+                activity.notify_calendar_change(
+                    f"{label} added",
+                    f"{holiday.name}: {_holiday_dates(holiday)}",
+                    tenant_id,
+                    {"holiday_id": holiday.id, "academic_year_id": academic_year_id},
+                )
         db.session.commit()
 
         result = holiday.to_dict()

@@ -38,7 +38,7 @@ from shared.helpers import (
     validation_error_response,
 )
 
-from . import export_services, services
+from . import export_services, import_services, services
 from .activity import resolve_user_names
 from .services import CalendarValidationError
 
@@ -187,6 +187,132 @@ def publish_calendar(calendar_id):
     return success_response(
         data={"calendar": cal.to_dict(), "summary": summary},
         message="Academic calendar published",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin: delete / archive / restore / preferences
+# ---------------------------------------------------------------------------
+
+def _current_user_id():
+    return g.current_user.id if g.current_user else None
+
+
+@academics_bp.route("/calendar/<calendar_id>", methods=["DELETE"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_permission(PERM_MANAGE)
+def delete_calendar(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+    try:
+        services.delete_calendar(cal)
+    except CalendarValidationError as e:
+        return validation_error_response(e.errors)
+    return success_response(message="Draft calendar deleted")
+
+
+@academics_bp.route("/calendar/<calendar_id>/archive", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_permission(PERM_MANAGE)
+def archive_calendar(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+    try:
+        cal = services.archive_calendar(cal, _current_user_id())
+    except CalendarValidationError as e:
+        return validation_error_response(e.errors)
+    return success_response(data=cal.to_dict(), message="Calendar archived")
+
+
+@academics_bp.route("/calendar/<calendar_id>/restore", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_permission(PERM_MANAGE)
+def restore_calendar(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+    try:
+        cal = services.restore_calendar(cal, _current_user_id())
+    except CalendarValidationError as e:
+        return validation_error_response(e.errors)
+    return success_response(data=cal.to_dict(), message="Calendar restored")
+
+
+@academics_bp.route("/calendar/<calendar_id>/preferences", methods=["PATCH"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_permission(PERM_MANAGE)
+def update_calendar_preferences(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+    try:
+        cal = services.update_preferences(cal, request.get_json() or {})
+    except CalendarValidationError as e:
+        return validation_error_response(e.errors)
+    return success_response(data=cal.to_dict(), message="Preferences saved")
+
+
+# ---------------------------------------------------------------------------
+# Admin: import (template + upload)
+# ---------------------------------------------------------------------------
+
+@academics_bp.route("/calendar/<calendar_id>/import-template", methods=["GET"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_any_permission(PERM_READ, PERM_MANAGE)
+def import_template(calendar_id):
+    import_type = (request.args.get("type") or "").strip()
+    try:
+        content = import_services.import_template_csv(import_type)
+    except import_services.ImportValidationError as e:
+        return validation_error_response({"type": e.message})
+    return send_file(
+        BytesIO(content),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"import-template-{import_type}.csv",
+    )
+
+
+@academics_bp.route("/calendar/<calendar_id>/import", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("academic_calendar")
+@require_permission(PERM_MANAGE)
+def import_calendar_data(calendar_id):
+    cal = services.get_calendar(calendar_id)
+    if not cal:
+        return not_found_response("Calendar not found")
+
+    if "file" not in request.files:
+        return validation_error_response({"file": "A CSV file is required."})
+    import_type = (request.form.get("type") or request.args.get("type") or "").strip()
+    try:
+        text = request.files["file"].read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return validation_error_response({"file": "File must be UTF-8 encoded CSV."})
+
+    try:
+        report = import_services.import_rows(cal, import_type, text)
+    except import_services.ImportValidationError as e:
+        return error_response(
+            "invalid_template", message=e.message, status_code=422,
+            details=e.details or None,
+        )
+    return success_response(
+        data=report,
+        message=f"Imported {report['imported']} of {report['total']} row(s)",
     )
 
 
