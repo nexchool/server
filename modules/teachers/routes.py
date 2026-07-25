@@ -216,6 +216,68 @@ def update_teacher(teacher_id):
     return error_response('UpdateError', result['error'], 400)
 
 
+@teachers_bp.route('/bulk-status', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_UPDATE)
+def bulk_update_teacher_status():
+    """
+    Set status for many teachers at once.
+
+    Body: { teacher_ids: [str], status: str }
+    """
+    from .teacher_schemas import TEACHER_STATUS_VALUES
+
+    data = request.get_json() or {}
+    teacher_ids = data.get('teacher_ids')
+    status = (data.get('status') or '').strip()
+
+    if not isinstance(teacher_ids, list) or not teacher_ids:
+        return validation_error_response({'teacher_ids': 'a non-empty list is required'})
+    if status not in TEACHER_STATUS_VALUES:
+        return validation_error_response({
+            'status': f"must be one of: {', '.join(TEACHER_STATUS_VALUES)}"
+        })
+
+    result = services.bulk_update_teacher_status(teacher_ids, status)
+    if not result.get('success'):
+        return error_response('BulkStatusError', result.get('error', 'Failed'), 400)
+    return success_response(
+        data={'updated': result['updated'], 'missing': result.get('missing', [])},
+        message=f"Updated {result['updated']} teacher(s)",
+    )
+
+
+@teachers_bp.route('/bulk-delete', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_DELETE)
+def bulk_delete_teachers():
+    """
+    Delete many teachers at once.
+
+    Body: { teacher_ids: [str] }
+
+    POST rather than DELETE: the action carries a body, matching /bulk-status
+    and the students module.
+    """
+    data = request.get_json() or {}
+    teacher_ids = data.get('teacher_ids')
+
+    if not isinstance(teacher_ids, list) or not teacher_ids:
+        return validation_error_response({'teacher_ids': 'a non-empty list is required'})
+
+    result = services.bulk_delete_teachers(teacher_ids)
+    if not result.get('success'):
+        return error_response('BulkDeleteError', result.get('error', 'Failed'), 400)
+    return success_response(
+        data={'deleted': result['deleted'], 'missing': result.get('missing', [])},
+        message=f"Deleted {result['deleted']} teacher(s)",
+    )
+
+
 @teachers_bp.route('/<teacher_id>', methods=['DELETE'])
 @tenant_required
 @auth_required
