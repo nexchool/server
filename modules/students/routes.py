@@ -573,6 +573,42 @@ def promotion_history():
     )
 
 
+@students_bp.route('/bulk-delete', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_DELETE)
+def bulk_delete_students():
+    """
+    Delete many students at once.
+
+    Body: { student_ids: [str] }
+
+    POST rather than DELETE: this is an action over a collection carrying a
+    body, matching the existing /bulk-status endpoint.
+    """
+    data = request.get_json() or {}
+    student_ids = data.get('student_ids')
+
+    if not isinstance(student_ids, list) or not student_ids:
+        return validation_error_response({'student_ids': 'a non-empty list is required'})
+
+    # Branch scope: reject if any target student is outside a restricted
+    # sub-admin's branches (403). No-op for unrestricted users.
+    for sid in student_ids:
+        assert_student_allowed(sid)
+
+    result = services.bulk_delete_students(student_ids)
+    if not result.get('success'):
+        return error_response('BulkDeleteError', result.get('error', 'Failed'), 400)
+    return success_response(
+        data={'deleted': result['deleted'], 'missing': result.get('missing', [])},
+        message=f"Deleted {result['deleted']} student(s)",
+    )
+
+
 @students_bp.route('/bulk-status', methods=['POST'], strict_slashes=False)
 @tenant_required
 @auth_required

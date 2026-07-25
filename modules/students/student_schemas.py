@@ -103,9 +103,11 @@ _STUDENT_SPEC = {
     "guardian_email": [v.email()],
     "father_email": [v.email()],
     "mother_email": [v.email()],
-    # Phones — guardian is the primary (mobile) contact; others may be landlines.
+    # Phones — the student's and guardian's own numbers are mobiles (they receive
+    # OTPs and SMS), so both take the strict 10-digit rule. Parent and emergency
+    # contacts stay lenient: those may be landlines with STD codes.
     "guardian_phone": [v.phone("Guardian phone")],
-    "phone": [v.phone_loose()],
+    "phone": [v.phone("Student phone")],
     "father_phone": [v.phone_loose()],
     "mother_phone": [v.phone_loose()],
     "emergency_contact_phone": [v.phone_loose()],
