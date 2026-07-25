@@ -26,7 +26,7 @@ from modules.academics.backbone.models import (
 from modules.classes.models import Class, ClassSubject
 from modules.finance.enums import PaymentStatus, StudentFeeStatus
 from modules.finance.models import Payment, StudentFee
-from modules.holidays.models import Holiday
+from modules.academics.calendar.holidays import Holiday
 from modules.schedule.models import ScheduleOverride
 from modules.students.models import Student
 from modules.teachers.models import Teacher, TeacherLeave

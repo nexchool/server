@@ -28,7 +28,7 @@ from modules.academics.backbone.models import AttendanceRecord, AttendanceSessio
 from modules.auth.models import User
 from modules.classes.models import Class
 from modules.students.models import Student
-from modules.holidays.services import get_holiday_for_date
+from modules.academics.calendar.holiday_services import get_holiday_for_date
 
 from . import session_services as session_svc
 from .models import Attendance

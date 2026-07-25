@@ -21,7 +21,7 @@ from core.database import db
 from core.tenant import get_tenant_id
 from modules.attendance.models import Attendance
 from modules.classes.models import Class
-from modules.holidays.services import get_holiday_for_date
+from modules.academics.calendar.holiday_services import get_holiday_for_date
 from modules.students.models import Student
 from modules.student_leaves.models import StudentLeave, LEAVE_TYPES
 from modules.teachers.models import Teacher, TeacherLeave

@@ -2817,7 +2817,7 @@ def _duty_display(total_minutes: int) -> str:
 def _is_calendar_holiday(tenant_id: str, d: date, academic_year_id: str) -> bool:
     """True if tenant has a holiday that applies to this calendar date."""
     try:
-        from modules.holidays.models import Holiday
+        from modules.academics.calendar.holidays import Holiday
     except ImportError:
         return False
 

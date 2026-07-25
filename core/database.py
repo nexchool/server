@@ -127,7 +127,7 @@ def init_db(app):
         )
         from modules.timetable.models import TimetableSlot, TimetableConfig
         from modules.schedule.models import ScheduleOverride
-        from modules.holidays.models import Holiday
+        from modules.academics.calendar.holidays import Holiday
         from modules.devices.models import DeviceToken
         from modules.transport.models import (
             TransportBus,

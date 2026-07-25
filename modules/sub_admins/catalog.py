@@ -91,6 +91,28 @@ SUBADMIN_MODULES: Dict[str, dict] = {
             TOGGLE_DELETE: ["teacher.delete"],
         },
     },
+    "academic_calendar": {
+        "label": "Academic Calendar",
+        "levels": [LEVEL_VIEW, LEVEL_EDIT],
+        "perms": {
+            LEVEL_VIEW: ["academic_calendar.read"],
+            LEVEL_EDIT: [
+                "academic_calendar.read",
+                "academic_calendar.create",
+                "academic_calendar.edit",
+                "academic_calendar.archive",
+                "academic_calendar.duplicate",
+                "academic_calendar.export",
+                "academic_calendar.import",
+                "academic_calendar.print",
+                "academic_calendar.settings",
+            ],
+        },
+        "toggles": {
+            # Deleting a draft is irreversible — keep it an explicit opt-in.
+            TOGGLE_DELETE: ["academic_calendar.delete"],
+        },
+    },
     "finance": {
         "label": "Finance & Fees",
         "levels": [LEVEL_VIEW, LEVEL_OPERATE],

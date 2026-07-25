@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
-from modules.holidays.models import Holiday
+from modules.academics.calendar.holidays import Holiday
 
 logger = logging.getLogger(__name__)
 

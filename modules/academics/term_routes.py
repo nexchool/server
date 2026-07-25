@@ -30,6 +30,10 @@ from shared.helpers import (
 
 from modules.academics import academics_bp
 from modules.academics.backbone.models import AcademicTerm
+from modules.academics.calendar.activity import (
+    audit_calendar_action,
+    notify_calendar_change,
+)
 
 
 PERM_READ = "academic_term.read"
@@ -69,6 +73,47 @@ def _term_to_dict(term: AcademicTerm) -> Dict[str, Any]:
         "created_at": term.created_at.isoformat() if term.created_at else None,
         "updated_at": term.updated_at.isoformat() if term.updated_at else None,
     }
+
+
+def _validate_term_dates(
+    tenant_id: str,
+    academic_year_id: str,
+    start: date,
+    end: date,
+    exclude_id: Optional[str] = None,
+) -> Optional[str]:
+    """Return an error message when the term falls outside its academic year
+    or overlaps a sibling term, else None."""
+    from modules.academics.academic_year.models import AcademicYear
+
+    year = AcademicYear.query.filter(
+        AcademicYear.id == academic_year_id,
+        AcademicYear.tenant_id == tenant_id,
+    ).first()
+    if not year:
+        return "Academic year not found."
+    if start < year.start_date or end > year.end_date:
+        return (
+            f"Term dates must fall within the academic year "
+            f"({year.start_date} – {year.end_date})."
+        )
+
+    overlap_q = AcademicTerm.query.filter(
+        AcademicTerm.tenant_id == tenant_id,
+        AcademicTerm.academic_year_id == academic_year_id,
+        AcademicTerm.deleted_at.is_(None),
+        AcademicTerm.start_date <= end,
+        AcademicTerm.end_date >= start,
+    )
+    if exclude_id:
+        overlap_q = overlap_q.filter(AcademicTerm.id != exclude_id)
+    other = overlap_q.first()
+    if other:
+        return (
+            f"Dates overlap existing term '{other.name}' "
+            f"({other.start_date} – {other.end_date})."
+        )
+    return None
 
 
 def _list_terms(tenant_id: str, academic_year_id: Optional[str]) -> List[Dict]:
@@ -117,6 +162,10 @@ def create_academic_term():
     if end < start:
         return validation_error_response({"message": "end_date must be on or after start_date"})
 
+    date_error = _validate_term_dates(g.tenant_id, academic_year_id, start, end)
+    if date_error:
+        return validation_error_response({"message": date_error})
+
     sequence = data.get("sequence")
     try:
         sequence = int(sequence) if sequence is not None else 1
@@ -135,6 +184,12 @@ def create_academic_term():
             is_active=bool(data.get("is_active", True)),
         )
         db.session.add(term)
+        db.session.flush()
+        audit_calendar_action(
+            "semester_created", "academic_term", term.id,
+            f"Semester '{term.name}' added ({term.start_date} – {term.end_date})",
+            g.tenant_id,
+        )
         db.session.commit()
         return success_response(
             data=_term_to_dict(term),
@@ -222,10 +277,27 @@ def update_academic_term(term_id):
         term.end_date = d
     if term.end_date < term.start_date:
         return validation_error_response({"message": "end_date must be on or after start_date"})
+    date_error = _validate_term_dates(
+        g.tenant_id, term.academic_year_id, term.start_date, term.end_date,
+        exclude_id=term_id,
+    )
+    if date_error:
+        return validation_error_response({"message": date_error})
     if "is_active" in data and data["is_active"] is not None:
         term.is_active = bool(data["is_active"])
 
     try:
+        audit_calendar_action(
+            "semester_updated", "academic_term", term.id,
+            f"Semester '{term.name}' updated ({term.start_date} – {term.end_date})",
+            g.tenant_id,
+        )
+        notify_calendar_change(
+            "Semester updated",
+            f"{term.name}: {term.start_date} – {term.end_date}",
+            g.tenant_id,
+            {"academic_term_id": term.id, "academic_year_id": term.academic_year_id},
+        )
         db.session.commit()
         return success_response(
             data=_term_to_dict(term),
@@ -271,6 +343,11 @@ def delete_academic_term(term_id):
         # `deleted_at` partial-unique pattern used elsewhere in academics).
         term.deleted_at = db.func.now()
         term.is_active = False
+        audit_calendar_action(
+            "semester_deleted", "academic_term", term.id,
+            f"Semester '{term.name}' removed",
+            g.tenant_id,
+        )
         db.session.commit()
         return success_response(message="Term deleted successfully")
     except Exception as e:

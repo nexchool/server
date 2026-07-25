@@ -24,7 +24,7 @@ from modules.academics.backbone.models import (
     ClassTeacherAssignment,
 )
 from modules.classes.models import Class
-from modules.holidays.services import get_holiday_for_date
+from modules.academics.calendar.holiday_services import get_holiday_for_date
 from modules.rbac.services import has_permission
 from modules.students.models import Student
 from modules.teachers.models import Teacher

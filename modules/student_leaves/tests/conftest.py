@@ -261,7 +261,7 @@ def holiday_in_range(db_session, tenant):
     column. The .date attribute we attach is for test convenience.
     """
     from datetime import date, timedelta
-    from modules.holidays.models import Holiday
+    from modules.academics.calendar.holidays import Holiday
 
     today = date.today()
     days_ahead = (0 - today.weekday()) % 7

@@ -15,3 +15,4 @@ from . import bell_routes  # noqa: E402, F401
 from . import dash_routes  # noqa: E402, F401
 from . import rollover_routes  # noqa: E402, F401
 from . import term_routes  # noqa: E402, F401
+from .calendar import routes as calendar_routes  # noqa: E402, F401
