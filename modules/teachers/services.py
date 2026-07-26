@@ -397,6 +397,115 @@ def update_teacher(
         return {'success': False, 'error': safe_error(e, "Failed to update teacher")}
 
 
+# Matches students' bulk cap: one request should not queue unbounded work, and
+# the UI pages at 100.
+MAX_BULK_TEACHERS = 500
+
+
+def bulk_update_teacher_status(teacher_ids: List[str], status: str) -> Dict:
+    """Set `status` for many teachers in one tenant-scoped transaction.
+
+    Returns {success, updated, missing}.
+    """
+    from .teacher_schemas import TEACHER_STATUS_VALUES
+
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context required"}
+
+    ids = [s for s in {str(i).strip() for i in (teacher_ids or [])} if s]
+    if not ids:
+        return {"success": False, "error": "No teachers selected"}
+    if status not in TEACHER_STATUS_VALUES:
+        return {
+            "success": False,
+            "error": f"Invalid status. Allowed: {', '.join(TEACHER_STATUS_VALUES)}",
+        }
+
+    try:
+        teachers = Teacher.query.filter(
+            Teacher.tenant_id == tenant_id, Teacher.id.in_(ids)
+        ).all()
+        found_ids = {t.id for t in teachers}
+        for teacher in teachers:
+            teacher.status = status
+        db.session.commit()
+        return {
+            "success": True,
+            "updated": len(teachers),
+            "missing": [i for i in ids if i not in found_ids],
+        }
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": safe_error(e, "Failed to update teachers")}
+
+
+def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
+    """Delete many teachers in one tenant-scoped transaction.
+
+    Same teardown as `delete_teacher`, set-based: detach class-teacher rows and
+    the legacy homeroom pointer first (neither FK cascades, so SQLAlchemy would
+    otherwise null a NOT NULL column), then the teacher rows, then soft-
+    deactivate the backing logins.
+
+    Returns {success, deleted, missing}.
+    """
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context required"}
+
+    ids = [s for s in {str(i).strip() for i in (teacher_ids or [])} if s]
+    if not ids:
+        return {"success": False, "error": "No teachers selected"}
+    if len(ids) > MAX_BULK_TEACHERS:
+        return {
+            "success": False,
+            "error": (
+                f"Cannot delete more than {MAX_BULK_TEACHERS} teachers in one request "
+                f"({len(ids)} requested)"
+            ),
+        }
+
+    try:
+        teachers = Teacher.query.filter(
+            Teacher.tenant_id == tenant_id, Teacher.id.in_(ids)
+        ).all()
+        if not teachers:
+            return {"success": True, "deleted": 0, "missing": ids}
+
+        found_ids = [t.id for t in teachers]
+        user_ids = [t.user_id for t in teachers if t.user_id]
+
+        from modules.classes.models import ClassTeacher, Class
+
+        ClassTeacher.query.filter(ClassTeacher.teacher_id.in_(found_ids)).delete(
+            synchronize_session=False
+        )
+        if user_ids:
+            Class.query.filter(
+                Class.tenant_id == tenant_id, Class.teacher_id.in_(user_ids)
+            ).update({Class.teacher_id: None}, synchronize_session=False)
+
+        for teacher in teachers:
+            db.session.delete(teacher)
+        db.session.flush()  # clear teachers.user_id before touching the users
+
+        for user_id in user_ids:
+            # hard=False: a teacher's user is referenced by NOT NULL / NO ACTION
+            # FKs (attendance.marked_by, classes.teacher_id) — see delete_teacher.
+            remove_login_for_deleted_profile(user_id, tenant_id, "Teacher", hard=False)
+
+        db.session.commit()
+        return {
+            "success": True,
+            "deleted": len(found_ids),
+            "missing": [i for i in ids if i not in set(found_ids)],
+        }
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": safe_error(e, "Failed to delete teachers")}
+
+
 def delete_teacher(teacher_id: str) -> Dict:
     """Delete teacher and deactivate its backing user.
 

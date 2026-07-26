@@ -20,7 +20,7 @@ REQUIRED_FIELDS = ("name", "email", "branch", "programme", "class_name", "sectio
 
 # Optional columns that map to Student / User (ignored if absent)
 OPTIONAL_STUDENT_FIELDS: Set[str] = {
-    "admission_number",  # legacy column; ignored with a warning (server assigns)
+    "admission_number",  # blank = new student (server assigns); set = update that student
     "roll_number",
     "address",
     "gender",

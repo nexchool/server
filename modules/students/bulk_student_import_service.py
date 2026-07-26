@@ -64,6 +64,54 @@ def _tenant_admission_numbers(tenant_id: str) -> Set[str]:
     return {r[0] for r in rows if r[0]}
 
 
+def _existing_student_index(tenant_id: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Look-up tables for deciding whether an imported row is a new student or an
+    existing one being re-imported with more detail.
+
+    `non_student_emails` matters as much as the match tables: a tenant's user
+    list also holds teachers and staff, and an import row must never latch onto
+    one of those accounts just because the address matches.
+    """
+    rows = (
+        db.session.query(
+            Student.id,
+            Student.user_id,
+            Student.admission_number,
+            Student.class_id,
+            User.email,
+        )
+        .join(User, User.id == Student.user_id)
+        .filter(Student.tenant_id == tenant_id)
+        .all()
+    )
+
+    by_admission: Dict[str, Dict[str, Any]] = {}
+    by_email: Dict[str, Dict[str, Any]] = {}
+    student_emails: Set[str] = set()
+
+    for student_id, user_id, admission_number, class_id, email in rows:
+        email_lower = email.strip().lower() if email else None
+        entry = {
+            "student_id": student_id,
+            "user_id": user_id,
+            "admission_number": admission_number,
+            "class_id": class_id,
+            "email_lower": email_lower,
+        }
+        if admission_number:
+            by_admission[str(admission_number).strip().lower()] = entry
+        if email_lower:
+            by_email[email_lower] = entry
+            student_emails.add(email_lower)
+
+    return {
+        "by_admission": by_admission,
+        "by_email": by_email,
+        "non_student_emails": _tenant_emails_lower(tenant_id) - student_emails,
+    }
+
+
 def _class_candidates_for_year(
     tenant_id: str, academic_year_id: str
 ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
@@ -207,11 +255,14 @@ def _validate_and_coerce_row(
     row_number: int,
     *,
     class_map: Dict[Tuple[str, str], List[Dict[str, Any]]],
-    db_emails_lower: Set[str],
+    index: Dict[str, Dict[str, Any]],
     file_emails: Set[str],
 ) -> Tuple[bool, Dict[str, Any], List[str], List[str], Optional[Dict[str, Any]]]:
     """
     Returns (valid, display_values, hard_errors, warnings, coerced_or_none).
+
+    A valid row carries `_action` ("create" or "update") and, for updates,
+    `_match` describing the student it resolved to.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -222,19 +273,45 @@ def _validate_and_coerce_row(
             errors.append(f"Missing {req}")
 
     email = (str(row.get("email")).strip() if not is_blank(row.get("email")) else None)
-    if not is_blank(row.get("admission_number")):
-        warnings.append(
-            "admission_number column is ignored; admission numbers are assigned automatically"
-        )
+    admission_number = (
+        str(row.get("admission_number")).strip()
+        if not is_blank(row.get("admission_number"))
+        else None
+    )
+
+    # Identify the row: admission number first (it is the school's own identity
+    # for a student and survives an email change), then email. A match makes
+    # this an update of the existing record rather than a duplicate; no match
+    # means a new student and the admission number is assigned automatically.
+    match: Optional[Dict[str, Any]] = None
+    if admission_number:
+        match = index["by_admission"].get(admission_number.lower())
+        if not match:
+            warnings.append(
+                f"No student found with admission number '{admission_number}'; "
+                "importing as a new student with an automatically assigned number"
+            )
+    if not match and email:
+        match = index["by_email"].get(email.lower())
 
     if email:
         if not validate_email_format(email):
             errors.append("Invalid email")
         el = email.lower()
-        if el in db_emails_lower:
-            errors.append("Email already exists")
-        elif el in file_emails:
+        if el in file_emails:
             errors.append("Duplicate email in file")
+        elif el in index["non_student_emails"]:
+            # A teacher or staff account owns this address. Creating would
+            # collide on the unique index and updating would hijack their login.
+            errors.append("Email already in use by another account in this school")
+        elif match and match["email_lower"] and match["email_lower"] != el:
+            # Matched by admission number but the sheet carries a different
+            # address — could be a genuine email change or the wrong row. Either
+            # way, silently reassigning a login is not something to guess at.
+            errors.append(
+                f"Admission number '{admission_number}' belongs to a student with a "
+                f"different email ({match['email_lower']}); fix the sheet or update the email in the app"
+            )
 
     class_name = (
         str(row.get("class_name")).strip() if not is_blank(row.get("class_name")) else None
@@ -292,6 +369,22 @@ def _validate_and_coerce_row(
     coerced["class_name"] = class_name
     coerced["section"] = section
 
+    if match:
+        coerced["_action"] = "update"
+        coerced["_match"] = match
+        # Placement is deliberately not driven by the sheet: moving a student
+        # cascades into enrollment, attendance and fee assignment, so a stale
+        # column must not re-enrol anyone as a side effect of enriching data.
+        if match["class_id"] and match["class_id"] != class_id:
+            warnings.append(
+                f"Class/section differs from the current placement for "
+                f"'{class_name} {section}'; the student was not moved"
+            )
+        display["_action"] = "update"
+    else:
+        coerced["_action"] = "create"
+        display["_action"] = "create"
+
     g_name, g_rel, g_phone = resolve_guardian_fields(coerced)
     coerced["guardian_name"] = g_name
     coerced["guardian_relationship"] = g_rel
@@ -317,24 +410,31 @@ def validate_workbook_rows(
         raise ValueError("academic_year_id not found for this tenant")
 
     class_map = _class_candidates_for_year(tenant_id, academic_year_id)
-    db_emails = _tenant_emails_lower(tenant_id)
+    index = _existing_student_index(tenant_id)
 
     file_emails: Set[str] = set()
 
     preview: List[Dict[str, Any]] = []
     valid_n = 0
     invalid_n = 0
+    create_n = 0
+    update_n = 0
 
     for raw, rn in zip(rows, row_numbers):
-        ok, display, errs, warns, _coerced = _validate_and_coerce_row(
+        ok, display, errs, warns, coerced = _validate_and_coerce_row(
             raw,
             rn,
             class_map=class_map,
-            db_emails_lower=db_emails,
+            index=index,
             file_emails=file_emails,
         )
+        action = (coerced or {}).get("_action")
         if ok:
             valid_n += 1
+            if action == "update":
+                update_n += 1
+            else:
+                create_n += 1
         else:
             invalid_n += 1
         preview.append(
@@ -344,10 +444,17 @@ def validate_workbook_rows(
                 "errors": errs,
                 "warnings": warns,
                 "valid": ok,
+                "action": action,
             }
         )
 
-    return preview, {"valid": valid_n, "invalid": invalid_n, "total": len(rows)}
+    return preview, {
+        "valid": valid_n,
+        "invalid": invalid_n,
+        "total": len(rows),
+        "create": create_n,
+        "update": update_n,
+    }
 
 
 def _student_kwargs_from_row(
@@ -445,6 +552,47 @@ def _student_kwargs_from_row(
     return kwargs
 
 
+# Identity and placement are never taken from a re-imported sheet: the
+# admission number is ours to assign, the academic year comes from the import
+# form, and a class move is an enrollment change (see the class-differs warning).
+_UPDATE_SKIP_FIELDS = frozenset(
+    {"admission_number", "academic_year_id", "class_id"}
+)
+
+
+def _apply_row_updates(
+    student: Student,
+    coerced: Dict[str, Any],
+    *,
+    academic_year_id: str,
+) -> List[str]:
+    """
+    Copy the row's populated values onto an existing student. Returns the names
+    of the fields that actually changed.
+
+    Only cells that carry a value are applied. A blank cell means "the sheet has
+    nothing to say about this field", never "erase what is on record" — the
+    whole point of a re-import is to add detail, and schools routinely upload
+    partial sheets covering one section or one set of columns.
+    """
+    kwargs = _student_kwargs_from_row(coerced, academic_year_id=academic_year_id)
+    changed: List[str] = []
+
+    for field, value in kwargs.items():
+        if field in _UPDATE_SKIP_FIELDS:
+            continue
+        # Test the source cell, not the coerced value: booleans coerce a blank
+        # to False, which would otherwise quietly clear a flag that is set.
+        if is_blank(coerced.get(field)):
+            continue
+        if getattr(student, field, None) == value:
+            continue
+        setattr(student, field, value)
+        changed.append(field)
+
+    return changed
+
+
 def _dispatch_welcome(
     user_id: str,
     tenant_id: str,
@@ -533,7 +681,7 @@ def import_students_from_rows(
         }
 
     class_map = _class_candidates_for_year(tenant_id, academic_year_id)
-    db_emails = _tenant_emails_lower(tenant_id)
+    index = _existing_student_index(tenant_id)
 
     validated: List[Tuple[int, Dict[str, Any]]] = []
     failed_rows: List[Dict[str, Any]] = []
@@ -545,7 +693,7 @@ def import_students_from_rows(
             raw,
             rn,
             class_map=class_map,
-            db_emails_lower=db_emails,
+            index=index,
             file_emails=file_emails,
         )
         if ok and coerced:
@@ -568,6 +716,12 @@ def import_students_from_rows(
             "failed_rows": failed_rows,
         }
 
+    # Only brand-new students consume plan capacity; re-imported rows update a
+    # record that is already counted.
+    new_student_rows = [
+        (rn, c) for rn, c in validated if c.get("_action") != "update"
+    ]
+
     allowed, limit_msg = _check_student_plan_limit(tenant_id)
     if not allowed:
         return {
@@ -589,7 +743,7 @@ def import_students_from_rows(
     if tenant and tenant.plan_id and tenant.plan:
         cap = tenant.plan.max_students
         current = Student.query.filter_by(tenant_id=tenant_id).count()
-        if current + len(validated) > cap:
+        if current + len(new_student_rows) > cap:
             return {
                 "total": total,
                 "success": 0,
@@ -608,15 +762,44 @@ def import_students_from_rows(
                 "error": "Student plan limit",
             }
 
-    _preassign_admission_numbers(validated, tenant_id)
+    _preassign_admission_numbers(new_student_rows, tenant_id)
 
     success_count = 0
+    updated_count = 0
     skwargs = _student_kwargs_from_row
 
     for i in range(0, len(validated), BATCH_SIZE):
         chunk = validated[i : i + BATCH_SIZE]
         batch_created: List[Tuple[int, Dict[str, Any], str, str]] = []
+        batch_updated: List[Tuple[int, Dict[str, Any], List[str]]] = []
         for rn, coerced in chunk:
+            if coerced.get("_action") == "update":
+                match = coerced["_match"]
+                # Carry the existing number so _student_kwargs_from_row can build
+                # its dict; _apply_row_updates then skips it as an identity field.
+                coerced["admission_number"] = match["admission_number"]
+                try:
+                    with db.session.begin_nested():
+                        student = Student.query.filter_by(
+                            id=match["student_id"], tenant_id=tenant_id
+                        ).first()
+                        if not student:
+                            raise RuntimeError("Student no longer exists")
+                        changed = _apply_row_updates(
+                            student, coerced, academic_year_id=academic_year_id
+                        )
+                        batch_updated.append((rn, coerced, changed))
+                except Exception as e:
+                    logger.exception("bulk_import: update row=%s failed: %s", rn, e)
+                    failed_rows.append(
+                        {
+                            "row_number": rn,
+                            "email": coerced.get("email", ""),
+                            "errors": [str(e)],
+                        }
+                    )
+                continue
+
             pwd = default_student_import_password(coerced["name"])
             try:
                 with db.session.begin_nested():
@@ -689,6 +872,14 @@ def import_students_from_rows(
                         "errors": ["Batch commit failed"],
                     }
                 )
+            for rn, coerced, _changed in batch_updated:
+                failed_rows.append(
+                    {
+                        "row_number": rn,
+                        "email": coerced.get("email", ""),
+                        "errors": ["Batch commit failed"],
+                    }
+                )
             continue
 
         for rn, coerced, user_id, student_id in batch_created:
@@ -701,11 +892,33 @@ def import_students_from_rows(
             )
             _dispatch_welcome(user_id, tenant_id, send_email)
             _post_create_fees(student_id)
-            db_emails.add(coerced["email"].lower())
+            index["by_email"][coerced["email"].lower()] = {
+                "student_id": student_id,
+                "user_id": user_id,
+                "admission_number": coerced["admission_number"],
+                "class_id": coerced["class_id"],
+                "email_lower": coerced["email"].lower(),
+            }
+
+        # Updates deliberately skip _dispatch_welcome and _post_create_fees:
+        # re-running those would mail every existing parent a fresh "welcome,
+        # here is your account" and assign a second set of fee records.
+        for rn, coerced, changed in batch_updated:
+            updated_count += 1
+            logger.info(
+                "bulk_import: updated student admission=%s row=%s fields=%s",
+                coerced.get("admission_number"),
+                rn,
+                ",".join(changed) if changed else "(none)",
+            )
 
     return {
         "total": total,
+        # `success` stays the count of newly created students so existing
+        # callers keep their meaning; created/updated break it down.
         "success": success_count,
+        "created": success_count,
+        "updated": updated_count,
         "failed": len(failed_rows),
         "failed_rows": failed_rows,
     }

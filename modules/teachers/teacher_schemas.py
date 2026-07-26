@@ -7,6 +7,14 @@ from __future__ import annotations
 
 from core import validation as v
 
+# Mirrors the `status` column default and comment on Teacher (active / inactive).
+# Kept here alongside the rest of the teacher contract so routes validate against
+# one list rather than repeating literals.
+TEACHER_STATUS_VALUES = (
+    "active",
+    "inactive",
+)
+
 _TEACHER_SPEC = {
     "name": [v.required("Name"), v.max_length(120, "Name")],
     "email": [v.email()],

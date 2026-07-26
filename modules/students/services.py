@@ -1124,6 +1124,92 @@ def bulk_update_status(student_ids: List[str], student_status: str) -> Dict:
         return {"success": False, "error": safe_error(e, "Failed to update students")}
 
 
+# A single request should not be able to queue unbounded deletion work. The UI
+# pages at 100; this leaves generous headroom while keeping one transaction's
+# footprint predictable.
+MAX_BULK_DELETE = 500
+
+
+def bulk_delete_students(student_ids: List[str]) -> Dict:
+    """Delete many students in one tenant-scoped transaction.
+
+    Same ordering as `delete_student` — fees first, then the student rows, then
+    the backing logins — but set-based, so deleting a page of students is one
+    round trip instead of one per student.
+
+    Returns {success, deleted, missing}. Branch-scope enforcement is the
+    caller's responsibility (the route validates each id before calling).
+    """
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return {"success": False, "error": "Tenant context required"}
+
+    ids = [s for s in {str(i).strip() for i in (student_ids or [])} if s]
+    if not ids:
+        return {"success": False, "error": "No students selected"}
+    if len(ids) > MAX_BULK_DELETE:
+        return {
+            "success": False,
+            "error": (
+                f"Cannot delete more than {MAX_BULK_DELETE} students in one request "
+                f"({len(ids)} requested)"
+            ),
+        }
+
+    try:
+        students = Student.query.filter(
+            Student.tenant_id == tenant_id, Student.id.in_(ids)
+        ).all()
+        if not students:
+            return {"success": True, "deleted": 0, "missing": ids}
+
+        found_ids = [s.id for s in students]
+        user_ids = [s.user_id for s in students if s.user_id]
+
+        from modules.finance.models import StudentFee
+
+        # Ahead of the student rows for the same reason as the single delete:
+        # SQLAlchemy would otherwise null out student_fees.student_id, which the
+        # NOT NULL constraint rejects even though the FK cascades in the DB.
+        StudentFee.query.filter(
+            StudentFee.tenant_id == tenant_id,
+            StudentFee.student_id.in_(found_ids),
+        ).delete(synchronize_session=False)
+
+        for student in students:
+            db.session.delete(student)
+        db.session.flush()  # clear students.user_id before the users go
+
+        for user_id in user_ids:
+            remove_login_for_deleted_profile(user_id, tenant_id, "Student")
+
+        db.session.commit()
+
+        try:
+            from modules.subscription.usage import recompute_tenant_usage
+
+            # Once for the whole batch, not per student.
+            recompute_tenant_usage(tenant_id)
+        except Exception:
+            logger.exception(
+                "recompute_tenant_usage failed after bulk_delete_students"
+            )
+
+        logger.info(
+            "bulk_delete_students: deleted %s student(s) for tenant=%s",
+            len(found_ids),
+            tenant_id,
+        )
+        return {
+            "success": True,
+            "deleted": len(found_ids),
+            "missing": [i for i in ids if i not in set(found_ids)],
+        }
+    except Exception as e:
+        db.session.rollback()
+        return {"success": False, "error": safe_error(e, "Failed to delete students")}
+
+
 def delete_student(student_id: str) -> Dict:
     """
     Delete student.
