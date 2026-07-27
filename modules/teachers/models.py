@@ -4,6 +4,11 @@ from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 
+# Needed so the "Department" name is registered before mappers configure:
+# department_ref below resolves it lazily by string, and modules/departments
+# isn't imported via a registered blueprint yet (routes land in Task 4).
+from modules.departments.models import Department  # noqa: F401
+
 
 LEAVE_TYPES = ["casual", "sick", "emergency", "unpaid", "other"]
 
@@ -73,7 +78,12 @@ class Teacher(TenantBaseModel):
     # Professional Info
     employee_id = db.Column(db.String(20), nullable=False, index=True)
     designation = db.Column(db.String(100), nullable=True)        # e.g. "Senior Teacher", "HOD"
-    department = db.Column(db.String(100), nullable=True)         # e.g. "Mathematics", "Science"
+    department_id = db.Column(
+        db.String(36),
+        db.ForeignKey("departments.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     qualification = db.Column(db.String(200), nullable=True)      # e.g. "M.Ed", "Ph.D"
     specialization = db.Column(db.String(200), nullable=True)     # e.g. "Algebra", "Organic Chemistry"
     experience_years = db.Column(db.Integer, nullable=True)
@@ -91,6 +101,7 @@ class Teacher(TenantBaseModel):
 
     # Relationships
     user = db.relationship('User', backref=db.backref('teacher_profile', uselist=False))
+    department_ref = db.relationship("Department", foreign_keys=[department_id])
 
     def save(self):
         db.session.add(self)
@@ -113,7 +124,11 @@ class Teacher(TenantBaseModel):
             ),
             "employee_id": self.employee_id,
             "designation": self.designation,
-            "department": self.department,
+            "department_id": self.department_id,
+            # Legacy key: the Expo client reads `department` as a plain string
+            # (client/modules/teachers/screens/TeacherDetailScreen.tsx). Keep
+            # emitting it until the mobile app ships a department picker.
+            "department": self.department_ref.name if self.department_ref else None,
             "qualification": self.qualification,
             "specialization": self.specialization,
             "experience_years": self.experience_years,

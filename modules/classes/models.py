@@ -5,6 +5,11 @@ import uuid
 
 from sqlalchemy import CheckConstraint, Index, text
 
+# Needed so the "Department" name is registered before mappers configure:
+# department_ref below resolves it lazily by string, and modules/departments
+# isn't imported via a registered blueprint yet (routes land in Task 4).
+from modules.departments.models import Department  # noqa: F401
+
 
 class Class(TenantBaseModel):
     """
@@ -65,6 +70,12 @@ class Class(TenantBaseModel):
     medium_id = db.Column(
         db.String(36),
         db.ForeignKey("mediums.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    department_id = db.Column(
+        db.String(36),
+        db.ForeignKey("departments.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
@@ -136,6 +147,7 @@ class Class(TenantBaseModel):
         foreign_keys=[medium_id],
         lazy=True,
     )
+    department_ref = db.relationship("Department", foreign_keys=[department_id])
 
     def save(self):
         db.session.add(self)
@@ -157,6 +169,8 @@ class Class(TenantBaseModel):
             "grade_sequence": self.grade.sequence if self.grade else None,
             "medium_id": self.medium_id,
             "medium_name": self.medium.name if self.medium else None,
+            "department_id": self.department_id,
+            "department_name": self.department_ref.name if self.department_ref else None,
             "academic_year": self.academic_year_ref.name if self.academic_year_ref else None,
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,

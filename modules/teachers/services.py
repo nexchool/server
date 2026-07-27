@@ -13,6 +13,7 @@ from modules.rbac.services import (
     remove_login_for_deleted_profile,
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
+from modules.departments.models import Department
 from .models import Teacher
 
 # Columns the client may sort by.
@@ -161,12 +162,16 @@ def create_teacher(
             db.session.rollback()
             return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
 
+        # `department` (free-text name) is accepted for API compatibility but
+        # not yet wired to department_id — resolving/creating the matching
+        # Department row is Task 5's job. Left unset here rather than
+        # crashing (department is no longer a Teacher column/kwarg) or
+        # guessing at resolution logic.
         teacher = Teacher(
             tenant_id=tenant_id,
             user_id=user.id,
             employee_id=employee_id,
             designation=designation,
-            department=department,
             qualification=qualification,
             specialization=specialization,
             experience_years=experience_years,
@@ -228,7 +233,12 @@ def list_teachers(
     When `page` and `per_page` are not provided all matching rows are returned
     (total_pages = 1) so callers that don't paginate still work.
     """
-    query = Teacher.query.join(User)
+    # Outer join: department_id replaced the free-text department column
+    # (migration 077). Outer so teachers with no department are still
+    # returned when the department filter/search below isn't in play.
+    query = Teacher.query.join(User).outerjoin(
+        Department, Teacher.department_id == Department.id
+    )
 
     if status:
         query = query.filter(
@@ -236,7 +246,7 @@ def list_teachers(
         )
 
     if department:
-        query = query.filter(Teacher.department.ilike(f"%{department.strip()}%"))
+        query = query.filter(Department.name.ilike(f"%{department.strip()}%"))
 
     if designation:
         query = query.filter(Teacher.designation.ilike(f"%{designation.strip()}%"))
@@ -267,7 +277,7 @@ def list_teachers(
                         User.name.ilike(pattern),
                         User.email.ilike(pattern),
                         Teacher.employee_id.ilike(pattern),
-                        Teacher.department.ilike(pattern),
+                        Department.name.ilike(pattern),
                         Teacher.phone.ilike(pattern),
                     )
                 )
@@ -284,7 +294,7 @@ def list_teachers(
     elif sort_key == "designation":
         order_cols = [_ordered(Teacher.designation, nulls_last=True)]
     elif sort_key == "department":
-        order_cols = [_ordered(Teacher.department, nulls_last=True)]
+        order_cols = [_ordered(Department.name, nulls_last=True)]
     elif sort_key == "date_of_joining":
         order_cols = [_ordered(Teacher.date_of_joining, nulls_last=True)]
     else:  # employee_id (default)
@@ -313,9 +323,10 @@ def list_teachers(
 
     all_departments = [
         r[0]
-        for r in Teacher.query.with_entities(_distinct(Teacher.department))
-        .filter(Teacher.department.isnot(None), Teacher.department != "")
-        .order_by(Teacher.department)
+        for r in Teacher.query.join(Department, Teacher.department_id == Department.id)
+        .with_entities(_distinct(Department.name))
+        .filter(Department.name.isnot(None), Department.name != "")
+        .order_by(Department.name)
         .all()
     ]
     all_designations = [
@@ -375,8 +386,8 @@ def update_teacher(
             teacher.phone = phone
         if designation is not None:
             teacher.designation = designation
-        if department is not None:
-            teacher.department = department
+        # `department` (free-text name) is accepted for API compatibility but
+        # not yet wired to department_id — see create_teacher's note above.
         if qualification is not None:
             teacher.qualification = qualification
         if specialization is not None:
