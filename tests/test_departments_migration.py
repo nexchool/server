@@ -1,7 +1,10 @@
-"""Backfill semantics for migration 077.
+"""Backfill dedupe helper for migration 077.
 
-The migration itself runs once; these tests exercise the same SQL against
-seeded rows so the dedupe and matching logic are pinned down.
+These tests cover only the pure `distinct_names()` helper — no SQL, no
+database fixture. The migration's actual SQL (the ON CONFLICT insert and the
+lower(trim())-matching UPDATE) is exercised by really running
+`flask db upgrade`/`downgrade` against seeded/real data; see the task report
+for that round-trip evidence, not this file.
 """
 from __future__ import annotations
 

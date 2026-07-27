@@ -15,12 +15,30 @@ TEACHER_STATUS_VALUES = (
     "inactive",
 )
 
+
+def _department_not_yet_supported(value: str | None) -> str | None:
+    """Reject a free-text department instead of silently discarding it.
+
+    Migration 077 replaced Teacher.department (free text) with department_id
+    (FK). Resolving a submitted name to a department_id — or exposing a
+    picker — is Task 5's job. Until then, accepting the field and dropping
+    it would look like a successful save while quietly losing the value;
+    failing loudly here is recoverable, silent data loss is not.
+    """
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return None
+    return (
+        "Department can no longer be set as free text; a department picker "
+        "is coming soon. Leave this field blank for now."
+    )
+
+
 _TEACHER_SPEC = {
     "name": [v.required("Name"), v.max_length(120, "Name")],
     "email": [v.email()],
     "phone": [v.phone_loose()],
     "designation": [v.max_length(80, "Designation")],
-    "department": [v.max_length(80, "Department")],
+    "department": [_department_not_yet_supported],
     "qualification": [v.max_length(120, "Qualification")],
     "specialization": [v.max_length(120, "Specialization")],
     "experience_years": [v.integer(min_value=0, max_value=80, label="Experience (years)")],

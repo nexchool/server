@@ -35,12 +35,19 @@ def upgrade():
         sa.text("SELECT tenant_id, department FROM teachers WHERE department IS NOT NULL")
     ).fetchall()
 
+    # ON CONFLICT DO NOTHING: makes the backfill idempotent against rows that
+    # already exist (case-insensitively) for this tenant — notably including
+    # rows a prior downgrade()/upgrade() cycle left behind, since downgrade()
+    # intentionally does not delete departments (see its docstring below).
+    # The subsequent UPDATE matches pre-existing rows the same way it
+    # matches freshly-inserted ones (lower(trim(name)) equality).
     for (tenant_id, _lowered), original_name in distinct_names(rows).items():
         connection.execute(
             sa.text(
                 "INSERT INTO departments "
                 "(id, tenant_id, name, type, status, display_order, created_at, updated_at) "
-                "VALUES (:id, :tenant_id, :name, 'academic_division', 'active', 0, now(), now())"
+                "VALUES (:id, :tenant_id, :name, 'academic_division', 'active', 0, now(), now()) "
+                "ON CONFLICT (tenant_id, lower(name)) WHERE deleted_at IS NULL DO NOTHING"
             ),
             {"id": str(uuid.uuid4()), "tenant_id": tenant_id, "name": original_name},
         )
@@ -79,6 +86,19 @@ def upgrade():
 
 
 def downgrade():
+    # Deliberately does NOT delete rows from `departments`. A downgrade runs
+    # at a point in *time*, not a point in the revision chain: by the time
+    # anyone downgrades past this revision in a real environment, other
+    # tasks' code (departments CRUD, Task 4+) may have created or attached
+    # departments this migration didn't insert — code, description,
+    # display_order, teacher/class assignments made through the API. Those
+    # rows belong to revision 076, which downgrade() must not touch.
+    # Deleting only "rows referenced by a teacher" is not a safe proxy for
+    # "rows this migration inserted" either: it's asymmetric (a department
+    # with no teacher survives) and would destroy user-created data the
+    # moment any teacher is assigned to it. upgrade()'s backfill INSERT is
+    # ON CONFLICT DO NOTHING specifically so it tolerates rows still present
+    # from a prior upgrade that a downgrade correctly left alone.
     op.add_column("teachers", sa.Column("department", sa.String(length=100), nullable=True))
 
     connection = op.get_bind()
@@ -89,26 +109,9 @@ def downgrade():
         )
     )
 
-    # Constraints must go before the cleanup DELETE below: fk_teachers_department_id
-    # still references these rows and blocks the delete otherwise.
     op.drop_constraint("fk_classes_department_id", "classes", type_="foreignkey")
     op.drop_constraint("fk_teachers_department_id", "teachers", type_="foreignkey")
     op.drop_index("ix_classes_department_id", table_name="classes")
     op.drop_index("ix_teachers_department_id", table_name="teachers")
-
-    # Remove the rows this migration's own backfill created. Without this,
-    # a subsequent upgrade() re-runs the backfill and its INSERT collides
-    # with the still-present rows on uq_departments_tenant_name_active
-    # (case-insensitive), aborting the migration. Safe at this point in the
-    # chain: teachers.department_id is the only writer of `departments`
-    # rows so far, so every row still linked to a teacher was created here.
-    connection.execute(
-        sa.text(
-            "DELETE FROM departments d "
-            "USING teachers t "
-            "WHERE t.department_id = d.id"
-        )
-    )
-
     op.drop_column("classes", "department_id")
     op.drop_column("teachers", "department_id")

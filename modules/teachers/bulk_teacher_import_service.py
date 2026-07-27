@@ -169,10 +169,14 @@ def _teacher_kwargs_from_coerced(coerced: Dict[str, Any]) -> Dict[str, Any]:
     if coerced.get("date_of_joining"):
         doj = datetime.strptime(coerced["date_of_joining"], "%Y-%m-%d").date()
 
+    # NOTE: "department" is deliberately not mapped here. It is no longer a
+    # Teacher column (migration 077 replaced it with department_id); passing
+    # it as a Teacher() kwarg raises TypeError. bulk_validation.py still lists
+    # it as an accepted Excel column and warns the value is ignored — see
+    # coerce_teacher_row(). Task 6 wires bulk import to department_id.
     return {
         "employee_id": coerced["employee_id"],
         "designation": _clean_str(coerced.get("designation")),
-        "department": _clean_str(coerced.get("department")),
         "qualification": _clean_str(coerced.get("qualification")),
         "specialization": _clean_str(coerced.get("specialization")),
         "experience_years": coerced.get("experience_years"),

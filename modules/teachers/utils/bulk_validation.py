@@ -65,6 +65,14 @@ def coerce_teacher_row(
         if not ok:
             warnings.append("phone: invalid format ignored")
 
+    if "department" in out and not is_blank(out.get("department")):
+        # department is no longer a free-text Teacher column (migration 077);
+        # accepted here for backward-compatible previews but not persisted.
+        # Task 6 wires bulk import to department_id.
+        warnings.append(
+            "department: not supported by bulk import yet; value ignored"
+        )
+
     if "status" in out and not is_blank(out.get("status")):
         s = str(out["status"]).strip().lower()
         if s in ("active", "inactive"):
