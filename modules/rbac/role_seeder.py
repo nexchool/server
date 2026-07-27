@@ -78,6 +78,11 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "hostel.gatepass.gatekeeper",
             "hostel.gatepass.read",
             "hostel.reports.read",
+            # Academic calendar. `manage` is a superset of the granular
+            # create/edit/delete/archive/duplicate/export/import/print/settings
+            # permissions, which are only handed out individually to sub-admins.
+            "academic_calendar.read",
+            "academic_calendar.manage",
         ],
     },
     "Teacher": {
@@ -106,6 +111,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "grade.read",
             "academic_term.read",
             "school_setup.read",
+            "academic_calendar.read",
         ],
     },
     "Student": {
