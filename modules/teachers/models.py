@@ -4,12 +4,6 @@ from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
 
-# Needed so the "Department" name is registered before mappers configure:
-# department_ref below resolves it lazily by string, and modules/departments
-# isn't imported via a registered blueprint yet (routes land in Task 4).
-from modules.departments.models import Department  # noqa: F401
-
-
 LEAVE_TYPES = ["casual", "sick", "emergency", "unpaid", "other"]
 
 # Default policy settings applied when a tenant has no explicit policy yet

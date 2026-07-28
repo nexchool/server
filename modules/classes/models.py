@@ -5,11 +5,6 @@ import uuid
 
 from sqlalchemy import CheckConstraint, Index, text
 
-# Needed so the "Department" name is registered before mappers configure:
-# department_ref below resolves it lazily by string, and modules/departments
-# isn't imported via a registered blueprint yet (routes land in Task 4).
-from modules.departments.models import Department  # noqa: F401
-
 
 class Class(TenantBaseModel):
     """
