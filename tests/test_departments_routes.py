@@ -290,3 +290,28 @@ def test_list_returns_403_when_class_management_feature_disabled(client, auth_he
 
     assert response.status_code == 403
     assert response.get_json()["error"] == "FeatureDisabled"
+
+
+# ---------------------------------------------------------------------------
+# _error_status — the message it maps to 500 must come FROM services.py, not
+# a copy of its text living in routes.py, or a reworded message in services.py
+# would silently fall through to the 400 branch (the bug a previous review
+# round closed). This guards the import, not just today's string value.
+# ---------------------------------------------------------------------------
+
+def test_error_status_maps_the_services_integrity_fallback_to_500():
+    from modules.departments import routes, services
+
+    assert routes._error_status(services.INTEGRITY_FALLBACK_ERROR) == 500
+
+
+def test_error_status_maps_an_unrelated_duplicate_message_to_409():
+    from modules.departments import routes
+
+    assert routes._error_status("A department with this name or code already exists") == 409
+
+
+def test_error_status_maps_anything_else_to_400():
+    from modules.departments import routes
+
+    assert routes._error_status("name is required") == 400

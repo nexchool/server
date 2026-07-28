@@ -502,3 +502,18 @@ def test_delete_allowed_when_only_teacher_is_inactive(db_session, tenant, svc):
     result = svc.delete_department(dept["id"], tenant.id)
 
     assert result["success"] is True
+
+
+def test_delete_clears_department_id_on_inactive_teachers(db_session, tenant, svc):
+    """The inactive teacher is excluded from `_counts_for` so the delete guard
+    passes, but the deletion is soft (deleted_at) — ON DELETE RESTRICT never
+    fires, so the FK must be cleared explicitly or the teacher is left
+    pointing at a department no listing shows."""
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, dept["id"], "1", status="inactive")
+
+    result = svc.delete_department(dept["id"], tenant.id)
+
+    assert result["success"] is True
+    db_session.refresh(teacher)
+    assert teacher.department_id is None

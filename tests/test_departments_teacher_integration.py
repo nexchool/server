@@ -343,3 +343,55 @@ def test_update_department_id_wins_over_legacy_department_name(ctx, tenant, db_s
 
     assert result["success"] is True
     assert result["teacher"]["department_id"] == science["id"]
+
+
+# ---------------------------------------------------------------------------
+# N+1 guard — list_teachers must eager-load department_ref alongside the
+# join it already uses for filter/sort, or every teacher row with a
+# department set fires its own `SELECT ... FROM departments`.
+#
+# This counts only statements touching the `departments` table specifically
+# (not the total statement count): `Teacher.user` is a separate, pre-existing
+# lazy relationship that already issues one query per row regardless of this
+# fix (out of scope here — see the review notes), so a blanket total-query
+# assertion would fail either way and prove nothing about department_ref.
+# ---------------------------------------------------------------------------
+
+def test_list_does_not_n_plus_one_on_department(flask_app, db_session, tenant, dept_svc):
+    from sqlalchemy import event
+
+    from core.database import db
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    made = 0
+
+    def count_department_statements(additional_teachers):
+        nonlocal made
+        for i in range(additional_teachers):
+            _make_teacher(db_session, tenant, science["id"], f"n1-{made + i}")
+        made += additional_teachers
+
+        statements = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            if "departments" in statement.lower():
+                statements.append(statement)
+
+        with flask_app.test_request_context("/"):
+            g.tenant_id = tenant.id
+            event.listen(db.engine, "before_cursor_execute", record)
+            try:
+                result = services.list_teachers()
+                assert len(result["items"]) == made
+                assert all(t["department"] == "Science" for t in result["items"])
+            finally:
+                event.remove(db.engine, "before_cursor_execute", record)
+        return len(statements)
+
+    few = count_department_statements(2)
+    many = count_department_statements(6)
+
+    assert many <= few, (
+        f"department query count grew with row count ({few} -> {many}): N+1"
+    )

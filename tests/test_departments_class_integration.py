@@ -133,6 +133,67 @@ def test_class_list_filters_by_department(ctx, db_session, tenant, dept_svc, mak
     assert [c["section"] for c in result["items"]] == ["A"]
 
 
+def test_stats_filters_by_department(ctx, db_session, tenant, dept_svc, make_class):
+    """get_classes_stats must honour department_id the same way the list
+    endpoint does — otherwise the header cards (total classes/students/
+    teachers) describe the whole tenant while the table beneath them shows
+    only the department-filtered rows."""
+    from modules.classes import services
+
+    hs = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+    primary = dept_svc.create_department({"name": "Primary"}, tenant.id)["department"]
+    make_class(department_id=hs["id"], section="A")
+    make_class(department_id=primary["id"], section="B")
+    make_class(department_id=primary["id"], section="C")
+
+    stats = services.get_classes_stats(department_id=hs["id"])
+
+    assert stats["total_classes"] == 1
+
+
+def test_class_list_does_not_n_plus_one_on_department(
+    flask_app, db_session, tenant, dept_svc, make_class
+):
+    """department_ref must be in the same eager-load block as the other
+    to_dict() relationships — otherwise every row with a department set fires
+    its own `SELECT ... FROM departments`, and the query count grows with the
+    row count instead of staying flat."""
+    from sqlalchemy import event
+    from modules.classes import services
+
+    from core.database import db
+
+    dept = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+    made = 0
+
+    def count_statements(additional_classes):
+        nonlocal made
+        for i in range(additional_classes):
+            make_class(department_id=dept["id"], section=f"S{made + i}")
+        made += additional_classes
+
+        statements = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            statements.append(statement)
+
+        with flask_app.test_request_context("/"):
+            g.tenant_id = tenant.id
+            event.listen(db.engine, "before_cursor_execute", record)
+            try:
+                result = services.get_all_classes()
+                assert len(result["items"]) == made
+                assert all(c["department_name"] == "Higher Secondary" for c in result["items"])
+            finally:
+                event.remove(db.engine, "before_cursor_execute", record)
+        return len(statements)
+
+    few = count_statements(2)
+    many = count_statements(6)
+
+    assert many <= few, f"query count grew with row count ({few} -> {many}): N+1"
+
+
 def test_department_delete_is_blocked_while_classes_are_assigned(
     db_session, tenant, dept_svc, make_class
 ):

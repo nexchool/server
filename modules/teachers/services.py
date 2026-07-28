@@ -1,6 +1,7 @@
 from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 import secrets
 
@@ -290,9 +291,11 @@ def list_teachers(
     # Outer join: department_id replaced the free-text department column
     # (migration 077). Outer so teachers with no department are still
     # returned when the department filter/search below isn't in play.
+    # Eager-load what to_dict() touches; otherwise each row lazy-loads
+    # department_ref and we're back to a per-row query up to the 100-row page cap.
     query = Teacher.query.join(User).outerjoin(
         Department, Teacher.department_id == Department.id
-    )
+    ).options(joinedload(Teacher.department_ref))
 
     if status:
         query = query.filter(

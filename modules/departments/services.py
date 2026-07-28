@@ -40,6 +40,13 @@ _TEACHER_STATUS_ACTIVE = "active"
 
 _DUPLICATE_ENTRY_PGCODE = "23505"
 
+# Public (no leading underscore): routes.py imports this rather than copying
+# the text, so the 500-vs-400 status mapping in `_error_status` can never
+# silently drift from the message actually returned below.
+INTEGRITY_FALLBACK_ERROR = (
+    "Could not save the department because it conflicts with existing data."
+)
+
 
 def _clean(value) -> Optional[str]:
     if value is None:
@@ -86,10 +93,7 @@ def _handle_integrity_error(error: IntegrityError) -> Dict:
         "department service: IntegrityError orig=%r",
         getattr(error, "orig", None),
     )
-    return {
-        "success": False,
-        "error": "Could not save the department because it conflicts with existing data.",
-    }
+    return {"success": False, "error": INTEGRITY_FALLBACK_ERROR}
 
 
 def _counts_for(tenant_id: str, department_ids: list) -> Dict[str, Dict[str, int]]:
@@ -289,7 +293,11 @@ def list_departments(params: Dict, tenant_id: str) -> Dict:
     if search:
         pattern = f"%{search}%"
         query = query.filter(
-            or_(Department.name.ilike(pattern), Department.code.ilike(pattern))
+            or_(
+                Department.name.ilike(pattern),
+                Department.code.ilike(pattern),
+                Department.description.ilike(pattern),
+            )
         )
 
     status = _clean(params.get("status"))
@@ -338,7 +346,7 @@ def list_departments(params: Dict, tenant_id: str) -> Dict:
 
 
 def delete_department(department_id: str, tenant_id: str) -> Dict:
-    """Soft delete. Blocked while any teacher or class still references it."""
+    """Soft delete. Blocked while any *active* teacher or class still references it."""
     department = _base_query(tenant_id).filter(Department.id == department_id).first()
     if not department:
         return {"success": False, "error": "Department not found"}
@@ -359,6 +367,17 @@ def delete_department(department_id: str, tenant_id: str) -> Dict:
             ),
             "in_use": {"teachers": counts["teachers"], "classes": counts["classes"]},
         }
+
+    # _counts_for only counts *active* teachers (see its note), so an inactive
+    # teacher can still hold this department_id even though the guard above
+    # passed. The deletion itself is soft (deleted_at), so ON DELETE RESTRICT
+    # never fires and that FK would otherwise dangle at a row no listing shows
+    # — clear it in the same transaction as the soft delete.
+    from modules.teachers.models import Teacher
+
+    Teacher.query.filter(
+        Teacher.tenant_id == tenant_id, Teacher.department_id == department_id
+    ).update({Teacher.department_id: None}, synchronize_session=False)
 
     department.deleted_at = datetime.now(timezone.utc)
     db.session.commit()

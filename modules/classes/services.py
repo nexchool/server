@@ -404,7 +404,7 @@ def get_all_classes(
         ]
         query = query.filter(or_(*clauses))
 
-    # Eager-load what to_dict() touches; otherwise each row lazy-loads six
+    # Eager-load what to_dict() touches; otherwise each row lazy-loads seven
     # relationships and we're back to the N+1 this query exists to kill.
     query = query.options(
         joinedload(Class.school_unit),
@@ -413,6 +413,7 @@ def get_all_classes(
         joinedload(Class.medium),
         joinedload(Class.academic_year_ref),
         joinedload(Class.teacher),
+        joinedload(Class.department_ref),
     )
 
     total = query.order_by(None).count()
@@ -447,6 +448,7 @@ def get_classes_stats(
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
+    department_id: Optional[str] = None,
 ) -> Dict:
     """Aggregate totals for the classes overview header.
 
@@ -472,6 +474,8 @@ def get_classes_stats(
         scoped = scoped.filter(Class.programme_id == programme_id)
     if grade_id:
         scoped = scoped.filter(Class.grade_id == grade_id)
+    if department_id:
+        scoped = scoped.filter(Class.department_id == department_id)
 
     class_ids = [row[0] for row in scoped.all()]
     total_classes = len(class_ids)

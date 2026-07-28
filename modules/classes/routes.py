@@ -135,7 +135,8 @@ def get_classes_stats():
     Honours the same structural filters as the list endpoint so the header
     always describes the list beneath it.
 
-    Query params: academic_year_id, school_unit_id, programme_id, grade_id
+    Query params: academic_year_id, school_unit_id, programme_id, grade_id,
+        department_id
     """
     school_unit_id = request.args.get('school_unit_id') or None
     if school_unit_id:
@@ -146,6 +147,7 @@ def get_classes_stats():
         school_unit_id=school_unit_id,
         programme_id=request.args.get('programme_id') or None,
         grade_id=request.args.get('grade_id') or None,
+        department_id=request.args.get('department_id') or None,
     )
     return success_response(data=stats)
 
@@ -176,6 +178,7 @@ def export_classes():
         ('programme_name', 'Programme'),
         ('school_unit_name', 'Branch'),
         ('medium_name', 'Medium'),
+        ('department_name', 'Department'),
         ('stream', 'Stream'),
         ('teacher_name', 'Class Teacher'),
         ('student_count', 'Students'),

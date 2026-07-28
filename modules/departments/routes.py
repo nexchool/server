@@ -28,21 +28,20 @@ _LIST_PARAMS = ("page", "per_page", "search", "status", "sort_by", "sort_dir")
 # services.py module docstring; Tasks 5-7 depend on the current success/
 # error/in_use return shape, so it isn't being added here either). There are
 # exactly three shapes:
-#   - this generic IntegrityError fallback (_handle_integrity_error, when
+#   - services.INTEGRITY_FALLBACK_ERROR (_handle_integrity_error, when
 #     pgcode != 23505): an FK/check-constraint violation the service's own
 #     docstring calls "an operator-facing bug, not a user mistake" -> 500.
+#     Imported (not copied) so this mapping cannot silently drift from the
+#     message services.py actually returns.
 #   - a name/code "already exists" message (the pre-checks, or the 23505
 #     race in the same handler) -> 409.
 #   - anything else (missing/oversized field, bad status/display_order) ->
 #     a genuine client mistake, 400.
-_INTEGRITY_FALLBACK_ERROR = (
-    "Could not save the department because it conflicts with existing data."
-)
 
 
 def _error_status(error: str) -> int:
     """Map a create/update failure message to the HTTP status it represents."""
-    if error == _INTEGRITY_FALLBACK_ERROR:
+    if error == services.INTEGRITY_FALLBACK_ERROR:
         return 500
     if "already exists" in error:
         return 409
