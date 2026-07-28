@@ -46,8 +46,12 @@ def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> st
     raise ValueError("Invalid teacher.")
 
 
-def _resolve_department_id(department_id: Optional[str], tenant_id: str) -> tuple:
-    """Validate a department_id belongs to this tenant.
+def _resolve_department_id(
+    department_id: Optional[str],
+    tenant_id: str,
+    current_department_id: Optional[str] = None,
+) -> tuple:
+    """Validate a department_id belongs to this tenant and is assignable.
 
     `classes.department_id` has no tenant component in its FK, so without this
     explicit lookup a department id belonging to another tenant would be
@@ -55,18 +59,36 @@ def _resolve_department_id(department_id: Optional[str], tenant_id: str) -> tupl
     minus the legacy name-resolution branch — classes have no free-text
     department field to fall back to.
 
+    An **inactive** department cannot be newly assigned, matching the UI, which
+    already hides inactive divisions from its picker. `current_department_id` is
+    what this class is already assigned to: re-sending it is retention, not
+    assignment, and stays legal — the edit form seeds the field with the
+    record's current value and resends it on save, so rejecting it outright
+    would make a class whose division was archived impossible to edit.
+    Existing rows are never rewritten as a side effect.
+
+    A falsy `department_id` means "no department" and clears the assignment.
+
     Returns (department_id_or_None, error_message_or_None).
     """
     if not department_id:
         return None, None
 
-    from modules.departments.models import Department
+    from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
 
-    exists = Department.query.filter_by(
+    existing = Department.query.filter_by(
         id=department_id, tenant_id=tenant_id, deleted_at=None
     ).first()
-    if not exists:
+    if not existing:
         return None, "Department not found"
+    if (
+        existing.status != DEPARTMENT_STATUS_ACTIVE
+        and department_id != current_department_id
+    ):
+        return None, (
+            f"'{existing.name}' is inactive and cannot be assigned. "
+            "Reactivate it under Departments, or choose an active one."
+        )
     return department_id, None
 
 
@@ -581,7 +603,9 @@ def update_class(
 
         resolved_department_id = _MISSING
         if department_id is not _MISSING:
-            resolved_department_id, department_error = _resolve_department_id(department_id, tenant_id)
+            resolved_department_id, department_error = _resolve_department_id(
+                department_id, tenant_id, current_department_id=cls.department_id
+            )
             if department_error:
                 return {'success': False, 'error': department_error}
 

@@ -1,10 +1,15 @@
-"""Department model — a tenant's customizable academic department catalogue.
+"""Department model — a tenant's catalogue of academic divisions.
 
-Deliberately flat: a school may put grade bands (Primary, Higher Secondary),
-streams (Science, Commerce) and subject divisions (Mathematics) in the same
-list. `type` exists so administrative departments (Accounts, HR, Library) can
-join the same table later without a migration; it is not exposed in the UI and
-always takes its default in this version.
+A Department is an **organizational academic unit** within a school: Primary,
+Middle School, Secondary, Higher Secondary, Junior Wing, Senior Wing,
+Montessori. Teachers and classes are assigned to one.
+
+A Department is NOT a subject grouping. Mathematics, Physics, Science, Commerce
+and Arts are different business concepts and will be modelled separately — do
+not add them here, and do not use them as examples in copy or docs.
+
+`type` is reserved for future expansion. It is not exposed in the UI, is never
+accepted from a client, and always takes its default.
 """
 
 from __future__ import annotations
@@ -29,8 +34,8 @@ class Department(TenantBaseModel):
     __tablename__ = "departments"
     __table_args__ = (
         # Partial unique indexes: soft-deleted rows are excluded so a name or
-        # code can be reused after archiving. Lowercased so "Science" and
-        # "science" cannot both exist — the whole point is one canonical name.
+        # code can be reused after archiving. Lowercased so "Primary" and
+        # "primary" cannot both exist — the whole point is one canonical name.
         Index(
             "uq_departments_tenant_name_active",
             "tenant_id",

@@ -312,3 +312,77 @@ def test_update_class_clears_department_when_explicitly_null(
 
     assert result["success"] is True
     assert result["class"]["department_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Inactive departments cannot be newly assigned, matching the teacher side and
+# the UI picker. Retention of an already-assigned inactive division stays legal.
+# ---------------------------------------------------------------------------
+
+
+def test_create_class_rejects_an_inactive_department(ctx, db_session, tenant, dept_svc, academic_year):
+    from modules.classes import services
+
+    dept = dept_svc.create_department({"name": "Montessori"}, tenant.id)["department"]
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.create_class(
+        name="Grade 1",
+        section="Z",
+        academic_year_id=academic_year.id,
+        department_id=dept["id"],
+    )
+
+    assert result["success"] is False
+    assert "inactive" in result["error"]
+    assert "Montessori" in result["error"]
+
+
+def test_update_class_rejects_reassigning_to_an_inactive_department(
+    ctx, db_session, tenant, dept_svc, make_class
+):
+    from modules.classes import services
+
+    primary = dept_svc.create_department({"name": "Primary"}, tenant.id)["department"]
+    archived = dept_svc.create_department({"name": "Junior Wing"}, tenant.id)["department"]
+    dept_svc.update_department(archived["id"], {"status": "inactive"}, tenant.id)
+    klass = make_class(department_id=primary["id"], section="Y")
+
+    result = services.update_class(klass.id, department_id=archived["id"])
+
+    assert result["success"] is False
+    assert "inactive" in result["error"]
+    db_session.refresh(klass)
+    assert klass.department_id == primary["id"], "existing data must not change"
+
+
+def test_update_class_allows_keeping_an_already_assigned_inactive_department(
+    ctx, db_session, tenant, dept_svc, make_class
+):
+    from modules.classes import services
+
+    dept = dept_svc.create_department({"name": "Senior Wing"}, tenant.id)["department"]
+    klass = make_class(department_id=dept["id"], section="X")
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.update_class(klass.id, department_id=dept["id"])
+
+    assert result["success"] is True
+    db_session.refresh(klass)
+    assert klass.department_id == dept["id"]
+
+
+def test_update_class_can_still_clear_an_inactive_department(
+    ctx, db_session, tenant, dept_svc, make_class
+):
+    from modules.classes import services
+
+    dept = dept_svc.create_department({"name": "Middle School"}, tenant.id)["department"]
+    klass = make_class(department_id=dept["id"], section="W")
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.update_class(klass.id, department_id=None)
+
+    assert result["success"] is True
+    db_session.refresh(klass)
+    assert klass.department_id is None

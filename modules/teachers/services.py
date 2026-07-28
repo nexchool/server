@@ -14,7 +14,7 @@ from modules.rbac.services import (
     remove_login_for_deleted_profile,
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
-from modules.departments.models import Department
+from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
 from .models import Teacher
 
 # Columns the client may sort by.
@@ -102,7 +102,10 @@ NOT_PROVIDED = object()
 
 
 def _resolve_department(
-    department_id: Optional[str], department_name: Optional[str], tenant_id: str
+    department_id: Optional[str],
+    department_name: Optional[str],
+    tenant_id: str,
+    current_department_id: Optional[str] = None,
 ) -> tuple:
     """Resolve the department_id to assign to a teacher.
 
@@ -118,15 +121,36 @@ def _resolve_department(
     field but still sends `department: ""` should get that same behaviour,
     not a confusing "Unknown department ''" error.
 
+    An **inactive** department cannot be newly assigned — the UI already hides
+    inactive divisions from its pickers, and the API now agrees. `current_
+    department_id` is what this teacher is already assigned to: re-sending it
+    is retention, not assignment, and stays legal. That distinction matters
+    because the edit form seeds the field with the record's current value and
+    resends it on save, so rejecting it outright would make a teacher whose
+    division was archived impossible to edit at all. Existing rows are never
+    rewritten as a side effect.
+
     Returns (department_id_or_None, error_message_or_None).
     """
+
+    def _reject_if_inactive(department, resolved_id):
+        if (
+            department.status != DEPARTMENT_STATUS_ACTIVE
+            and resolved_id != current_department_id
+        ):
+            return None, (
+                f"'{department.name}' is inactive and cannot be assigned. "
+                "Reactivate it under Departments, or choose an active one."
+            )
+        return resolved_id, None
+
     if department_id is not None:
-        exists = Department.query.filter_by(
+        existing = Department.query.filter_by(
             id=department_id, tenant_id=tenant_id, deleted_at=None
         ).first()
-        if not exists:
+        if not existing:
             return None, "Department not found"
-        return department_id, None
+        return _reject_if_inactive(existing, department_id)
 
     cleaned_name = department_name.strip() if isinstance(department_name, str) else department_name
     if cleaned_name:
@@ -136,9 +160,14 @@ def _resolve_department(
         if resolved is None:
             return None, (
                 f"Unknown department '{department_name}'. Create it under "
-                "Academics → Departments first."
+                "Departments first."
             )
-        return resolved, None
+        resolved_department = Department.query.filter_by(
+            id=resolved, tenant_id=tenant_id, deleted_at=None
+        ).first()
+        if resolved_department is None:
+            return None, "Department not found"
+        return _reject_if_inactive(resolved_department, resolved)
 
     return None, None
 
@@ -455,14 +484,16 @@ def update_teacher(
             teacher.designation = designation
         if department_id is not NOT_PROVIDED:
             resolved_department_id, department_error = _resolve_department(
-                department_id, None, teacher.tenant_id
+                department_id, None, teacher.tenant_id,
+                current_department_id=teacher.department_id,
             )
             if department_error:
                 return {'success': False, 'error': department_error}
             teacher.department_id = resolved_department_id
         elif department is not None:
             resolved_department_id, department_error = _resolve_department(
-                None, department, teacher.tenant_id
+                None, department, teacher.tenant_id,
+                current_department_id=teacher.department_id,
             )
             if department_error:
                 return {'success': False, 'error': department_error}

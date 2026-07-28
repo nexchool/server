@@ -395,3 +395,96 @@ def test_list_does_not_n_plus_one_on_department(flask_app, db_session, tenant, d
     assert many <= few, (
         f"department query count grew with row count ({few} -> {many}): N+1"
     )
+
+
+# ---------------------------------------------------------------------------
+# Inactive departments cannot be newly assigned (the API now matches the UI,
+# which already hides inactive divisions from its picker). Retention of an
+# already-assigned inactive division stays legal, because the edit form seeds
+# the field with the record's current value and resends it on save.
+# ---------------------------------------------------------------------------
+
+
+def test_create_rejects_an_inactive_department_id(ctx, tenant, db_session, dept_svc):
+    from modules.teachers import services
+
+    dept = dept_svc.create_department({"name": "Montessori"}, tenant.id)["department"]
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.create_teacher(
+        name="New Teacher",
+        email=f"inactive-id-{uuid.uuid4().hex[:6]}@example.test",
+        department_id=dept["id"],
+    )
+
+    assert result["success"] is False
+    assert "inactive" in result["error"]
+    assert "Montessori" in result["error"]
+
+
+def test_create_rejects_an_inactive_department_name(ctx, tenant, db_session, dept_svc):
+    """The legacy free-text path (mobile form, bulk import) enforces it too."""
+    from modules.teachers import services
+
+    dept_svc.create_department({"name": "Junior Wing"}, tenant.id)
+    dept = dept_svc.list_departments({"search": "Junior Wing"}, tenant.id)["items"][0]
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.create_teacher(
+        name="New Teacher",
+        email=f"inactive-name-{uuid.uuid4().hex[:6]}@example.test",
+        department="junior wing",
+    )
+
+    assert result["success"] is False
+    assert "inactive" in result["error"]
+
+
+def test_update_rejects_reassigning_to_an_inactive_department(ctx, tenant, db_session, dept_svc):
+    from modules.teachers import services
+
+    primary = dept_svc.create_department({"name": "Primary"}, tenant.id)["department"]
+    archived = dept_svc.create_department({"name": "Senior Wing"}, tenant.id)["department"]
+    dept_svc.update_department(archived["id"], {"status": "inactive"}, tenant.id)
+    teacher = _make_teacher(db_session, tenant, primary["id"], "inact1")
+
+    result = services.update_teacher(teacher.id, department_id=archived["id"])
+
+    assert result["success"] is False
+    assert "inactive" in result["error"]
+    db_session.refresh(teacher)
+    assert teacher.department_id == primary["id"], "existing data must not change"
+
+
+def test_update_allows_keeping_an_already_assigned_inactive_department(
+    ctx, tenant, db_session, dept_svc
+):
+    """The edit form resends the current value on save. Retention is not
+    assignment — rejecting it would make the record uneditable."""
+    from modules.teachers import services
+
+    dept = dept_svc.create_department({"name": "Middle School"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, dept["id"], "inact2")
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.update_teacher(
+        teacher.id, phone="9998887777", department_id=dept["id"]
+    )
+
+    assert result["success"] is True
+    db_session.refresh(teacher)
+    assert teacher.department_id == dept["id"]
+
+
+def test_update_can_still_clear_an_inactive_department(ctx, tenant, db_session, dept_svc):
+    from modules.teachers import services
+
+    dept = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, dept["id"], "inact3")
+    dept_svc.update_department(dept["id"], {"status": "inactive"}, tenant.id)
+
+    result = services.update_teacher(teacher.id, department_id=None)
+
+    assert result["success"] is True
+    db_session.refresh(teacher)
+    assert teacher.department_id is None
