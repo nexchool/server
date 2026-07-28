@@ -90,6 +90,7 @@ def init_db(app):
         )
         from modules.academics.academic_year.models import AcademicYear
         from modules.subjects.models import Subject
+        from modules.departments.models import Department  # noqa: F401
         from modules.teachers.models import Teacher
         from modules.classes.models import Class, ClassTeacher, ClassSubject
         from modules.academics.backbone.models import (
