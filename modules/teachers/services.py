@@ -91,11 +91,48 @@ def generate_teacher_password(name: str) -> str:
     return f"{name_part}{digits}"
 
 
+def _resolve_department(
+    department_id: Optional[str], department_name: Optional[str], tenant_id: str
+) -> tuple:
+    """Resolve the department_id to assign to a teacher.
+
+    `department_id` wins when supplied — but it must belong to this tenant;
+    the FK itself doesn't enforce that, so an unscoped id would otherwise
+    attach an invisible cross-tenant reference. The legacy free-text
+    `department_name` resolves case-insensitively against the tenant's
+    catalogue; an unrecognised name is rejected rather than silently dropped
+    or auto-created (see resolve_department_name).
+
+    Returns (department_id_or_None, error_message_or_None).
+    """
+    if department_id is not None:
+        exists = Department.query.filter_by(
+            id=department_id, tenant_id=tenant_id, deleted_at=None
+        ).first()
+        if not exists:
+            return None, "Department not found"
+        return department_id, None
+
+    if department_name is not None:
+        from modules.departments.services import resolve_department_name
+
+        resolved = resolve_department_name(department_name, tenant_id)
+        if resolved is None:
+            return None, (
+                f"Unknown department '{department_name}'. Create it under "
+                "Academics → Departments first."
+            )
+        return resolved, None
+
+    return None, None
+
+
 def create_teacher(
     name: str,
     email: Optional[str] = None,
     phone: Optional[str] = None,
     designation: Optional[str] = None,
+    department_id: Optional[str] = None,
     department: Optional[str] = None,
     qualification: Optional[str] = None,
     specialization: Optional[str] = None,
@@ -119,6 +156,12 @@ def create_teacher(
         tenant_id = get_tenant_id()
         if not tenant_id:
             return {'success': False, 'error': 'Tenant context is required'}
+
+        resolved_department_id, department_error = _resolve_department(
+            department_id, department, tenant_id
+        )
+        if department_error:
+            return {'success': False, 'error': department_error}
 
         try:
             employee_id = generate_employee_id(tenant_id)
@@ -162,16 +205,12 @@ def create_teacher(
             db.session.rollback()
             return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
 
-        # `department` (free-text name) is accepted for API compatibility but
-        # not yet wired to department_id — resolving/creating the matching
-        # Department row is Task 5's job. Left unset here rather than
-        # crashing (department is no longer a Teacher column/kwarg) or
-        # guessing at resolution logic.
         teacher = Teacher(
             tenant_id=tenant_id,
             user_id=user.id,
             employee_id=employee_id,
             designation=designation,
+            department_id=resolved_department_id,
             qualification=qualification,
             specialization=specialization,
             experience_years=experience_years,
@@ -217,7 +256,7 @@ def list_teachers(
     search: Optional[str] = None,
     search_field: str = "all",
     status: Optional[str] = None,
-    department: Optional[str] = None,
+    department_id: Optional[str] = None,
     designation: Optional[str] = None,
     date_of_joining_from: Optional[str] = None,
     date_of_joining_to: Optional[str] = None,
@@ -245,8 +284,8 @@ def list_teachers(
             db.func.lower(Teacher.status) == status.strip().lower()
         )
 
-    if department:
-        query = query.filter(Department.name.ilike(f"%{department.strip()}%"))
+    if department_id:
+        query = query.filter(Teacher.department_id == department_id)
 
     if designation:
         query = query.filter(Teacher.designation.ilike(f"%{designation.strip()}%"))
@@ -317,18 +356,16 @@ def list_teachers(
         per_page = len(teachers) or 0
         total_pages = 1
 
-    # Unique, sorted department / designation values across ALL tenant teachers
-    # (not the filtered subset) so filter dropdowns are always fully populated.
+    # Departments facet: the full active catalogue for this tenant, not just
+    # names in use — so a brand-new department appears in the filter dropdown
+    # before anyone is assigned to it. Designations have no such catalogue, so
+    # that facet stays derived from distinct values across ALL tenant teachers
+    # (not the filtered subset) so its dropdown is always fully populated.
     from sqlalchemy import distinct as _distinct
 
-    all_departments = [
-        r[0]
-        for r in Teacher.query.join(Department, Teacher.department_id == Department.id)
-        .with_entities(_distinct(Department.name))
-        .filter(Department.name.isnot(None), Department.name != "")
-        .order_by(Department.name)
-        .all()
-    ]
+    from modules.departments.services import list_active_departments
+
+    all_departments = list_active_departments(get_tenant_id())
     all_designations = [
         r[0]
         for r in Teacher.query.with_entities(_distinct(Teacher.designation))
@@ -365,6 +402,7 @@ def update_teacher(
     name: Optional[str] = None,
     phone: Optional[str] = None,
     designation: Optional[str] = None,
+    department_id: Optional[str] = None,
     department: Optional[str] = None,
     qualification: Optional[str] = None,
     specialization: Optional[str] = None,
@@ -386,8 +424,13 @@ def update_teacher(
             teacher.phone = phone
         if designation is not None:
             teacher.designation = designation
-        # `department` (free-text name) is accepted for API compatibility but
-        # not yet wired to department_id — see create_teacher's note above.
+        if department_id is not None or department is not None:
+            resolved_department_id, department_error = _resolve_department(
+                department_id, department, teacher.tenant_id
+            )
+            if department_error:
+                return {'success': False, 'error': department_error}
+            teacher.department_id = resolved_department_id
         if qualification is not None:
             teacher.qualification = qualification
         if specialization is not None:

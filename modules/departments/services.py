@@ -365,6 +365,35 @@ def delete_department(department_id: str, tenant_id: str) -> Dict:
     return {"success": True}
 
 
+def resolve_department_name(name: str, tenant_id: str) -> Optional[str]:
+    """Return the department id for a case-insensitive name match, or None.
+
+    Used by the legacy free-text write paths (mobile teacher form, bulk import).
+    Deliberately does not create missing departments — silently inventing them
+    would rebuild the uncontrolled vocabulary this module exists to replace.
+    """
+    cleaned = _clean(name)
+    if not cleaned:
+        return None
+    row = (
+        _base_query(tenant_id)
+        .filter(func.lower(Department.name) == cleaned.lower())
+        .first()
+    )
+    return row.id if row else None
+
+
+def list_active_departments(tenant_id: str) -> list:
+    """[{id, name}] in display order — for filter facets and dropdowns."""
+    rows = (
+        _base_query(tenant_id)
+        .filter(Department.status == DEPARTMENT_STATUS_ACTIVE)
+        .order_by(Department.display_order.asc(), Department.name.asc())
+        .all()
+    )
+    return [{"id": row.id, "name": row.name} for row in rows]
+
+
 def get_department_stats(tenant_id: str) -> Dict:
     from modules.classes.models import Class
     from modules.teachers.models import Teacher

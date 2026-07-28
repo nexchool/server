@@ -79,20 +79,33 @@ def _names(result):
 # Filter
 # ---------------------------------------------------------------------------
 
-def test_department_filter_matches_by_name_substring(ctx, teachers):
-    result = teacher_services.list_teachers(department="Mat")
+def test_department_filter_matches_by_exact_department_id(ctx, teachers, departments):
+    result = teacher_services.list_teachers(department_id=departments["maths"].id)
 
     assert _names(result) == {"Alice"}
 
 
-def test_department_filter_is_case_insensitive(ctx, teachers):
-    result = teacher_services.list_teachers(department="SCIENCE")
+def test_department_filter_matches_only_the_exact_id_not_a_name_substring(
+    ctx, db_session, tenant, departments, teachers
+):
+    """The filter changed from a name substring match to an exact
+    department_id match (Task 5). A teacher in a differently-named
+    department whose name happens to contain the target department's name as
+    a substring (e.g. "Advanced Maths" contains "Maths") must not leak in —
+    the old `Department.name.ilike(f"%{department}%")` filter would have
+    matched it."""
+    advanced_maths = Department(id=_new_id("d-"), tenant_id=tenant.id, name="Advanced Maths")
+    db_session.add(advanced_maths)
+    db_session.flush()
+    _make_teacher(db_session, tenant, "Eve", department_id=advanced_maths.id)
 
-    assert _names(result) == {"Bob"}
+    result = teacher_services.list_teachers(department_id=departments["maths"].id)
+
+    assert _names(result) == {"Alice"}
 
 
-def test_department_filter_excludes_teachers_with_no_department(ctx, teachers):
-    result = teacher_services.list_teachers(department="Maths")
+def test_department_filter_excludes_teachers_with_no_department(ctx, teachers, departments):
+    result = teacher_services.list_teachers(department_id=departments["maths"].id)
 
     assert "Carol" not in _names(result)
 
@@ -138,29 +151,55 @@ def test_sort_by_department_desc_still_puts_nulls_last(ctx, teachers):
 
 
 # ---------------------------------------------------------------------------
-# Facet (distinct department names for the filter dropdown)
+# Facet — Task 5: sourced from the department catalogue (as {id, name}
+# objects, display-order then name), not distinct names off teacher rows.
 # ---------------------------------------------------------------------------
 
-def test_departments_facet_lists_distinct_names_sorted(ctx, teachers):
+def test_departments_facet_lists_the_catalogue_as_id_name_objects(ctx, teachers, departments):
     result = teacher_services.list_teachers()
 
-    assert result["departments"] == ["Maths", "Science"]
+    assert result["departments"] == [
+        {"id": departments["maths"].id, "name": "Maths"},
+        {"id": departments["science"].id, "name": "Science"},
+    ]
 
 
-def test_departments_facet_does_not_duplicate_a_shared_department(
+def test_departments_facet_count_is_independent_of_teacher_assignment_count(
     ctx, db_session, tenant, departments, teachers
 ):
+    """Facets are catalogue-sourced now (list_active_departments), not a
+    distinct-teacher join, so a department shared by several teachers still
+    appears exactly once — no join fanout is even possible here."""
     _make_teacher(db_session, tenant, "Dan", department_id=departments["maths"].id)
 
     result = teacher_services.list_teachers()
 
-    assert result["departments"] == ["Maths", "Science"]
+    assert result["departments"] == [
+        {"id": departments["maths"].id, "name": "Maths"},
+        {"id": departments["science"].id, "name": "Science"},
+    ]
 
 
-def test_departments_facet_excludes_teachers_with_no_department(ctx, teachers):
+def test_departments_facet_excludes_inactive_departments(
+    ctx, db_session, tenant, departments, teachers
+):
+    """Facets list only active departments (list_active_departments) — an
+    inactive department (hidden from new assignments) must not appear in the
+    filter dropdown, even though it still has a name like any other row."""
+    from modules.departments.models import DEPARTMENT_STATUS_INACTIVE
+
+    archived = Department(
+        id=_new_id("d-"),
+        tenant_id=tenant.id,
+        name="Archived Dept",
+        status=DEPARTMENT_STATUS_INACTIVE,
+    )
+    db_session.add(archived)
+    db_session.flush()
+
     result = teacher_services.list_teachers()
 
-    assert None not in result["departments"]
+    assert "Archived Dept" not in [d["name"] for d in result["departments"]]
 
 
 # ---------------------------------------------------------------------------
