@@ -15,12 +15,18 @@ TEACHER_STATUS_VALUES = (
     "inactive",
 )
 
+
 _TEACHER_SPEC = {
     "name": [v.required("Name"), v.max_length(120, "Name")],
     "email": [v.email()],
     "phone": [v.phone_loose()],
     "designation": [v.max_length(80, "Designation")],
-    "department": [v.max_length(80, "Department")],
+    # Legacy free-text name (mobile client). Resolved to a department_id in
+    # modules/teachers/services.py — resolution needs a tenant context that
+    # this schema layer, a pure `data -> errors` validator, does not have.
+    # Only shape (length) is checked here; whether the name matches a real
+    # department is a service-layer / business-rule concern, not a format one.
+    "department": [v.max_length(100, "Department")],
     "qualification": [v.max_length(120, "Qualification")],
     "specialization": [v.max_length(120, "Specialization")],
     "experience_years": [v.integer(min_value=0, max_value=80, label="Experience (years)")],

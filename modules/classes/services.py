@@ -46,6 +46,52 @@ def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> st
     raise ValueError("Invalid teacher.")
 
 
+def _resolve_department_id(
+    department_id: Optional[str],
+    tenant_id: str,
+    current_department_id: Optional[str] = None,
+) -> tuple:
+    """Validate a department_id belongs to this tenant and is assignable.
+
+    `classes.department_id` has no tenant component in its FK, so without this
+    explicit lookup a department id belonging to another tenant would be
+    accepted by Postgres. Mirrors `modules.teachers.services._resolve_department`,
+    minus the legacy name-resolution branch — classes have no free-text
+    department field to fall back to.
+
+    An **inactive** department cannot be newly assigned, matching the UI, which
+    already hides inactive divisions from its picker. `current_department_id` is
+    what this class is already assigned to: re-sending it is retention, not
+    assignment, and stays legal — the edit form seeds the field with the
+    record's current value and resends it on save, so rejecting it outright
+    would make a class whose division was archived impossible to edit.
+    Existing rows are never rewritten as a side effect.
+
+    A falsy `department_id` means "no department" and clears the assignment.
+
+    Returns (department_id_or_None, error_message_or_None).
+    """
+    if not department_id:
+        return None, None
+
+    from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
+
+    existing = Department.query.filter_by(
+        id=department_id, tenant_id=tenant_id, deleted_at=None
+    ).first()
+    if not existing:
+        return None, "Department not found"
+    if (
+        existing.status != DEPARTMENT_STATUS_ACTIVE
+        and department_id != current_department_id
+    ):
+        return None, (
+            f"'{existing.name}' is inactive and cannot be assigned. "
+            "Reactivate it under Departments, or choose an active one."
+        )
+    return department_id, None
+
+
 def create_class(
     name: str,
     section: str,
@@ -59,6 +105,7 @@ def create_class(
     school_unit_id: Optional[str] = None,
     medium_id: Optional[str] = None,
     stream: Optional[str] = None,
+    department_id: Optional[str] = None,
 ) -> Dict:
     """Create a new class (tenant-scoped). academic_year_id is required."""
     logger.warning(
@@ -98,6 +145,10 @@ def create_class(
                     'error': 'This teacher is already the class teacher of another class. A teacher can only be class teacher of one class.'
                 }
 
+        resolved_department_id, department_error = _resolve_department_id(department_id, tenant_id)
+        if department_error:
+            return {'success': False, 'error': department_error}
+
         # Explicit duplicate check (name, section, academic_year_id) - gives clear error
         logger.warning("[create_class] checking for duplicate")
         existing = Class.query.filter_by(
@@ -128,6 +179,7 @@ def create_class(
             school_unit_id=school_unit_id or None,
             medium_id=medium_id or None,
             stream=stream or None,
+            department_id=resolved_department_id,
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
@@ -301,6 +353,7 @@ def get_all_classes(
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
+    department_id: Optional[str] = None,
     search: Optional[str] = None,
     search_field: str = "all",
     sort_by: str = "grade",
@@ -355,6 +408,8 @@ def get_all_classes(
         query = query.filter(Class.programme_id == programme_id)
     if grade_id:
         query = query.filter(Class.grade_id == grade_id)
+    if department_id:
+        query = query.filter(Class.department_id == department_id)
 
     term = (search or "").strip()
     if term:
@@ -371,7 +426,7 @@ def get_all_classes(
         ]
         query = query.filter(or_(*clauses))
 
-    # Eager-load what to_dict() touches; otherwise each row lazy-loads six
+    # Eager-load what to_dict() touches; otherwise each row lazy-loads seven
     # relationships and we're back to the N+1 this query exists to kill.
     query = query.options(
         joinedload(Class.school_unit),
@@ -380,6 +435,7 @@ def get_all_classes(
         joinedload(Class.medium),
         joinedload(Class.academic_year_ref),
         joinedload(Class.teacher),
+        joinedload(Class.department_ref),
     )
 
     total = query.order_by(None).count()
@@ -414,6 +470,7 @@ def get_classes_stats(
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
+    department_id: Optional[str] = None,
 ) -> Dict:
     """Aggregate totals for the classes overview header.
 
@@ -439,6 +496,8 @@ def get_classes_stats(
         scoped = scoped.filter(Class.programme_id == programme_id)
     if grade_id:
         scoped = scoped.filter(Class.grade_id == grade_id)
+    if department_id:
+        scoped = scoped.filter(Class.department_id == department_id)
 
     class_ids = [row[0] for row in scoped.all()]
     total_classes = len(class_ids)
@@ -519,8 +578,21 @@ def update_class(
     school_unit_id: Optional[str] = None,
     medium_id: Optional[str] = None,
     stream: Optional[str] = None,
+    department_id=_MISSING,
 ) -> Dict:
-    """Update class details."""
+    """Update class details.
+
+    `department_id` defaults to the `_MISSING` sentinel (the same one
+    `grade_level` already uses above) rather than `None`, so the three
+    states a department picker needs stay distinguishable: key omitted
+    (leave the class's department alone), key explicitly null (unassign
+    it), key set to a real id (reassign it, once verified to belong to
+    this tenant). A plain `None` default would make "omitted" and
+    "explicitly cleared" the same value and silently prevent ever
+    unassigning a department once set — see
+    `modules.teachers.services.update_teacher` for the same fix applied
+    to `teachers.department_id`.
+    """
     try:
         tenant_id = get_tenant_id()
         # Explicit tenant filter — defense in depth even though
@@ -528,6 +600,14 @@ def update_class(
         cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
         if not cls:
             return {'success': False, 'error': 'Class not found'}
+
+        resolved_department_id = _MISSING
+        if department_id is not _MISSING:
+            resolved_department_id, department_error = _resolve_department_id(
+                department_id, tenant_id, current_department_id=cls.department_id
+            )
+            if department_error:
+                return {'success': False, 'error': department_error}
 
         if academic_year_id:
             from modules.academics.academic_year.models import AcademicYear
@@ -594,6 +674,8 @@ def update_class(
             cls.medium_id = medium_id or None
         if stream is not None:
             cls.stream = stream if stream else None
+        if department_id is not _MISSING:
+            cls.department_id = resolved_department_id
 
         cls.save()
         return {'success': True, 'class': cls.to_dict()}

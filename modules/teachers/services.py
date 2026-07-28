@@ -1,6 +1,7 @@
 from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 import secrets
 
@@ -13,6 +14,7 @@ from modules.rbac.services import (
     remove_login_for_deleted_profile,
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
+from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
 from .models import Teacher
 
 # Columns the client may sort by.
@@ -90,11 +92,92 @@ def generate_teacher_password(name: str) -> str:
     return f"{name_part}{digits}"
 
 
+# Sentinel distinguishing "the update payload didn't mention department_id at
+# all" from "department_id was explicitly sent as null" — both collapse to
+# Python None through `data.get('department_id')`, but they mean different
+# things: the former leaves the teacher's department untouched, the latter
+# clears it. Used only by update_teacher; create_teacher has no existing
+# value to leave alone, so a plain None default is unambiguous there.
+NOT_PROVIDED = object()
+
+
+def _resolve_department(
+    department_id: Optional[str],
+    department_name: Optional[str],
+    tenant_id: str,
+    current_department_id: Optional[str] = None,
+) -> tuple:
+    """Resolve the department_id to assign to a teacher.
+
+    `department_id` wins when supplied — but it must belong to this tenant;
+    the FK itself doesn't enforce that, so an unscoped id would otherwise
+    attach an invisible cross-tenant reference. The legacy free-text
+    `department_name` resolves case-insensitively against the tenant's
+    catalogue; an unrecognised name is rejected rather than silently dropped
+    or auto-created (see resolve_department_name). A blank/whitespace-only
+    name is treated the same as "no name given" (returns no department, no
+    error) rather than as an unrecognised name — pre-migration, an empty
+    free-text `department` cleared the field, and a client that clears the
+    field but still sends `department: ""` should get that same behaviour,
+    not a confusing "Unknown department ''" error.
+
+    An **inactive** department cannot be newly assigned — the UI already hides
+    inactive divisions from its pickers, and the API now agrees. `current_
+    department_id` is what this teacher is already assigned to: re-sending it
+    is retention, not assignment, and stays legal. That distinction matters
+    because the edit form seeds the field with the record's current value and
+    resends it on save, so rejecting it outright would make a teacher whose
+    division was archived impossible to edit at all. Existing rows are never
+    rewritten as a side effect.
+
+    Returns (department_id_or_None, error_message_or_None).
+    """
+
+    def _reject_if_inactive(department, resolved_id):
+        if (
+            department.status != DEPARTMENT_STATUS_ACTIVE
+            and resolved_id != current_department_id
+        ):
+            return None, (
+                f"'{department.name}' is inactive and cannot be assigned. "
+                "Reactivate it under Departments, or choose an active one."
+            )
+        return resolved_id, None
+
+    if department_id is not None:
+        existing = Department.query.filter_by(
+            id=department_id, tenant_id=tenant_id, deleted_at=None
+        ).first()
+        if not existing:
+            return None, "Department not found"
+        return _reject_if_inactive(existing, department_id)
+
+    cleaned_name = department_name.strip() if isinstance(department_name, str) else department_name
+    if cleaned_name:
+        from modules.departments.services import resolve_department_name
+
+        resolved = resolve_department_name(cleaned_name, tenant_id)
+        if resolved is None:
+            return None, (
+                f"Unknown department '{department_name}'. Create it under "
+                "Departments first."
+            )
+        resolved_department = Department.query.filter_by(
+            id=resolved, tenant_id=tenant_id, deleted_at=None
+        ).first()
+        if resolved_department is None:
+            return None, "Department not found"
+        return _reject_if_inactive(resolved_department, resolved)
+
+    return None, None
+
+
 def create_teacher(
     name: str,
     email: Optional[str] = None,
     phone: Optional[str] = None,
     designation: Optional[str] = None,
+    department_id: Optional[str] = None,
     department: Optional[str] = None,
     qualification: Optional[str] = None,
     specialization: Optional[str] = None,
@@ -118,6 +201,12 @@ def create_teacher(
         tenant_id = get_tenant_id()
         if not tenant_id:
             return {'success': False, 'error': 'Tenant context is required'}
+
+        resolved_department_id, department_error = _resolve_department(
+            department_id, department, tenant_id
+        )
+        if department_error:
+            return {'success': False, 'error': department_error}
 
         try:
             employee_id = generate_employee_id(tenant_id)
@@ -166,7 +255,7 @@ def create_teacher(
             user_id=user.id,
             employee_id=employee_id,
             designation=designation,
-            department=department,
+            department_id=resolved_department_id,
             qualification=qualification,
             specialization=specialization,
             experience_years=experience_years,
@@ -212,7 +301,7 @@ def list_teachers(
     search: Optional[str] = None,
     search_field: str = "all",
     status: Optional[str] = None,
-    department: Optional[str] = None,
+    department_id: Optional[str] = None,
     designation: Optional[str] = None,
     date_of_joining_from: Optional[str] = None,
     date_of_joining_to: Optional[str] = None,
@@ -228,15 +317,22 @@ def list_teachers(
     When `page` and `per_page` are not provided all matching rows are returned
     (total_pages = 1) so callers that don't paginate still work.
     """
-    query = Teacher.query.join(User)
+    # Outer join: department_id replaced the free-text department column
+    # (migration 077). Outer so teachers with no department are still
+    # returned when the department filter/search below isn't in play.
+    # Eager-load what to_dict() touches; otherwise each row lazy-loads
+    # department_ref and we're back to a per-row query up to the 100-row page cap.
+    query = Teacher.query.join(User).outerjoin(
+        Department, Teacher.department_id == Department.id
+    ).options(joinedload(Teacher.department_ref))
 
     if status:
         query = query.filter(
             db.func.lower(Teacher.status) == status.strip().lower()
         )
 
-    if department:
-        query = query.filter(Teacher.department.ilike(f"%{department.strip()}%"))
+    if department_id:
+        query = query.filter(Teacher.department_id == department_id)
 
     if designation:
         query = query.filter(Teacher.designation.ilike(f"%{designation.strip()}%"))
@@ -267,7 +363,7 @@ def list_teachers(
                         User.name.ilike(pattern),
                         User.email.ilike(pattern),
                         Teacher.employee_id.ilike(pattern),
-                        Teacher.department.ilike(pattern),
+                        Department.name.ilike(pattern),
                         Teacher.phone.ilike(pattern),
                     )
                 )
@@ -284,7 +380,7 @@ def list_teachers(
     elif sort_key == "designation":
         order_cols = [_ordered(Teacher.designation, nulls_last=True)]
     elif sort_key == "department":
-        order_cols = [_ordered(Teacher.department, nulls_last=True)]
+        order_cols = [_ordered(Department.name, nulls_last=True)]
     elif sort_key == "date_of_joining":
         order_cols = [_ordered(Teacher.date_of_joining, nulls_last=True)]
     else:  # employee_id (default)
@@ -307,17 +403,16 @@ def list_teachers(
         per_page = len(teachers) or 0
         total_pages = 1
 
-    # Unique, sorted department / designation values across ALL tenant teachers
-    # (not the filtered subset) so filter dropdowns are always fully populated.
+    # Departments facet: the full active catalogue for this tenant, not just
+    # names in use — so a brand-new department appears in the filter dropdown
+    # before anyone is assigned to it. Designations have no such catalogue, so
+    # that facet stays derived from distinct values across ALL tenant teachers
+    # (not the filtered subset) so its dropdown is always fully populated.
     from sqlalchemy import distinct as _distinct
 
-    all_departments = [
-        r[0]
-        for r in Teacher.query.with_entities(_distinct(Teacher.department))
-        .filter(Teacher.department.isnot(None), Teacher.department != "")
-        .order_by(Teacher.department)
-        .all()
-    ]
+    from modules.departments.services import list_active_departments
+
+    all_departments = list_active_departments(get_tenant_id())
     all_designations = [
         r[0]
         for r in Teacher.query.with_entities(_distinct(Teacher.designation))
@@ -354,6 +449,7 @@ def update_teacher(
     name: Optional[str] = None,
     phone: Optional[str] = None,
     designation: Optional[str] = None,
+    department_id: Optional[str] = NOT_PROVIDED,
     department: Optional[str] = None,
     qualification: Optional[str] = None,
     specialization: Optional[str] = None,
@@ -362,7 +458,18 @@ def update_teacher(
     date_of_joining: Optional[str] = None,
     status: Optional[str] = None,
 ) -> Dict:
-    """Update teacher details. Only updates provided fields."""
+    """Update teacher details. Only updates provided fields.
+
+    `department_id` defaults to the `NOT_PROVIDED` sentinel rather than
+    `None` so the three states the department picker needs are all
+    distinguishable: key omitted (leave the teacher's department alone),
+    key explicitly null (unassign it), key set to a real id (reassign it,
+    once verified to belong to this tenant). `department` (the legacy
+    free-text path) only has two states that matter — blank clears, a name
+    resolves — because a caller that cares about "unchanged" already has
+    `department_id` for that; `department_id` wins whenever it was part of
+    the request at all, even as null.
+    """
     try:
         teacher = Teacher.query.get(teacher_id)
         if not teacher:
@@ -375,8 +482,22 @@ def update_teacher(
             teacher.phone = phone
         if designation is not None:
             teacher.designation = designation
-        if department is not None:
-            teacher.department = department
+        if department_id is not NOT_PROVIDED:
+            resolved_department_id, department_error = _resolve_department(
+                department_id, None, teacher.tenant_id,
+                current_department_id=teacher.department_id,
+            )
+            if department_error:
+                return {'success': False, 'error': department_error}
+            teacher.department_id = resolved_department_id
+        elif department is not None:
+            resolved_department_id, department_error = _resolve_department(
+                None, department, teacher.tenant_id,
+                current_department_id=teacher.department_id,
+            )
+            if department_error:
+                return {'success': False, 'error': department_error}
+            teacher.department_id = resolved_department_id
         if qualification is not None:
             teacher.qualification = qualification
         if specialization is not None:

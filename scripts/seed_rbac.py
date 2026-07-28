@@ -106,6 +106,10 @@ PERMISSIONS = [
     ('subject.delete', 'Delete subjects'),
     ('subject.manage', 'Full subject management access'),
 
+    # Department permissions
+    ('department.read', 'View department information'),
+    ('department.manage', 'Full department management access'),
+
     # Timetable permissions
     ('timetable.read', 'View timetable information'),
     ('timetable.create', 'Create timetable slots'),
@@ -252,6 +256,7 @@ ROLES = {
             'course.manage',
             'class.manage',
             'subject.manage',
+            'department.manage',
             'timetable.manage',
             'finance.read',
             'finance.manage',
@@ -314,6 +319,7 @@ ROLES = {
             'course.read',
             'class.read',
             'subject.read',
+            'department.read',
             'timetable.read',
             'teacher.leave.apply',
             'student.leave.read.class',

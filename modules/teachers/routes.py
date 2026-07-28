@@ -60,7 +60,7 @@ def list_teachers():
 
     # Filters
     status = request.args.get('status')
-    department = request.args.get('department')
+    department_id = request.args.get('department_id')
     designation = request.args.get('designation')
     date_of_joining_from = request.args.get('date_of_joining_from')
     date_of_joining_to = request.args.get('date_of_joining_to')
@@ -85,7 +85,7 @@ def list_teachers():
         search=search,
         search_field=search_field,
         status=status,
-        department=department,
+        department_id=department_id,
         designation=designation,
         date_of_joining_from=date_of_joining_from,
         date_of_joining_to=date_of_joining_to,
@@ -109,8 +109,10 @@ def create_teacher():
     Create a new teacher (admin only).
 
     Required: name
-    Optional: email, phone, designation, department, qualification,
-              specialization, experience_years, address, date_of_joining
+    Optional: email, phone, designation, department_id, department (legacy
+              free-text name, resolved case-insensitively; department_id
+              wins if both are given), qualification, specialization,
+              experience_years, address, date_of_joining
     """
     data = request.get_json() or {}
 
@@ -123,6 +125,7 @@ def create_teacher():
         email=data.get('email'),
         phone=data.get('phone'),
         designation=data.get('designation'),
+        department_id=data.get('department_id'),
         department=data.get('department'),
         qualification=data.get('qualification'),
         specialization=data.get('specialization'),
@@ -202,6 +205,11 @@ def update_teacher(teacher_id):
         name=data.get('name'),
         phone=data.get('phone'),
         designation=data.get('designation'),
+        # `data.get('department_id', services.NOT_PROVIDED)` — not
+        # `data.get('department_id')` — so an omitted key (leave department
+        # unchanged) stays distinguishable from an explicit `null` (clear
+        # it); both collapse to plain `None` under a two-argument `.get()`.
+        department_id=data.get('department_id', services.NOT_PROVIDED),
         department=data.get('department'),
         qualification=data.get('qualification'),
         specialization=data.get('specialization'),

@@ -65,6 +65,11 @@ def coerce_teacher_row(
         if not ok:
             warnings.append("phone: invalid format ignored")
 
+    # "department" (free-text name) passes through unchanged here. It is no
+    # longer a Teacher column (migration 077 replaced it with department_id);
+    # bulk_teacher_import_service resolves the name against the departments
+    # catalogue and turns an unrecognised name into a row-level error.
+
     if "status" in out and not is_blank(out.get("status")):
         s = str(out["status"]).strip().lower()
         if s in ("active", "inactive"):

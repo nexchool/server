@@ -137,6 +137,7 @@ def register_blueprints(app: Flask):
     from modules.academics import academics_bp
     from modules.notifications import notifications_bp
     from modules.subjects import subjects_bp
+    from modules.departments import departments_bp
     from modules.timetable import timetable_bp
     from modules.schedule import schedule_bp
     from modules.academics.calendar.holiday_routes import holidays_bp
@@ -177,6 +178,7 @@ def register_blueprints(app: Flask):
     app.register_blueprint(finance_bp, url_prefix='/api/finance')
     app.register_blueprint(academics_bp, url_prefix='/api/academics')
     app.register_blueprint(subjects_bp, url_prefix='/api/subjects')
+    app.register_blueprint(departments_bp, url_prefix='/api/departments')
     app.register_blueprint(timetable_bp, url_prefix='/api/timetable')
     app.register_blueprint(schedule_bp, url_prefix='/api/schedule')
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
@@ -412,6 +414,7 @@ def register_health_check(app: Flask):
                 'fees': '/api/fees',
                 'academics': '/api/academics',
                 'subjects': '/api/subjects',
+                'departments': '/api/departments',
                 'notifications': '/api/notifications',
                 'devices': '/api/devices',
                 'platform': '/api/platform',
