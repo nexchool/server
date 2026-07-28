@@ -552,9 +552,21 @@ def update_class(
     school_unit_id: Optional[str] = None,
     medium_id: Optional[str] = None,
     stream: Optional[str] = None,
-    department_id: Optional[str] = None,
+    department_id=_MISSING,
 ) -> Dict:
-    """Update class details."""
+    """Update class details.
+
+    `department_id` defaults to the `_MISSING` sentinel (the same one
+    `grade_level` already uses above) rather than `None`, so the three
+    states a department picker needs stay distinguishable: key omitted
+    (leave the class's department alone), key explicitly null (unassign
+    it), key set to a real id (reassign it, once verified to belong to
+    this tenant). A plain `None` default would make "omitted" and
+    "explicitly cleared" the same value and silently prevent ever
+    unassigning a department once set — see
+    `modules.teachers.services.update_teacher` for the same fix applied
+    to `teachers.department_id`.
+    """
     try:
         tenant_id = get_tenant_id()
         # Explicit tenant filter — defense in depth even though
@@ -563,8 +575,8 @@ def update_class(
         if not cls:
             return {'success': False, 'error': 'Class not found'}
 
-        resolved_department_id = None
-        if department_id is not None:
+        resolved_department_id = _MISSING
+        if department_id is not _MISSING:
             resolved_department_id, department_error = _resolve_department_id(department_id, tenant_id)
             if department_error:
                 return {'success': False, 'error': department_error}
@@ -634,7 +646,7 @@ def update_class(
             cls.medium_id = medium_id or None
         if stream is not None:
             cls.stream = stream if stream else None
-        if department_id is not None:
+        if department_id is not _MISSING:
             cls.department_id = resolved_department_id
 
         cls.save()

@@ -178,3 +178,76 @@ def test_update_class_rejects_department_from_another_tenant(
 
     assert result["success"] is False
     assert result["error"] == "Department not found"
+
+
+# ---------------------------------------------------------------------------
+# Positive path: department_id actually persists through the service (not
+# just rejected on cross-tenant input, and not bypassed via direct model
+# construction like `make_class` does for the other tests above).
+# ---------------------------------------------------------------------------
+
+def test_create_class_persists_the_department_id(
+    ctx, db_session, tenant, academic_year, dept_svc
+):
+    from modules.classes import services
+
+    dept = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+
+    result = services.create_class(
+        name="Grade 2",
+        section="Z",
+        academic_year_id=academic_year.id,
+        department_id=dept["id"],
+    )
+
+    assert result["success"] is True
+    assert result["class"]["department_id"] == dept["id"]
+
+
+def test_update_class_assigns_a_department(ctx, db_session, tenant, make_class, dept_svc):
+    from modules.classes import services
+
+    klass = make_class(department_id=None)
+    dept = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+
+    result = services.update_class(klass.id, department_id=dept["id"])
+
+    assert result["success"] is True
+    assert result["class"]["department_id"] == dept["id"]
+
+
+# ---------------------------------------------------------------------------
+# Three-state update semantics — mirrors modules.teachers.services
+# .update_teacher's NOT_PROVIDED handling for the identical problem: key
+# omitted, key explicitly null, and key set to a value must all behave
+# differently. `update_class` reuses this module's existing `_MISSING`
+# sentinel (already used for `grade_level`) rather than introducing a
+# second sentinel with the same meaning.
+# ---------------------------------------------------------------------------
+
+def test_update_class_leaves_department_unchanged_when_field_omitted(
+    ctx, db_session, tenant, make_class, dept_svc
+):
+    from modules.classes import services
+
+    dept = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+    klass = make_class(department_id=dept["id"])
+
+    result = services.update_class(klass.id, name="Renamed")
+
+    assert result["success"] is True
+    assert result["class"]["department_id"] == dept["id"]
+
+
+def test_update_class_clears_department_when_explicitly_null(
+    ctx, db_session, tenant, make_class, dept_svc
+):
+    from modules.classes import services
+
+    dept = dept_svc.create_department({"name": "Higher Secondary"}, tenant.id)["department"]
+    klass = make_class(department_id=dept["id"])
+
+    result = services.update_class(klass.id, department_id=None)
+
+    assert result["success"] is True
+    assert result["class"]["department_id"] is None
