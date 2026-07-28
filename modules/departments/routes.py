@@ -75,8 +75,9 @@ def create_department():
         user_id=g.current_user.id,
     )
     if not result["success"]:
-        status = 409 if _is_duplicate_error(result["error"]) else 400
-        return error_response("ValidationError", result["error"], status_code=status)
+        if _is_duplicate_error(result["error"]):
+            return error_response("DuplicateError", result["error"], status_code=409)
+        return error_response("ValidationError", result["error"], status_code=400)
     return success_response(data=result["department"], status_code=201)
 
 
@@ -95,8 +96,9 @@ def update_department(department_id):
     if not result["success"]:
         if result["error"] == "Department not found":
             return not_found_response("Department")
-        status = 409 if _is_duplicate_error(result["error"]) else 400
-        return error_response("ValidationError", result["error"], status_code=status)
+        if _is_duplicate_error(result["error"]):
+            return error_response("DuplicateError", result["error"], status_code=409)
+        return error_response("ValidationError", result["error"], status_code=400)
     return success_response(data=result["department"])
 
 
