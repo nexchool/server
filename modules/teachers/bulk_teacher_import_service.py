@@ -22,6 +22,7 @@ from modules.students.utils.excel_parser import parse_xlsx_to_rows
 from modules.teachers.models import Teacher
 from modules.teachers.services import (
     _check_teacher_plan_limit,
+    _resolve_department,
     generate_employee_id,
     generate_teacher_password,
 )
@@ -50,12 +51,31 @@ def _tenant_employee_ids(tenant_id: str) -> Set[str]:
     return {r[0] for r in rows if r[0]}
 
 
+def _resolve_department_ids(
+    rows: List[Dict[str, Any]], tenant_id: str
+) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
+    """Resolve every distinct department name appearing in the sheet once.
+
+    A sheet routinely repeats the same department name across dozens of
+    rows; resolving it per-row would be an N+1 against a bounded catalogue.
+    Blank/absent names are excluded up front since they never need a lookup
+    (no department, no error).
+    """
+    names = {
+        str(raw.get("department")).strip()
+        for raw in rows
+        if not is_blank(raw.get("department"))
+    }
+    return {name: _resolve_department(None, name, tenant_id) for name in names}
+
+
 def _validate_and_coerce_row(
     raw: Dict[str, Any],
     row_number: int,
     *,
     db_emails_lower: Set[str],
     file_emails: Set[str],
+    department_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
 ) -> Tuple[bool, Dict[str, Any], List[str], List[str], Optional[Dict[str, Any]]]:
     errors: List[str] = []
     warnings: List[str] = []
@@ -89,6 +109,16 @@ def _validate_and_coerce_row(
     for e in date_errs:
         errors.append(e)
 
+    department_raw = coerced.get("department")
+    department_id = None
+    if not is_blank(department_raw):
+        cache_key = str(department_raw).strip()
+        department_id, department_error = department_cache.get(cache_key, (None, None))
+        if department_error:
+            errors.append(department_error)
+    coerced["department_id"] = department_id
+    coerced.pop("department", None)
+
     display = {**{k: raw.get(k) for k in raw}, **coerced}
     display["row_number"] = row_number
 
@@ -120,6 +150,7 @@ def validate_teacher_workbook_rows(
     tenant_id: str,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     db_emails = _tenant_emails_lower(tenant_id)
+    department_cache = _resolve_department_ids(rows, tenant_id)
 
     file_emails: Set[str] = set()
 
@@ -133,6 +164,7 @@ def validate_teacher_workbook_rows(
             rn,
             db_emails_lower=db_emails,
             file_emails=file_emails,
+            department_cache=department_cache,
         )
         if ok:
             valid_n += 1
@@ -169,14 +201,10 @@ def _teacher_kwargs_from_coerced(coerced: Dict[str, Any]) -> Dict[str, Any]:
     if coerced.get("date_of_joining"):
         doj = datetime.strptime(coerced["date_of_joining"], "%Y-%m-%d").date()
 
-    # NOTE: "department" is deliberately not mapped here. It is no longer a
-    # Teacher column (migration 077 replaced it with department_id); passing
-    # it as a Teacher() kwarg raises TypeError. bulk_validation.py still lists
-    # it as an accepted Excel column and warns the value is ignored — see
-    # coerce_teacher_row(). Task 6 wires bulk import to department_id.
     return {
         "employee_id": coerced["employee_id"],
         "designation": _clean_str(coerced.get("designation")),
+        "department_id": coerced.get("department_id"),
         "qualification": _clean_str(coerced.get("qualification")),
         "specialization": _clean_str(coerced.get("specialization")),
         "experience_years": coerced.get("experience_years"),
@@ -236,6 +264,7 @@ def import_teachers_from_rows(
         }
 
     db_emails = _tenant_emails_lower(tenant_id)
+    department_cache = _resolve_department_ids(rows, tenant_id)
 
     validated: List[Tuple[int, Dict[str, Any]]] = []
     failed_rows: List[Dict[str, Any]] = []
@@ -248,6 +277,7 @@ def import_teachers_from_rows(
             rn,
             db_emails_lower=db_emails,
             file_emails=file_emails,
+            department_cache=department_cache,
         )
         if ok and coerced:
             validated.append((rn, coerced))
