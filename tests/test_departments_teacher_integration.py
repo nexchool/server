@@ -1,6 +1,6 @@
 """Teacher list/create behaviour after the department FK migration.
 
-Four corrections to the brief's illustrative Step 1 code, made while writing
+Five corrections to the brief's illustrative Step 1 code, made while writing
 this file (see task-5-report.md for detail):
 
 1. The teacher list/filter/facet function is `modules.teachers.services.
@@ -49,6 +49,23 @@ def ctx(flask_app, tenant):
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         yield
+
+
+def _other_tenant(db_session, suffix):
+    """A second, distinct tenant — for asserting a department lookup/id check
+    actually excludes another tenant's row, not just an unmatched one."""
+    from core.models import Tenant, TENANT_STATUS_ACTIVE, BILLING_CYCLE_YEARLY
+
+    other = Tenant(
+        id=str(uuid.uuid4()),
+        name=f"Other School {suffix}",
+        subdomain=f"other-{suffix}-{uuid.uuid4().hex[:6]}",
+        status=TENANT_STATUS_ACTIVE,
+        billing_cycle=BILLING_CYCLE_YEARLY,
+    )
+    db_session.add(other)
+    db_session.flush()
+    return other
 
 
 def _make_teacher(db_session, tenant, department_id, suffix):
@@ -170,18 +187,9 @@ def test_create_rejects_an_unknown_department_name(ctx, tenant):
 def test_create_rejects_a_department_id_from_another_tenant(ctx, tenant, db_session, dept_svc):
     """A department_id must belong to the caller's own tenant — the FK column
     itself doesn't scope by tenant, so this has to be checked in the service."""
-    from core.models import Tenant, TENANT_STATUS_ACTIVE, BILLING_CYCLE_YEARLY
     from modules.teachers import services
 
-    other_tenant = Tenant(
-        id=str(uuid.uuid4()),
-        name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
-        status=TENANT_STATUS_ACTIVE,
-        billing_cycle=BILLING_CYCLE_YEARLY,
-    )
-    db_session.add(other_tenant)
-    db_session.flush()
+    other_tenant = _other_tenant(db_session, "a")
     foreign_dept = dept_svc.create_department({"name": "Foreign Dept"}, other_tenant.id)["department"]
 
     result = services.create_teacher(
@@ -191,6 +199,43 @@ def test_create_rejects_a_department_id_from_another_tenant(ctx, tenant, db_sess
     )
 
     assert result["success"] is False
+
+
+def test_create_rejects_a_department_name_owned_by_another_tenant(ctx, tenant, db_session, dept_svc):
+    """The name-resolution path must exclude another tenant's row of the same
+    name, not just fail on names that exist nowhere (that's a weaker check —
+    it would pass even if resolve_department_name's tenant_id filter were
+    deleted entirely)."""
+    from modules.teachers import services
+
+    other_tenant = _other_tenant(db_session, "b")
+    dept_svc.create_department({"name": "Robotics"}, other_tenant.id)
+
+    result = services.create_teacher(
+        name="New Teacher",
+        email=f"new-{uuid.uuid4().hex[:6]}@example.test",
+        department="Robotics",
+    )
+
+    assert result["success"] is False
+    assert "Robotics" in result["error"]
+
+
+def test_create_with_a_blank_department_name_is_a_no_op_not_an_error(ctx, tenant):
+    """A blank `department` means "no department", matching pre-migration
+    behaviour where an empty free-text value cleared the field — not the
+    confusing "Unknown department ''" that a naive empty-string lookup would
+    otherwise produce."""
+    from modules.teachers import services
+
+    result = services.create_teacher(
+        name="New Teacher",
+        email=f"new-{uuid.uuid4().hex[:6]}@example.test",
+        department="",
+    )
+
+    assert result["success"] is True
+    assert result["teacher"]["department_id"] is None
 
 
 def test_create_department_id_wins_over_legacy_department_name(ctx, tenant, dept_svc):
@@ -209,3 +254,92 @@ def test_create_department_id_wins_over_legacy_department_name(ctx, tenant, dept
     assert result["success"] is True
     assert result["teacher"]["department_id"] == science["id"]
     assert arts["id"] != science["id"]
+
+
+# ---------------------------------------------------------------------------
+# update_teacher — previously zero coverage anywhere in the suite. Mirrors
+# the create_teacher cross-tenant checks above, plus the update-only "leave
+# unchanged vs. explicitly clear" distinction that create_teacher has no
+# analogue for (a brand-new teacher has nothing to "leave unchanged").
+# ---------------------------------------------------------------------------
+
+def test_update_rejects_a_department_id_from_another_tenant(ctx, tenant, db_session, dept_svc):
+    from modules.teachers import services
+
+    teacher = _make_teacher(db_session, tenant, None, "u1")
+    other_tenant = _other_tenant(db_session, "c")
+    foreign_dept = dept_svc.create_department({"name": "Foreign Dept"}, other_tenant.id)["department"]
+
+    result = services.update_teacher(teacher.id, department_id=foreign_dept["id"])
+
+    assert result["success"] is False
+
+
+def test_update_rejects_a_department_name_owned_by_another_tenant(ctx, tenant, db_session, dept_svc):
+    from modules.teachers import services
+
+    teacher = _make_teacher(db_session, tenant, None, "u2")
+    other_tenant = _other_tenant(db_session, "d")
+    dept_svc.create_department({"name": "Robotics"}, other_tenant.id)
+
+    result = services.update_teacher(teacher.id, department="Robotics")
+
+    assert result["success"] is False
+    assert "Robotics" in result["error"]
+
+
+def test_update_without_department_keys_leaves_department_unchanged(ctx, tenant, db_session, dept_svc):
+    """The whole point of update_teacher's department_id default being the
+    NOT_PROVIDED sentinel rather than None: a caller updating an unrelated
+    field (phone, here) must not touch the department at all."""
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, science["id"], "u3")
+
+    result = services.update_teacher(teacher.id, phone="9998887777")
+
+    assert result["success"] is True
+    assert result["teacher"]["department_id"] == science["id"]
+    assert result["teacher"]["phone"] == "9998887777"
+
+
+def test_update_clears_department_when_department_id_explicitly_null(ctx, tenant, db_session, dept_svc):
+    """department_id present-but-null is the "clear the department" signal —
+    distinct from omitting the key entirely (tested above)."""
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, science["id"], "u4")
+
+    result = services.update_teacher(teacher.id, department_id=None)
+
+    assert result["success"] is True
+    assert result["teacher"]["department_id"] is None
+
+
+def test_update_clears_department_when_legacy_name_is_blank(ctx, tenant, db_session, dept_svc):
+    """Pre-migration, `department=""` cleared the free-text column — this
+    keeps that contract for a client that still speaks the legacy field."""
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, science["id"], "u5")
+
+    result = services.update_teacher(teacher.id, department="")
+
+    assert result["success"] is True
+    assert result["teacher"]["department_id"] is None
+
+
+def test_update_department_id_wins_over_legacy_department_name(ctx, tenant, db_session, dept_svc):
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    arts = dept_svc.create_department({"name": "Arts"}, tenant.id)["department"]
+    teacher = _make_teacher(db_session, tenant, None, "u6")
+
+    result = services.update_teacher(teacher.id, department_id=science["id"], department="Arts")
+
+    assert result["success"] is True
+    assert result["teacher"]["department_id"] == science["id"]

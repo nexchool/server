@@ -91,6 +91,15 @@ def generate_teacher_password(name: str) -> str:
     return f"{name_part}{digits}"
 
 
+# Sentinel distinguishing "the update payload didn't mention department_id at
+# all" from "department_id was explicitly sent as null" — both collapse to
+# Python None through `data.get('department_id')`, but they mean different
+# things: the former leaves the teacher's department untouched, the latter
+# clears it. Used only by update_teacher; create_teacher has no existing
+# value to leave alone, so a plain None default is unambiguous there.
+NOT_PROVIDED = object()
+
+
 def _resolve_department(
     department_id: Optional[str], department_name: Optional[str], tenant_id: str
 ) -> tuple:
@@ -101,7 +110,12 @@ def _resolve_department(
     attach an invisible cross-tenant reference. The legacy free-text
     `department_name` resolves case-insensitively against the tenant's
     catalogue; an unrecognised name is rejected rather than silently dropped
-    or auto-created (see resolve_department_name).
+    or auto-created (see resolve_department_name). A blank/whitespace-only
+    name is treated the same as "no name given" (returns no department, no
+    error) rather than as an unrecognised name — pre-migration, an empty
+    free-text `department` cleared the field, and a client that clears the
+    field but still sends `department: ""` should get that same behaviour,
+    not a confusing "Unknown department ''" error.
 
     Returns (department_id_or_None, error_message_or_None).
     """
@@ -113,10 +127,11 @@ def _resolve_department(
             return None, "Department not found"
         return department_id, None
 
-    if department_name is not None:
+    cleaned_name = department_name.strip() if isinstance(department_name, str) else department_name
+    if cleaned_name:
         from modules.departments.services import resolve_department_name
 
-        resolved = resolve_department_name(department_name, tenant_id)
+        resolved = resolve_department_name(cleaned_name, tenant_id)
         if resolved is None:
             return None, (
                 f"Unknown department '{department_name}'. Create it under "
@@ -402,7 +417,7 @@ def update_teacher(
     name: Optional[str] = None,
     phone: Optional[str] = None,
     designation: Optional[str] = None,
-    department_id: Optional[str] = None,
+    department_id: Optional[str] = NOT_PROVIDED,
     department: Optional[str] = None,
     qualification: Optional[str] = None,
     specialization: Optional[str] = None,
@@ -411,7 +426,18 @@ def update_teacher(
     date_of_joining: Optional[str] = None,
     status: Optional[str] = None,
 ) -> Dict:
-    """Update teacher details. Only updates provided fields."""
+    """Update teacher details. Only updates provided fields.
+
+    `department_id` defaults to the `NOT_PROVIDED` sentinel rather than
+    `None` so the three states the department picker needs are all
+    distinguishable: key omitted (leave the teacher's department alone),
+    key explicitly null (unassign it), key set to a real id (reassign it,
+    once verified to belong to this tenant). `department` (the legacy
+    free-text path) only has two states that matter — blank clears, a name
+    resolves — because a caller that cares about "unchanged" already has
+    `department_id` for that; `department_id` wins whenever it was part of
+    the request at all, even as null.
+    """
     try:
         teacher = Teacher.query.get(teacher_id)
         if not teacher:
@@ -424,9 +450,16 @@ def update_teacher(
             teacher.phone = phone
         if designation is not None:
             teacher.designation = designation
-        if department_id is not None or department is not None:
+        if department_id is not NOT_PROVIDED:
             resolved_department_id, department_error = _resolve_department(
-                department_id, department, teacher.tenant_id
+                department_id, None, teacher.tenant_id
+            )
+            if department_error:
+                return {'success': False, 'error': department_error}
+            teacher.department_id = resolved_department_id
+        elif department is not None:
+            resolved_department_id, department_error = _resolve_department(
+                None, department, teacher.tenant_id
             )
             if department_error:
                 return {'success': False, 'error': department_error}

@@ -205,7 +205,11 @@ def update_teacher(teacher_id):
         name=data.get('name'),
         phone=data.get('phone'),
         designation=data.get('designation'),
-        department_id=data.get('department_id'),
+        # `data.get('department_id', services.NOT_PROVIDED)` — not
+        # `data.get('department_id')` — so an omitted key (leave department
+        # unchanged) stays distinguishable from an explicit `null` (clear
+        # it); both collapse to plain `None` under a two-argument `.get()`.
+        department_id=data.get('department_id', services.NOT_PROVIDED),
         department=data.get('department'),
         qualification=data.get('qualification'),
         specialization=data.get('specialization'),
