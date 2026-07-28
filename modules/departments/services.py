@@ -8,6 +8,7 @@ another tenant's totals into this tenant's list.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from math import ceil
 from typing import Dict, Optional
@@ -30,6 +31,14 @@ from .schemas import (
     NAME_MAX_LENGTH,
     SORTABLE_COLUMNS,
 )
+
+logger = logging.getLogger(__name__)
+
+# teachers.models has no exported status constant to import; mirrored here
+# rather than reaching into the module's internals for a bare string.
+_TEACHER_STATUS_ACTIVE = "active"
+
+_DUPLICATE_ENTRY_PGCODE = "23505"
 
 
 def _clean(value) -> Optional[str]:
@@ -60,10 +69,36 @@ def _code_taken(tenant_id: str, code: str, exclude_id: Optional[str] = None) -> 
     return db.session.query(query.exists()).scalar()
 
 
+def _handle_integrity_error(error: IntegrityError) -> Dict:
+    """Discriminate duplicate-key violations from everything else.
+
+    Only a unique-violation (Postgres 23505 — the department name/code
+    partial unique indexes) is safe to report back as "already exists". Any
+    other integrity error (FK violation on created_by/updated_by, a check
+    constraint on status/type, etc.) is an operator-facing bug, not a user
+    mistake — log it with the original cause and return a generic message
+    rather than misreporting it as a duplicate.
+    """
+    pgcode = getattr(getattr(error, "orig", None), "pgcode", None)
+    if pgcode == _DUPLICATE_ENTRY_PGCODE:
+        return {"success": False, "error": "A department with this name or code already exists"}
+    logger.exception(
+        "department service: IntegrityError orig=%r",
+        getattr(error, "orig", None),
+    )
+    return {
+        "success": False,
+        "error": "Could not save the department because it conflicts with existing data.",
+    }
+
+
 def _counts_for(tenant_id: str, department_ids: list) -> Dict[str, Dict[str, int]]:
     """Return {department_id: {"teachers": n, "classes": n}} in two grouped queries.
 
     Both subqueries filter on tenant_id explicitly — see the module docstring.
+    Teacher counts only include active teachers: a departed staff member
+    should not permanently block deleting a department, nor inflate the
+    "assigned" figure a principal reads as current headcount.
     """
     counts = {did: {"teachers": 0, "classes": 0} for did in department_ids}
     if not department_ids:
@@ -77,6 +112,7 @@ def _counts_for(tenant_id: str, department_ids: list) -> Dict[str, Dict[str, int
         .filter(
             Teacher.tenant_id == tenant_id,
             Teacher.department_id.in_(department_ids),
+            Teacher.status == _TEACHER_STATUS_ACTIVE,
         )
         .group_by(Teacher.department_id)
         .all()
@@ -145,63 +181,95 @@ def create_department(data: Dict, tenant_id: str, user_id: Optional[str] = None)
     try:
         db.session.add(department)
         db.session.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": "A department with this name or code already exists"}
+        return _handle_integrity_error(e)
 
+    # A newly created department genuinely has zero teachers/classes — no
+    # need for a _counts_for round trip here.
     return {"success": True, "department": department.to_dict()}
 
 
 def update_department(
     department_id: str, data: Dict, tenant_id: str, user_id: Optional[str] = None
 ) -> Dict:
+    """Update a department.
+
+    Every field is validated before anything is assigned to `department`.
+    This matters beyond readability: `_name_taken`/`_code_taken` issue a
+    SELECT, and SQLAlchemy autoflushes pending changes before running any
+    query on the same session — so if the name were assigned before the
+    code check ran, a later rejection (e.g. an invalid status) would still
+    leave the rejected rename flushed to the open transaction, ready to be
+    committed by an unrelated later call. Validating into a plain dict
+    first and only calling `setattr` once everything has passed avoids
+    that entirely. Each failure path also rolls back defensively, matching
+    modules/classes/services.py and modules/teachers/services.py.
+    """
     department = _base_query(tenant_id).filter(Department.id == department_id).first()
     if not department:
         return {"success": False, "error": "Department not found"}
 
+    updates: Dict = {}
+
     if "name" in data:
         name = _clean(data.get("name"))
         if not name:
+            db.session.rollback()
             return {"success": False, "error": "name is required"}
         if len(name) > NAME_MAX_LENGTH:
+            db.session.rollback()
             return {"success": False, "error": f"name must be at most {NAME_MAX_LENGTH} characters"}
         if _name_taken(tenant_id, name, exclude_id=department_id):
+            db.session.rollback()
             return {"success": False, "error": "A department with this name already exists"}
-        department.name = name
+        updates["name"] = name
 
     if "code" in data:
         code = _clean(data.get("code"))
         if code:
             if len(code) > CODE_MAX_LENGTH:
+                db.session.rollback()
                 return {"success": False, "error": f"code must be at most {CODE_MAX_LENGTH} characters"}
             if _code_taken(tenant_id, code, exclude_id=department_id):
+                db.session.rollback()
                 return {"success": False, "error": "A department with this code already exists"}
-        department.code = code
+        updates["code"] = code
 
     if "description" in data:
-        department.description = _clean(data.get("description"))
+        updates["description"] = _clean(data.get("description"))
 
     if "display_order" in data:
         try:
-            department.display_order = int(data.get("display_order") or 0)
+            updates["display_order"] = int(data.get("display_order") or 0)
         except (TypeError, ValueError):
+            db.session.rollback()
             return {"success": False, "error": "display_order must be an integer"}
 
     if "status" in data:
         status = _clean(data.get("status"))
         if status not in DEPARTMENT_STATUSES:
+            db.session.rollback()
             return {"success": False, "error": f"status must be one of: {', '.join(DEPARTMENT_STATUSES)}"}
-        department.status = status
+        updates["status"] = status
 
+    for field, value in updates.items():
+        setattr(department, field, value)
     department.updated_by = user_id
 
     try:
         db.session.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         db.session.rollback()
-        return {"success": False, "error": "A department with this name or code already exists"}
+        return _handle_integrity_error(e)
 
-    return {"success": True, "department": department.to_dict()}
+    counts = _counts_for(tenant_id, [department.id])[department.id]
+    return {
+        "success": True,
+        "department": department.to_dict(
+            teacher_count=counts["teachers"], class_count=counts["classes"]
+        ),
+    }
 
 
 def get_department(department_id: str, tenant_id: str) -> Optional[Dict]:
@@ -306,9 +374,14 @@ def get_department_stats(tenant_id: str) -> Dict:
         Department.status == DEPARTMENT_STATUS_ACTIVE
     ).count()
 
+    # Active teachers only — see the note in _counts_for.
     teachers_assigned = (
         db.session.query(func.count(Teacher.id))
-        .filter(Teacher.tenant_id == tenant_id, Teacher.department_id.isnot(None))
+        .filter(
+            Teacher.tenant_id == tenant_id,
+            Teacher.department_id.isnot(None),
+            Teacher.status == _TEACHER_STATUS_ACTIVE,
+        )
         .scalar()
     ) or 0
     # Class has no deleted_at column — see the note in _counts_for.

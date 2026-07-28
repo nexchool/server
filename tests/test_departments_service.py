@@ -216,7 +216,7 @@ def test_stats_counts_total_and_active(db_session, tenant, svc):
     assert stats["classes_assigned"] == 0
 
 
-def _make_teacher(db_session, tenant, department_id, suffix):
+def _make_teacher(db_session, tenant, department_id, suffix, status="active"):
     """Minimal teacher row. Teacher.user_id is NOT NULL, so a user comes first.
 
     NOTE: the actual User model lives at modules.auth.models.User (not
@@ -243,10 +243,46 @@ def _make_teacher(db_session, tenant, department_id, suffix):
         user_id=user.id,
         employee_id=f"EMP{suffix}",
         department_id=department_id,
+        status=status,
     )
     db_session.add(teacher)
     db_session.flush()
     return teacher
+
+
+def _make_academic_year(db_session, tenant, suffix):
+    from modules.academics.academic_year.models import AcademicYear
+
+    year = AcademicYear(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        name=f"AY-{suffix}",
+        start_date="2026-06-01",
+        end_date="2027-03-31",
+        is_active=True,
+    )
+    db_session.add(year)
+    db_session.flush()
+    return year
+
+
+def _make_class(db_session, tenant, department_id, suffix):
+    """Minimal class row. Class.academic_year_id and .section are NOT NULL;
+    school_unit_id/programme_id/grade_id stay unset (nullable) — construction
+    pattern copied from tests/test_classes_list_and_stats.py's _make_class."""
+    from modules.classes.models import Class
+
+    year = _make_academic_year(db_session, tenant, suffix)
+    cls = Class(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        section=f"S{suffix}",
+        academic_year_id=year.id,
+        department_id=department_id,
+    )
+    db_session.add(cls)
+    db_session.flush()
+    return cls
 
 
 def test_list_reports_the_teacher_count(db_session, tenant, svc):
@@ -301,3 +337,168 @@ def test_stats_counts_assigned_teachers(db_session, tenant, svc):
     _make_teacher(db_session, tenant, dept["id"], "1")
 
     assert svc.get_department_stats(tenant.id)["teachers_assigned"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (round 1): rejected update must not leave a dirty rename;
+# update must return real counts; duplicate-vs-other IntegrityError
+# discrimination; class-count coverage; update-path uniqueness collisions;
+# active-teachers-only scope change.
+# ---------------------------------------------------------------------------
+
+
+def test_update_rejects_invalid_status_without_leaving_a_dirty_rename(
+    db_session, tenant, svc
+):
+    """Pins the autoflush bug: a rejected update must not leave the rejected
+    rename sitting in the session ready to be committed by a later call."""
+    created = svc.create_department({"name": "Primary"}, tenant.id)["department"]
+
+    result = svc.update_department(
+        created["id"], {"name": "Renamed", "status": "archived"}, tenant.id
+    )
+
+    assert result["success"] is False
+
+    # Simulate the next thing to touch the session — if the rename were
+    # still dirty, this unrelated commit would persist it.
+    db_session.commit()
+
+    dept = svc.get_department(created["id"], tenant.id)
+    assert dept["name"] == "Primary"
+
+
+def test_update_returns_the_current_teacher_and_class_count(db_session, tenant, svc):
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_teacher(db_session, tenant, dept["id"], "1")
+    _make_class(db_session, tenant, dept["id"], "1")
+
+    result = svc.update_department(dept["id"], {"display_order": 5}, tenant.id)
+
+    assert result["success"] is True
+    assert result["department"]["teacher_count"] == 1
+    assert result["department"]["class_count"] == 1
+
+
+def test_create_returns_a_generic_error_for_a_non_duplicate_integrity_violation(
+    db_session, tenant, svc
+):
+    """created_by is a real FK to users.id. A user id that does not exist
+    triggers a foreign-key violation (pgcode 23503), not a unique violation
+    (23505) — it must not be reported as a duplicate name/code."""
+    result = svc.create_department(
+        {"name": "Ops"}, tenant.id, user_id="does-not-exist"
+    )
+
+    assert result["success"] is False
+    assert "already exists" not in result["error"]
+
+
+def test_update_rejects_renaming_to_another_departments_name(db_session, tenant, svc):
+    svc.create_department({"name": "Science"}, tenant.id)
+    other = svc.create_department({"name": "Commerce"}, tenant.id)["department"]
+
+    result = svc.update_department(other["id"], {"name": "Science"}, tenant.id)
+
+    assert result["success"] is False
+    assert "already exists" in result["error"]
+
+
+def test_update_rejects_renaming_to_another_departments_name_ignoring_case(
+    db_session, tenant, svc
+):
+    svc.create_department({"name": "Science"}, tenant.id)
+    other = svc.create_department({"name": "Commerce"}, tenant.id)["department"]
+
+    result = svc.update_department(other["id"], {"name": "  SCIENCE "}, tenant.id)
+
+    assert result["success"] is False
+    assert "already exists" in result["error"]
+
+
+def test_update_rejects_a_code_collision_with_another_department(
+    db_session, tenant, svc
+):
+    svc.create_department({"name": "Science", "code": "SCI"}, tenant.id)
+    other = svc.create_department(
+        {"name": "Commerce", "code": "COM"}, tenant.id
+    )["department"]
+
+    result = svc.update_department(other["id"], {"code": "sci"}, tenant.id)
+
+    assert result["success"] is False
+    assert "already exists" in result["error"]
+
+
+def test_list_reports_the_class_count(db_session, tenant, svc):
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_class(db_session, tenant, dept["id"], "1")
+    _make_class(db_session, tenant, dept["id"], "2")
+
+    items = svc.list_departments({}, tenant.id)["items"]
+
+    assert items[0]["class_count"] == 2
+
+
+def test_class_count_excludes_other_tenants(db_session, tenant, svc):
+    """Mirrors test_teacher_count_excludes_other_tenants: the other tenant's
+    class points at *this* tenant's department, so an unscoped subquery
+    would return 2 and fail this assertion."""
+    from core.models import Tenant, TENANT_STATUS_ACTIVE, BILLING_CYCLE_YEARLY
+
+    other = Tenant(
+        id=str(uuid.uuid4()),
+        name="Other School",
+        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        status=TENANT_STATUS_ACTIVE,
+        billing_cycle=BILLING_CYCLE_YEARLY,
+    )
+    db_session.add(other)
+    db_session.flush()
+
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_class(db_session, tenant, dept["id"], "mine")
+    _make_class(db_session, other, dept["id"], "theirs")
+
+    items = svc.list_departments({}, tenant.id)["items"]
+
+    assert items[0]["class_count"] == 1
+
+
+def test_delete_is_blocked_while_classes_are_assigned(db_session, tenant, svc):
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_class(db_session, tenant, dept["id"], "1")
+
+    result = svc.delete_department(dept["id"], tenant.id)
+
+    assert result["success"] is False
+    assert result["in_use"] == {"teachers": 0, "classes": 1}
+    assert "1 classes" in result["error"]
+    assert "teachers" not in result["error"]
+
+
+def test_teacher_count_excludes_inactive_teachers(db_session, tenant, svc):
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_teacher(db_session, tenant, dept["id"], "1", status="active")
+    _make_teacher(db_session, tenant, dept["id"], "2", status="inactive")
+
+    items = svc.list_departments({}, tenant.id)["items"]
+
+    assert items[0]["teacher_count"] == 1
+
+
+def test_stats_counts_only_active_teachers(db_session, tenant, svc):
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_teacher(db_session, tenant, dept["id"], "1", status="active")
+    _make_teacher(db_session, tenant, dept["id"], "2", status="inactive")
+
+    assert svc.get_department_stats(tenant.id)["teachers_assigned"] == 1
+
+
+def test_delete_allowed_when_only_teacher_is_inactive(db_session, tenant, svc):
+    dept = svc.create_department({"name": "Science"}, tenant.id)["department"]
+    _make_teacher(db_session, tenant, dept["id"], "1", status="inactive")
+
+    result = svc.delete_department(dept["id"], tenant.id)
+
+    assert result["success"] is True
