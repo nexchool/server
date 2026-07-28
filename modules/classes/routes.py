@@ -85,6 +85,7 @@ def _list_filters_from_request():
         school_unit_id=school_unit_id,
         programme_id=request.args.get('programme_id') or None,
         grade_id=request.args.get('grade_id') or None,
+        department_id=request.args.get('department_id') or None,
         search=request.args.get('search') or None,
         search_field=search_field,
         sort_by=sort_by,
@@ -105,7 +106,7 @@ def get_classes():
     which is what the structured class pickers rely on.
 
     Query params:
-        academic_year_id, school_unit_id, programme_id, grade_id,
+        academic_year_id, school_unit_id, programme_id, grade_id, department_id,
         search, search_field, sort_by, sort_dir, page, per_page
     """
     filters, err = _list_filters_from_request()
@@ -249,6 +250,7 @@ def create_class():
         school_unit_id=school_unit_id,
         medium_id=data.get('medium_id') or None,
         stream=data.get('stream') or None,
+        department_id=data.get('department_id') or None,
     )
 
     if result['success']:
@@ -398,7 +400,7 @@ def update_class(class_id):
             except (TypeError, ValueError):
                 return validation_error_response({'message': 'grade_level must be an integer'})
     # Structural fields (optional)
-    for field in ('grade_id', 'programme_id', 'school_unit_id', 'medium_id', 'stream'):
+    for field in ('grade_id', 'programme_id', 'school_unit_id', 'medium_id', 'stream', 'department_id'):
         if field in data:
             kw[field] = data.get(field) or None
 

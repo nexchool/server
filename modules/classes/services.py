@@ -46,6 +46,30 @@ def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> st
     raise ValueError("Invalid teacher.")
 
 
+def _resolve_department_id(department_id: Optional[str], tenant_id: str) -> tuple:
+    """Validate a department_id belongs to this tenant.
+
+    `classes.department_id` has no tenant component in its FK, so without this
+    explicit lookup a department id belonging to another tenant would be
+    accepted by Postgres. Mirrors `modules.teachers.services._resolve_department`,
+    minus the legacy name-resolution branch — classes have no free-text
+    department field to fall back to.
+
+    Returns (department_id_or_None, error_message_or_None).
+    """
+    if not department_id:
+        return None, None
+
+    from modules.departments.models import Department
+
+    exists = Department.query.filter_by(
+        id=department_id, tenant_id=tenant_id, deleted_at=None
+    ).first()
+    if not exists:
+        return None, "Department not found"
+    return department_id, None
+
+
 def create_class(
     name: str,
     section: str,
@@ -59,6 +83,7 @@ def create_class(
     school_unit_id: Optional[str] = None,
     medium_id: Optional[str] = None,
     stream: Optional[str] = None,
+    department_id: Optional[str] = None,
 ) -> Dict:
     """Create a new class (tenant-scoped). academic_year_id is required."""
     logger.warning(
@@ -98,6 +123,10 @@ def create_class(
                     'error': 'This teacher is already the class teacher of another class. A teacher can only be class teacher of one class.'
                 }
 
+        resolved_department_id, department_error = _resolve_department_id(department_id, tenant_id)
+        if department_error:
+            return {'success': False, 'error': department_error}
+
         # Explicit duplicate check (name, section, academic_year_id) - gives clear error
         logger.warning("[create_class] checking for duplicate")
         existing = Class.query.filter_by(
@@ -128,6 +157,7 @@ def create_class(
             school_unit_id=school_unit_id or None,
             medium_id=medium_id or None,
             stream=stream or None,
+            department_id=resolved_department_id,
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
@@ -301,6 +331,7 @@ def get_all_classes(
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
+    department_id: Optional[str] = None,
     search: Optional[str] = None,
     search_field: str = "all",
     sort_by: str = "grade",
@@ -355,6 +386,8 @@ def get_all_classes(
         query = query.filter(Class.programme_id == programme_id)
     if grade_id:
         query = query.filter(Class.grade_id == grade_id)
+    if department_id:
+        query = query.filter(Class.department_id == department_id)
 
     term = (search or "").strip()
     if term:
@@ -519,6 +552,7 @@ def update_class(
     school_unit_id: Optional[str] = None,
     medium_id: Optional[str] = None,
     stream: Optional[str] = None,
+    department_id: Optional[str] = None,
 ) -> Dict:
     """Update class details."""
     try:
@@ -528,6 +562,12 @@ def update_class(
         cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
         if not cls:
             return {'success': False, 'error': 'Class not found'}
+
+        resolved_department_id = None
+        if department_id is not None:
+            resolved_department_id, department_error = _resolve_department_id(department_id, tenant_id)
+            if department_error:
+                return {'success': False, 'error': department_error}
 
         if academic_year_id:
             from modules.academics.academic_year.models import AcademicYear
@@ -594,6 +634,8 @@ def update_class(
             cls.medium_id = medium_id or None
         if stream is not None:
             cls.stream = stream if stream else None
+        if department_id is not None:
+            cls.department_id = resolved_department_id
 
         cls.save()
         return {'success': True, 'class': cls.to_dict()}
