@@ -99,6 +99,61 @@ def test_update_persists_gr_number_scheme(client, auth_headers):
     assert response.get_json()["data"]["gr_number_scheme"] == "SC-{SEQ}"
 
 
+def test_delete_returns_school_unit_in_use_code_when_classes_attached(
+    client, auth_headers, db_session, tenant
+):
+    """The client keys off this code to offer 'Set to inactive' instead of failing."""
+    from modules.academics.academic_year.models import AcademicYear
+    from modules.classes.models import Class
+
+    created = client.post(
+        "/api/school-units/",
+        json={"name": "West Campus", "code": _unique_code()},
+        headers=auth_headers,
+    )
+    unit_id = created.get_json()["data"]["id"]
+
+    academic_year = AcademicYear(
+        id=f"ay-{uuid.uuid4().hex[:12]}",
+        tenant_id=tenant.id,
+        name="2025-2026",
+        start_date="2025-06-01",
+        end_date="2026-03-31",
+    )
+    db_session.add(academic_year)
+    db_session.flush()
+    db_session.add(
+        Class(
+            id=f"c-{uuid.uuid4().hex[:12]}",
+            tenant_id=tenant.id,
+            section="A",
+            academic_year_id=academic_year.id,
+            school_unit_id=unit_id,
+        )
+    )
+    db_session.flush()
+
+    response = client.delete(f"/api/school-units/{unit_id}", headers=auth_headers)
+
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["error"] == "SCHOOL_UNIT_IN_USE"
+    assert "1 class is still assigned" in body["message"]
+
+
+def test_delete_succeeds_when_no_classes_attached(client, auth_headers):
+    created = client.post(
+        "/api/school-units/",
+        json={"name": "Free Campus", "code": _unique_code()},
+        headers=auth_headers,
+    )
+    unit_id = created.get_json()["data"]["id"]
+
+    response = client.delete(f"/api/school-units/{unit_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+
+
 def test_update_clears_gr_number_scheme_when_blank(client, auth_headers):
     created = client.post(
         "/api/school-units/",

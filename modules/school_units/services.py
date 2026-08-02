@@ -159,11 +159,20 @@ def delete_school_unit(unit_id: str, tenant_id: str) -> Dict:
 
     from modules.classes.models import Class
 
-    in_use = Class.query.filter_by(tenant_id=tenant_id, school_unit_id=unit_id).first()
-    if in_use:
+    in_use_count = Class.query.filter_by(
+        tenant_id=tenant_id, school_unit_id=unit_id
+    ).count()
+    if in_use_count:
+        plural = "es" if in_use_count != 1 else ""
         return {
             "success": False,
-            "error": "School unit is referenced by existing classes; remove or reassign them first.",
+            "code": "SCHOOL_UNIT_IN_USE",
+            "error": (
+                f"Cannot delete this branch because {in_use_count} class{plural} "
+                f"{'are' if in_use_count != 1 else 'is'} still assigned to it. "
+                "Reassign or remove them first, or set the branch to inactive to "
+                "hide it from new assignments."
+            ),
         }
 
     try:
