@@ -101,4 +101,6 @@ def delete_school_unit(unit_id):
         return success_response(message="School unit deleted successfully")
     if result.get("error") == "School unit not found":
         return not_found_response("School unit")
-    return error_response("DeleteError", result["error"], 400)
+    # Machine-readable code (e.g. SCHOOL_UNIT_IN_USE) so the client can offer a
+    # recovery action instead of just surfacing the message.
+    return error_response(result.get("code", "DeleteError"), result["error"], 400)
