@@ -141,6 +141,26 @@ def test_delete_returns_school_unit_in_use_code_when_classes_attached(
     assert "1 class is still assigned" in body["message"]
 
 
+def test_create_with_duplicate_code_returns_duplicate_error_code(client, auth_headers):
+    """The form modal keys off this code to put the error on the Code field."""
+    code = _unique_code()
+    first = client.post(
+        "/api/school-units/",
+        json={"name": "First Campus", "code": code},
+        headers=auth_headers,
+    )
+    assert first.status_code == 201
+
+    response = client.post(
+        "/api/school-units/",
+        json={"name": "Second Campus", "code": code},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "DuplicateError"
+
+
 def test_delete_succeeds_when_no_classes_attached(client, auth_headers):
     created = client.post(
         "/api/school-units/",
