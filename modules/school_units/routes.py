@@ -57,7 +57,7 @@ def create_school_unit():
             message="School unit created successfully",
             status_code=201,
         )
-    return error_response("CreationError", result["error"], 400)
+    return error_response(result.get("code", "CreationError"), result["error"], 400)
 
 
 @school_units_bp.route("/<unit_id>", methods=["GET"])
@@ -87,7 +87,7 @@ def update_school_unit(unit_id):
         )
     if result.get("error") == "School unit not found":
         return not_found_response("School unit")
-    return error_response("UpdateError", result["error"], 400)
+    return error_response(result.get("code", "UpdateError"), result["error"], 400)
 
 
 @school_units_bp.route("/<unit_id>", methods=["DELETE"])

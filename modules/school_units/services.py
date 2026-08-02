@@ -109,7 +109,11 @@ def create_school_unit(data: Dict, tenant_id: str) -> Dict:
             or "uq_school_units_tenant_code" in msg
             or "code" in msg
         ):
-            return {"success": False, "error": "A school unit with this code already exists"}
+            return {
+                "success": False,
+                "code": "DuplicateError",
+                "error": "A school unit with this code already exists",
+            }
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
@@ -144,7 +148,11 @@ def update_school_unit(unit_id: str, data: Dict, tenant_id: str) -> Dict:
             or "uq_school_units_tenant_code" in msg
             or "code" in msg
         ):
-            return {"success": False, "error": "A school unit with this code already exists"}
+            return {
+                "success": False,
+                "code": "DuplicateError",
+                "error": "A school unit with this code already exists",
+            }
         return {"success": False, "error": "Database constraint violation"}
     except Exception as e:
         db.session.rollback()
