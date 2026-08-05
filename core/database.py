@@ -79,7 +79,7 @@ def init_db(app):
     with app.app_context():
         from core.models import Tenant, Plan, AuditLog, PlatformSetting
         from modules.auth.models import User, Session
-        from modules.rbac.models import Role, Permission, RolePermission, UserRole
+        from modules.rbac.models import Role, Permission, RolePermission
         from modules.sub_admins.models import UserSchoolUnit  # noqa: F401
         from modules.students.models import Student, StudentDocument, StudentPromotionBatch
         from modules.student_leaves.models import StudentLeave  # noqa: F401

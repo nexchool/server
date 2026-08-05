@@ -10,7 +10,7 @@ RBAC Philosophy:
 - 'manage' permission implies all actions on that resource
 
 Components:
-- models: Role, Permission, RolePermission, UserRole models
+- models: Role, Permission, RolePermission, StaffAuthority models
 - routes: RBAC management endpoints (admin only)
 - services: RBAC business logic
 """

@@ -752,8 +752,8 @@ def remove_role_from_user(user_id: str, role_id: str) -> Dict:
 
 
 def is_subadmin_user(user_id: str, tenant_id: str) -> bool:
-    """Return True iff the user is attached (via UserRole) to an is_subadmin
-    Role within the given tenant.
+    """Return True iff the person behind this account holds an is_subadmin
+    Authority Profile within the given tenant.
 
     A platform admin is never a sub-admin: callers should treat the
     is_platform_admin flag with precedence. This helper only inspects the

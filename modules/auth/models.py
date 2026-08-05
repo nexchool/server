@@ -92,7 +92,8 @@ class User(TenantBaseModel):
         cascade="all, delete-orphan"
     )
 
-    # Note: roles relationship is defined in RBAC module via UserRole model
+    # Authority is held by the person's employment, not the account (ADR-013):
+    # see modules/rbac/authority_service.py.
 
     def set_password(self, password: str) -> None:
         """Hash and set user password"""

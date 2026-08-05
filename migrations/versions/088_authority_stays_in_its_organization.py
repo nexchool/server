@@ -5,7 +5,7 @@ makes the state unrepresentable: the composite foreign keys below require the
 assignment and the profile to agree on the tenant, so the database refuses a
 cross-tenant assignment regardless of what any code path asks for.
 
-Found by the equivalence gate in scripts/backfill_authority.py while clearing
+Found by the authority-equivalence check run while clearing
 the way to retire user_roles: rows in one tenant pointed at Student profiles
 owned by two others.
 

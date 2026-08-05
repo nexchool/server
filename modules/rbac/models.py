@@ -126,46 +126,6 @@ class RolePermission(TenantBaseModel):
         db.session.commit()
 
 
-class UserRole(TenantBaseModel):
-    """
-    UserRole Junction Table
-    
-    Maps roles to users (many-to-many relationship).
-    Users can have multiple roles. Scoped by tenant.
-    """
-    __tablename__ = "user_roles"
-
-    __table_args__ = (
-        db.UniqueConstraint(
-            "user_id", "role_id", "tenant_id",
-            name="uq_user_role_tenant",
-        ),
-    )
-
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(
-        db.String(36),
-        db.ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
-    role_id = db.Column(
-        db.String(36),
-        db.ForeignKey("roles.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-
-    def __repr__(self):
-        return f"<UserRole user_id={self.user_id} role_id={self.role_id}>"
-    
-    def save(self):
-        """Save user-role mapping to database"""
-        db.session.add(self)
-        db.session.commit()
-
-
 class StaffAuthority(TenantBaseModel):
     """An Authority Profile held by an employed person (ADR-013).
 

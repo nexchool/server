@@ -254,7 +254,7 @@ class TenantBaseModel(db.Model):
     - Subclasses are automatically filtered by tenant in queries when
       tenant resolution middleware has set g.tenant_id.
 
-    All business models (users, sessions, roles, user_roles, role_permissions,
+    All business models (users, sessions, roles, staff_authorities, role_permissions,
     students, teachers, classes, class_teachers, attendance) must inherit
     from this to prevent cross-tenant data leakage.
     """
