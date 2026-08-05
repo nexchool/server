@@ -53,6 +53,13 @@ Identity exists).
 > academics, attendance and identity all have one; the domain everything now
 > depends on has only architecture docs and ADRs. A reader cannot find the
 > workflows in one place.
+>
+> **Fixed 2026-08-05.** `docs/modules/people.md`, following the shape the other
+> five use: what the module owns, what it deliberately does not, the rule that
+> it depends on nothing, and the workflows — recording someone, correcting what
+> is known, recognising a parent already recorded, households, employment. The
+> match-key gap (same name, same role, different phone) is written down as a
+> known gap rather than left to be rediscovered.
 
 ---
 
