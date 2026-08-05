@@ -96,6 +96,123 @@ def ensure_staff(tenant_id: str, person_id: str, **employment):
     return _fill_employment_gaps(staff, employment)
 
 
+def _adult_already_recorded(tenant_id: str, role: str, name, phone, email):
+    """An adult in this role whom the evidence says is the same human.
+
+    Uses the recognition rules of ADR-010, so a father enrolled with a second
+    child is found rather than recorded twice. The database narrows the
+    candidates; the match key decides.
+    """
+    from core.database import db
+
+    from .matching import build_match_key, normalize_phone
+    from .models import FamilyMember, Person
+
+    key = build_match_key(role, name, phone, email)
+    if key is None:
+        return None
+
+    candidates = (
+        db.session.query(Person)
+        .join(FamilyMember, FamilyMember.person_id == Person.id)
+        .filter(
+            FamilyMember.tenant_id == tenant_id,
+            FamilyMember.relationship == role,
+            Person.deleted_at.is_(None),
+        )
+    )
+
+    digits = normalize_phone(phone)
+    if digits:
+        # Phone numbers are written inconsistently, so narrow on the part that
+        # never changes and let the match key be the judge.
+        candidates = candidates.filter(Person.phone_number.ilike(f"%{digits[-8:]}%"))
+    elif email:
+        candidates = candidates.filter(Person.email.ilike(email.strip()))
+
+    for person in candidates.all():
+        if build_match_key(role, person.full_name, person.phone_number, person.email) == key:
+            return person
+    return None
+
+
+def _family_containing(tenant_id: str, person_id: str):
+    from .models import FamilyMember
+
+    membership = FamilyMember.query.filter_by(
+        tenant_id=tenant_id, person_id=person_id
+    ).first()
+    return membership.family_id if membership is not None else None
+
+
+def _ensure_membership(tenant_id: str, family_id: str, person_id: str, relationship: str):
+    from .models import FamilyMember
+
+    existing = FamilyMember.query.filter_by(
+        tenant_id=tenant_id, family_id=family_id, person_id=person_id
+    ).first()
+    if existing is not None:
+        return existing
+
+    membership = FamilyMember(
+        tenant_id=tenant_id,
+        family_id=family_id,
+        person_id=person_id,
+        relationship=relationship,
+    )
+    db_session_add(membership)
+    return membership
+
+
+def record_family_member(
+    tenant_id: str,
+    child_person_id: str,
+    *,
+    name: Optional[str],
+    relationship: Optional[str],
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    occupation: Optional[str] = None,
+):
+    """Record an adult responsible for a student as a Person in their family.
+
+    Admission is where a school tells us who is responsible for a child, so it
+    is where the family is recorded — not only when a migration runs later.
+
+    A sibling enrolled afterwards finds the same adult and joins the family
+    already holding them, which is how two children come to share one father
+    rather than one each.
+    """
+    from .models import FAMILY_ROLE_CHILD, Family, Person
+
+    if not name or not name.strip():
+        return None
+
+    role = family_role_for(relationship)
+
+    adult = _adult_already_recorded(tenant_id, role, name, phone, email)
+    if adult is None:
+        adult = Person(
+            tenant_id=tenant_id,
+            full_name=name.strip(),
+            phone_number=phone,
+            email=email,
+            occupation=occupation,
+        )
+        db_session_add(adult)
+
+    family_id = _family_containing(tenant_id, child_person_id) or _family_containing(
+        tenant_id, adult.id
+    )
+    if family_id is None:
+        family = Family(tenant_id=tenant_id)
+        db_session_add(family)
+        family_id = family.id
+
+    _ensure_membership(tenant_id, family_id, child_person_id, FAMILY_ROLE_CHILD)
+    return _ensure_membership(tenant_id, family_id, adult.id, role)
+
+
 def employment_status_for_legacy_flag(legacy_status: Optional[str]) -> str:
     """Translate the v1 active/inactive flag into a business state.
 

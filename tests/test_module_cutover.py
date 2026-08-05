@@ -155,6 +155,101 @@ def test_an_unfamiliar_relationship_is_still_a_guardian(db_session, tenant):
     assert family_role_for("Uncle") == FAMILY_ROLE_UNCLE
 
 
+def _admit(academic_year, name, **guardian):
+    from modules.students.services import create_student
+
+    fields = {
+        "guardian_name": "Rajesh Patel",
+        "guardian_relationship": "Father",
+        "guardian_phone": "9811111111",
+    }
+    fields.update(guardian)
+    result = create_student(name=name, academic_year_id=academic_year.id, **fields)
+    assert result["success"], result
+    return result["student"]
+
+
+def test_admission_records_the_family_without_waiting_for_a_migration(
+    ctx, tenant, academic_year
+):
+    from modules.people.models import Person
+    from modules.students.models import Student
+
+    student = _admit(academic_year, "Aarav Patel")
+
+    guardian = Person.query.filter_by(
+        tenant_id=tenant.id, full_name="Rajesh Patel"
+    ).one()
+    membership = FamilyMember.query.filter_by(person_id=guardian.id).one()
+    assert membership.relationship == "father"
+
+    child_person_id = Student.query.get(student["id"]).person_id
+    child = FamilyMember.query.filter_by(person_id=child_person_id).one()
+    assert child.family_id == membership.family_id
+    assert child.relationship == "child"
+
+
+def test_a_sibling_admitted_later_joins_the_same_family(ctx, tenant, academic_year):
+    from modules.people.models import Family, Person
+    from modules.students.models import Student
+
+    first = _admit(academic_year, "Aarav Patel")
+    second = _admit(academic_year, "Isha Patel")
+
+    guardians = Person.query.filter_by(
+        tenant_id=tenant.id, full_name="Rajesh Patel"
+    ).all()
+    assert len(guardians) == 1
+    assert Family.query.filter_by(tenant_id=tenant.id).count() == 1
+
+    families = {
+        FamilyMember.query.filter_by(
+            person_id=Student.query.get(child["id"]).person_id
+        ).one().family_id
+        for child in (first, second)
+    }
+    assert len(families) == 1
+
+
+def test_an_unrelated_student_gets_their_own_family(ctx, tenant, academic_year):
+    from modules.people.models import Family
+
+    _admit(academic_year, "Aarav Patel")
+    _admit(
+        academic_year,
+        "Vivaan Shah",
+        guardian_name="Amit Shah",
+        guardian_phone="9833333333",
+    )
+
+    assert Family.query.filter_by(tenant_id=tenant.id).count() == 2
+
+
+def test_a_guardian_written_differently_is_not_assumed_to_be_the_same_person(
+    ctx, tenant, academic_year
+):
+    """The admission path uses the migration's recognition rules, which refuse
+    to merge on a shared phone alone."""
+    from modules.people.models import Person
+
+    _admit(academic_year, "Aarav Patel")
+    _admit(
+        academic_year,
+        "Isha Patel",
+        guardian_name="Nita Patel",
+        guardian_relationship="Mother",
+        guardian_phone="9811111111",
+    )
+
+    assert (
+        Person.query.filter_by(tenant_id=tenant.id, full_name="Rajesh Patel").count()
+        == 1
+    )
+    assert (
+        Person.query.filter_by(tenant_id=tenant.id, full_name="Nita Patel").count() == 1
+    )
+
+
 def test_the_backfill_records_a_guardian_as_a_person(db_session, tenant):
     from modules.auth.models import User
     from modules.people.backfill import backfill_tenant

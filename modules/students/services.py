@@ -382,7 +382,7 @@ def create_student(
         # already carries a Person; the identity collected on the admission form
         # is recorded there, which is where it will be read from once the
         # columns below are dropped.
-        from modules.people.service import fill_blank_identity
+        from modules.people.service import fill_blank_identity, record_family_member
 
         parsed_date_of_birth = (
             datetime.strptime(date_of_birth, '%Y-%m-%d').date() if date_of_birth else None
@@ -397,6 +397,24 @@ def create_student(
                     "address": address,
                 },
             )
+
+            # Admission is where the school says who is responsible for this
+            # child, so the family is recorded now rather than by a later
+            # migration. A sibling already enrolled joins the same family.
+            for member_name, member_relationship, member_phone, member_email, member_occupation in (
+                (guardian_name, guardian_relationship, guardian_phone, guardian_email, guardian_occupation),
+                (father_name, 'father', father_phone, father_email, father_occupation),
+                (mother_name, 'mother', mother_phone, mother_email, mother_occupation),
+            ):
+                record_family_member(
+                    tenant_id,
+                    user.person_id,
+                    name=member_name,
+                    relationship=member_relationship,
+                    phone=member_phone,
+                    email=member_email,
+                    occupation=member_occupation,
+                )
 
         # Create Student Profile (tenant-scoped)
         student = Student(
