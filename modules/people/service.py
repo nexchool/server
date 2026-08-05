@@ -71,6 +71,14 @@ def fill_blank_identity(person: Person, values: dict) -> bool:
     return changed
 
 
+def _fill_employment_gaps(staff, employment: dict):
+    """Existing employment is not overwritten by a later form; only gaps filled."""
+    for field, value in employment.items():
+        if value is not None and getattr(staff, field, None) is None:
+            setattr(staff, field, value)
+    return staff
+
+
 def ensure_staff(tenant_id: str, person_id: str, **employment):
     """The Staff relationship for a person, created if they have none.
 
@@ -85,11 +93,22 @@ def ensure_staff(tenant_id: str, person_id: str, **employment):
         db_session_add(staff)
         return staff
 
-    # Existing employment is not overwritten by a later form; only gaps filled.
-    for field, value in employment.items():
-        if value is not None and getattr(staff, field, None) is None:
-            setattr(staff, field, value)
-    return staff
+    return _fill_employment_gaps(staff, employment)
+
+
+def employment_status_for_legacy_flag(legacy_status: Optional[str]) -> str:
+    """Translate the v1 active/inactive flag into a business state.
+
+    v1 recorded only whether someone was active, so a departure cannot be
+    reported as a resignation, retirement or dismissal without inventing a fact.
+    'Left' says exactly what is known: they have gone, and the reason was never
+    recorded.
+    """
+    from .employment import EMPLOYMENT_STATUS_LEFT, EMPLOYMENT_STATUS_WORKING
+
+    if (legacy_status or "").strip().lower() == "active":
+        return EMPLOYMENT_STATUS_WORKING
+    return EMPLOYMENT_STATUS_LEFT
 
 
 def ensure_employment_period(staff, joined_on=None):
@@ -146,24 +165,101 @@ def build_person_for_account(user) -> Person:
     )
 
 
-@event.listens_for(Session, "before_flush")
-def _give_every_new_account_a_person(session, flush_context, instances) -> None:
-    """Create the Person behind any account that arrives without one.
-
-    Runs before the flush so the Person is inserted in the same transaction, and
-    ahead of the account that references it.
-    """
-    # Imported here: this module is loaded while models are still being defined.
+def _pending_account(session, user_id: str):
+    """The account with this id, whether already saved or still being saved."""
     from modules.auth.models import User
 
-    for instance in session.new:
-        if not isinstance(instance, User) or instance.person_id:
-            continue
-        if not instance.tenant_id:
-            # Nothing to attach a person to; the account itself is invalid and
-            # will fail its own constraint.
-            continue
+    for pending in session.new:
+        if isinstance(pending, User) and pending.id == user_id:
+            return pending
+    return session.get(User, user_id) if user_id else None
 
-        # Assigning the relationship rather than the id makes the person part of
-        # this flush and orders their insert ahead of the account.
-        instance.person = build_person_for_account(instance)
+
+def _person_behind(session, instance):
+    """The human whose account this relationship was created for."""
+    account = _pending_account(session, getattr(instance, "user_id", None))
+    return getattr(account, "person", None) if account is not None else None
+
+
+@event.listens_for(Session, "before_flush")
+def _relationships_belong_to_people(session, flush_context, instances) -> None:
+    """Attach every arriving record to the human it describes.
+
+    An account gets the Person it belongs to, a student relationship gets that
+    same Person, and teaching gets the employment it is a participation of
+    (ADR-005). Assigning relationships rather than ids is what orders each
+    insert ahead of the row referencing it.
+
+    Autoflush is suspended because resolving these may read the database, and a
+    flush inside a flush would recurse.
+    """
+    # Imported here: this module loads while the models are still being defined.
+    from modules.auth.models import User
+    from modules.students.models import Student
+    from modules.teachers.models import Teacher
+
+    with session.no_autoflush:
+        # Accounts first: the records below borrow the Person created here.
+        for instance in session.new:
+            if isinstance(instance, User) and not instance.person_id:
+                if not instance.tenant_id:
+                    # Nothing to attach a person to; the account is invalid and
+                    # will fail its own constraint.
+                    continue
+                instance.person = build_person_for_account(instance)
+
+        for instance in session.new:
+            if isinstance(instance, Student) and not instance.person_id:
+                instance.person = _person_behind(session, instance)
+
+            elif isinstance(instance, Teacher) and not instance.staff_id:
+                person = _person_behind(session, instance)
+                if person is not None:
+                    instance.staff = _employment_for(session, instance, person)
+
+
+def _employment_for(session, teacher, person):
+    """The employment a teaching record participates in, opened if there is none."""
+    from .employment import Staff
+
+    employment = (
+        session.query(Staff)
+        .filter_by(tenant_id=teacher.tenant_id, person_id=person.id)
+        .first()
+    )
+    if employment is not None:
+        return _fill_employment_gaps(
+            employment,
+            {
+                "employee_number": getattr(teacher, "employee_id", None),
+                "designation": getattr(teacher, "designation", None),
+                "department_id": getattr(teacher, "department_id", None),
+            },
+        )
+
+    # No flush here: this runs inside one, so rows are added and ordered by
+    # their relationships instead.
+    from .employment import EMPLOYMENT_STATUS_WORKING, StaffEmploymentPeriod
+
+    status = employment_status_for_legacy_flag(getattr(teacher, "status", None))
+    employment = Staff(
+        tenant_id=teacher.tenant_id,
+        person=person,
+        employee_number=getattr(teacher, "employee_id", None),
+        designation=getattr(teacher, "designation", None),
+        department_id=getattr(teacher, "department_id", None),
+        employment_status=status,
+    )
+    session.add(employment)
+
+    # Employment always covers a period; someone who works here started
+    # sometime, even where the date was never recorded.
+    session.add(
+        StaffEmploymentPeriod(
+            tenant_id=teacher.tenant_id,
+            staff=employment,
+            joined_on=getattr(teacher, "date_of_joining", None),
+            end_reason=None if status == EMPLOYMENT_STATUS_WORKING else status,
+        )
+    )
+    return employment

@@ -96,6 +96,9 @@ class Staff(TenantBaseModel):
         nullable=False,
         index=True,
     )
+    # A relationship, not merely a column: it is what orders the person's insert
+    # ahead of the employment that references them.
+    person = db.relationship("Person", foreign_keys=[person_id])
 
     # The school's own identifier. Nullable because organizations migrating from
     # records that never captured one should not be given an invented number.
@@ -157,6 +160,7 @@ class StaffEmploymentPeriod(TenantBaseModel):
         nullable=False,
         index=True,
     )
+    staff = db.relationship("Staff", foreign_keys=[staff_id])
 
     joined_on = db.Column(db.Date, nullable=True)
     left_on = db.Column(db.Date, nullable=True)

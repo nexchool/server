@@ -75,9 +75,10 @@ class Teacher(TenantBaseModel):
     staff_id = db.Column(
         db.String(36),
         db.ForeignKey("staff.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
+    staff = db.relationship("Staff", foreign_keys=[staff_id])
 
     # Professional Info
     employee_id = db.Column(db.String(20), nullable=False, index=True)

@@ -41,7 +41,12 @@ from .models import (
     FamilyMember,
     Person,
 )
-from .service import build_person_for_account, family_role_for, fill_blank_identity
+from .service import (
+    build_person_for_account,
+    employment_status_for_legacy_flag,
+    family_role_for,
+    fill_blank_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,19 +157,6 @@ def _link_students_to_people(
         report.students_linked += 1
 
 
-def _employment_status_for(v1_status: Optional[str]) -> str:
-    """Translate the v1 active/inactive flag into a business state.
-
-    v1 recorded only whether someone was active, so a departure cannot be
-    reported as a resignation, retirement or dismissal without inventing a fact.
-    'Left' says exactly what is known: they have gone, and the reason was never
-    recorded.
-    """
-    if (v1_status or "").strip().lower() == "active":
-        return EMPLOYMENT_STATUS_WORKING
-    return EMPLOYMENT_STATUS_LEFT
-
-
 def _create_staff_relationships(
     tenant_id: str, person_by_user: Dict[str, str], report: BackfillReport
 ) -> None:
@@ -203,7 +195,9 @@ def _create_staff_relationships(
             continue
 
         teacher = teachers_by_user.get(user.id)
-        status = _employment_status_for(getattr(teacher, "status", None) if teacher else "active")
+        status = employment_status_for_legacy_flag(
+            getattr(teacher, "status", None) if teacher else "active"
+        )
 
         staff = Staff(
             tenant_id=tenant_id,

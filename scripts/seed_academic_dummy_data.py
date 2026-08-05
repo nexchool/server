@@ -48,6 +48,9 @@ from modules.finance.models import (
     StudentFeeItem,
 )
 from modules.notifications.models import Notification
+from modules.people.employment import Staff, StaffEmploymentPeriod
+from modules.people.models import Family, FamilyMember, Person
+from modules.people.service import ensure_employment_period, ensure_staff
 from modules.rbac.models import Role, UserRole
 from modules.schedule.models import ScheduleOverride
 from modules.students.models import Student, StudentDocument
@@ -141,6 +144,21 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
             UserRole.query.filter(UserRole.user_id.in_(ids)).delete(synchronize_session=False)
             User.query.filter(User.id.in_(ids)).delete(synchronize_session=False)
 
+    # The People model, cleared last: accounts, employment and family
+    # participation all reference a person, and the person outlives them all.
+    # Employee numbers are unique per organization, so leaving employment behind
+    # would collide with the staff this run is about to create.
+    StaffEmploymentPeriod.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    Staff.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    FamilyMember.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    Family.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    db.session.flush()
+    # Only people nothing points at any more; the platform admin keeps theirs.
+    Person.query.filter(
+        Person.tenant_id == tenant_id,
+        ~Person.id.in_(db.session.query(User.person_id).filter(User.person_id.isnot(None))),
+    ).delete(synchronize_session=False)
+
     db.session.flush()
 
 
@@ -227,10 +245,19 @@ def run_seed() -> None:
     for i, (tname, temail) in enumerate(teacher_specs, start=1):
         u = _user(tenant_id, temail, tname, password)
         _assign_role(tenant_id, u.id, "Teacher")
+        # A teacher is an employed person who teaches (ADR-005).
+        staff = ensure_staff(
+            tenant_id,
+            u.person_id,
+            employee_number=f"EMP{i:03d}",
+            designation="Teacher",
+        )
+        ensure_employment_period(staff)
         t = Teacher(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
             user_id=u.id,
+            staff_id=staff.id,
             employee_id=f"EMP{i:03d}",
             designation="Teacher",
             status="active",
@@ -274,6 +301,7 @@ def run_seed() -> None:
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
             user_id=u.id,
+            person_id=u.person_id,
             admission_number=f"ADM{idx:03d}",
             roll_number=idx,
             academic_year="2025-2026",

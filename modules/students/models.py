@@ -127,9 +127,10 @@ class Student(TenantBaseModel):
     person_id = db.Column(
         db.String(36),
         db.ForeignKey("persons.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
+    person = db.relationship("Person", foreign_keys=[person_id])
 
     # Academic Info
     admission_number = db.Column(db.String(20), nullable=False, index=True)
