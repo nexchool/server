@@ -27,6 +27,12 @@ from .matching import (
     normalize_name,
     normalize_phone,
 )
+from .employment import (
+    EMPLOYMENT_STATUS_LEFT,
+    EMPLOYMENT_STATUS_WORKING,
+    Staff,
+    StaffEmploymentPeriod,
+)
 from .models import (
     FAMILY_ROLE_CHILD,
     FAMILY_ROLE_FATHER,
@@ -50,6 +56,8 @@ class BackfillReport:
     parents_merged: int = 0
     families_created: int = 0
     memberships_created: int = 0
+    students_linked: int = 0
+    staff_created: int = 0
     suggestions: List[Dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -57,7 +65,8 @@ class BackfillReport:
             f"tenant={self.tenant_id} people={self.people_created} "
             f"accounts_linked={self.accounts_linked} parents={self.parents_created} "
             f"merged={self.parents_merged} families={self.families_created} "
-            f"memberships={self.memberships_created} suggestions={len(self.suggestions)}"
+            f"memberships={self.memberships_created} students={self.students_linked} "
+            f"staff={self.staff_created} suggestions={len(self.suggestions)}"
         )
 
 
@@ -120,6 +129,102 @@ def _link_accounts_to_people(tenant_id: str, report: BackfillReport) -> Dict[str
         report.accounts_linked += 1
 
     return person_by_user
+
+
+def _link_students_to_people(
+    tenant_id: str, person_by_user: Dict[str, str], report: BackfillReport
+) -> None:
+    """Point each student relationship at the human it belongs to."""
+    from modules.students.models import Student
+
+    for student in Student.query.filter(
+        Student.tenant_id == tenant_id, Student.person_id.is_(None)
+    ).all():
+        person_id = person_by_user.get(student.user_id)
+        if person_id is None:
+            continue
+        student.person_id = person_id
+        report.students_linked += 1
+
+
+def _employment_status_for(v1_status: Optional[str]) -> str:
+    """Translate the v1 active/inactive flag into a business state.
+
+    v1 recorded only whether someone was active, so a departure cannot be
+    reported as a resignation, retirement or dismissal without inventing a fact.
+    'Left' says exactly what is known: they have gone, and the reason was never
+    recorded.
+    """
+    if (v1_status or "").strip().lower() == "active":
+        return EMPLOYMENT_STATUS_WORKING
+    return EMPLOYMENT_STATUS_LEFT
+
+
+def _create_staff_relationships(
+    tenant_id: str, person_by_user: Dict[str, str], report: BackfillReport
+) -> None:
+    """Give every employed person a Staff relationship.
+
+    Teachers bring employment detail with them. Everyone else who holds an
+    account and is not a student is staff too — an administrator or a
+    receptionist is employed just as a teacher is — even though v1 recorded
+    nothing about their employment.
+    """
+    from modules.auth.models import User
+    from modules.students.models import Student
+    from modules.teachers.models import Teacher
+
+    student_user_ids = {
+        student.user_id
+        for student in Student.query.filter(Student.tenant_id == tenant_id).all()
+    }
+    teachers_by_user = {
+        teacher.user_id: teacher
+        for teacher in Teacher.query.filter(Teacher.tenant_id == tenant_id).all()
+    }
+    people_with_staff = {
+        staff.person_id
+        for staff in Staff.query.filter(Staff.tenant_id == tenant_id).all()
+    }
+
+    for user in User.query.filter(User.tenant_id == tenant_id).all():
+        # Platform administrators run Nexchool; they are not employed by the
+        # school whose data they are looking at.
+        if user.is_platform_admin or user.id in student_user_ids:
+            continue
+
+        person_id = person_by_user.get(user.id)
+        if person_id is None or person_id in people_with_staff:
+            continue
+
+        teacher = teachers_by_user.get(user.id)
+        status = _employment_status_for(getattr(teacher, "status", None) if teacher else "active")
+
+        staff = Staff(
+            tenant_id=tenant_id,
+            person_id=person_id,
+            employee_number=getattr(teacher, "employee_id", None),
+            designation=getattr(teacher, "designation", None),
+            department_id=getattr(teacher, "department_id", None),
+            employment_status=status,
+        )
+        db.session.add(staff)
+        db.session.flush()
+
+        db.session.add(
+            StaffEmploymentPeriod(
+                tenant_id=tenant_id,
+                staff_id=staff.id,
+                joined_on=getattr(teacher, "date_of_joining", None),
+                # v1 never recorded a leaving date, so a closed period carries
+                # its reason instead of a date it does not know.
+                end_reason=None if status == EMPLOYMENT_STATUS_WORKING else status,
+            )
+        )
+        people_with_staff.add(person_id)
+        report.staff_created += 1
+
+    db.session.flush()
 
 
 def _existing_parent_index(tenant_id: str) -> Dict[PersonMatchKey, str]:
@@ -232,6 +337,8 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
     report = BackfillReport(tenant_id=tenant_id)
 
     person_by_user = _link_accounts_to_people(tenant_id, report)
+    _link_students_to_people(tenant_id, person_by_user, report)
+    _create_staff_relationships(tenant_id, person_by_user, report)
     parent_index = _existing_parent_index(tenant_id)
 
     students = Student.query.filter(Student.tenant_id == tenant_id).all()

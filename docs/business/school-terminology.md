@@ -529,10 +529,17 @@ Examples
 Employment
 
 - Working
-- Suspended
+- Probation
+- On Leave
 - Notice Period
-- Left
+- Suspended
+- Resigned
 - Retired
+- Terminated
+- Left — departed, reason not recorded
+
+How a person is engaged — Permanent, Contract, Visiting, Part Time, Temporary —
+is a separate concept from where they stand. See staff-management.md.
 
 Admission
 

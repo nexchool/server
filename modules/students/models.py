@@ -121,6 +121,16 @@ class Student(TenantBaseModel):
     # The User record handles email, password, name, profile pic
     user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
 
+    # The human this student relationship belongs to (ADR-001). Nullable until
+    # the People backfill has run; the identity columns below move to Person and
+    # are dropped in a later cleanup migration.
+    person_id = db.Column(
+        db.String(36),
+        db.ForeignKey("persons.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+
     # Academic Info
     admission_number = db.Column(db.String(20), nullable=False, index=True)
     roll_number = db.Column(db.Integer, nullable=True)

@@ -267,20 +267,36 @@ Only the employment relationship evolves.
 
 # Employment Status
 
-Employment Status represents the staff member's organizational state.
+Employment has two independent dimensions, and collapsing them into one field
+makes ordinary situations inexpressible — a permanent teacher on maternity
+leave, or a contract teacher serving notice.
 
-Suggested statuses include:
+**Employment Status** is where the person stands right now.
 
-- Candidate
-- Joining
-- Active
+- Working
 - Probation
-- Contract
-- Permanent
 - On Leave
+- Notice Period
+- Suspended
 - Resigned
 - Retired
 - Terminated
+- Left — departed, reason not recorded
+
+Each represents a real business event, so the record explains what actually
+happened rather than merely that someone is no longer active. *Left* exists for
+history carried over from systems that recorded only that a person had gone.
+
+**Employment Type** is the basis on which the person is engaged.
+
+- Permanent
+- Contract
+- Visiting
+- Part Time
+- Temporary
+
+A candidate has no employment status because a candidate is not yet Staff.
+Recruitment happens before the Staff relationship exists.
 
 Status changes occur only through business workflows.
 
