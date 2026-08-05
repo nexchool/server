@@ -70,9 +70,10 @@ Identity exists).
 **Ownership: correct.** Authentication is implemented once, in
 `core/authentication.py`, and consumed by both transports.
 
-**Boundary: one leak.** `available_contexts()` in the Identity module reads
+**Boundary: closed 2026-08-05.** `available_contexts()` used to read
 `modules.students.models.Student`, `modules.teachers.models.Teacher` and
-`modules.people.employment.Staff` directly to derive contexts.
+`modules.people.employment.Staff` directly. It now asks
+`people/relationships.py`, and an import-level test keeps it that way.
 
 > **Finding I1 (high).** Identity reads Academic. The architecture explicitly
 > forbids this: "Identity should never know Academic". Contexts are derived from
@@ -88,14 +89,24 @@ households share a login (ADR-011).
 
 ## Authorization
 
-**Not started.** Business Authority, Authority Profiles, Capabilities, Business
-Actions and Scope exist only as documents. v1 RBAC — roles and permission
-strings — is still the live implementation.
+**Half done — the holder moved, the vocabulary did not.**
 
-> **Finding A1 (high, sequencing).** Authorization is the third domain in the
-> dependency order and it has not been touched. Every module built before it
-> lands will be written against v1 RBAC and will need revisiting. This is the
-> largest remaining foundation gap.
+*Done (M4).* Authority is held by the **employment**, not the login
+(`staff_authorities`); `user_roles` is dropped; temporary delegation exists;
+being a student implies a student's access without a grant; authority cannot
+cross organizations. Ending someone's employment ends their authority, which is
+the property the whole change was for.
+
+*Not done.* Business Actions, Capabilities, Authority Profiles and Scope still
+exist only as documents. The live check is `has_permission(user_id, "x.manage")`
+against `roles` / `permissions` / `role_permissions` — v1 RBAC vocabulary, with
+hierarchical permission strings.
+
+> **Finding A1 (high, sequencing) — partly open.** The sequencing risk it
+> described is *reduced*, not gone: a module written today will use the right
+> holder but the wrong vocabulary. Rewriting `has_permission` call sites later
+> is mechanical; re-deciding who holds authority would not have been, which is
+> why the holder went first.
 
 ---
 
@@ -120,13 +131,25 @@ something introduced here.
 
 ---
 
+## Branch scope
+
+> **Finding B1 (high).** `teachers`, `transport` and `hostel` have **no branch
+> scoping at all** — not one file in them references `school_unit_id` or
+> `core/branch_scope.py`, against 3–5 files each in students, classes and
+> attendance. Multi-campus is day-one scope, so on a trust running twenty
+> campuses a sub-admin scoped to one of them currently sees every campus's
+> teachers, buses and hostel allocations. This is a foundation gap, not a
+> module feature: it is the tenancy guarantee, one level down.
+
+---
+
 # Duplicated Concepts
 
 | Concept | Stored in | Status |
 |---------|-----------|--------|
-| Student identity (dob, gender, phone, address, Aadhaar) | `students.*` **and** `persons.*` | **Duplicated — written to both** |
-| Parent / guardian details | `students.father_*`/`mother_*`/`guardian_*` **and** Family | **Duplicated — written to both** |
-| Employment (employee number, designation, department, joining, status) | `teachers.*` **and** `staff.*` | **Duplicated — written to both** |
+| Student identity (dob, gender, phone, address, Aadhaar) | `persons.*` | **Resolved** — columns dropped (090) |
+| Employment (employee number, designation, department, joining, status) | `staff.*` | **Resolved** — columns dropped (090) |
+| Parent / guardian details | `students.father_*`/`mother_*`/`guardian_*` **and** Family | **Still duplicated** — 18 columns; the Expo app reads them |
 | Class teacher | `classes.teacher_id` **and** `class_teacher_assignments` | Pre-existing v1 duplication |
 
 > **Finding D1 (high).** Three concepts are actively written to two places. This
