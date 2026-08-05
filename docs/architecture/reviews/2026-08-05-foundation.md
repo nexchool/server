@@ -122,7 +122,7 @@ something introduced here.
 
 Every entry answers: why it exists, when it goes, and what removes it.
 
-### 1. Dual-written identity, family and employment — **mostly closed**
+### 1. Dual-written identity, family and employment — **closed except family**
 
 - **Why:** the API and three clients read the v1 columns. Writing only to the new
   model would break them; writing only to the old would abandon the new one.
@@ -141,6 +141,8 @@ Every entry answers: why it exists, when it goes, and what removes it.
   for all 1,524). Both edit paths now reach People — until then the dual write
   was only a dual write on *create*, so every record drifted from the day it was
   edited. That was the unbounded part of this debt, and it is closed.
+- **Closed 2026-08-05 (migration 090):** the identity and employment columns
+  are dropped. No concept is written to two places any more except the family.
 - **Still open — the student's family keys.** `father_*`, `mother_*` and
   `guardian_*` still read the v1 columns. This is not a like-for-like switch:
   where a school recorded the guardian's relationship as "father" there is one
@@ -235,9 +237,12 @@ M1  Read Path Cutover                                    MOSTLY DONE
     Identity stops reading Academic (I1)                  done
     students.person_id is the single path                 done
 
-M2  Column Drop
-    clients write through the new model
-    v1 identity, parent and employment columns removed
+M2  Column Drop                                          SERVER DONE
+    v1 identity and employment columns removed (migration 090)
+      students: date_of_birth, gender, phone, address, aadhar_number
+      teachers: employee_id, designation, department_id, phone,
+                address, date_of_joining, status
+    parent/guardian columns remain — they move with the client
 
 M3  Creation Through Services
     account and student creation funnel through People services
