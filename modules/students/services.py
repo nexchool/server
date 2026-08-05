@@ -772,6 +772,7 @@ def list_students(
     # User is already inner-joined above — contains_eager reuses that join.
     query = query.options(
         contains_eager(Student.user),
+        joinedload(Student.person),
         joinedload(Student.current_class).joinedload(Class.programme),
         joinedload(Student.current_class).joinedload(Class.grade),
     )

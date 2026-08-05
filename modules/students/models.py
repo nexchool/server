@@ -282,7 +282,7 @@ class Student(TenantBaseModel):
         return {
             "id": self.id,
             "user_id": self.user_id,
-            "name": self.user.name if self.user else None,
+            "name": self.person.full_name if self.person else None,
             "email": self.user.email if self.user else None,
             # `profile_picture` resolves to a presigned S3 URL, which is
             # expensive to generate in bulk. Skip it on list endpoints.
@@ -303,10 +303,19 @@ class Student(TenantBaseModel):
                 if self.current_class and self.current_class.programme
                 else None
             ),
-            "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
-            "gender": self.gender,
-            "phone": self.phone,
-            "address": self.address,
+            # Who this student is comes from their Person (ADR-001). The
+            # columns below are the same facts left over from before People
+            # existed, and are dropped once nothing reads them. The family
+            # fields further down still read these columns — see the migration
+            # debt register for why they are cut over with the client, not here.
+            "date_of_birth": (
+                self.person.date_of_birth.isoformat()
+                if self.person and self.person.date_of_birth
+                else None
+            ),
+            "gender": self.person.gender if self.person else None,
+            "phone": self.person.phone_number if self.person else None,
+            "address": self.person.address if self.person else None,
             "guardian_name": self.guardian_name,
             "guardian_relationship": self.guardian_relationship,
             "guardian_phone": self.guardian_phone,
@@ -336,7 +345,7 @@ class Student(TenantBaseModel):
             "guardian_occupation": self.guardian_occupation,
             "guardian_aadhar_number": self.guardian_aadhar_number,
 
-            "aadhar_number": self.aadhar_number,
+            "aadhar_number": self.person.aadhaar_number if self.person else None,
             "apaar_id": self.apaar_id,
             "emis_number": self.emis_number,
             "udise_student_id": self.udise_student_id,
