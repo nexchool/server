@@ -507,6 +507,14 @@ def create_sub_admin(
 
         _sync_role_permissions(tenant_id, role, permission_names)
 
+        # A sub-admin works for the school, and authority belongs to that
+        # employment rather than to the login (ADR-013).
+        from modules.people.service import employ
+        from modules.rbac.authority_service import grant_authority
+
+        employment = employ(tenant_id, user.person_id)
+        grant_authority(employment.id, role.id)
+
         db.session.add(
             UserRole(tenant_id=tenant_id, user_id=user.id, role_id=role.id)
         )

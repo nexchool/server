@@ -205,17 +205,15 @@ def delegations_in_effect_for(staff_id: str, on_date: Optional[date] = None):
     return in_effect
 
 
-def permission_keys_for_person(
-    person_id: str, on_date: Optional[date] = None
-) -> List[str]:
-    """Permission keys this person holds through their employment.
+RELATIONSHIP_STUDENT = "student"
 
-    Two sources: the authority they hold themselves, and any they are acting
-    under on behalf of someone else.
 
-    Nothing is returned once the employment has ended, or while the person is
-    suspended. That is the point of ADR-013: authority stops because the
-    employment stopped, not because somebody remembered to withdraw it.
+def _roles_from_employment(person_id: str, on_date: Optional[date]) -> List[Role]:
+    """Authority held, or acted under, through employment.
+
+    Nothing once the employment has ended or while the person is suspended.
+    That is the point of ADR-013: authority stops because the employment
+    stopped, not because somebody remembered to withdraw it.
     """
     from modules.people.employment import Staff
 
@@ -229,6 +227,48 @@ def permission_keys_for_person(
         for delegation in delegations_in_effect_for(employment.id, on_date)
         if delegation.role is not None
     )
+    return roles
+
+
+def _roles_implied_by_relationships(person_id: str) -> List[Role]:
+    """Authority that follows from what someone *is*, rather than being granted.
+
+    A student was never given the right to see their own attendance; it comes
+    with being a student. So it is derived from the relationship and disappears
+    with it, instead of being assigned account by account and left behind.
+    """
+    from modules.people.models import Person
+    from modules.students.models import Student
+
+    person = Person.query.get(person_id)
+    if person is None:
+        return []
+
+    implied = []
+    if Student.query.filter_by(person_id=person_id).first() is not None:
+        implied.append(RELATIONSHIP_STUDENT)
+
+    if not implied:
+        return []
+
+    return (
+        Role.query.filter(
+            Role.tenant_id == person.tenant_id,
+            Role.implied_by_relationship.in_(implied),
+        ).all()
+    )
+
+
+def permission_keys_for_person(
+    person_id: str, on_date: Optional[date] = None
+) -> List[str]:
+    """Every permission key this person holds.
+
+    Three sources: authority they hold through employment, authority they are
+    acting under for someone else, and authority implied by who they are.
+    """
+    roles = _roles_from_employment(person_id, on_date)
+    roles.extend(_roles_implied_by_relationships(person_id))
 
     keys = set()
     for role in roles:

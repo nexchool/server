@@ -118,6 +118,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
     },
     "Student": {
         "description": "Student with limited access to own data",
+        "implied_by_relationship": "student",
         "permissions": [
             "student.read.self",
             "attendance.read.self",
@@ -193,6 +194,9 @@ def seed_roles_for_tenant(tenant_id: str) -> Dict[str, str]:
                 tenant_id=tenant_id,
                 name=role_name,
                 description=role_data["description"],
+                # A student's access follows from being a student rather than
+                # being granted to their account (ADR-013).
+                implied_by_relationship=role_data.get("implied_by_relationship"),
             )
             db.session.add(role)
             db.session.flush()

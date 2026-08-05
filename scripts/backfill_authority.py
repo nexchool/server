@@ -38,18 +38,41 @@ class AuthorityReport:
     tenant_id: str
     moved: int = 0
     already_held: int = 0
-    # Holders whose authority cannot live on an employment.
-    students: int = 0
+    employments_created: int = 0
     platform_admins: int = 0
-    without_relationship: List[Dict[str, Any]] = field(default_factory=list)
+    # Students whose assignment is redundant because the relationship implies it.
+    students_covered_by_implication: int = 0
+    # Students whose assignment grants more than the relationship implies —
+    # these must be answered before user_roles can be dropped.
+    students_not_covered: List[Dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
             f"tenant={self.tenant_id} moved={self.moved} "
-            f"already={self.already_held} students={self.students} "
-            f"platform_admins={self.platform_admins} "
-            f"no_relationship={len(self.without_relationship)}"
+            f"already={self.already_held} employed={self.employments_created} "
+            f"students_covered={self.students_covered_by_implication} "
+            f"students_uncovered={len(self.students_not_covered)} "
+            f"platform_admins={self.platform_admins}"
         )
+
+
+def _implied_access_covers(account, role_id: str) -> bool:
+    """Whether the relationship already implies everything this role grants.
+
+    The gate for dropping a student's assignment: if the relationship implies
+    it, removing the row changes nothing. If it grants more, removing it would
+    quietly take access away, and that must be decided rather than assumed.
+    """
+    from modules.rbac.authority_service import permission_keys_for_person
+    from modules.rbac.models import Role
+
+    role = Role.query.get(role_id)
+    if role is None:
+        return True
+
+    granted = {permission.name for permission in role.permissions}
+    implied = set(permission_keys_for_person(account.person_id))
+    return granted.issubset(implied)
 
 
 def _move_tenant_authority(tenant_id: str) -> AuthorityReport:
@@ -91,16 +114,29 @@ def _move_tenant_authority(tenant_id: str) -> AuthorityReport:
             continue
 
         employment = employment_by_person.get(account.person_id)
-        if employment is None:
-            if account.person_id in student_person_ids:
-                # A student holds no organizational authority. Their access
-                # follows from being a student, which is a different thing.
-                report.students += 1
+
+        if employment is None and account.person_id in student_person_ids:
+            # A student holds no organizational authority. Their access follows
+            # from being a student, so it is implied by the relationship and
+            # this assignment is redundant — verified below before anything is
+            # dropped.
+            if _implied_access_covers(account, assignment.role_id):
+                report.students_covered_by_implication += 1
             else:
-                report.without_relationship.append(
+                report.students_not_covered.append(
                     {"user_id": account.id, "email": account.email}
                 )
             continue
+
+        if employment is None:
+            # An account holding authority with nothing to hold it: created
+            # before employment was recorded at creation. They work here, so
+            # record that, exactly as the People backfill does.
+            from modules.people.service import employ
+
+            employment = employ(tenant_id, account.person_id)
+            employment_by_person[account.person_id] = employment
+            report.employments_created += 1
 
         if (employment.id, assignment.role_id) in already:
             report.already_held += 1
@@ -145,7 +181,7 @@ def main() -> int:
 
         reports = [_move_tenant_authority(t.id) for t in tenants]
         for tenant, report in zip(tenants, reports):
-            if report.moved or report.without_relationship:
+            if report.moved or report.employments_created or report.students_not_covered:
                 logger.info("%s %s", tenant.subdomain, report.summary())
 
         if args.dry_run:
@@ -157,18 +193,25 @@ def main() -> int:
 
         blocked = defaultdict(int)
         for report in reports:
-            blocked["students"] += report.students
-            blocked["accounts_without_a_relationship"] += len(report.without_relationship)
+            blocked["students_covered"] += report.students_covered_by_implication
+            blocked["students_uncovered"] += len(report.students_not_covered)
+            blocked["employed"] += report.employments_created
 
         logger.info(
-            "\nBefore user_roles can be dropped:\n"
-            "  %s student assignment(s) need student access to be implied by the "
-            "Student relationship rather than granted.\n"
-            "  %s account(s) hold roles but have no business relationship to hold "
-            "authority — each needs one, or needs to stop holding authority.",
-            blocked["students"],
-            blocked["accounts_without_a_relationship"],
+            "\n%s account(s) holding authority with no employment were employed.\n"
+            "%s student assignment(s) are redundant: the relationship already "
+            "implies everything they grant.",
+            blocked["employed"],
+            blocked["students_covered"],
         )
+        if blocked["students_uncovered"]:
+            logger.info(
+                "%s student assignment(s) grant MORE than the relationship "
+                "implies. Answer these before dropping user_roles.",
+                blocked["students_uncovered"],
+            )
+        else:
+            logger.info("Nothing now blocks retiring user_roles.")
 
         if args.report:
             Path(args.report).write_text(
@@ -176,15 +219,15 @@ def main() -> int:
                     [
                         {
                             "tenant_id": r.tenant_id,
-                            "accounts_without_a_relationship": r.without_relationship,
+                            "students_not_covered": r.students_not_covered,
                         }
                         for r in reports
-                        if r.without_relationship
+                        if r.students_not_covered
                     ],
                     indent=2,
                 )
             )
-            logger.info("Unmovable holders written to %s", args.report)
+            logger.info("Unresolved holders written to %s", args.report)
 
     return 0
 

@@ -534,3 +534,75 @@ def test_moving_authority_changes_nobodys_permissions(db_session, tenant):
     after = _load_user_permissions_from_db(user.id)
 
     assert before == after == ["student.read"]
+
+
+# ---------------------------------------------------------------------------
+# Access that follows from what someone is, rather than being granted
+# ---------------------------------------------------------------------------
+
+def _admit_student(db_session, tenant, user):
+    from modules.students.models import Student
+
+    student = Student(
+        id=f"s-{uuid.uuid4().hex[:8]}",
+        tenant_id=tenant.id,
+        user_id=user.id,
+        admission_number=f"ADM-{uuid.uuid4().hex[:8]}",
+    )
+    db_session.add(student)
+    db_session.flush()
+    return student
+
+
+def _student_profile(db_session, tenant, *, permissions=("attendance.read.self",)):
+    role = _authority_profile(db_session, tenant, permissions=permissions)
+    role.implied_by_relationship = "student"
+    db_session.flush()
+    return role
+
+
+def test_a_student_holds_their_access_without_anyone_granting_it(db_session, tenant):
+    user = _account(db_session, tenant, name="Aarav Patel")
+    _admit_student(db_session, tenant, user)
+    _student_profile(db_session, tenant)
+
+    # Nothing was assigned to this account.
+    assert permission_keys_for_person(user.person_id) == ["attendance.read.self"]
+
+
+def test_someone_who_is_not_a_student_does_not_get_student_access(db_session, tenant):
+    user = _account(db_session, tenant)
+    employ(tenant.id, user.person_id)
+    _student_profile(db_session, tenant)
+
+    assert permission_keys_for_person(user.person_id) == []
+
+
+def test_renaming_the_student_profile_does_not_remove_student_access(
+    db_session, tenant
+):
+    """Which is why the profile is marked rather than matched by name."""
+    user = _account(db_session, tenant, name="Aarav Patel")
+    _admit_student(db_session, tenant, user)
+    role = _student_profile(db_session, tenant)
+
+    role.name = "Learner"
+    db_session.flush()
+
+    assert permission_keys_for_person(user.person_id) == ["attendance.read.self"]
+
+
+def test_a_teaching_student_holds_both_kinds_of_access(db_session, tenant):
+    """A senior student employed as a lab assistant is both things at once."""
+    user = _account(db_session, tenant, name="Aarav Patel")
+    _admit_student(db_session, tenant, user)
+    _student_profile(db_session, tenant)
+
+    staff = employ(tenant.id, user.person_id)
+    employed_role = _authority_profile(db_session, tenant, permissions=("student.read",))
+    grant_authority(staff.id, employed_role.id)
+
+    assert permission_keys_for_person(user.person_id) == [
+        "attendance.read.self",
+        "student.read",
+    ]

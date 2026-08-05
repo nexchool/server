@@ -29,6 +29,12 @@ class Role(TenantBaseModel):
     name = db.Column(db.String(50), nullable=False, index=True)
     description = db.Column(db.String(255), nullable=True)
     is_subadmin = db.Column(db.Boolean, nullable=False, default=False)
+
+    # Set when holding a business relationship implies this profile, rather than
+    # it being granted. A student's access follows from being a student; nobody
+    # assigns it. Marked here rather than matched by name so that renaming the
+    # profile cannot silently remove everyone's access.
+    implied_by_relationship = db.Column(db.String(30), nullable=True, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships

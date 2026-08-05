@@ -228,6 +228,15 @@ def create_tenant(
     db.session.add(user)
     db.session.flush()
 
+    # The school's administrator works for the school, and authority belongs to
+    # that employment rather than to the login (ADR-013). No designation is
+    # invented: we know they administer the system, not what their job title is.
+    from modules.people.service import employ
+    from modules.rbac.authority_service import grant_authority
+
+    employment = employ(tenant_id, user.person_id)
+    grant_authority(employment.id, admin_role.id)
+
     ur = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
     db.session.add(ur)
     db.session.commit()
@@ -920,6 +929,15 @@ def add_tenant_admin(
     user.email_verified = True
     db.session.add(user)
     db.session.flush()
+    # The school's administrator works for the school, and authority belongs to
+    # that employment rather than to the login (ADR-013). No designation is
+    # invented: we know they administer the system, not what their job title is.
+    from modules.people.service import employ
+    from modules.rbac.authority_service import grant_authority
+
+    employment = employ(tenant_id, user.person_id)
+    grant_authority(employment.id, admin_role.id)
+
     ur = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
     db.session.add(ur)
     db.session.commit()
