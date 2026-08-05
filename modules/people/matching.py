@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from .models import MERGEABLE_PARENT_ROLES
+from .models import MERGEABLE_FAMILY_ROLES
 
 # Stripped before comparing names: they describe how someone is addressed, not
 # who they are, and schools record them inconsistently.
@@ -89,7 +89,7 @@ def build_match_key(
     or when there is neither a phone nor an email — a name on its own is never
     enough to declare two people the same.
     """
-    if role not in MERGEABLE_PARENT_ROLES:
+    if role not in MERGEABLE_FAMILY_ROLES:
         return None
 
     normalized_name = normalize_name(name)

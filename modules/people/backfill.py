@@ -41,7 +41,7 @@ from .models import (
     FamilyMember,
     Person,
 )
-from .service import build_person_for_account
+from .service import build_person_for_account, family_role_for, fill_blank_identity
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def _link_accounts_to_people(tenant_id: str, report: BackfillReport) -> Dict[str
 
         if user.person_id:
             person = Person.query.get(user.person_id)
-            if person is not None and _fill_blanks(person, known):
+            if person is not None and fill_blank_identity(person, known):
                 report.people_enriched += 1
         else:
             person = build_person_for_account(user)
@@ -134,14 +134,6 @@ def _link_accounts_to_people(tenant_id: str, report: BackfillReport) -> Dict[str
     return person_by_user
 
 
-def _fill_blanks(person: Person, known: Dict[str, Any]) -> bool:
-    """Fill only the fields the Person does not already have. Never overwrites."""
-    changed = False
-    for field, value in known.items():
-        if value is not None and getattr(person, field, None) is None:
-            setattr(person, field, value)
-            changed = True
-    return changed
 
 
 def _link_students_to_people(
@@ -353,6 +345,11 @@ def _record_weak_matches(
         for role, name, phone in (
             (FAMILY_ROLE_FATHER, student.father_name, student.father_phone),
             (FAMILY_ROLE_MOTHER, student.mother_name, student.mother_phone),
+            (
+                family_role_for(student.guardian_relationship),
+                student.guardian_name,
+                student.guardian_phone,
+            ),
         ):
             normalized_phone = normalize_phone(phone)
             normalized_name = normalize_name(name)
@@ -431,6 +428,22 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
         if mother_id:
             parents.append((mother_id, FAMILY_ROLE_MOTHER))
 
+        # The admission form records a single guardian and how they are related,
+        # which is how most students in v1 actually got their family details.
+        guardian_role = family_role_for(student.guardian_relationship)
+        guardian_id = _resolve_parent(
+            tenant_id,
+            guardian_role,
+            student.guardian_name,
+            student.guardian_phone,
+            student.guardian_email,
+            student.guardian_occupation,
+            parent_index,
+            report,
+        )
+        if guardian_id and guardian_id not in {person_id for person_id, _ in parents}:
+            parents.append((guardian_id, guardian_role))
+
         if not parents:
             # A family with only a child records nothing worth keeping; it can
             # be created when parent details are entered.
@@ -459,7 +472,9 @@ def _find_or_create_family(
         FamilyMember.query.filter(
             FamilyMember.tenant_id == tenant_id,
             FamilyMember.person_id.in_(parent_ids),
-            FamilyMember.relationship.in_([FAMILY_ROLE_FATHER, FAMILY_ROLE_MOTHER]),
+            # Any adult already in a family identifies that family; only a child
+            # membership would point at the wrong household.
+            FamilyMember.relationship != FAMILY_ROLE_CHILD,
         )
         .first()
     )

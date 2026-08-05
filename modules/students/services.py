@@ -378,15 +378,36 @@ def create_student(
             user.force_password_reset = False
             user.save()
 
+        # The student relationship belongs to a human (ADR-001). The account
+        # already carries a Person; the identity collected on the admission form
+        # is recorded there, which is where it will be read from once the
+        # columns below are dropped.
+        from modules.people.service import fill_blank_identity
+
+        parsed_date_of_birth = (
+            datetime.strptime(date_of_birth, '%Y-%m-%d').date() if date_of_birth else None
+        )
+        if user.person is not None:
+            fill_blank_identity(
+                user.person,
+                {
+                    "date_of_birth": parsed_date_of_birth,
+                    "gender": gender,
+                    "phone_number": phone,
+                    "address": address,
+                },
+            )
+
         # Create Student Profile (tenant-scoped)
         student = Student(
             tenant_id=tenant_id,
             user_id=user.id,
+            person_id=user.person_id,
             admission_number=admission_number,
             academic_year_id=ay_id,
             roll_number=roll_number,
             class_id=class_id,
-            date_of_birth=datetime.strptime(date_of_birth, '%Y-%m-%d').date() if date_of_birth else None,
+            date_of_birth=parsed_date_of_birth,
             gender=gender,
             phone=phone,
             address=address,

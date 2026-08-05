@@ -377,11 +377,31 @@ def import_teachers_from_rows(
                     )
                     db.session.add(ur)
 
+                    # Teaching is a participation of employment (ADR-005), so
+                    # the imported teacher is employed before they teach.
+                    from modules.people.service import (
+                        ensure_employment_period,
+                        ensure_staff,
+                    )
+
+                    teacher_fields = tkwargs(coerced)
+                    staff = ensure_staff(
+                        tenant_id,
+                        user.person_id,
+                        employee_number=teacher_fields.get("employee_id"),
+                        designation=teacher_fields.get("designation"),
+                        department_id=teacher_fields.get("department_id"),
+                    )
+                    ensure_employment_period(
+                        staff, teacher_fields.get("date_of_joining")
+                    )
+
                     teacher = Teacher(
                         id=str(uuid.uuid4()),
                         tenant_id=tenant_id,
                         user_id=user.id,
-                        **tkwargs(coerced),
+                        staff_id=staff.id,
+                        **teacher_fields,
                     )
                     db.session.add(teacher)
                     db.session.flush()

@@ -827,6 +827,9 @@ def import_students_from_rows(
                         id=str(uuid.uuid4()),
                         tenant_id=tenant_id,
                         user_id=user.id,
+                        # The student relationship belongs to the human the
+                        # account was created for (ADR-001).
+                        person_id=user.person_id,
                         **sk,
                     )
                     db.session.add(student)

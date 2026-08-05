@@ -60,9 +60,12 @@ KNOWN_FAMILY_ROLES = frozenset(
 # Roles that may be compared when deciding whether two records describe the same
 # human (ADR-010). Comparing only within a role is what makes it impossible to
 # merge a father into a mother who shares the household phone.
-MERGEABLE_PARENT_ROLES = frozenset(
-    {FAMILY_ROLE_FATHER, FAMILY_ROLE_MOTHER, FAMILY_ROLE_GUARDIAN}
-)
+#
+# Children are excluded, and that exclusion is load-bearing: siblings share a
+# household phone and a surname, so comparing them would merge two students into
+# one human. An adult recorded once per child is a duplicate; two children are
+# two people.
+MERGEABLE_FAMILY_ROLES = frozenset(KNOWN_FAMILY_ROLES - {FAMILY_ROLE_CHILD})
 
 
 class Person(TenantBaseModel):
