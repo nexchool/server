@@ -244,15 +244,11 @@ def create_teacher(
         # This is a no-op if everything is already correct (idempotent).
         seed_roles_for_tenant(tenant_id)
 
-        # Assign Teacher role (for both new and existing users)
-        role_result = assign_role_to_user_by_email(actual_email, 'Teacher', tenant_id=tenant_id)
-        if not role_result['success']:
-            db.session.rollback()
-            return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
-
         # A teacher is an employed person who teaches (ADR-005): the employment
-        # is the Staff relationship, and teaching hangs off it. Someone already
-        # employed here keeps the employment they have.
+        # is the Staff relationship, and teaching hangs off it. It is created
+        # before the profile is granted, because authority is held by the
+        # employment and there is nothing to grant it to otherwise. Someone
+        # already employed here keeps the employment they have.
         from modules.people.service import employ
 
         joined_on = (
@@ -268,6 +264,12 @@ def create_teacher(
             department_id=resolved_department_id,
             joined_on=joined_on,
         )
+
+        # Grant the teaching profile to that employment.
+        role_result = assign_role_to_user_by_email(actual_email, 'Teacher', tenant_id=tenant_id)
+        if not role_result['success']:
+            db.session.rollback()
+            return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
 
         teacher = Teacher(
             tenant_id=tenant_id,

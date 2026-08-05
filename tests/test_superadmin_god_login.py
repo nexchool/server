@@ -25,7 +25,9 @@ from core.decorators.rbac import require_permission
 from core.decorators.setup import require_setup_complete
 from core.models import Tenant, TENANT_STATUS_ACTIVE, BILLING_CYCLE_YEARLY
 from modules.auth.models import User
-from modules.rbac.models import Role, UserRole
+from modules.people.service import employ
+from modules.rbac.authority_service import grant_authority
+from modules.rbac.models import Role
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.rbac.services import has_permission, is_subadmin_user
 
@@ -117,8 +119,8 @@ def tenant_admin(db_session, setup_tenant):
     u.set_password(ADMIN_PASSWORD)
     db_session.add(u)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=setup_tenant.id, user_id=u.id, role_id=admin_role.id)
+    grant_authority(
+        employ(setup_tenant.id, u.person_id).id, admin_role.id
     )
     db_session.flush()
     return u
@@ -146,8 +148,8 @@ def sub_admin(db_session, setup_tenant):
     u.set_password(ADMIN_PASSWORD)
     db_session.add(u)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=setup_tenant.id, user_id=u.id, role_id=role.id)
+    grant_authority(
+        employ(setup_tenant.id, u.person_id).id, role.id
     )
     db_session.flush()
     return u
@@ -233,8 +235,8 @@ def test_email_collision_tenant_user_wins(client, db_session, setup_tenant, plat
     collision.set_password(ADMIN_PASSWORD)
     db_session.add(collision)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=setup_tenant.id, user_id=collision.id, role_id=admin_role.id)
+    grant_authority(
+        employ(setup_tenant.id, collision.person_id).id, admin_role.id
     )
     db_session.flush()
 

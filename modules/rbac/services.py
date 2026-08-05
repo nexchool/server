@@ -677,26 +677,30 @@ def assign_role_to_user(user_id: str, role_id: str) -> Dict:
                 'error': 'That role belongs to another organization',
             }
 
-        # Check if already assigned
-        existing = UserRole.query.filter_by(
-            user_id=user_id,
-            role_id=role_id
+        # Authority belongs to the employment, not the login (ADR-013).
+        from modules.people.employment import Staff
+        from .authority_service import AuthorityRefused, authorities_held_by, grant_authority
+
+        employment = Staff.query.filter_by(
+            tenant_id=user.tenant_id, person_id=user.person_id
         ).first()
-        
-        if existing:
+        if employment is None:
+            return {
+                'success': False,
+                'error': 'That person is not employed here, so they cannot hold authority',
+            }
+
+        if any(held.id == role_id for held in authorities_held_by(employment.id)):
             return {
                 'success': False,
                 'error': 'Role already assigned to this user'
             }
 
-        # Create association (tenant_id from user)
-        user_role = UserRole(
-            tenant_id=user.tenant_id,
-            user_id=user_id,
-            role_id=role_id,
-        )
-        user_role.save()
-        invalidate_user_permissions(user_id)
+        try:
+            grant_authority(employment.id, role_id)
+        except AuthorityRefused as refusal:
+            return {'success': False, 'error': str(refusal)}
+        db.session.commit()
         
         return {
             'success': True,
@@ -742,20 +746,23 @@ def assign_role_to_user_by_email(email: str, role_name: str, tenant_id: str = No
 def remove_role_from_user(user_id: str, role_id: str) -> Dict:
     """Remove a role from a user."""
     try:
-        user_role = UserRole.query.filter_by(
-            user_id=user_id,
-            role_id=role_id
-        ).first()
-        
-        if not user_role:
+        from modules.auth.models import User as _User
+        from modules.people.employment import Staff
+        from .authority_service import withdraw_authority
+
+        account = _User.query.get(user_id)
+        employment = (
+            Staff.query.filter_by(person_id=account.person_id).first()
+            if account is not None
+            else None
+        )
+        if employment is None or not withdraw_authority(employment.id, role_id):
             return {
                 'success': False,
                 'error': 'Role not assigned to this user'
             }
-        
-        db.session.delete(user_role)
+
         db.session.commit()
-        invalidate_user_permissions(user_id)
         
         return {
             'success': True,
@@ -779,12 +786,19 @@ def is_subadmin_user(user_id: str, tenant_id: str) -> bool:
     """
     if not user_id or not tenant_id:
         return False
+    from modules.auth.models import User as _User
+    from modules.people.employment import Staff
+
+    from .models import StaffAuthority
+
     exists = (
-        db.session.query(UserRole.id)
-        .join(Role, Role.id == UserRole.role_id)
+        db.session.query(StaffAuthority.id)
+        .join(Staff, Staff.id == StaffAuthority.staff_id)
+        .join(_User, _User.person_id == Staff.person_id)
+        .join(Role, Role.id == StaffAuthority.role_id)
         .filter(
-            UserRole.user_id == user_id,
-            UserRole.tenant_id == tenant_id,
+            _User.id == user_id,
+            StaffAuthority.tenant_id == tenant_id,
             Role.is_subadmin.is_(True),
         )
         .first()
