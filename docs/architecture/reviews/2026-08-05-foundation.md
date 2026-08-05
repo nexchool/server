@@ -129,6 +129,13 @@ Every entry answers: why it exists, when it goes, and what removes it.
 - **Goes when:** serializers read from Person / Family / Staff while emitting the
   same JSON keys, and the clients write through the new model.
 - **Removed by:** Milestone **M1 — Read Path Cutover**, then **M2 — Column Drop**.
+- **Scope note, learned the hard way:** cutting a field over means moving the
+  serializer, the **query layer** (filter, sort, search, facet) and **every
+  writer** — single, bulk, import, self-service and platform. Moving only the
+  serializer leaves the concept with two owners: a teacher displayed as inactive
+  while the status filter still counted them active, and bulk-imported students
+  showing blank details the school had just supplied. Both were found and fixed
+  the same day (`9bc71a3`, `5018e21`).
 - **Done 2026-08-05:** teacher payloads read the Person and the employment
   (verified identical for all 435); student identity reads the Person (identical
   for all 1,524). Both edit paths now reach People — until then the dual write
