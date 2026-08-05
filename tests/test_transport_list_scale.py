@@ -201,3 +201,55 @@ def test_nonsense_page_values_do_not_hide_rows(ctx, tenant, db_session, academic
     _enroll(db_session, tenant, bus, route, academic_year, 3)
 
     assert len(services.list_buses(page="not-a-number", per_page="nonsense")) == 1
+
+
+def test_a_paged_list_is_searched_on_the_server(
+    ctx, tenant, db_session, academic_year
+):
+    """A screen that pages cannot filter what it has not fetched.
+
+    Searching in the browser would find a child only if they happened to be on
+    the page already shown, so a student on page four reads as one who does not
+    exist.
+    """
+    from modules.people.service import revise_identity
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 6)
+
+    everyone = services.list_enrollments()
+    wanted = everyone[-1]
+    student = _student_of(wanted["student_id"])
+    revise_identity(student.person, {"full_name": "Findable Child"})
+    db_session.flush()
+
+    # Deliberately smaller than the number enrolled: without server-side
+    # search this child is not on the first page and would not be found.
+    found = services.list_enrollments(search="Findable", page=1, per_page=2)
+
+    assert found["total"] == 1
+    assert found["items"][0]["student_name"] == "Findable Child"
+
+
+def test_searching_by_admission_number_finds_the_child(
+    ctx, tenant, db_session, academic_year
+):
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 4)
+
+    everyone = services.list_enrollments()
+    admission_number = everyone[0]["admission_number"]
+
+    found = services.list_enrollments(search=admission_number)
+
+    assert len(found) == 1
+    assert found[0]["admission_number"] == admission_number
+
+
+def _student_of(student_id):
+    from modules.students.models import Student
+
+    return Student.query.get(student_id)

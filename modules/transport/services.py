@@ -23,6 +23,9 @@ from modules.finance.services.student_fee_service import (
     remove_student_fee_for_structure,
 )
 from modules.rbac.services import has_permission
+from modules.classes.models import Class
+from modules.grades.models import Grade
+from modules.people.models import Person
 from modules.students.models import Student
 
 from .models import (
@@ -1350,6 +1353,7 @@ def list_enrollments(
     academic_year_id: Optional[str] = None,
     page: Optional[int] = None,
     per_page: Optional[int] = None,
+    search: Optional[str] = None,
 ) -> Any:
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -1361,10 +1365,42 @@ def list_enrollments(
         joinedload(TransportEnrollment.drop_stop),
         # The row shows who the child is, so load them with the page rather
         # than a query each for the student and again for their account.
-        joinedload(TransportEnrollment.student).joinedload(Student.user),
+        joinedload(TransportEnrollment.student).joinedload(Student.person),
     ).filter_by(tenant_id=tenant_id)
     if academic_year_id:
         q = q.filter(TransportEnrollment.academic_year_id == academic_year_id)
+
+    # Searched here rather than in the browser. A screen that pages cannot
+    # filter what it has not fetched — searching a page finds only the child
+    # who happens to be on it, which reads as "no such student".
+    term = (search or "").strip()
+    if term:
+        pattern = f"%{term}%"
+        # Name, admission number and class — the three things the screen used
+        # to match on in the browser. Dropping class silently would have taken
+        # away a way of finding a child that already worked.
+        q = (
+            q.join(Student, Student.id == TransportEnrollment.student_id)
+            .join(Person, Person.id == Student.person_id)
+            .outerjoin(Class, Class.id == Student.class_id)
+            .outerjoin(Grade, Grade.id == Class.grade_id)
+            .filter(
+                db.or_(
+                    Person.full_name.ilike(pattern),
+                    Student.admission_number.ilike(pattern),
+                    # The class as the screen shows it. Class.name is a legacy
+                    # nullable column — grade-based classes carry their label on
+                    # the grade — so this composes the same string the student
+                    # payload does, and "Std 1-A" finds what it looks like.
+                    db.func.concat_ws(
+                        "-",
+                        db.func.coalesce(Class.name, Grade.name),
+                        Class.section,
+                    ).ilike(pattern),
+                )
+            )
+        )
+
     q = q.order_by(TransportEnrollment.created_at.desc())
 
     # Paged in the query, not after building every row. The others are bounded
@@ -1403,8 +1439,11 @@ def list_enrollments(
         else:
             d["transport_status"] = None
         st = en.student
-        if st and st.user:
-            d["student_name"] = st.user.name
+        if st:
+            # The child's name comes from the person, as it does everywhere
+            # else (ADR-001). Reading the account name here while searching the
+            # person's would let the two disagree.
+            d["student_name"] = st.person.full_name if st.person else None
             d["admission_number"] = st.admission_number
         result.append(d)
 
@@ -3438,7 +3477,7 @@ def export_bus_students_csv(bus_id: str, academic_year_id: Optional[str] = None)
         joinedload(TransportEnrollment.pickup_stop),
         joinedload(TransportEnrollment.drop_stop),
         joinedload(TransportEnrollment.student).joinedload(Student.current_class),
-        joinedload(TransportEnrollment.student).joinedload(Student.user),
+        joinedload(TransportEnrollment.student).joinedload(Student.person),
     ).filter_by(tenant_id=tenant_id, bus_id=bus_id, status="active")
     if ay:
         q = q.filter(TransportEnrollment.academic_year_id == ay)
@@ -3484,7 +3523,7 @@ def export_route_students_csv(route_id: str, academic_year_id: Optional[str] = N
         joinedload(TransportEnrollment.pickup_stop),
         joinedload(TransportEnrollment.drop_stop),
         joinedload(TransportEnrollment.student).joinedload(Student.current_class),
-        joinedload(TransportEnrollment.student).joinedload(Student.user),
+        joinedload(TransportEnrollment.student).joinedload(Student.person),
     ).filter_by(tenant_id=tenant_id, route_id=route_id, status="active")
     if ay:
         q = q.filter(TransportEnrollment.academic_year_id == ay)

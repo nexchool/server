@@ -895,7 +895,10 @@ def list_enrollments():
     page, per_page = _requested_page()
     return success_response(
         data=services.list_enrollments(
-            academic_year_id=ay, page=page, per_page=per_page
+            academic_year_id=ay,
+            page=page,
+            per_page=per_page,
+            search=request.args.get("search") or None,
         )
     )
 
