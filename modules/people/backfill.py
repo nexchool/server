@@ -288,15 +288,30 @@ def _resolve_parent(
     occupation: Optional[str],
     index: Dict[PersonMatchKey, str],
     report: BackfillReport,
+    already_named: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Optional[str]:
-    """Find or create the Person for one parent column set."""
+    """Find or create the Person for one parent column set.
+
+    ``already_named`` holds the adults resolved for *this child* so far, keyed
+    by role and name. v1 asked for the father and the guardian separately, and
+    a school naming the same man twice usually typed two different phone
+    numbers for him — the match key then reads them as two men, and the child
+    ends up with two fathers. Within one household the name settles it.
+    """
     if not name or not name.strip():
         return None
+
+    within_this_household = (role, name.strip().casefold())
+    if already_named is not None and within_this_household in already_named:
+        report.parents_merged += 1
+        return already_named[within_this_household]
 
     key = build_match_key(role=role, name=name, phone=phone, email=email)
 
     if key is not None and key in index:
         report.parents_merged += 1
+        if already_named is not None:
+            already_named[within_this_household] = index[key]
         return index[key]
 
     person = Person(
@@ -311,6 +326,8 @@ def _resolve_parent(
 
     report.people_created += 1
     report.parents_created += 1
+    if already_named is not None:
+        already_named[within_this_household] = person.id
 
     if key is not None:
         index[key] = person.id
@@ -394,6 +411,9 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
             continue
 
         parents: List[Tuple[str, str]] = []
+        # Adults already named for this child, so the guardian columns cannot
+        # duplicate the parent columns.
+        already_named: Dict[Tuple[str, str], str] = {}
 
         father_id = _resolve_parent(
             tenant_id,
@@ -404,6 +424,7 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
             student.father_occupation,
             parent_index,
             report,
+            already_named,
         )
         if father_id:
             parents.append((father_id, FAMILY_ROLE_FATHER))
@@ -417,6 +438,7 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
             student.mother_occupation,
             parent_index,
             report,
+            already_named,
         )
         if mother_id:
             parents.append((mother_id, FAMILY_ROLE_MOTHER))
@@ -433,6 +455,7 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
             student.guardian_occupation,
             parent_index,
             report,
+            already_named,
         )
         if guardian_id and guardian_id not in {person_id for person_id, _ in parents}:
             parents.append((guardian_id, guardian_role))

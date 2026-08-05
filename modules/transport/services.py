@@ -1366,6 +1366,9 @@ def list_enrollments(
         # The row shows who the child is, so load them with the page rather
         # than a query each for the student and again for their account.
         joinedload(TransportEnrollment.student).joinedload(Student.person),
+        joinedload(TransportEnrollment.student)
+        .joinedload(Student.current_class)
+        .joinedload(Class.grade),
     ).filter_by(tenant_id=tenant_id)
     if academic_year_id:
         q = q.filter(TransportEnrollment.academic_year_id == academic_year_id)
@@ -1445,6 +1448,9 @@ def list_enrollments(
             # person's would let the two disagree.
             d["student_name"] = st.person.full_name if st.person else None
             d["admission_number"] = st.admission_number
+            # The class the row displays. Sent with the row so the screen does
+            # not have to fetch every student in the school to label twenty.
+            d["class_name"] = st._class_display_name()
         result.append(d)
 
     if envelope is None:
@@ -3513,6 +3519,9 @@ def export_bus_students_csv(bus_id: str, academic_year_id: Optional[str] = None)
         joinedload(TransportEnrollment.drop_stop),
         joinedload(TransportEnrollment.student).joinedload(Student.current_class),
         joinedload(TransportEnrollment.student).joinedload(Student.person),
+        joinedload(TransportEnrollment.student)
+        .joinedload(Student.current_class)
+        .joinedload(Class.grade),
     ).filter_by(tenant_id=tenant_id, bus_id=bus_id, status="active")
     if ay:
         q = q.filter(TransportEnrollment.academic_year_id == ay)
@@ -3559,6 +3568,9 @@ def export_route_students_csv(route_id: str, academic_year_id: Optional[str] = N
         joinedload(TransportEnrollment.drop_stop),
         joinedload(TransportEnrollment.student).joinedload(Student.current_class),
         joinedload(TransportEnrollment.student).joinedload(Student.person),
+        joinedload(TransportEnrollment.student)
+        .joinedload(Student.current_class)
+        .joinedload(Class.grade),
     ).filter_by(tenant_id=tenant_id, route_id=route_id, status="active")
     if ay:
         q = q.filter(TransportEnrollment.academic_year_id == ay)
