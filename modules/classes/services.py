@@ -998,11 +998,26 @@ def get_unassigned_students(class_id: str) -> List[Dict]:
     return [s.to_dict() for s in students]
 
 
+def _currently_teaching():
+    """Teachers the school can still assign: those whose employment is current.
+
+    Whether someone still works here is the employment's answer (ADR-005), not
+    a flag on the teaching record — otherwise a teacher who has left keeps
+    turning up in pickers.
+    """
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+    from modules.teachers.models import Teacher
+
+    return Teacher.query.join(Staff, Teacher.staff_id == Staff.id).filter(
+        Staff.employment_status.in_(EMPLOYED_STATUSES)
+    )
+
+
 def get_unassigned_teachers(class_id: str) -> List[Dict]:
     """Get teachers not yet assigned to this class."""
     from modules.teachers.models import Teacher
     assigned_ids = [ct.teacher_id for ct in ClassTeacher.query.filter_by(class_id=class_id).all()]
-    query = Teacher.query.filter(Teacher.status == 'active')
+    query = _currently_teaching()
     if assigned_ids:
         query = query.filter(~Teacher.id.in_(assigned_ids))
     return [t.to_dict() for t in query.all()]
@@ -1039,7 +1054,7 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
         ct_filter = ct_filter.filter(ClassTeacher.class_id != class_id)
     ct_class_teacher_ids = {ct.teacher_id for ct in ct_filter.all()}
 
-    query = Teacher.query.filter(Teacher.status == 'active')
+    query = _currently_teaching()
     if class_teacher_user_ids:
         query = query.filter(~Teacher.user_id.in_(class_teacher_user_ids))
     if ct_class_teacher_ids:

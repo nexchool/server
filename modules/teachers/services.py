@@ -1,7 +1,7 @@
 from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from datetime import datetime
 import secrets
 
@@ -15,7 +15,13 @@ from modules.rbac.services import (
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
-from modules.people.employment import Staff
+from modules.people.employment import (
+    EMPLOYED_STATUSES,
+    Staff,
+    StaffEmploymentPeriod,
+)
+from modules.people.models import Person
+from modules.people.service import record_employment_standing
 from .models import Teacher
 
 # Columns the client may sort by.
@@ -345,36 +351,47 @@ def list_teachers(
     # returned when the department filter/search below isn't in play.
     # Eager-load what to_dict() touches; otherwise each row lazy-loads
     # department_ref and we're back to a per-row query up to the 100-row page cap.
-    query = Teacher.query.join(User).outerjoin(
-        Department, Teacher.department_id == Department.id
-    ).options(
-        joinedload(Teacher.department_ref),
-        # to_dict() reads the person and the employment now, so they load with
-        # the page rather than a query per row.
-        joinedload(Teacher.staff).options(
-            joinedload(Staff.person),
-            joinedload(Staff.department),
-            selectinload(Staff.periods),
-        ),
+    # Filtering, sorting and searching read the same facts the payload shows:
+    # the person and the employment. Reading one and filtering the other lets a
+    # teacher be displayed as inactive while still turning up under "active".
+    # Both joins are inner: every teacher has an employment, and every
+    # employment has a person.
+    query = (
+        Teacher.query.join(User)
+        .join(Staff, Teacher.staff_id == Staff.id)
+        .join(Person, Staff.person_id == Person.id)
+        .outerjoin(Department, Staff.department_id == Department.id)
+        .options(
+            contains_eager(Teacher.staff).options(
+                contains_eager(Staff.person),
+                contains_eager(Staff.department),
+                selectinload(Staff.periods),
+            ),
+        )
     )
 
     if status:
+        # "Active" is not a column any more: it is whether the employment is
+        # one someone is currently serving.
+        currently_employed = Staff.employment_status.in_(EMPLOYED_STATUSES)
         query = query.filter(
-            db.func.lower(Teacher.status) == status.strip().lower()
+            currently_employed
+            if status.strip().lower() == "active"
+            else db.not_(currently_employed)
         )
 
     if department_id:
-        query = query.filter(Teacher.department_id == department_id)
+        query = query.filter(Staff.department_id == department_id)
 
     if designation:
-        query = query.filter(Teacher.designation.ilike(f"%{designation.strip()}%"))
+        query = query.filter(Staff.designation.ilike(f"%{designation.strip()}%"))
 
     date_from = _parse_date(date_of_joining_from)
     if date_from:
-        query = query.filter(Teacher.date_of_joining >= date_from)
+        query = query.filter(Staff.joined_on_column() >= date_from)
     date_to = _parse_date(date_of_joining_to)
     if date_to:
-        query = query.filter(Teacher.date_of_joining <= date_to)
+        query = query.filter(Staff.joined_on_column() <= date_to)
 
     if search:
         term = search.strip()
@@ -382,21 +399,21 @@ def list_teachers(
             pattern = f"%{term}%"
             field = search_field if search_field in SEARCH_FIELDS else "all"
             if field == "name":
-                query = query.filter(User.name.ilike(pattern))
+                query = query.filter(Person.full_name.ilike(pattern))
             elif field == "employee_id":
-                query = query.filter(Teacher.employee_id.ilike(pattern))
+                query = query.filter(Staff.employee_number.ilike(pattern))
             elif field == "email":
                 query = query.filter(User.email.ilike(pattern))
             elif field == "phone":
-                query = query.filter(Teacher.phone.ilike(pattern))
+                query = query.filter(Person.phone_number.ilike(pattern))
             else:
                 query = query.filter(
                     db.or_(
-                        User.name.ilike(pattern),
+                        Person.full_name.ilike(pattern),
                         User.email.ilike(pattern),
-                        Teacher.employee_id.ilike(pattern),
+                        Staff.employee_number.ilike(pattern),
                         Department.name.ilike(pattern),
-                        Teacher.phone.ilike(pattern),
+                        Person.phone_number.ilike(pattern),
                     )
                 )
 
@@ -408,18 +425,18 @@ def list_teachers(
         return expr.nulls_last() if nulls_last else expr
 
     if sort_key == "name":
-        order_cols = [_ordered(User.name)]
+        order_cols = [_ordered(Person.full_name)]
     elif sort_key == "designation":
-        order_cols = [_ordered(Teacher.designation, nulls_last=True)]
+        order_cols = [_ordered(Staff.designation, nulls_last=True)]
     elif sort_key == "department":
         order_cols = [_ordered(Department.name, nulls_last=True)]
     elif sort_key == "date_of_joining":
-        order_cols = [_ordered(Teacher.date_of_joining, nulls_last=True)]
+        order_cols = [_ordered(Staff.joined_on_column(), nulls_last=True)]
     else:  # employee_id (default)
-        order_cols = [_ordered(Teacher.employee_id)]
+        order_cols = [_ordered(Staff.employee_number)]
 
     if sort_key != "employee_id":
-        order_cols.append(Teacher.employee_id.asc())
+        order_cols.append(Staff.employee_number.asc())
 
     query = query.order_by(*order_cols)
 
@@ -447,9 +464,11 @@ def list_teachers(
     all_departments = list_active_departments(get_tenant_id())
     all_designations = [
         r[0]
-        for r in Teacher.query.with_entities(_distinct(Teacher.designation))
-        .filter(Teacher.designation.isnot(None), Teacher.designation != "")
-        .order_by(Teacher.designation)
+        for r in db.session.query(_distinct(Staff.designation))
+        .select_from(Teacher)
+        .join(Staff, Teacher.staff_id == Staff.id)
+        .filter(Staff.designation.isnot(None), Staff.designation != "")
+        .order_by(Staff.designation)
         .all()
     ]
 
@@ -563,10 +582,9 @@ def _record_edit_against_the_employment(teacher, *, name, phone, address, status
     outside this table, and each goes to its own owner. The third stays, being
     what a teacher is as distinct from what an employee is (ADR-005).
     """
-    from modules.people.employment import EMPLOYMENT_STATUS_LEFT
     from modules.people.service import (
-        employment_status_for_legacy_flag,
         ensure_employment_period,
+        record_employment_standing,
         revise_identity,
     )
 
@@ -591,16 +609,7 @@ def _record_edit_against_the_employment(teacher, *, name, phone, address, status
         # Opening a second one would say they left and came back.
         period.joined_on = teacher.date_of_joining
 
-    if status is not None:
-        # v1 records only active/inactive, so a departure arrives without a
-        # reason. Translate it only when it changes whether the person works
-        # here at all: someone suspended or on leave is already "inactive" in
-        # v1's vocabulary, and flattening that back to plain working would
-        # quietly reinstate them.
-        works_here = staff.is_employed
-        says_works_here = employment_status_for_legacy_flag(status) != EMPLOYMENT_STATUS_LEFT
-        if works_here != says_works_here:
-            staff.employment_status = employment_status_for_legacy_flag(status)
+    record_employment_standing(staff, status)
 
 
 # Matches students' bulk cap: one request should not queue unbounded work, and
@@ -635,6 +644,9 @@ def bulk_update_teacher_status(teacher_ids: List[str], status: str) -> Dict:
         found_ids = {t.id for t in teachers}
         for teacher in teachers:
             teacher.status = status
+            # Marking a teacher inactive in bulk is the same business action as
+            # marking one, and must reach the employment the same way.
+            record_employment_standing(teacher.staff, status)
         db.session.commit()
         return {
             "success": True,

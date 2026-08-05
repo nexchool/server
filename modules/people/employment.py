@@ -160,6 +160,33 @@ class Staff(TenantBaseModel):
         """
         return self.employment_status in AUTHORITY_BEARING_STATUSES
 
+    @property
+    def joined_on(self):
+        """When this person first came to work here.
+
+        Employment covers periods, and someone who resigned and was later
+        re-appointed has more than one. "Date of joining" means the first of
+        them — the day the school first took them on.
+        """
+        started = [period.joined_on for period in self.periods if period.joined_on]
+        return min(started) if started else None
+
+    @classmethod
+    def joined_on_column(cls):
+        """``joined_on`` as something a query can filter and sort by.
+
+        The same fact as the property above, expressed in SQL so that reading a
+        joining date and searching by one can never disagree.
+        """
+        from sqlalchemy import func, select
+
+        return (
+            select(func.min(StaffEmploymentPeriod.joined_on))
+            .where(StaffEmploymentPeriod.staff_id == cls.id)
+            .correlate(cls)
+            .scalar_subquery()
+        )
+
     def __repr__(self) -> str:
         return f"<Staff {self.id} person={self.person_id} {self.employment_status}>"
 

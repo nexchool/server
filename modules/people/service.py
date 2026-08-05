@@ -330,6 +330,28 @@ def employment_status_for_legacy_flag(legacy_status: Optional[str]) -> str:
     return EMPLOYMENT_STATUS_LEFT
 
 
+def record_employment_standing(staff, legacy_status: Optional[str]) -> None:
+    """Apply a v1 active/inactive flag to an employment without flattening it.
+
+    v1 records only whether someone is active, so a suspension and a
+    resignation arrive as the same word. Translate only when the flag changes
+    whether the person works here at all: someone suspended or on leave is
+    already "inactive" in that vocabulary, and rewriting them to plain working
+    would quietly reinstate them.
+
+    Every path that marks a teacher active or inactive goes through here, so
+    the employment and the record the school edited cannot drift apart.
+    """
+    from .employment import EMPLOYMENT_STATUS_LEFT
+
+    if staff is None or legacy_status is None:
+        return
+
+    translated = employment_status_for_legacy_flag(legacy_status)
+    if staff.is_employed != (translated != EMPLOYMENT_STATUS_LEFT):
+        staff.employment_status = translated
+
+
 def employ(
     tenant_id: str,
     person_id: str,

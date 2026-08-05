@@ -158,7 +158,9 @@ class Teacher(TenantBaseModel):
             "phone": person.phone_number if person else None,
             "address": person.address if person else None,
             "date_of_joining": (
-                self._joined_on().isoformat() if self._joined_on() else None
+                employment.joined_on.isoformat()
+                if employment and employment.joined_on
+                else None
             ),
             "status": "active" if employment and employment.is_employed else "inactive",
             "created_at": self.created_at.isoformat(),
@@ -170,20 +172,6 @@ class Teacher(TenantBaseModel):
                 if ts.subject
             ]
         return data
-
-    def _joined_on(self):
-        """When this employment began.
-
-        Employment covers periods, and someone who resigned and was later
-        re-appointed has more than one. The date the school means by "date of
-        joining" is the first of them — when they first came to work here.
-        """
-        employment = self.staff
-        if employment is None:
-            return None
-
-        started = [period.joined_on for period in employment.periods if period.joined_on]
-        return min(started) if started else None
 
     def __repr__(self):
         return f"<Teacher {self.employee_id}>"

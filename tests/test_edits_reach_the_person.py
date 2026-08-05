@@ -242,3 +242,42 @@ def test_an_edit_does_not_quietly_reinstate_a_suspended_teacher(ctx, tenant):
     update_teacher(teacher.id, status="active", phone="9700000000")
 
     assert teacher.staff.employment_status == EMPLOYMENT_STATUS_SUSPENDED
+
+
+# ---------------------------------------------------------------------------
+# What is shown and what is filtered must be the same fact
+# ---------------------------------------------------------------------------
+
+def test_a_teacher_marked_inactive_in_bulk_is_inactive_everywhere(ctx, tenant):
+    """Display reads the employment; the filter must read it too.
+
+    Reading one and filtering the other lets a teacher be shown as inactive
+    while still turning up under "active" — and still being offered as a class
+    teacher.
+    """
+    from modules.teachers.services import bulk_update_teacher_status, list_teachers
+
+    teacher = _appoint()
+
+    assert bulk_update_teacher_status([teacher.id], "inactive")["success"]
+
+    assert teacher.to_dict()["status"] == "inactive"
+    assert not teacher.staff.is_employed
+
+    active = list_teachers(status="active")["items"]
+    assert teacher.id not in {t["id"] for t in active}
+
+    inactive = list_teachers(status="inactive")["items"]
+    assert teacher.id in {t["id"] for t in inactive}
+
+
+def test_a_teacher_who_has_left_is_not_offered_as_a_class_teacher(ctx, tenant):
+    from modules.classes.services import _currently_teaching
+    from modules.teachers.services import bulk_update_teacher_status
+
+    teacher = _appoint()
+    assert teacher.id in {t.id for t in _currently_teaching().all()}
+
+    bulk_update_teacher_status([teacher.id], "inactive")
+
+    assert teacher.id not in {t.id for t in _currently_teaching().all()}

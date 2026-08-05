@@ -74,11 +74,19 @@ def _validate_classes(
 def _active_teacher_ids(tenant_id: str, teacher_ids: List[str]) -> set:
     if not teacher_ids:
         return set()
-    rows = Teacher.query.filter(
-        Teacher.tenant_id == tenant_id,
-        Teacher.id.in_(list(set(teacher_ids))),
-        Teacher.status == "active",
-    ).all()
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+
+    # A teacher can be carried into the next year if they still work here —
+    # which is what the employment says, not a flag on the teaching record.
+    rows = (
+        Teacher.query.join(Staff, Teacher.staff_id == Staff.id)
+        .filter(
+            Teacher.tenant_id == tenant_id,
+            Teacher.id.in_(list(set(teacher_ids))),
+            Staff.employment_status.in_(EMPLOYED_STATUSES),
+        )
+        .all()
+    )
     return {t.id for t in rows}
 
 
