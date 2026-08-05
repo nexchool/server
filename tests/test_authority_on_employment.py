@@ -480,33 +480,51 @@ def test_moving_authority_twice_moves_it_once(db_session, tenant):
     assert len(authorities_held_by(staff.id)) == 1
 
 
-def test_a_students_role_is_reported_rather_than_moved(db_session, tenant):
+def test_a_students_assignment_is_redundant_once_the_relationship_implies_it(
+    db_session, tenant
+):
     """A student holds no organizational authority; their access follows from
-    being a student, which is a different thing and not moved here."""
-    from modules.students.models import Student
+    being a student, so the assignment carries nothing the relationship does
+    not already give them."""
     from scripts.backfill_authority import _move_tenant_authority
 
     user = _account(db_session, tenant, name="Aarav Patel")
-    db_session.add(
-        Student(
-            id=f"s-{uuid.uuid4().hex[:8]}",
-            tenant_id=tenant.id,
-            user_id=user.id,
-            admission_number=f"ADM-{uuid.uuid4().hex[:8]}",
-        )
-    )
-    db_session.flush()
-    role = _authority_profile(db_session, tenant)
+    _admit_student(db_session, tenant, user)
+    role = _student_profile(db_session, tenant)
     _assign_account_role(db_session, tenant, user, role)
 
     report = _move_tenant_authority(tenant.id)
 
     assert report.moved == 0
-    assert report.students == 1
+    assert report.students_covered_by_implication == 1
+    assert report.students_not_covered == []
 
 
-def test_a_holder_with_no_relationship_is_named_in_the_report(db_session, tenant):
-    """These block the drop: authority with nothing to belong to."""
+def test_a_students_assignment_granting_more_than_implied_is_refused(
+    db_session, tenant
+):
+    """The gate: removing this would quietly take access away, so it is
+    reported rather than assumed safe."""
+    from scripts.backfill_authority import _move_tenant_authority
+
+    user = _account(db_session, tenant, name="Aarav Patel")
+    _admit_student(db_session, tenant, user)
+    _student_profile(db_session, tenant, permissions=("attendance.read.self",))
+
+    # Assigned a profile granting something the relationship does not imply.
+    extra = _authority_profile(db_session, tenant, permissions=("profile.update.self",))
+    _assign_account_role(db_session, tenant, user, extra)
+
+    report = _move_tenant_authority(tenant.id)
+
+    assert [entry["email"] for entry in report.students_not_covered] == [user.email]
+
+
+def test_a_holder_with_no_employment_is_employed_rather_than_abandoned(
+    db_session, tenant
+):
+    """They work here; the record simply never said so."""
+    from modules.people.employment import Staff
     from scripts.backfill_authority import _move_tenant_authority
 
     user = _account(db_session, tenant, name="Orphaned Admin")
@@ -515,8 +533,11 @@ def test_a_holder_with_no_relationship_is_named_in_the_report(db_session, tenant
 
     report = _move_tenant_authority(tenant.id)
 
-    assert report.moved == 0
-    assert [entry["email"] for entry in report.without_relationship] == [user.email]
+    assert report.employments_created == 1
+    assert report.moved == 1
+
+    employment = Staff.query.filter_by(person_id=user.person_id).one()
+    assert [r.id for r in authorities_held_by(employment.id)] == [role.id]
 
 
 def test_moving_authority_changes_nobodys_permissions(db_session, tenant):
