@@ -58,6 +58,7 @@ class BackfillReport:
     memberships_created: int = 0
     students_linked: int = 0
     staff_created: int = 0
+    teachers_linked: int = 0
     suggestions: List[Dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -66,7 +67,8 @@ class BackfillReport:
             f"accounts_linked={self.accounts_linked} parents={self.parents_created} "
             f"merged={self.parents_merged} families={self.families_created} "
             f"memberships={self.memberships_created} students={self.students_linked} "
-            f"staff={self.staff_created} suggestions={len(self.suggestions)}"
+            f"staff={self.staff_created} teachers={self.teachers_linked} "
+            f"suggestions={len(self.suggestions)}"
         )
 
 
@@ -227,6 +229,34 @@ def _create_staff_relationships(
     db.session.flush()
 
 
+def _link_teachers_to_staff(
+    tenant_id: str, person_by_user: Dict[str, str], report: BackfillReport
+) -> None:
+    """Attach each teaching record to the employment it is a participation of.
+
+    Teaching describes what an employed person does academically (ADR-005), so
+    it hangs off the Staff relationship rather than off the login.
+    """
+    from modules.teachers.models import Teacher
+
+    staff_by_person = {
+        staff.person_id: staff.id
+        for staff in Staff.query.filter(Staff.tenant_id == tenant_id).all()
+    }
+
+    for teacher in Teacher.query.filter(
+        Teacher.tenant_id == tenant_id, Teacher.staff_id.is_(None)
+    ).all():
+        person_id = person_by_user.get(teacher.user_id)
+        staff_id = staff_by_person.get(person_id) if person_id else None
+        if staff_id is None:
+            continue
+        teacher.staff_id = staff_id
+        report.teachers_linked += 1
+
+    db.session.flush()
+
+
 def _existing_parent_index(tenant_id: str) -> Dict[PersonMatchKey, str]:
     """Rebuild the merge index from People already recorded as parents.
 
@@ -339,6 +369,7 @@ def backfill_tenant(tenant_id: str) -> BackfillReport:
     person_by_user = _link_accounts_to_people(tenant_id, report)
     _link_students_to_people(tenant_id, person_by_user, report)
     _create_staff_relationships(tenant_id, person_by_user, report)
+    _link_teachers_to_staff(tenant_id, person_by_user, report)
     parent_index = _existing_parent_index(tenant_id)
 
     students = Student.query.filter(Student.tenant_id == tenant_id).all()

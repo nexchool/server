@@ -469,7 +469,10 @@ A Programme becomes the academic foundation upon which Academic Years are create
 
 Academic Year defines the operational period during which all academic activities occur.
 
-Only one Academic Year should normally remain Active for a Programme.
+It belongs to the organization and is shared by every Programme it runs; the
+Programme decides what happens inside it (ADR-012).
+
+Only one Academic Year should normally remain Active.
 
 Historical Academic Years remain available for reporting and historical navigation.
 
@@ -973,13 +976,21 @@ Only future academic activities occur within the merged Section.
 
 ## Programmes define educational policies.
 
-Every Academic Year belongs to one Programme.
+A Programme owns its academic structure, its subjects and its promotion rules.
+
+---
+
+## Academic Years belong to the organization.
+
+An organization running two Programmes has one 2026–27, not two. Each Programme
+follows its own terms, examinations and promotion rules within that shared year
+(ADR-012).
 
 ---
 
 ## Only one Active Academic Year.
 
-Each Programme should normally have only one Active Academic Year.
+An organization should normally have only one Active Academic Year.
 
 ---
 

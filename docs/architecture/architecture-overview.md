@@ -158,6 +158,8 @@ ADR-009 Academic Year as Operational Context
 ADR-010 Incremental Migration from the v1 Schema
 
 ADR-011 Family Access Model
+
+ADR-012 The Academic Domain Is Reconciled, Not Rebuilt
 ```
 
 ---

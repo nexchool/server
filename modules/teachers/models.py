@@ -69,6 +69,16 @@ class Teacher(TenantBaseModel):
     # Link to Auth User (One-to-One)
     user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
 
+    # Teaching is an academic participation of an employed person (ADR-005).
+    # Employment itself lives on Staff; the employment columns below are read
+    # from there once their last reader moves, and are then dropped.
+    staff_id = db.Column(
+        db.String(36),
+        db.ForeignKey("staff.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+
     # Professional Info
     employee_id = db.Column(db.String(20), nullable=False, index=True)
     designation = db.Column(db.String(100), nullable=True)        # e.g. "Senior Teacher", "HOD"

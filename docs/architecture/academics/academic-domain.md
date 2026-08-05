@@ -233,7 +233,8 @@ Each Programme owns its own:
 
 An organization may operate multiple Programmes simultaneously — including two Programmes on the same Campus.
 
-Every Academic Year belongs to exactly one Programme.
+Academic Years belong to the organization and are shared across its Programmes;
+each Programme decides what happens within the year (ADR-012).
 
 ---
 
@@ -675,6 +676,16 @@ Education belongs to the Academic Domain.
 Academic concepts should exist only once within the platform.
 
 Grades, Sections, Subjects, and Academic Years should never be duplicated between modules.
+
+---
+
+# How These Concepts Are Implemented
+
+Almost every concept in this document already exists in the schema, sometimes
+under a different name — most importantly, **a Section is what the code calls a
+Class**. ADR-012 holds the binding mapping and must be read before adding any
+academic table, so that a concept which already has a table never gets a second
+one.
 
 ---
 

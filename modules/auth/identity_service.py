@@ -34,10 +34,10 @@ def available_contexts(user) -> List[ActiveContext]:
     Derived from business relationships rather than stored, so the answer cannot
     drift from the relationships it describes.
 
-    Whether someone teaches still comes from the v1 table: teaching belongs to
-    the Academic Domain (ADR-005), which has not been built yet. That is the
-    last remaining v1 read here — employment and studentship now come from the
-    People model.
+    Every relationship is read through the Person: employment from Staff,
+    teaching from the participation hanging off that employment (ADR-005), and
+    studentship from the Student relationship. Nothing here is derived from the
+    login any more.
 
     Teaching is reported instead of, not in addition to, employment: a teacher
     has one experience in the application, and offering a switch that changes
@@ -58,7 +58,7 @@ def available_contexts(user) -> List[ActiveContext]:
 
     employment = Staff.query.filter_by(person_id=user.person_id).first()
     if employment is not None and employment.is_employed:
-        teaches = Teacher.query.filter_by(user_id=user.id).first() is not None
+        teaches = Teacher.query.filter_by(staff_id=employment.id).first() is not None
         contexts.append(ActiveContext.TEACHER if teaches else ActiveContext.STAFF)
 
     if Student.query.filter_by(person_id=user.person_id).first() is not None:

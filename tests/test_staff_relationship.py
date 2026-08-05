@@ -188,12 +188,21 @@ def test_an_unknown_employment_status_is_rejected_by_the_database(db_session, te
     db_session.add(person)
     db_session.flush()
 
-    db_session.add(
-        Staff(tenant_id=tenant.id, person_id=person.id, employment_status="vibing")
-    )
+    # The violation is contained in its own savepoint. Letting it reach the
+    # transaction this test runs inside would roll back the fixture's savepoint
+    # and break whichever test happens to run next.
     with pytest.raises(IntegrityError):
-        db_session.flush()
-    db_session.rollback()
+        with db_session.begin_nested():
+            db_session.add(
+                Staff(
+                    tenant_id=tenant.id,
+                    person_id=person.id,
+                    employment_status="vibing",
+                )
+            )
+
+    # The session is still usable, which is the point of the savepoint.
+    assert Person.query.get(person.id) is not None
 
 
 # ---------------------------------------------------------------------------
