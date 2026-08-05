@@ -4,11 +4,13 @@ The Academic Domain owns the concepts that define how education is structured an
 
 Specifically, it owns:
 
+- Programme
 - Academic Year
 - Academic Structure
 - Academic Division
 - Grade
 - Section
+- Medium
 - Subject
 - Teacher
 - Student Academic Participation
@@ -59,9 +61,9 @@ The Academic Domain never depends on authentication to determine academic partic
 
 ---
 
-## Permissions Domain
+## Authorization Domain
 
-Permissions determine what a User may perform inside academic modules.
+Authorization determines what a User may perform inside academic modules.
 
 Examples include:
 
@@ -72,7 +74,7 @@ Examples include:
 
 The Academic Domain defines academic responsibilities.
 
-The Permissions Domain controls access to those responsibilities.
+The Authorization Domain controls access to those responsibilities.
 
 ---
 
@@ -182,8 +184,8 @@ The Academic Domain owns these lifecycle concepts.
 Typical business states include:
 
 - Active
-- Inactive
 - Suspended
+- Withdrawn
 - Graduated
 - Transferred
 
@@ -413,14 +415,14 @@ The Academic Domain is designed to evolve without architectural restructuring.
 
 Future capabilities may include:
 
-- Multiple Campuses
-- Multiple Curricula
 - Elective Subjects
 - Clubs
 - Academic Houses
 - Learning Paths
 - Skill-based Education
 - AI Learning Recommendations
+
+Multiple Campuses, multiple Programmes and parallel Mediums are **core capabilities of the current architecture**, not future evolution.
 
 These features should extend the Academic Structure rather than replacing it.
 

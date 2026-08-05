@@ -146,11 +146,13 @@ Instead, it consists of several closely related business concepts that together 
 
 The Academic Domain consists of the following primary concepts.
 
+- Programme
 - Academic Year
 - Academic Structure
 - Academic Division
 - Grade
 - Section
+- Medium
 - Subject
 - Teacher
 - Student Enrollment
@@ -171,6 +173,12 @@ It is a business concept rather than a database entity.
 Every academic activity occurs within this structure.
 
 ```
+Programme
+
+        │
+
+        ▼
+
 Academic Year
 
         │
@@ -201,6 +209,31 @@ Subjects
 Modules such as Attendance, Timetable, Homework, Examination, and Analytics all depend upon this structure.
 
 The Academic Structure serves as the common language shared by every academic module.
+
+---
+
+# Programme
+
+A Programme represents the educational system followed for a set of students.
+
+Examples include:
+
+- GSEB (State Board)
+- CBSE
+- ICSE
+- Cambridge
+- IB
+
+Each Programme owns its own:
+
+- Academic Structure
+- Subjects
+- Promotion Rules
+- Academic Years
+
+An organization may operate multiple Programmes simultaneously — including two Programmes on the same Campus.
+
+Every Academic Year belongs to exactly one Programme.
 
 ---
 
@@ -412,6 +445,33 @@ A Section does not own:
 
 ---
 
+# Campus and Medium
+
+A Campus is a physical location where the school operates.
+
+Campuses belong to the organization structure (Organization Setup), not to the Academic Domain.
+
+A Medium is the language of instruction.
+
+Examples include:
+
+- English
+- Gujarati
+- Hindi
+
+Every Section belongs to exactly one Campus and one Medium.
+
+Examples:
+
+- Grade 8A — English Medium — City Campus
+- Grade 8B — Gujarati Medium — City Campus
+
+Multi-campus organizations, multiple Programmes (including two Programmes on one Campus) and parallel Mediums are core capabilities of the platform.
+
+They are not future evolution.
+
+---
+
 # Subject
 
 A Subject represents an area of academic instruction delivered by the school.
@@ -498,11 +558,13 @@ This hierarchy should remain stable throughout the lifetime of Nexchool.
 
 The Academic Domain owns:
 
+- Programme
 - Academic Structure
 - Academic Year
 - Academic Division
 - Grade
 - Section
+- Medium
 - Subject
 - Student Participation
 - Teacher Participation

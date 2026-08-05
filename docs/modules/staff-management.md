@@ -625,7 +625,7 @@ Examples include:
 - Reporting Manager
 - Working Hours
 - Employment Status
-- Campus Assignment (Future)
+- Campus Assignment
 
 Employment changes update the current Employment Period.
 

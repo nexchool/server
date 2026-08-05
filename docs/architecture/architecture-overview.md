@@ -106,10 +106,14 @@ server/docs/architecture/
 
 ├── engineering-principles.md
 ├── naming-conventions.md
+├── backend-architecture.md
 ├── people-domain.md
 ├── identity-domain.md
 ├── authorization-domain.md
-├── academic-domain.md
+├── academics/
+│   ├── academic-domain.md
+│   ├── academic-participants.md
+│   └── domain-ownership.md
 └── domain-interactions.md
 ```
 

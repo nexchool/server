@@ -93,14 +93,18 @@ The following table defines the owner of the major business concepts within Nexc
 | Capability | Authorization |
 | Business Action | Authorization |
 | Permission Key | Authorization |
+| Programme | Academic |
 | Academic Year | Academic |
 | Academic Division | Academic |
 | Grade | Academic |
 | Section | Academic |
+| Medium | Academic |
 | Subject | Academic |
 | Teacher | Academic |
 | Academic Enrollment | Academic |
 | Teaching Assignment | Academic |
+
+Campus (Trust → School → Campus) belongs to the organization structure managed during Organization Setup. Academic concepts reference Campus; they do not own it.
 
 Ownership is exclusive.
 

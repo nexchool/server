@@ -104,9 +104,14 @@ server/
 
 ## 📚 Documentation
 
-- **`docs/REFACTORING_SUMMARY.md`** — Overview and quick reference
-- **`docs/QUICK_START.md`** — Setup and common tasks
-- **`docs/BACKEND_ARCHITECTURE_REFACTORING.md`** — Complete documentation
+Single source of truth: **`docs/`** — read in this order:
+
+- **`docs/README.md`** — documentation philosophy and index
+- **`docs/business/`** — product vision, business principles, school terminology, workflows
+- **`docs/architecture/`** — People / Identity / Authorization / Academic domains (+ `adr/` decision records)
+- **`docs/modules/`** — module specifications (student, staff, academic management, attendance)
+
+Pre-v2 docs are archived under `docs/archive/` (historical reference only).
 
 ## 🔧 Key Concepts
 

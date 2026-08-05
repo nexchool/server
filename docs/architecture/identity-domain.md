@@ -416,7 +416,7 @@ Switching contexts changes the presentation.
 
 Permissions continue to enforce authorization independently.
 
-Detailed permission architecture is defined within the Permissions Domain.
+Detailed permission architecture is defined within the Authorization Domain.
 
 ---
 

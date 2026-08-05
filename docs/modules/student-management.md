@@ -297,6 +297,8 @@ Suggested statuses include:
 
 Each status represents a business milestone rather than a technical state.
 
+Note: Prospective and Admission In Progress belong to the Admission workflow — the Student relationship does not exist yet at those stages. From Admitted onward, statuses map onto the Academic Domain's canonical Student states (Active, Suspended, Withdrawn, Transferred, Graduated).
+
 Status changes should occur only through business workflows defined by this module.
 
 ---

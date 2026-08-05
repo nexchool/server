@@ -207,8 +207,8 @@ The Student relationship represents the student's long-term association with the
 Typical business states include:
 
 - Active
-- Inactive
 - Suspended
+- Withdrawn
 - Graduated
 - Transferred
 

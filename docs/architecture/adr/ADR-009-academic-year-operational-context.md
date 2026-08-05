@@ -317,6 +317,16 @@ Modules should not independently determine the current Academic Year.
 
 ---
 
+# Multiple Programmes
+
+Each Programme owns its own Academic Years.
+
+For organizations operating multiple Programmes, the operational context is therefore the combination of Programme and Academic Year.
+
+Single-Programme schools simply select the Academic Year.
+
+---
+
 # Cross-Domain Interaction
 
 Academic Year belongs to the Academic Domain.

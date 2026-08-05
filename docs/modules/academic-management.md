@@ -397,13 +397,13 @@ It owns workflows including Academic Year setup, Academic Calendar management, A
 
 This module establishes the operational foundation for every academic activity performed within Nexchool.
 
-# Program Management
+# Programme Management
 
 ## Purpose
 
-A Program defines how education is delivered within the organization.
+A Programme defines how education is delivered within the organization.
 
-Programs allow a single organization to support multiple educational systems without changing the overall architecture.
+Programmes allow a single organization to support multiple educational systems without changing the overall architecture.
 
 Examples include:
 
@@ -413,7 +413,7 @@ Examples include:
 - Cambridge
 - IB
 
-Each Program defines its own academic structure, progression rules and educational policies.
+Each Programme defines its own academic structure, progression rules and educational policies.
 
 ---
 
@@ -434,7 +434,7 @@ Supporting modules include:
 ## Workflow
 
 ```
-Create Program
+Create Programme
 
 ↓
 
@@ -450,16 +450,16 @@ Configure Subject Structure
 
 ↓
 
-Program Ready
+Programme Ready
 ```
 
-Programs are generally created once and evolve over time.
+Programmes are generally created once and evolve over time.
 
 ---
 
 ## Business Outcome
 
-A Program becomes the academic foundation upon which Academic Years are created.
+A Programme becomes the academic foundation upon which Academic Years are created.
 
 ---
 
@@ -469,7 +469,7 @@ A Program becomes the academic foundation upon which Academic Years are created.
 
 Academic Year defines the operational period during which all academic activities occur.
 
-Only one Academic Year should normally remain Active for a Program.
+Only one Academic Year should normally remain Active for a Programme.
 
 Historical Academic Years remain available for reporting and historical navigation.
 
@@ -478,7 +478,7 @@ Historical Academic Years remain available for reporting and historical navigati
 ## Workflow
 
 ```
-Program
+Programme
 
 ↓
 
@@ -574,7 +574,7 @@ The Academic Calendar becomes available throughout the platform.
 Academic Structure organizes students into educational groups.
 
 ```
-Program
+Programme
 
 ↓
 
@@ -623,7 +623,7 @@ Student enrollment begins only after the Academic Structure is available.
 
 ## Purpose
 
-Subject Management defines the subjects offered within a Program.
+Subject Management defines the subjects offered within a Programme.
 
 Subjects exist independently of Teachers.
 
@@ -875,7 +875,7 @@ Historical Academic Years remain unchanged.
 
 ## Promotion Rules
 
-Draft Promotions are generated using the Program's Promotion Rules.
+Draft Promotions are generated using the Programme's Promotion Rules.
 
 Examples include:
 
@@ -890,7 +890,7 @@ Draft Promotions should always be reviewable before final confirmation.
 
 ## Graduation During Rollover
 
-Students belonging to the highest Grade supported by the Program should automatically be prepared for Graduation.
+Students belonging to the highest Grade supported by the Programme should automatically be prepared for Graduation.
 
 Example:
 
@@ -971,15 +971,15 @@ Only future academic activities occur within the merged Section.
 
 # Business Rules
 
-## Programs define educational policies.
+## Programmes define educational policies.
 
-Every Academic Year belongs to one Program.
+Every Academic Year belongs to one Programme.
 
 ---
 
 ## Only one Active Academic Year.
 
-Each Program should normally have only one Active Academic Year.
+Each Programme should normally have only one Active Academic Year.
 
 ---
 
@@ -989,7 +989,7 @@ Grades and Sections should never be shared across Academic Years.
 
 ---
 
-## Subjects belong to Programs.
+## Subjects belong to Programmes.
 
 Grades decide which subjects are taught.
 
@@ -1021,9 +1021,9 @@ Promotion decisions should always be reviewable before becoming final.
 
 ---
 
-## Graduation is determined by Program rules.
+## Graduation is determined by Programme rules.
 
-Students completing the highest Grade supported by the Program become Graduation candidates.
+Students completing the highest Grade supported by the Programme become Graduation candidates.
 
 ---
 

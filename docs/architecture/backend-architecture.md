@@ -230,26 +230,26 @@ Services must never call Controllers or Resolvers.
 Every business module should follow the same structure.
 
 ```
-student/
+students/
 
-    student.controller.ts
+    routes.py          REST controller (infrastructure + legacy endpoints)
 
-    student.resolver.ts
+    resolvers.py       GraphQL resolvers
 
-    student.service.ts
+    service.py         Application Service — all business logic
 
-    student.repository.ts
+    repository.py      Persistence
 
-    dto/
+    models.py          SQLAlchemy entities
 
-    graphql/
+    graphql/           GraphQL types
 
-    entities/
-
-    mappers/
+    schemas/           Request / response schemas
 ```
 
 This structure should remain consistent across the entire backend.
+
+The backend remains Python / Flask. GraphQL is served from the same application through a Python GraphQL library. Earlier drafts of this document used TypeScript-style filenames; those were illustrative only.
 
 ---
 
@@ -384,6 +384,20 @@ Phase 5
 Gradually retire business REST endpoints after frontend migration.
 
 Infrastructure REST endpoints remain.
+
+---
+
+## Route-by-Route Migration
+
+Migration happens while working inside a module, never as a bulk conversion project.
+
+For every route touched during v2 work:
+
+1. Decide where it belongs. Infrastructure concerns (authentication, uploads, downloads, health, webhooks) stay REST. Business capabilities move to GraphQL.
+
+2. A business operation is exposed by exactly one transport. Never duplicate the same operation in REST and GraphQL.
+
+3. After a route migrates to GraphQL and the replacement is verified working, delete the old REST code. Dead code must not remain in the product.
 
 ---
 
