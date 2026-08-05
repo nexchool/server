@@ -22,7 +22,7 @@ from sqlalchemy.orm import joinedload
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.auth.models import User
-from .models import Role, Permission, RolePermission, UserRole
+from .models import Role, Permission, RolePermission
 
 
 # ==================== AUTHORIZATION LOGIC ====================
@@ -63,8 +63,8 @@ def _load_user_permissions_from_db(user_id: str) -> List[str]:
     """
     Fetch all unique permissions for a user by traversing their roles.
     
-    This function queries the user and eagerly loads their roles and permissions
-    using SQLAlchemy relationships: User -> UserRole -> Role -> RolePermission -> Permission
+    Authority reaches a person through their employment, and through the
+    relationships they hold (ADR-013). Nothing is read from the account itself.
     
     Args:
         user_id: The UUID string of the user
@@ -78,39 +78,14 @@ def _load_user_permissions_from_db(user_id: str) -> List[str]:
         >>> print(permissions)
         ['attendance.mark', 'attendance.read.class', 'student.read']
     """
-    # Authority comes from two places while the migration runs (ADR-013): the
-    # account, as it always has, and the employment, where it belongs.
-    # Employment-held authority disappears when the employment ends.
-    permission_names = set(_permissions_held_through_employment(user_id))
-
-    # Query user roles with eager loading of permissions
-    user_roles = UserRole.query.filter_by(user_id=user_id).all()
-
-    if not user_roles:
-        return sorted(permission_names)
-
-    # Get all role IDs for the user
-    role_ids = [ur.role_id for ur in user_roles]
-    
-    # Query roles with their permissions
-    roles = Role.query.options(
-        joinedload(Role.permissions)
-    ).filter(Role.id.in_(role_ids)).all()
-    
-    # Collect all unique permission names
-    for role in roles:
-        for permission in role.permissions:
-            permission_names.add(permission.name)
-    
-    # Return sorted list for consistency
-    return sorted(list(permission_names))
+    return sorted(_permissions_held_through_employment(user_id))
 
 
 def _permissions_held_through_employment(user_id: str) -> List[str]:
-    """Permission keys the account's person holds through their employment.
+    """Permission keys the account's person holds.
 
-    Isolated so that retiring account-held roles later means deleting the other
-    half of ``_load_user_permissions_from_db``, not untangling it.
+    Employment-held authority, anything they are acting under by delegation, and
+    anything their relationships imply.
     """
     from modules.auth.models import User
 
@@ -807,19 +782,19 @@ def is_subadmin_user(user_id: str, tenant_id: str) -> bool:
 
 
 def get_user_roles(user_id: str) -> List[Dict]:
-    """Get all roles for a specific user."""
-    user_roles = UserRole.query.filter_by(user_id=user_id).all()
-    if not user_roles:
+    """The Authority Profiles the person behind this account holds (ADR-013)."""
+    from modules.auth.models import User as _User
+    from modules.rbac.authority_service import authority_profiles_for_person
+
+    person_id = db.session.query(_User.person_id).filter(_User.id == user_id).scalar()
+    if not person_id:
         return []
-    
-    role_ids = [ur.role_id for ur in user_roles]
-    roles = Role.query.filter(Role.id.in_(role_ids)).all()
-    
+
     return [{
         'id': r.id,
         'name': r.name,
         'description': r.description
-    } for r in roles]
+    } for r in authority_profiles_for_person(person_id)]
 
 
 def remove_login_for_deleted_profile(
@@ -830,53 +805,67 @@ def remove_login_for_deleted_profile(
     Call this inside the profile-deletion transaction (it does NOT commit), AFTER
     the profile row has been deleted/flushed so it no longer references the user.
 
-    - If the user holds a role beyond ``profile_role`` (rare — e.g. someone
-      recorded as both a teacher and a student), the User is kept and only the
-      ``profile_role`` assignment is detached, preserving their other access.
+    The question it answers is whether the person still has a reason to sign in
+    here. The profile that justified ``profile_role`` is gone, so that authority
+    is withdrawn from their employment first; what they still hold afterwards
+    decides the account's fate.
+
+    - If they still hold an Authority Profile — through their employment, acted
+      under by delegation, or implied by another relationship (someone recorded
+      as both a teacher and a student) — the User is kept, with the other access
+      preserved.
     - Otherwise, with ``hard=True`` (default, for students) the whole User row is
       removed via a bulk DELETE: it clears the orphaned login and frees the email
-      for re-enrolment. DB FKs cascade (user_roles, sessions, device_tokens,
-      notifications, user_school_units) and audit references SET NULL. A bulk
-      delete (not session.delete) avoids the ORM NULLing NOT NULL user_id columns.
+      for re-enrolment. DB FKs cascade (sessions, device_tokens, notifications,
+      user_school_units) and audit references SET NULL. A bulk delete (not
+      session.delete) avoids the ORM NULLing NOT NULL user_id columns.
     - With ``hard=False`` (for teachers) the login is SOFT-deactivated instead: the
       User row is kept — so NOT NULL audit references like attendance.marked_by
       stay valid and history is preserved — with deleted_at set so it can no longer
-      authenticate, and its roles detached. A teacher's user is referenced by
-      NO ACTION / NOT NULL FKs that forbid a hard delete.
+      authenticate. A teacher's user is referenced by NO ACTION / NOT NULL FKs
+      that forbid a hard delete.
     """
-    role_rows = (
-        db.session.query(UserRole.id, Role.name)
-        .join(Role, Role.id == UserRole.role_id)
-        .filter(UserRole.user_id == user_id, UserRole.tenant_id == tenant_id)
-        .all()
+    from modules.people.employment import Staff
+    from modules.rbac.authority_service import (
+        authority_profiles_for_person,
+        withdraw_authority,
     )
-    has_other_role = any(name != profile_role for _id, name in role_rows)
 
-    if has_other_role:
-        profile_role_ids = [rid for rid, name in role_rows if name == profile_role]
-        if profile_role_ids:
-            UserRole.query.filter(UserRole.id.in_(profile_role_ids)).delete(
-                synchronize_session=False
-            )
+    person_id = db.session.query(User.person_id).filter(User.id == user_id).scalar()
+    if not person_id:
+        # No person behind the account: nothing holds authority, so the only
+        # question left is whether to remove the row or deactivate it.
+        _close_login(user_id, tenant_id, hard=hard)
+        return
+
+    staff = Staff.query.filter_by(tenant_id=tenant_id, person_id=person_id).first()
+    if staff is not None:
+        profile = Role.query.filter_by(tenant_id=tenant_id, name=profile_role).first()
+        if profile is not None:
+            withdraw_authority(staff.id, profile.id)
+
+    if authority_profiles_for_person(person_id):
         # User row is kept and stays active, so auth_required won't cut them off —
-        # drop their cached permissions so the removed profile role's perms don't
+        # drop their cached permissions so the removed profile's perms don't
         # linger. (Caller commits the surrounding txn; TTL backstops any race.)
         invalidate_user_permissions(user_id)
         return
 
+    _close_login(user_id, tenant_id, hard=hard)
+
+
+def _close_login(user_id: str, tenant_id: str, *, hard: bool) -> None:
+    """Remove the account outright, or keep the row and block authentication."""
     if hard:
         User.query.filter_by(id=user_id, tenant_id=tenant_id).delete(
             synchronize_session=False
         )
         return
 
-    # Soft-deactivate: keep the row (preserves FK history), block login, drop roles.
     user = User.query.filter_by(id=user_id, tenant_id=tenant_id).first()
     if user is not None and user.deleted_at is None:
         user.deleted_at = datetime.now(timezone.utc)
-    UserRole.query.filter_by(user_id=user_id, tenant_id=tenant_id).delete(
-        synchronize_session=False
-    )
+    invalidate_user_permissions(user_id)
 
 
 # ==================== BULK OPERATIONS ====================

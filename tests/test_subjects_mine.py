@@ -17,7 +17,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from tests.conftest import employ_for
+from tests.conftest import employ_for, grant_profile_to
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -49,7 +49,7 @@ def _make_user(db_session, tenant, *, name: str):
 
 def _grant_permission(db_session, tenant, user, permission_name: str):
     """Create a role with `permission_name` and assign it to `user`."""
-    from modules.rbac.models import Role, Permission, RolePermission, UserRole
+    from modules.rbac.models import Role, Permission, RolePermission
 
     perm = Permission.query.filter_by(name=permission_name).first()
     if perm is None:
@@ -65,10 +65,7 @@ def _grant_permission(db_session, tenant, user, permission_name: str):
             id=_nid("rp-"), tenant_id=tenant.id, role_id=role.id, permission_id=perm.id
         )
     )
-    db_session.add(
-        UserRole(id=_nid("ur-"), tenant_id=tenant.id, user_id=user.id, role_id=role.id)
-    )
-    db_session.flush()
+    grant_profile_to(user, role.id)
 
 
 def _make_academic_year(db_session, tenant):

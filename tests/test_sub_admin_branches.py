@@ -23,7 +23,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from flask import g
+
+from tests.conftest import grant_profile_to
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -341,7 +344,7 @@ def test_edit_add_branch_to_user_with_existing_non_branch_module_rejected(
 def _build_admin_user(db_session, tenant):
     """A verified Admin user (carries permissions) for login/profile tests."""
     from modules.auth.models import User
-    from modules.rbac.models import Role, UserRole
+    from modules.rbac.models import Role
 
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant.id).first()
     assert admin_role is not None
@@ -350,8 +353,7 @@ def _build_admin_user(db_session, tenant):
     user.email_verified = True
     db_session.add(user)
     db_session.flush()
-    db_session.add(UserRole(tenant_id=tenant.id, user_id=user.id, role_id=admin_role.id))
-    db_session.flush()
+    grant_profile_to(user, admin_role.id)
     return user
 
 

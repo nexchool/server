@@ -261,10 +261,10 @@ def _roles_implied_by_relationships(person_id: str) -> List[Role]:
     )
 
 
-def permission_keys_for_person(
+def authority_profiles_for_person(
     person_id: str, on_date: Optional[date] = None
-) -> List[str]:
-    """Every permission key this person holds.
+) -> List[Role]:
+    """Every Authority Profile this person holds, however they come to hold it.
 
     Three sources: authority they hold through employment, authority they are
     acting under for someone else, and authority implied by who they are.
@@ -272,8 +272,16 @@ def permission_keys_for_person(
     roles = _roles_from_employment(person_id, on_date)
     roles.extend(_roles_implied_by_relationships(person_id))
 
+    by_id = {role.id: role for role in roles}
+    return sorted(by_id.values(), key=lambda role: role.name)
+
+
+def permission_keys_for_person(
+    person_id: str, on_date: Optional[date] = None
+) -> List[str]:
+    """Every permission key this person holds."""
     keys = set()
-    for role in roles:
+    for role in authority_profiles_for_person(person_id, on_date):
         for permission in role.permissions:
             keys.add(permission.name)
     return sorted(keys)

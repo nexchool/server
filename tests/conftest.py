@@ -283,3 +283,19 @@ def employ_for(user, **employment):
     staff = employ(user.tenant_id, user.person_id, **employment)
     db.session.flush()
     return staff
+
+
+def grant_profile_to(user, role_id, **employment):
+    """Give this account's person an Authority Profile.
+
+    Authority is held by the employment, not by the account (ADR-013), so a test
+    that wants an administrator has to employ them first — which is also the
+    order the school does it in: you are hired, then you are given rights.
+    """
+    from core.database import db
+    from modules.rbac.authority_service import grant_authority
+
+    staff = employ_for(user, **employment)
+    grant_authority(staff.id, role_id)
+    db.session.flush()
+    return staff

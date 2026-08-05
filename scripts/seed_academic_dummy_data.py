@@ -51,7 +51,7 @@ from modules.notifications.models import Notification
 from modules.people.employment import Staff, StaffEmploymentPeriod
 from modules.people.models import Family, FamilyMember, Person
 from modules.people.service import employ
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.schedule.models import ScheduleOverride
 from modules.students.models import Student, StudentDocument
 from modules.subjects.models import Subject
@@ -141,7 +141,6 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
         if ids:
             Session.query.filter(Session.user_id.in_(ids)).delete(synchronize_session=False)
             Notification.query.filter(Notification.user_id.in_(ids)).delete(synchronize_session=False)
-            UserRole.query.filter(UserRole.user_id.in_(ids)).delete(synchronize_session=False)
             User.query.filter(User.id.in_(ids)).delete(synchronize_session=False)
 
     # The People model, cleared last: accounts, employment and family
@@ -201,15 +200,10 @@ def _assign_role(tenant_id: str, user_id: str, role_name: str) -> None:
     role = Role.query.filter_by(tenant_id=tenant_id, name=role_name).first()
     if not role:
         raise RuntimeError(f'Role "{role_name}" not found for tenant. Run seed_rbac first.')
-    db.session.add(
-        UserRole(
-            id=str(uuid.uuid4()),
-            tenant_id=tenant_id,
-            user_id=user_id,
-            role_id=role.id,
-            created_at=datetime.utcnow(),
-        )
-    )
+    from modules.rbac.authority_service import grant_authority
+
+    user = User.query.get(user_id)
+    grant_authority(employ(tenant_id, user.person_id).id, role.id)
 
 
 def run_seed() -> None:

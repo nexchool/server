@@ -176,7 +176,7 @@ def test_authority_from_another_organization_is_refused(db_session, tenant):
 
 
 # ---------------------------------------------------------------------------
-# Resolution reads both sources during the migration
+# Resolution reads authority, and nothing else
 # ---------------------------------------------------------------------------
 
 def test_permission_resolution_reads_authority_held_through_employment(
@@ -192,26 +192,14 @@ def test_permission_resolution_reads_authority_held_through_employment(
     assert "fee.collect" in _load_user_permissions_from_db(user.id)
 
 
-def test_an_account_with_no_employment_still_resolves_its_own_roles(
-    db_session, tenant
-):
-    """The account-held path is untouched while both sources coexist."""
-    from modules.rbac.models import UserRole
+def test_an_account_holds_nothing_of_its_own(db_session, tenant):
+    """Authority reaches a person through their employment, never the login."""
     from modules.rbac.services import _load_user_permissions_from_db
 
     user = _account(db_session, tenant)
-    role = _authority_profile(db_session, tenant, permissions=("student.read",))
-    db_session.add(
-        UserRole(
-            id=f"ur-{uuid.uuid4().hex[:8]}",
-            tenant_id=tenant.id,
-            user_id=user.id,
-            role_id=role.id,
-        )
-    )
-    db_session.flush()
+    _authority_profile(db_session, tenant, permissions=("student.read",))
 
-    assert "student.read" in _load_user_permissions_from_db(user.id)
+    assert _load_user_permissions_from_db(user.id) == []
 
 
 # ---------------------------------------------------------------------------
@@ -433,131 +421,6 @@ def test_the_person_who_lent_authority_still_holds_it(db_session, tenant):
 
 
 # ---------------------------------------------------------------------------
-# Moving account-held roles onto employments
-# ---------------------------------------------------------------------------
-
-def _assign_account_role(db_session, tenant, user, role):
-    from modules.rbac.models import UserRole
-
-    db_session.add(
-        UserRole(
-            id=f"ur-{uuid.uuid4().hex[:8]}",
-            tenant_id=tenant.id,
-            user_id=user.id,
-            role_id=role.id,
-        )
-    )
-    db_session.flush()
-
-
-def test_an_employed_holders_authority_moves_onto_their_employment(db_session, tenant):
-    from scripts.backfill_authority import _move_tenant_authority
-
-    user = _account(db_session, tenant)
-    staff = employ(tenant.id, user.person_id)
-    role = _authority_profile(db_session, tenant)
-    _assign_account_role(db_session, tenant, user, role)
-
-    report = _move_tenant_authority(tenant.id)
-
-    assert report.moved == 1
-    assert [r.id for r in authorities_held_by(staff.id)] == [role.id]
-
-
-def test_moving_authority_twice_moves_it_once(db_session, tenant):
-    from scripts.backfill_authority import _move_tenant_authority
-
-    user = _account(db_session, tenant)
-    staff = employ(tenant.id, user.person_id)
-    role = _authority_profile(db_session, tenant)
-    _assign_account_role(db_session, tenant, user, role)
-
-    _move_tenant_authority(tenant.id)
-    second = _move_tenant_authority(tenant.id)
-
-    assert second.moved == 0
-    assert second.already_held == 1
-    assert len(authorities_held_by(staff.id)) == 1
-
-
-def test_a_students_assignment_is_redundant_once_the_relationship_implies_it(
-    db_session, tenant
-):
-    """A student holds no organizational authority; their access follows from
-    being a student, so the assignment carries nothing the relationship does
-    not already give them."""
-    from scripts.backfill_authority import _move_tenant_authority
-
-    user = _account(db_session, tenant, name="Aarav Patel")
-    _admit_student(db_session, tenant, user)
-    role = _student_profile(db_session, tenant)
-    _assign_account_role(db_session, tenant, user, role)
-
-    report = _move_tenant_authority(tenant.id)
-
-    assert report.moved == 0
-    assert report.students_covered_by_implication == 1
-    assert report.students_not_covered == []
-
-
-def test_a_students_assignment_granting_more_than_implied_is_refused(
-    db_session, tenant
-):
-    """The gate: removing this would quietly take access away, so it is
-    reported rather than assumed safe."""
-    from scripts.backfill_authority import _move_tenant_authority
-
-    user = _account(db_session, tenant, name="Aarav Patel")
-    _admit_student(db_session, tenant, user)
-    _student_profile(db_session, tenant, permissions=("attendance.read.self",))
-
-    # Assigned a profile granting something the relationship does not imply.
-    extra = _authority_profile(db_session, tenant, permissions=("profile.update.self",))
-    _assign_account_role(db_session, tenant, user, extra)
-
-    report = _move_tenant_authority(tenant.id)
-
-    assert [entry["email"] for entry in report.students_not_covered] == [user.email]
-
-
-def test_a_holder_with_no_employment_is_employed_rather_than_abandoned(
-    db_session, tenant
-):
-    """They work here; the record simply never said so."""
-    from modules.people.employment import Staff
-    from scripts.backfill_authority import _move_tenant_authority
-
-    user = _account(db_session, tenant, name="Orphaned Admin")
-    role = _authority_profile(db_session, tenant)
-    _assign_account_role(db_session, tenant, user, role)
-
-    report = _move_tenant_authority(tenant.id)
-
-    assert report.employments_created == 1
-    assert report.moved == 1
-
-    employment = Staff.query.filter_by(person_id=user.person_id).one()
-    assert [r.id for r in authorities_held_by(employment.id)] == [role.id]
-
-
-def test_moving_authority_changes_nobodys_permissions(db_session, tenant):
-    """The union means this is additive: access before equals access after."""
-    from modules.rbac.services import _load_user_permissions_from_db
-    from scripts.backfill_authority import _move_tenant_authority
-
-    user = _account(db_session, tenant)
-    employ(tenant.id, user.person_id)
-    role = _authority_profile(db_session, tenant, permissions=("student.read",))
-    _assign_account_role(db_session, tenant, user, role)
-
-    before = _load_user_permissions_from_db(user.id)
-    _move_tenant_authority(tenant.id)
-    after = _load_user_permissions_from_db(user.id)
-
-    assert before == after == ["student.read"]
-
-
-# ---------------------------------------------------------------------------
 # Access that follows from what someone is, rather than being granted
 # ---------------------------------------------------------------------------
 
@@ -684,22 +547,24 @@ def test_assigning_by_name_never_reaches_another_organizations_role(
     assert "not found" in result["error"]
 
 
-def test_the_database_refuses_a_cross_tenant_assignment(db_session, tenant):
+def test_the_database_refuses_a_cross_tenant_grant(db_session, tenant):
     """The durable guard: no code path can recreate this, however it asks."""
     from sqlalchemy.exc import IntegrityError
 
-    from modules.rbac.models import UserRole
+    from modules.rbac.models import StaffAuthority
 
     user = _account(db_session, tenant)
+    staff = employ(tenant.id, user.person_id)
     elsewhere = _authority_profile(db_session, _other_tenant(db_session))
 
     with pytest.raises(IntegrityError):
         with db_session.begin_nested():
             db_session.add(
-                UserRole(
-                    id=f"ur-{uuid.uuid4().hex[:8]}",
+                StaffAuthority(
+                    id=f"sa-{uuid.uuid4().hex[:8]}",
                     tenant_id=tenant.id,
-                    user_id=user.id,
+                    staff_id=staff.id,
                     role_id=elsewhere.id,
                 )
             )
+            db_session.flush()

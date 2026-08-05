@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import grant_profile_to
+
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
@@ -29,7 +31,7 @@ def auth_headers(db_session, tenant):
     """Bearer token + tenant header for a user holding school_unit.read/manage."""
     from modules.auth.models import User
     from modules.auth.services import generate_access_token
-    from modules.rbac.models import Permission, Role, UserRole
+    from modules.rbac.models import Permission, Role
     from modules.rbac.role_seeder import seed_roles_for_tenant
 
     for name, description in (
@@ -53,10 +55,7 @@ def auth_headers(db_session, tenant):
     user.set_password("Password123")
     db_session.add(user)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=tenant.id, user_id=user.id, role_id=admin_role.id)
-    )
-    db_session.flush()
+    grant_profile_to(user, admin_role.id)
 
     token = generate_access_token(user)
     return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant.id}

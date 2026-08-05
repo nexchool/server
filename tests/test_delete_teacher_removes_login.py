@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 from flask import g
-from tests.conftest import employ_for
+from tests.conftest import employ_for, grant_profile_to
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -47,19 +47,17 @@ def _make_teacher(db_session, tenant):
 
 
 def _give_role(db_session, tenant, user_id: str, role_name: str):
-    from modules.rbac.models import Role, UserRole
+    """Give the person behind this account an Authority Profile (ADR-013)."""
+    from modules.auth.models import User
+    from modules.rbac.models import Role
 
     role = Role.query.filter_by(tenant_id=tenant.id, name=role_name).first()
     if not role:
         role = Role(id=uuid.uuid4().hex, tenant_id=tenant.id, name=role_name)
         db_session.add(role)
         db_session.flush()
-    db_session.add(
-        UserRole(id=uuid.uuid4().hex, tenant_id=tenant.id, user_id=user_id, role_id=role.id)
-    )
-    db_session.flush()
 
-
+    grant_profile_to(User.query.get(user_id), role.id)
 def test_delete_teacher_soft_deactivates_backing_user(flask_app, db_session, tenant):
     from modules.auth.models import User
     from modules.teachers.models import Teacher
@@ -126,7 +124,7 @@ def test_delete_teacher_clears_homeroom_pointer_and_deletes_cleanly(
 
 def test_delete_teacher_keeps_user_holding_another_role(flask_app, db_session, tenant):
     from modules.auth.models import User
-    from modules.rbac.models import Role, UserRole
+    from modules.rbac.services import get_user_roles
     from modules.teachers import services
 
     teacher = _make_teacher(db_session, tenant)
@@ -143,10 +141,5 @@ def test_delete_teacher_keeps_user_holding_another_role(flask_app, db_session, t
     user = User.query.filter_by(id=user_id).first()
     assert user is not None and user.deleted_at is None
     # ...and only the Teacher role was detached.
-    remaining = {
-        r.name
-        for r in Role.query.join(UserRole, Role.id == UserRole.role_id)
-        .filter(UserRole.user_id == user_id)
-        .all()
-    }
+    remaining = {r["name"] for r in get_user_roles(user_id)}
     assert remaining == {"Admin"}
