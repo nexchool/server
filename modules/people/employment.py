@@ -124,6 +124,7 @@ class Staff(TenantBaseModel):
         nullable=True,
         index=True,
     )
+    department = db.relationship("Department", foreign_keys=[department_id])
 
     employment_status = db.Column(
         db.String(30), nullable=False, default=EMPLOYMENT_STATUS_WORKING

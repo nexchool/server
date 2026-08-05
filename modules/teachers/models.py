@@ -123,30 +123,44 @@ class Teacher(TenantBaseModel):
         db.session.commit()
 
     def to_dict(self, include_subjects: bool = False, include_profile_picture: bool = True):
+        """Serialize for API response.
+
+        The keys are v1's and stay v1's — three clients read them. What changed
+        is where the answers come from: who this person is comes from their
+        Person, and what they do for the school comes from their employment.
+        The columns on this table are the same facts left over from before
+        People existed, and they are dropped once nothing reads them (ADR-005).
+        """
+        employment = self.staff
+        person = employment.person if employment else None
+        department = employment.department if employment else None
+
         data = {
             "id": self.id,
             "user_id": self.user_id,
-            "name": self.user.name if self.user else None,
+            "name": person.full_name if person else None,
             "email": self.user.email if self.user else None,
             "profile_picture": (
                 profile_picture_public_url(self.user.profile_picture_url)
                 if self.user and include_profile_picture
                 else None
             ),
-            "employee_id": self.employee_id,
-            "designation": self.designation,
-            "department_id": self.department_id,
+            "employee_id": employment.employee_number if employment else None,
+            "designation": employment.designation if employment else None,
+            "department_id": employment.department_id if employment else None,
             # Legacy key: the Expo client reads `department` as a plain string
             # (client/modules/teachers/screens/TeacherDetailScreen.tsx). Keep
             # emitting it until the mobile app ships a department picker.
-            "department": self.department_ref.name if self.department_ref else None,
+            "department": department.name if department else None,
             "qualification": self.qualification,
             "specialization": self.specialization,
             "experience_years": self.experience_years,
-            "phone": self.phone,
-            "address": self.address,
-            "date_of_joining": self.date_of_joining.isoformat() if self.date_of_joining else None,
-            "status": self.status,
+            "phone": person.phone_number if person else None,
+            "address": person.address if person else None,
+            "date_of_joining": (
+                self._joined_on().isoformat() if self._joined_on() else None
+            ),
+            "status": "active" if employment and employment.is_employed else "inactive",
             "created_at": self.created_at.isoformat(),
         }
         if include_subjects:
@@ -156,6 +170,20 @@ class Teacher(TenantBaseModel):
                 if ts.subject
             ]
         return data
+
+    def _joined_on(self):
+        """When this employment began.
+
+        Employment covers periods, and someone who resigned and was later
+        re-appointed has more than one. The date the school means by "date of
+        joining" is the first of them — when they first came to work here.
+        """
+        employment = self.staff
+        if employment is None:
+            return None
+
+        started = [period.joined_on for period in employment.periods if period.joined_on]
+        return min(started) if started else None
 
     def __repr__(self):
         return f"<Teacher {self.employee_id}>"

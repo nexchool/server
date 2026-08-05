@@ -1,7 +1,7 @@
 from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime
 import secrets
 
@@ -15,6 +15,7 @@ from modules.rbac.services import (
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
+from modules.people.employment import Staff
 from .models import Teacher
 
 # Columns the client may sort by.
@@ -346,7 +347,16 @@ def list_teachers(
     # department_ref and we're back to a per-row query up to the 100-row page cap.
     query = Teacher.query.join(User).outerjoin(
         Department, Teacher.department_id == Department.id
-    ).options(joinedload(Teacher.department_ref))
+    ).options(
+        joinedload(Teacher.department_ref),
+        # to_dict() reads the person and the employment now, so they load with
+        # the page rather than a query per row.
+        joinedload(Teacher.staff).options(
+            joinedload(Staff.person),
+            joinedload(Staff.department),
+            selectinload(Staff.periods),
+        ),
+    )
 
     if status:
         query = query.filter(
@@ -549,16 +559,16 @@ def _record_edit_against_the_employment(teacher, *, name, phone, address, status
     A teacher record mixes three things: facts about the human (name, phone,
     address), facts about the employment (designation, department, when they
     joined, whether they still work here) and facts about the teaching itself
-    (qualification, specialisation, subjects). Only the first two have a home
-    outside this table, and each goes to its own owner.
-
-    Employment fields are deliberately not forwarded here — designation,
-    department and joining date reach Staff through ``employ()``, which is the
-    business action that owns them. What is left is identity, and the departure
-    that a status change represents.
+    (qualification, specialisation, subjects). The first two have a home
+    outside this table, and each goes to its own owner. The third stays, being
+    what a teacher is as distinct from what an employee is (ADR-005).
     """
     from modules.people.employment import EMPLOYMENT_STATUS_LEFT
-    from modules.people.service import employment_status_for_legacy_flag, revise_identity
+    from modules.people.service import (
+        employment_status_for_legacy_flag,
+        ensure_employment_period,
+        revise_identity,
+    )
 
     staff = teacher.staff
     if staff is None:
@@ -568,6 +578,18 @@ def _record_edit_against_the_employment(teacher, *, name, phone, address, status
         staff.person,
         {"full_name": name, "phone_number": phone, "address": address},
     )
+
+    # These are the employment's own facts, so the employment carries what the
+    # record now says — including a department cleared to nothing, which a
+    # correction that skipped empty values would quietly keep.
+    staff.designation = teacher.designation
+    staff.department_id = teacher.department_id
+
+    if teacher.date_of_joining is not None:
+        period = ensure_employment_period(staff, teacher.date_of_joining)
+        # Correcting when someone joined corrects the period they are serving.
+        # Opening a second one would say they left and came back.
+        period.joined_on = teacher.date_of_joining
 
     if status is not None:
         # v1 records only active/inactive, so a departure arrives without a

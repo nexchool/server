@@ -87,7 +87,9 @@ def _make_teacher(db_session, tenant, department_id, suffix):
         id=str(uuid.uuid4()),
         tenant_id=tenant.id,
         user_id=user.id,
-        staff_id=employ_for(user).id,
+        # The department belongs to the employment, which is where the
+        # serializer reads it from.
+        staff_id=employ_for(user, department_id=department_id).id,
         employee_id=f"EMP{suffix}",
         department_id=department_id,
     )
@@ -490,3 +492,48 @@ def test_update_can_still_clear_an_inactive_department(ctx, tenant, db_session, 
     assert result["success"] is True
     db_session.refresh(teacher)
     assert teacher.department_id is None
+
+
+def test_listing_teachers_does_not_query_per_person_or_employment(
+    flask_app, db_session, tenant, dept_svc
+):
+    """to_dict reads the Person and the employment, which a page must not pay
+    for row by row. A 15,000-student trust lists its staff too."""
+    from sqlalchemy import event
+
+    from core.database import db
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    made = 0
+
+    def statements_for(additional_teachers):
+        nonlocal made
+        for i in range(additional_teachers):
+            _make_teacher(db_session, tenant, science["id"], f"np-{made + i}")
+        made += additional_teachers
+
+        counted = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            probe = statement.lower()
+            if " persons" in probe or " staff" in probe or "staff_employment_periods" in probe:
+                counted.append(statement)
+
+        with flask_app.test_request_context("/"):
+            g.tenant_id = tenant.id
+            event.listen(db.engine, "before_cursor_execute", record)
+            try:
+                result = services.list_teachers()
+                assert len(result["items"]) == made
+                assert all(t["name"] for t in result["items"])
+            finally:
+                event.remove(db.engine, "before_cursor_execute", record)
+        return len(counted)
+
+    few = statements_for(2)
+    many = statements_for(6)
+
+    assert many <= few, (
+        f"person/employment query count grew with row count ({few} -> {many}): N+1"
+    )
