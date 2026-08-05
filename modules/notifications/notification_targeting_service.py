@@ -14,7 +14,7 @@ from sqlalchemy.orm import load_only
 from core.database import db
 from modules.auth.models import User
 from modules.classes.models import ClassTeacher
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.students.models import Student
 from modules.teachers.models import Teacher
 
@@ -37,20 +37,52 @@ def get_users_by_ids(user_ids: Sequence[str], tenant_id: str) -> List[User]:
 
 
 def get_users_by_role(role_name: str, tenant_id: str) -> List[User]:
-    """Users assigned the given role name within the tenant."""
+    """Everyone this Authority Profile describes, as an audience.
+
+    Audience follows the same two sources as authorization (ADR-013): profiles
+    held through employment, and profiles a business relationship implies. So
+    "the teachers" means the people currently employed to teach, and stops
+    meaning someone the day they leave — rather than depending on whether an
+    assignment was tidied up.
+    """
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+    from modules.rbac.authority_service import RELATIONSHIP_STUDENT
+    from modules.rbac.models import StaffAuthority
+
     role = Role.query.filter_by(name=role_name, tenant_id=tenant_id).first()
     if not role:
         return []
-    ur_subq = (
-        db.session.query(UserRole.user_id)
+
+    holder_ids = {
+        user_id
+        for (user_id,) in db.session.query(User.id)
+        .join(Staff, Staff.person_id == User.person_id)
+        .join(StaffAuthority, StaffAuthority.staff_id == Staff.id)
         .filter(
-            UserRole.tenant_id == tenant_id,
-            UserRole.role_id == role.id,
+            User.tenant_id == tenant_id,
+            Staff.tenant_id == tenant_id,
+            StaffAuthority.role_id == role.id,
+            Staff.employment_status.in_(list(EMPLOYED_STATUSES)),
         )
-        .subquery()
-    )
+        .all()
+    }
+
+    # Nobody is assigned the student profile; holding the relationship is what
+    # makes someone a student, so that is who the audience is.
+    if role.implied_by_relationship == RELATIONSHIP_STUDENT:
+        holder_ids.update(
+            user_id
+            for (user_id,) in db.session.query(User.id)
+            .join(Student, Student.person_id == User.person_id)
+            .filter(User.tenant_id == tenant_id, Student.tenant_id == tenant_id)
+            .all()
+        )
+
+    if not holder_ids:
+        return []
+
     return (
-        User.query.filter(User.tenant_id == tenant_id, User.id.in_(ur_subq))
+        User.query.filter(User.tenant_id == tenant_id, User.id.in_(holder_ids))
         .options(load_only(User.id, User.email, User.name, User.tenant_id))
         .all()
     )
@@ -127,7 +159,8 @@ def get_leave_manager_user_ids(tenant_id: str) -> List[str]:
     Return user IDs of all users in the tenant who hold the
     'teacher.leave.manage' permission (i.e. admin / leave managers).
     """
-    from modules.rbac.models import Permission, RolePermission
+    from modules.people.employment import AUTHORITY_BEARING_STATUSES, Staff
+    from modules.rbac.models import Permission, RolePermission, StaffAuthority
 
     perm = Permission.query.filter_by(name="teacher.leave.manage").first()
     if not perm:
@@ -138,12 +171,18 @@ def get_leave_manager_user_ids(tenant_id: str) -> List[str]:
         RolePermission.tenant_id == tenant_id,
     )
 
+    # Asking someone to approve leave they no longer have the authority to
+    # approve is worse than not asking: suspended and departed staff are not
+    # notified, on the same rule that decides whether they may act at all.
     rows = (
-        db.session.execute(
-            select(UserRole.user_id).where(
-                UserRole.tenant_id == tenant_id,
-                UserRole.role_id.in_(role_id_select),
-            )
+        db.session.query(User.id)
+        .join(Staff, Staff.person_id == User.person_id)
+        .join(StaffAuthority, StaffAuthority.staff_id == Staff.id)
+        .filter(
+            User.tenant_id == tenant_id,
+            Staff.tenant_id == tenant_id,
+            StaffAuthority.role_id.in_(role_id_select),
+            Staff.employment_status.in_(list(AUTHORITY_BEARING_STATUSES)),
         )
         .all()
     )
