@@ -230,6 +230,7 @@ Module documentation explains how business workflows are implemented.
 
 Examples include:
 
+- Identity Management
 - Student Management
 - Staff Management
 - Academic Management

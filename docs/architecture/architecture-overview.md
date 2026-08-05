@@ -154,6 +154,8 @@ ADR-007 Admission and Academic Enrollment Separation
 ADR-008 Teaching Assignment
 
 ADR-009 Academic Year as Operational Context
+
+ADR-010 Incremental Migration from the v1 Schema
 ```
 
 ---
