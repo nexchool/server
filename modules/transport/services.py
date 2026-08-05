@@ -93,6 +93,80 @@ def _deactivate_future_schedules_for_inactive_route(route_id: str, tenant_id: st
     return deactivated
 
 
+
+class TransportPageReference:
+    """Everything a page of enrollments needs about routes, stops and schedules.
+
+    Read once for the whole page. Each enrollment used to ask for its own route,
+    its own stop and its own schedules, which is six queries a row — a school
+    with three thousand children on buses paid eighteen thousand queries to list
+    them.
+
+    Callers holding a single enrollment need none of this and pass nothing; the
+    helpers below fall back to asking the database directly.
+    """
+
+    __slots__ = ("routes", "stops", "pickup_schedules")
+
+    def __init__(self, routes, stops, pickup_schedules):
+        self.routes = routes
+        self.stops = stops
+        self.pickup_schedules = pickup_schedules
+
+    def route(self, route_id):
+        return self.routes.get(route_id)
+
+    def stop(self, route_id, stop_id):
+        return self.stops.get((route_id, stop_id))
+
+    def pickups(self, bus_id, route_id, academic_year_id):
+        return self.pickup_schedules.get((bus_id, route_id, academic_year_id), [])
+
+
+def load_transport_reference(tenant_id: str, enrollments) -> TransportPageReference:
+    """Fetch the reference data a page of enrollments reads, in three queries."""
+    route_ids = {en.route_id for en in enrollments if en.route_id}
+    stop_ids = {en.pickup_stop_id for en in enrollments if en.pickup_stop_id}
+
+    routes = {}
+    stops = {}
+    pickup_schedules: Dict[Any, List] = {}
+
+    if route_ids:
+        routes = {
+            r.id: r
+            for r in TransportRoute.query.filter(
+                TransportRoute.tenant_id == tenant_id,
+                TransportRoute.id.in_(route_ids),
+            ).all()
+        }
+
+        if stop_ids:
+            stops = {
+                (rs.route_id, rs.stop_id): rs
+                for rs in TransportRouteStop.query.filter(
+                    TransportRouteStop.tenant_id == tenant_id,
+                    TransportRouteStop.route_id.in_(route_ids),
+                    TransportRouteStop.stop_id.in_(stop_ids),
+                ).all()
+            }
+
+        for schedule in (
+            TransportRouteSchedule.query.filter(
+                TransportRouteSchedule.tenant_id == tenant_id,
+                TransportRouteSchedule.route_id.in_(route_ids),
+                TransportRouteSchedule.is_active.is_(True),
+                TransportRouteSchedule.shift_type == "pickup",
+            )
+            .order_by(TransportRouteSchedule.start_time)
+            .all()
+        ):
+            key = (schedule.bus_id, schedule.route_id, schedule.academic_year_id)
+            pickup_schedules.setdefault(key, []).append(schedule)
+
+    return TransportPageReference(routes, stops, pickup_schedules)
+
+
 def _count_active_pickup_schedules_for_bus_route(
     tenant_id: str, bus_id: str, route_id: str, academic_year_id: str
 ) -> int:
@@ -112,19 +186,31 @@ def compute_enrollment_transport_status(
     en: TransportEnrollment,
     *,
     on_date: date,
+    reference: Optional["TransportPageReference"] = None,
 ) -> str:
     """
     Derived status for admin visibility — does not mutate enrollment rows.
+
+    `reference` is the page's pre-read routes and schedules; without it this
+    asks the database, which is right for one enrollment and ruinous for a list.
     """
     tenant_id = en.tenant_id
-    route = TransportRoute.query.filter_by(id=en.route_id, tenant_id=tenant_id).first()
+    if reference is not None:
+        route = reference.route(en.route_id)
+    else:
+        route = TransportRoute.query.filter_by(
+            id=en.route_id, tenant_id=tenant_id
+        ).first()
     if not route or route.status != "active":
         return TRANSPORT_STATUS_ROUTE_INACTIVE
     if not en.bus_id or not en.academic_year_id:
         return TRANSPORT_STATUS_SCHEDULE_MISSING
-    n = _count_active_pickup_schedules_for_bus_route(
-        tenant_id, en.bus_id, en.route_id, en.academic_year_id
-    )
+    if reference is not None:
+        n = len(reference.pickups(en.bus_id, en.route_id, en.academic_year_id))
+    else:
+        n = _count_active_pickup_schedules_for_bus_route(
+            tenant_id, en.bus_id, en.route_id, en.academic_year_id
+        )
     if n == 0:
         return TRANSPORT_STATUS_SCHEDULE_MISSING
     return TRANSPORT_STATUS_ACTIVE
@@ -617,24 +703,44 @@ def list_buses(
     ay = academic_year_id or resolve_default_academic_year_id()
     buses = TransportBus.query.filter_by(tenant_id=tenant_id).order_by(TransportBus.bus_number).all()
     on = _today()
+
+    # Read the fleet's enrollments and crew assignments once. Asking per bus
+    # loads that bus's entire enrollment list, and a full bus carries sixty
+    # children.
+    seats_on_bus: Dict[str, int] = {}
+    enrollment_query = TransportEnrollment.query.filter_by(
+        tenant_id=tenant_id, status="active"
+    )
+    if ay:
+        enrollment_query = enrollment_query.filter(
+            TransportEnrollment.academic_year_id == ay
+        )
+    for en in enrollment_query.all():
+        if en.bus_id and enrollment_active_on(en, on):
+            seats_on_bus[en.bus_id] = seats_on_bus.get(en.bus_id, 0) + 1
+
+    assignments_by_bus: Dict[str, List] = {}
+    for assignment in (
+        TransportBusAssignment.query.options(
+            joinedload(TransportBusAssignment.driver),
+            joinedload(TransportBusAssignment.helper),
+            joinedload(TransportBusAssignment.route),
+        )
+        .filter_by(tenant_id=tenant_id, status="active")
+        .all()
+    ):
+        assignments_by_bus.setdefault(assignment.bus_id, []).append(assignment)
+
     out = []
     for b in buses:
         d = b.to_dict()
         if include_occupancy:
-            used = count_enrollment_seats_on_bus(b.id, on, academic_year_id=ay)
+            used = seats_on_bus.get(b.id, 0)
             cap = b.capacity or 1
             d["occupancy_count"] = used
             d["occupancy_percent"] = round(100.0 * used / cap, 2)
             d["occupancy_health"] = occupancy_health_label(used, cap)
-        assign = (
-            TransportBusAssignment.query.options(
-                joinedload(TransportBusAssignment.driver),
-                joinedload(TransportBusAssignment.helper),
-                joinedload(TransportBusAssignment.route),
-            )
-            .filter_by(tenant_id=tenant_id, bus_id=b.id, status="active")
-            .all()
-        )
+        assign = assignments_by_bus.get(b.id, [])
         active_a = next((x for x in assign if assignment_active_on(x, on)), None)
         if active_a and active_a.driver:
             d["assigned_driver"] = active_a.driver.to_dict()
@@ -793,15 +899,34 @@ def list_routes() -> List[Dict]:
     if not tenant_id:
         return []
     rows = TransportRoute.query.filter_by(tenant_id=tenant_id).order_by(TransportRoute.name).all()
+
+    # Counted for every route at once. Asking per route is two queries a row,
+    # and a trust running twenty campuses has a lot of routes.
+    stops_by_route = dict(
+        db.session.query(
+            TransportRouteStop.route_id, db.func.count(TransportRouteStop.id)
+        )
+        .filter(TransportRouteStop.tenant_id == tenant_id)
+        .group_by(TransportRouteStop.route_id)
+        .all()
+    )
+    schedules_by_route = dict(
+        db.session.query(
+            TransportRouteSchedule.route_id, db.func.count(TransportRouteSchedule.id)
+        )
+        .filter(
+            TransportRouteSchedule.tenant_id == tenant_id,
+            TransportRouteSchedule.is_active.is_(True),
+        )
+        .group_by(TransportRouteSchedule.route_id)
+        .all()
+    )
+
     out: List[Dict] = []
     for r in rows:
         d = r.to_dict()
-        d["stops_count"] = TransportRouteStop.query.filter_by(
-            tenant_id=tenant_id, route_id=r.id
-        ).count()
-        d["schedules_count"] = TransportRouteSchedule.query.filter_by(
-            tenant_id=tenant_id, route_id=r.id, is_active=True
-        ).count()
+        d["stops_count"] = stops_by_route.get(r.id, 0)
+        d["schedules_count"] = schedules_by_route.get(r.id, 0)
         out.append(d)
     return out
 
@@ -1106,8 +1231,15 @@ def validate_transport_enrollment_prereqs(
     return True, None
 
 
-def _enrollment_transport_hints(en: TransportEnrollment) -> Dict[str, Any]:
-    """Junction stop times + pickup schedule windows for API consumers (US5)."""
+def _enrollment_transport_hints(
+    en: TransportEnrollment,
+    reference: Optional["TransportPageReference"] = None,
+) -> Dict[str, Any]:
+    """Junction stop times + pickup schedule windows for API consumers (US5).
+
+    `reference` is the page's pre-read stops and schedules; without it this asks
+    the database for this one enrollment.
+    """
     tenant_id = en.tenant_id
     hints: Dict[str, Any] = {
         "junction_pickup_time": None,
@@ -1116,9 +1248,12 @@ def _enrollment_transport_hints(en: TransportEnrollment) -> Dict[str, Any]:
         "pickup_time_display": None,
     }
     if en.pickup_stop_id and en.route_id:
-        rs = TransportRouteStop.query.filter_by(
-            tenant_id=tenant_id, route_id=en.route_id, stop_id=en.pickup_stop_id
-        ).first()
+        if reference is not None:
+            rs = reference.stop(en.route_id, en.pickup_stop_id)
+        else:
+            rs = TransportRouteStop.query.filter_by(
+                tenant_id=tenant_id, route_id=en.route_id, stop_id=en.pickup_stop_id
+            ).first()
         if rs:
             if rs.pickup_time:
                 hints["junction_pickup_time"] = rs.pickup_time.strftime("%H:%M")
@@ -1126,23 +1261,33 @@ def _enrollment_transport_hints(en: TransportEnrollment) -> Dict[str, Any]:
                 hints["junction_drop_time"] = rs.drop_time.strftime("%H:%M")
 
     if en.route_id and en.bus_id and en.academic_year_id:
-        pickups = (
-            TransportRouteSchedule.query.join(
-                TransportRoute, TransportRouteSchedule.route_id == TransportRoute.id
+        if reference is not None:
+            # Windows are only shown for a route still running, which is what
+            # the route join below asserts.
+            route = reference.route(en.route_id)
+            pickups = (
+                reference.pickups(en.bus_id, en.route_id, en.academic_year_id)
+                if route is not None and route.status == "active"
+                else []
             )
-            .filter(
-                TransportRouteSchedule.tenant_id == tenant_id,
-                TransportRoute.tenant_id == tenant_id,
-                TransportRoute.status == "active",
-                TransportRouteSchedule.route_id == en.route_id,
-                TransportRouteSchedule.bus_id == en.bus_id,
-                TransportRouteSchedule.academic_year_id == en.academic_year_id,
-                TransportRouteSchedule.is_active.is_(True),
-                TransportRouteSchedule.shift_type == "pickup",
+        else:
+            pickups = (
+                TransportRouteSchedule.query.join(
+                    TransportRoute, TransportRouteSchedule.route_id == TransportRoute.id
+                )
+                .filter(
+                    TransportRouteSchedule.tenant_id == tenant_id,
+                    TransportRoute.tenant_id == tenant_id,
+                    TransportRoute.status == "active",
+                    TransportRouteSchedule.route_id == en.route_id,
+                    TransportRouteSchedule.bus_id == en.bus_id,
+                    TransportRouteSchedule.academic_year_id == en.academic_year_id,
+                    TransportRouteSchedule.is_active.is_(True),
+                    TransportRouteSchedule.shift_type == "pickup",
+                )
+                .order_by(TransportRouteSchedule.start_time)
+                .all()
             )
-            .order_by(TransportRouteSchedule.start_time)
-            .all()
-        )
         for s in pickups:
             hints["schedule_pickup_windows"].append(
                 {
@@ -1168,17 +1313,23 @@ def list_enrollments(academic_year_id: Optional[str] = None) -> List[Dict]:
         joinedload(TransportEnrollment.route),
         joinedload(TransportEnrollment.pickup_stop),
         joinedload(TransportEnrollment.drop_stop),
+        # The row shows who the child is, so load them with the page rather
+        # than a query each for the student and again for their account.
+        joinedload(TransportEnrollment.student).joinedload(Student.user),
     ).filter_by(tenant_id=tenant_id)
     if academic_year_id:
         q = q.filter(TransportEnrollment.academic_year_id == academic_year_id)
     rows = q.order_by(TransportEnrollment.created_at.desc()).all()
     result = []
     on = _today()
+    reference = load_transport_reference(tenant_id, rows)
     for en in rows:
         d = en.to_dict(include_nested=True)
-        d["transport_hints"] = _enrollment_transport_hints(en)
+        d["transport_hints"] = _enrollment_transport_hints(en, reference)
         if en.status == "active":
-            d["transport_status"] = compute_enrollment_transport_status(en, on_date=on)
+            d["transport_status"] = compute_enrollment_transport_status(
+                en, on_date=on, reference=reference
+            )
         else:
             d["transport_status"] = None
         st = en.student
