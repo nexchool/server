@@ -355,6 +355,10 @@ def list_teachers(
         .join(Person, Staff.person_id == Person.id)
         .outerjoin(Department, Staff.department_id == Department.id)
         .options(
+            # The account is joined above for the email filter; to_dict reads
+            # its email and picture too, so reuse that join rather than paying
+            # a query a row for it.
+            contains_eager(Teacher.user),
             contains_eager(Teacher.staff).options(
                 contains_eager(Staff.person),
                 contains_eager(Staff.department),

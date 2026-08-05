@@ -275,7 +275,8 @@ class Student(TenantBaseModel):
         label = c.name or (c.grade.name if c.grade else None)
         return "-".join(p for p in (label, c.section) if p) or None
 
-    def to_dict(self, include_profile_picture: bool = True):
+    def to_dict(self, include_profile_picture: bool = True,
+                include_family: bool = True):
         return {
             "id": self.id,
             "user_id": self.user_id,
@@ -386,11 +387,15 @@ class Student(TenantBaseModel):
             # adult, each with their relationship, and which one the school
             # calls. The flat father_/mother_/guardian_ keys above say the same
             # thing in v1's shape and stay until the mobile client moves.
-            "family": self._household(),
+            "family": self._household() if include_family else None,
             "created_at": self.created_at.isoformat()
         }
 
     def _household(self):
+        """The household, read through relationships the caller must have
+        loaded. A list endpoint asks for this per row otherwise, which is four
+        queries a student — see the guard in test_students_list_queries.
+        """
         from modules.people.relationships import household_of
 
         return [

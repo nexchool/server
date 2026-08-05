@@ -795,7 +795,13 @@ def list_students(
 
     # Skip the profile_picture URL on list responses — each value is a
     # presigned S3 URL and generating hundreds per page is pure overhead.
-    items = [s.to_dict(include_profile_picture=False) for s in students]
+    # The household is not shown in a list, and reading it costs four queries
+    # a row. The flat guardian_/father_/mother_ keys still carry the contact
+    # details a list needs, and they are plain columns.
+    items = [
+        s.to_dict(include_profile_picture=False, include_family=False)
+        for s in students
+    ]
     if include_transport_summary:
         _attach_transport_summary(items, academic_year_id)
 

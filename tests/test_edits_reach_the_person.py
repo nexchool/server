@@ -454,3 +454,44 @@ def test_the_student_payload_carries_the_household(ctx, tenant, academic_year):
     assert [m["name"] for m in family] == ["Rajesh Patel"]
     assert family[0]["relationship"] == "father"
     assert family[0]["is_primary_contact"] is True
+
+
+def test_listing_students_does_not_read_a_household_per_row(
+    ctx, tenant, academic_year, flask_app
+):
+    """The household costs four queries a student to read.
+
+    A list of 100 students must not pay that. The flat guardian_/father_ keys
+    carry what a list needs and they are plain columns; the household is served
+    on the record itself, where it is one row.
+    """
+    from sqlalchemy import event
+
+    from core.database import db
+    from modules.students.services import list_students
+
+    def queries_for(count):
+        for index in range(count):
+            _admit(academic_year, name=f"Student {uuid.uuid4().hex[:6]}")
+
+        seen = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            probe = statement.lower()
+            if "family_members" in probe or " families" in probe:
+                seen.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", record)
+        try:
+            result = list_students(per_page=100)
+            assert len(result["items"]) >= count
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record)
+        return len(seen)
+
+    few = queries_for(2)
+    many = queries_for(6)
+
+    assert many <= few, (
+        f"household query count grew with row count ({few} -> {many}): N+1"
+    )

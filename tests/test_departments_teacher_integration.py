@@ -515,7 +515,15 @@ def test_listing_teachers_does_not_query_per_person_or_employment(
 
         def record(conn, cursor, statement, params, context, executemany):
             probe = statement.lower()
-            if " persons" in probe or " staff" in probe or "staff_employment_periods" in probe:
+            # Every relationship to_dict touches, the account included — it is
+            # joined for the email filter but was not being reused for
+            # serialization, which cost a query a row.
+            if (
+                " persons" in probe
+                or " staff" in probe
+                or "staff_employment_periods" in probe
+                or " users" in probe
+            ):
                 counted.append(statement)
 
         with flask_app.test_request_context("/"):
