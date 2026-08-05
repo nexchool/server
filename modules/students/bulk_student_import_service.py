@@ -17,7 +17,7 @@ from core.models import Tenant
 from modules.academics.academic_year.models import AcademicYear
 from modules.auth.models import User
 from modules.classes.models import Class
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.students.models import Student
 from modules.students.services import (
@@ -814,13 +814,8 @@ def import_students_from_rows(
                     db.session.add(user)
                     db.session.flush()
 
-                    ur = UserRole(
-                        id=str(uuid.uuid4()),
-                        tenant_id=tenant_id,
-                        user_id=user.id,
-                        role_id=student_role.id,
-                    )
-                    db.session.add(ur)
+                    # No profile is assigned: being a student is what grants
+                    # a student their access (ADR-013).
 
                     sk = skwargs(coerced, academic_year_id=academic_year_id)
                     student = Student(

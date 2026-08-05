@@ -15,7 +15,7 @@ from core.database import db
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.students.utils.bulk_validation import is_blank, validate_email_format
 from modules.students.utils.excel_parser import parse_xlsx_to_rows
@@ -369,14 +369,6 @@ def import_teachers_from_rows(
                     db.session.add(user)
                     db.session.flush()
 
-                    ur = UserRole(
-                        id=str(uuid.uuid4()),
-                        tenant_id=tenant_id,
-                        user_id=user.id,
-                        role_id=teacher_role.id,
-                    )
-                    db.session.add(ur)
-
                     # Teaching is a participation of employment (ADR-005), so
                     # the imported teacher is employed before they teach.
                     from modules.people.service import employ
@@ -390,6 +382,10 @@ def import_teachers_from_rows(
                         department_id=teacher_fields.get("department_id"),
                         joined_on=teacher_fields.get("date_of_joining"),
                     )
+                    # Authority belongs to the employment, not the login.
+                    from modules.rbac.authority_service import grant_authority
+
+                    grant_authority(staff.id, teacher_role.id)
 
                     teacher = Teacher(
                         id=str(uuid.uuid4()),

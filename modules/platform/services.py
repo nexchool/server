@@ -237,8 +237,6 @@ def create_tenant(
     employment = employ(tenant_id, user.person_id)
     grant_authority(employment.id, admin_role.id)
 
-    ur = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
-    db.session.add(ur)
     db.session.commit()
 
     try:
@@ -938,8 +936,6 @@ def add_tenant_admin(
     employment = employ(tenant_id, user.person_id)
     grant_authority(employment.id, admin_role.id)
 
-    ur = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
-    db.session.add(ur)
     db.session.commit()
     try:
         from modules.notifications.services import notification_dispatcher
