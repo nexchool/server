@@ -130,7 +130,13 @@ class Student(TenantBaseModel):
         nullable=False,
         index=True,
     )
-    person = db.relationship("Person", foreign_keys=[person_id])
+    # Declared from this side so People can see that a person studies here
+    # without importing this module.
+    person = db.relationship(
+        "Person",
+        foreign_keys=[person_id],
+        backref=db.backref("student_relationships", lazy=True),
+    )
 
     # Academic Info
     admission_number = db.Column(db.String(20), nullable=False, index=True)

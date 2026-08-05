@@ -29,34 +29,31 @@ def available_contexts(user) -> List[ActiveContext]:
     Derived from business relationships rather than stored, so the answer cannot
     drift from the relationships it describes.
 
-    Every relationship is read through the Person: employment from Staff,
-    teaching from the participation hanging off that employment (ADR-005), and
-    studentship from the Student relationship. Nothing here is derived from the
-    login any more.
+    Identity does not know what those relationships are — it asks People, which
+    owns the question of what a person is to the organization. What Identity
+    decides is how to *present* the answer, which is its own business:
 
-    Teaching is reported instead of, not in addition to, employment: a teacher
+    Teaching is presented instead of, not in addition to, employment: a teacher
     has one experience in the application, and offering a switch that changes
     nothing would be noise.
 
     PARENT is absent by design. While a household shares the student's
     credentials there is no separate parent experience to switch to (ADR-011);
-    it appears when an organization issues parent logins.
+    it appears when an organization issues parent logins, at which point family
+    membership becomes a context rather than only a relationship.
     """
-    from modules.people.employment import Staff
-    from modules.students.models import Student
-    from modules.teachers.models import Teacher
+    from modules.people.relationships import PersonRelationship, relationships_held_by
 
-    if not user.person_id:
-        return []
+    held = relationships_held_by(user.person)
 
     contexts: List[ActiveContext] = []
 
-    employment = Staff.query.filter_by(person_id=user.person_id).first()
-    if employment is not None and employment.is_employed:
-        teaches = Teacher.query.filter_by(staff_id=employment.id).first() is not None
-        contexts.append(ActiveContext.TEACHER if teaches else ActiveContext.STAFF)
+    if PersonRelationship.TEACHING in held:
+        contexts.append(ActiveContext.TEACHER)
+    elif PersonRelationship.EMPLOYMENT in held:
+        contexts.append(ActiveContext.STAFF)
 
-    if Student.query.filter_by(person_id=user.person_id).first() is not None:
+    if PersonRelationship.STUDENTSHIP in held:
         contexts.append(ActiveContext.STUDENT)
 
     return contexts

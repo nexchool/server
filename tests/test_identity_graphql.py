@@ -225,3 +225,34 @@ def test_no_parent_context_exists_while_households_share_a_login(
     )
 
     assert "PARENT" not in response.get_json()["data"]["me"]["availableContexts"]
+
+
+# ---------------------------------------------------------------------------
+# The boundary itself
+# ---------------------------------------------------------------------------
+
+def test_identity_does_not_know_academic():
+    """Identity presents relationships; it must not go looking for them.
+
+    Contexts are derived from what a person is to the organization, and People
+    owns that question. When Identity reads Student or Teacher directly it has
+    reached across a boundary the architecture forbids, and the reach is easy
+    to reintroduce by accident — one convenient import in a resolver.
+    """
+    import ast
+    import pathlib
+
+    source = pathlib.Path("modules/auth/identity_service.py").read_text()
+
+    reached_for = {
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module
+        if node.module.startswith(("modules.students", "modules.teachers",
+                                   "modules.classes", "modules.academics"))
+    }
+
+    assert not reached_for, (
+        f"Identity is reading Academic directly: {sorted(reached_for)}. "
+        "Ask modules.people.relationships instead."
+    )

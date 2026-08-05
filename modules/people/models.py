@@ -196,6 +196,19 @@ class FamilyMember(TenantBaseModel):
     )
     relationship = db.Column(db.String(50), nullable=False)
 
+    # `relationship` is taken by the column above, so the mapper attributes are
+    # named for what they point at.
+    person = db.relationship(
+        "Person",
+        foreign_keys=[person_id],
+        backref=db.backref("family_memberships", lazy=True),
+    )
+    family = db.relationship(
+        "Family",
+        foreign_keys=[family_id],
+        backref=db.backref("members", lazy=True),
+    )
+
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_now)
     updated_at = db.Column(
         db.DateTime(timezone=True), nullable=False, default=_now, onupdate=_now

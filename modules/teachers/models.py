@@ -78,7 +78,13 @@ class Teacher(TenantBaseModel):
         nullable=False,
         index=True,
     )
-    staff = db.relationship("Staff", foreign_keys=[staff_id])
+    # Declared from this side so People can see that an employment teaches
+    # without importing Academic (ADR-005, and the dependency order).
+    staff = db.relationship(
+        "Staff",
+        foreign_keys=[staff_id],
+        backref=db.backref("teaching_participations", lazy=True),
+    )
 
     # Professional Info
     employee_id = db.Column(db.String(20), nullable=False, index=True)

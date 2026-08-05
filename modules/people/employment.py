@@ -103,8 +103,13 @@ class Staff(TenantBaseModel):
         index=True,
     )
     # A relationship, not merely a column: it is what orders the person's insert
-    # ahead of the employment that references them.
-    person = db.relationship("Person", foreign_keys=[person_id])
+    # ahead of the employment that references them, and it is how People answers
+    # "does this person work here?" without going looking (see relationships.py).
+    person = db.relationship(
+        "Person",
+        foreign_keys=[person_id],
+        backref=db.backref("employments", lazy=True),
+    )
 
     # The school's own identifier. Nullable because organizations migrating from
     # records that never captured one should not be given an invented number.
