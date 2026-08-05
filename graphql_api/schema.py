@@ -30,7 +30,7 @@ class GraphQLStatus:
 
 
 @strawberry.type
-class Query:
+class TransportQuery:
     @strawberry.field(
         description=(
             "Reports how this request was resolved — used to verify client wiring "
@@ -44,6 +44,21 @@ class Query:
             authenticated=context.is_authenticated,
             tenant_subdomain=getattr(context.tenant, "subdomain", None),
         )
+
+
+def _build_query_type() -> type:
+    """Compose the root Query from the transport's own fields and each module's.
+
+    Imported here rather than at module scope because module resolvers import
+    the transport's errors and permissions.
+    """
+    from modules.auth.resolvers import IdentityQuery
+
+    @strawberry.type(description="Every read the platform exposes.")
+    class Query(TransportQuery, IdentityQuery):
+        pass
+
+    return Query
 
 
 class NexchoolSchema(strawberry.Schema):
@@ -90,4 +105,4 @@ def build_schema(config: Mapping[str, Any]) -> NexchoolSchema:
     Built per application rather than at import time so the query limits and
     introspection setting come from that app's config.
     """
-    return NexchoolSchema(query=Query, extensions=build_extensions(config))
+    return NexchoolSchema(query=_build_query_type(), extensions=build_extensions(config))

@@ -28,6 +28,15 @@ class User(TenantBaseModel):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Authentication
+    # The human this account belongs to (ADR-003). Nullable until the People
+    # backfill has run everywhere; a later migration makes it mandatory.
+    person_id = db.Column(
+        db.String(36),
+        db.ForeignKey("persons.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+
     email = db.Column(db.String(120), nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
 

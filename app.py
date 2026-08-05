@@ -64,6 +64,10 @@ def create_app(config_name=None):
     # Register blueprints
     register_blueprints(app)
 
+    # The People domain has no REST surface; import it so its models register
+    # with SQLAlchemy regardless of which transports are mounted.
+    import modules.people.models  # noqa: F401
+
     # Mount the GraphQL endpoint (/api/graphql)
     from graphql_api import register_graphql
     register_graphql(app)
