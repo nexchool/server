@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from core.database import db
+from core.branch_scope import filter_by_student_ids
 from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
 from modules.finance.models import FeeComponent, FeeStructure, StudentFee, StudentFeeItem
@@ -1372,6 +1373,10 @@ def list_enrollments(
     ).filter_by(tenant_id=tenant_id)
     if academic_year_id:
         q = q.filter(TransportEnrollment.academic_year_id == academic_year_id)
+
+    # Which children ride is a fact about children, so a campus admin sees
+    # their campus's.
+    q = filter_by_student_ids(q, TransportEnrollment.student_id)
 
     # Searched here rather than in the browser. A screen that pages cannot
     # filter what it has not fetched — searching a page finds only the child

@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from core.branch_scope import filter_by_student_ids
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -155,6 +156,10 @@ class AllocationService:
             HostelAllocation.tenant_id == tenant_id,
             HostelAllocation.deleted_at.is_(None),
         )
+
+        # Which bed a child sleeps in is a fact about the child, so a sub-admin
+        # restricted to one campus sees their campus's boarders.
+        query = filter_by_student_ids(query, HostelAllocation.student_id)
 
         if hostel_id is not None:
             query = query.filter(HostelAllocation.hostel_id == hostel_id)

@@ -6,6 +6,7 @@ from datetime import datetime
 import secrets
 
 from core.database import db
+from core.branch_scope import filter_teachers_by_branch
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
@@ -366,6 +367,9 @@ def list_teachers(
             ),
         )
     )
+
+    # A sub-admin restricted to one campus sees that campus's teachers.
+    query = filter_teachers_by_branch(query)
 
     if status:
         # "Active" is not a column any more: it is whether the employment is

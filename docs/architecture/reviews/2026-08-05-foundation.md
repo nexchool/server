@@ -133,13 +133,29 @@ something introduced here.
 
 ## Branch scope
 
-> **Finding B1 (high).** `teachers`, `transport` and `hostel` have **no branch
+> **Finding B1 (high) — fixed 2026-08-05.** `teachers`, `transport` and `hostel` had **no branch
 > scoping at all** — not one file in them references `school_unit_id` or
 > `core/branch_scope.py`, against 3–5 files each in students, classes and
 > attendance. Multi-campus is day-one scope, so on a trust running twenty
 > campuses a sub-admin scoped to one of them currently sees every campus's
 > teachers, buses and hostel allocations. This is a foundation gap, not a
 > module feature: it is the tenancy guarantee, one level down.
+>
+> **Fixed.** Teachers scope through the classes they teach — by class teacher,
+> subject teacher or the assignment table, since teaching one class at a campus
+> is what a head of campus means by "my staff". Transport enrollments and hostel
+> allocations scope through the **student**: which bed a child sleeps in and
+> which bus they ride are facts about a child, not about a building or a
+> vehicle. A trust may run one fleet across every campus, so saying a bus
+> belongs to a campus would invent a fact nobody recorded — if per-campus fleets
+> are wanted later, that is a model change, not a filter.
+>
+> A teacher assigned to no class is excluded from a restricted view, the same
+> rule a classless student already follows. They are not lost: an unrestricted
+> administrator sees them, and they appear to a campus the moment they are given
+> a class there.
+>
+> Each guard was checked to fail with the filter removed.
 
 ---
 

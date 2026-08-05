@@ -287,6 +287,90 @@ def filter_students_by_branch(query):
     return query.filter(Student.class_id.in_(class_subq.select()))
 
 
+def _allowed_teacher_id_subquery(allowed_units: Set[str]):
+    """Scalar subquery: teachers who teach at least one class in the allowed set.
+
+    A teacher reaches a campus through the classes they teach, by any of the
+    three ways the school records that — the class teacher, a subject teacher,
+    or the newer assignment table. Teaching one class at a campus makes you
+    that campus's teacher, which is what a head of campus means by "my staff".
+    """
+    from modules.academics.backbone.models import (
+        ClassSubjectTeacher,
+        ClassTeacherAssignment,
+    )
+    from modules.classes.models import ClassSubject, ClassTeacher
+
+    tenant_id = getattr(g, "tenant_id", None)
+    class_subq = _allowed_class_id_subquery(allowed_units)
+
+    parts = []
+    for model in (ClassTeacher, ClassTeacherAssignment):
+        query = (
+            model.query
+            .with_entities(model.teacher_id)
+            .filter(model.class_id.in_(class_subq.select()))
+        )
+        if tenant_id is not None:
+            query = query.filter(model.tenant_id == tenant_id)
+        parts.append(query)
+
+    # A subject teacher is attached to the subject-in-a-class, not the class,
+    # so this one reaches the campus through class_subjects.
+    subjects_here = ClassSubject.query.with_entities(ClassSubject.id).filter(
+        ClassSubject.class_id.in_(class_subq.select())
+    )
+    if tenant_id is not None:
+        subjects_here = subjects_here.filter(ClassSubject.tenant_id == tenant_id)
+
+    by_subject = ClassSubjectTeacher.query.with_entities(
+        ClassSubjectTeacher.teacher_id
+    ).filter(ClassSubjectTeacher.class_subject_id.in_(subjects_here.subquery().select()))
+    if tenant_id is not None:
+        by_subject = by_subject.filter(ClassSubjectTeacher.tenant_id == tenant_id)
+    parts.append(by_subject)
+
+    return parts[0].union(*parts[1:]).subquery()
+
+
+def filter_teachers_by_branch(query):
+    """Restrict a Teacher query to teachers teaching in the allowed branches.
+
+    A teacher assigned to no class anywhere is excluded, the same way a student
+    with no class is — an unrestricted admin still sees them, and they become
+    visible to a campus the moment they are given a class there.
+
+    No-op if unrestricted.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return query
+
+    from modules.teachers.models import Teacher
+
+    teacher_subq = _allowed_teacher_id_subquery(allowed)
+    return query.filter(Teacher.id.in_(teacher_subq.select()))
+
+
+def filter_by_student_ids(query, student_fk_column):
+    """Restrict any query by its student FK to students in allowed branches.
+
+    Hostel allocations and transport enrollments are both, in the end, a child:
+    which bed they sleep in and which bus they ride are facts about a student,
+    so they are scoped by the student rather than by the building or the
+    vehicle. A trust may run one fleet across every campus; saying a bus
+    belongs to a campus would be inventing a fact nobody recorded.
+
+    No-op if unrestricted.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return query
+
+    student_subq = _allowed_student_id_subquery(allowed)
+    return query.filter(student_fk_column.in_(student_subq.select()))
+
+
 def filter_fees_by_branch(query, student_fk_column):
     """Restrict a fee-domain query by its student FK to allowed-branch students.
 
