@@ -196,6 +196,15 @@ class FamilyMember(TenantBaseModel):
     )
     relationship = db.Column(db.String(50), nullable=False)
 
+    # The adult the school should call. Every school has one — v1 asked for it
+    # under the name "guardian", which is why that field was filled for almost
+    # every student and usually held the father. Being the contact is a
+    # separate fact from being the father, so it is recorded separately, and at
+    # most one member of a household holds it.
+    is_primary_contact = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.text("false")
+    )
+
     # `relationship` is taken by the column above, so the mapper attributes are
     # named for what they point at.
     person = db.relationship(
@@ -218,6 +227,14 @@ class FamilyMember(TenantBaseModel):
         # One human holds one relationship to one family. A person who is both
         # guardian and grandmother is recorded by the relationship that governs.
         db.UniqueConstraint("family_id", "person_id", name="uq_family_members_family_person"),
+        # A household has one person the school calls, not several. Partial, so
+        # the many non-contacts do not collide with each other.
+        db.Index(
+            "uq_family_members_primary_contact",
+            "family_id",
+            unique=True,
+            postgresql_where=db.text("is_primary_contact"),
+        ),
     )
 
     def __repr__(self) -> str:

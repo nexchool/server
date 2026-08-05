@@ -173,6 +173,7 @@ def record_family_member(
     phone: Optional[str] = None,
     email: Optional[str] = None,
     occupation: Optional[str] = None,
+    is_primary_contact: bool = False,
 ):
     """Record an adult responsible for a student as a Person in their family.
 
@@ -210,7 +211,34 @@ def record_family_member(
         family_id = family.id
 
     _ensure_membership(tenant_id, family_id, child_person_id, FAMILY_ROLE_CHILD)
-    return _ensure_membership(tenant_id, family_id, adult.id, role)
+    membership = _ensure_membership(tenant_id, family_id, adult.id, role)
+
+    if is_primary_contact:
+        name_the_contact(membership)
+    return membership
+
+
+def name_the_contact(membership) -> None:
+    """Make this household member the adult the school calls.
+
+    A household has one, so naming a new contact stands the previous one down
+    rather than leaving two — which the database would refuse anyway.
+    """
+    from core.database import db
+
+    from .models import FamilyMember
+
+    if membership is None or membership.is_primary_contact:
+        return
+
+    FamilyMember.query.filter(
+        FamilyMember.family_id == membership.family_id,
+        FamilyMember.is_primary_contact.is_(True),
+    ).update({"is_primary_contact": False}, synchronize_session=False)
+    db.session.flush()
+
+    membership.is_primary_contact = True
+    db.session.flush()
 
 
 def revise_identity(person: Person, values: dict) -> bool:
@@ -243,6 +271,7 @@ def revise_family_member(
     phone: Optional[str] = None,
     email: Optional[str] = None,
     occupation: Optional[str] = None,
+    is_primary_contact: bool = False,
 ):
     """The school has corrected who is responsible for a child, or how to reach them.
 
@@ -274,6 +303,7 @@ def revise_family_member(
             phone=phone,
             email=email,
             occupation=occupation,
+            is_primary_contact=is_primary_contact,
         )
 
     if _is_same_name(held_by.person.full_name, name):
@@ -281,6 +311,8 @@ def revise_family_member(
             held_by.person,
             {"phone_number": phone, "email": email, "occupation": occupation},
         )
+        if is_primary_contact:
+            name_the_contact(held_by)
         return held_by
 
     from core.database import db
@@ -295,6 +327,7 @@ def revise_family_member(
         phone=phone,
         email=email,
         occupation=occupation,
+        is_primary_contact=is_primary_contact,
     )
 
 
@@ -498,3 +531,79 @@ def _relationships_belong_to_people(session, flush_context, instances) -> None:
             if isinstance(instance, Student) and not instance.person_id:
                 instance.person = _person_behind(session, instance)
 
+
+
+def record_household(tenant_id: str, child_person_id: str, members) -> None:
+    """Make this child's household match what the school just submitted.
+
+    The form sends the household whole — every adult it holds, each with a
+    relationship — so an adult it no longer lists has been removed from the
+    child's household, not merely left unedited. The Person survives that: they
+    may still be a parent in another family, and forgetting a human because one
+    form stopped mentioning them would be wrong.
+
+    Adults are matched by person_id when the form returns one, and by
+    relationship otherwise, so editing a father's phone corrects the father
+    already on record instead of adding a second one.
+    """
+    from core.database import db
+
+    from .models import FAMILY_ROLE_CHILD, FamilyMember
+    from .relationships import household_of
+
+    if members is None:
+        return
+
+    person = Person.query.get(child_person_id)
+    if person is None:
+        return
+
+    existing = {member.person_id: member for member in household_of(person)}
+    submitted = []
+    keep = set()
+
+    for entry in members:
+        name = (entry.get("name") or "").strip()
+        if not name:
+            continue
+
+        held_by = existing.get(entry.get("person_id"))
+        if held_by is not None:
+            keep.add(held_by.person_id)
+            revise_identity(
+                held_by.person,
+                {
+                    "full_name": name,
+                    "phone_number": entry.get("phone"),
+                    "email": entry.get("email"),
+                    "occupation": entry.get("occupation"),
+                },
+            )
+            held_by.relationship = family_role_for(entry.get("relationship"))
+            submitted.append((held_by, bool(entry.get("is_primary_contact"))))
+            continue
+
+        recorded = revise_family_member(
+            tenant_id,
+            child_person_id,
+            relationship=entry.get("relationship"),
+            name=name,
+            phone=entry.get("phone"),
+            email=entry.get("email"),
+            occupation=entry.get("occupation"),
+        )
+        if recorded is not None:
+            keep.add(recorded.person_id)
+            submitted.append((recorded, bool(entry.get("is_primary_contact"))))
+
+    for person_id, member in existing.items():
+        if person_id not in keep and member.relationship != FAMILY_ROLE_CHILD:
+            db.session.delete(member)
+    db.session.flush()
+
+    # Naming the contact last, once the household is settled, so standing the
+    # previous one down never collides with a member about to be removed.
+    for member, is_contact in submitted:
+        if is_contact:
+            name_the_contact(member)
+            break

@@ -1037,6 +1037,9 @@ def update_student(student_id):
     
     result = services.update_student(
         student_id,
+        # The household as the form submitted it, whole. Absent means the
+        # client did not edit the family; an empty list means it emptied it.
+        family=data.get('family'),
         name=data.get('name'),
         roll_number=data.get('roll_number'),
         date_of_birth=data.get('date_of_birth'),

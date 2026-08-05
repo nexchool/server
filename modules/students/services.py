@@ -402,10 +402,14 @@ def create_student(
             # Admission is where the school says who is responsible for this
             # child, so the family is recorded now rather than by a later
             # migration. A sibling already enrolled joins the same family.
-            for member_name, member_relationship, member_phone, member_email, member_occupation in (
-                (guardian_name, guardian_relationship, guardian_phone, guardian_email, guardian_occupation),
-                (father_name, 'father', father_phone, father_email, father_occupation),
-                (mother_name, 'mother', mother_phone, mother_email, mother_occupation),
+            # The guardian the admission form names is the adult the school
+            # will call, whatever their relationship turns out to be. Recording
+            # that as a fact of the household is what lets both parents be kept
+            # without the father being stored twice.
+            for member_name, member_relationship, member_phone, member_email, member_occupation, is_contact in (
+                (guardian_name, guardian_relationship, guardian_phone, guardian_email, guardian_occupation, True),
+                (father_name, 'father', father_phone, father_email, father_occupation, False),
+                (mother_name, 'mother', mother_phone, mother_email, mother_occupation, False),
             ):
                 record_family_member(
                     tenant_id,
@@ -415,6 +419,7 @@ def create_student(
                     phone=member_phone,
                     email=member_email,
                     occupation=member_occupation,
+                    is_primary_contact=is_contact,
                 )
 
         # Create Student Profile (tenant-scoped)
@@ -860,6 +865,7 @@ def _apply_placement_update(
 
 def update_student(
     student_id: str,
+    family=None,
     name: Optional[str] = None,
     roll_number: Optional[int] = None,
     date_of_birth: Optional[str] = None,
@@ -1097,6 +1103,11 @@ def update_student(
             student.student_status = _clean_str(student_status)
         if academic_result is not None:
             student.academic_result = _clean_str(academic_result)
+
+        if family is not None:
+            from modules.people.service import record_household
+
+            record_household(student.tenant_id, student.person_id, family)
 
         # The same edit reaches the human it describes. Until now only
         # admission did this, so a Person recorded at admission stopped

@@ -382,8 +382,29 @@ class Student(TenantBaseModel):
             "student_status": self.student_status,
             "academic_result": self.academic_result,
             "is_transport_opted": bool(self.is_transport_opted),
+            # The household as it actually is (ADR-002): every responsible
+            # adult, each with their relationship, and which one the school
+            # calls. The flat father_/mother_/guardian_ keys above say the same
+            # thing in v1's shape and stay until the mobile client moves.
+            "family": self._household(),
             "created_at": self.created_at.isoformat()
         }
+
+    def _household(self):
+        from modules.people.relationships import household_of
+
+        return [
+            {
+                "person_id": member.person_id,
+                "name": member.person.full_name,
+                "relationship": member.relationship,
+                "phone": member.person.phone_number,
+                "email": member.person.email,
+                "occupation": member.person.occupation,
+                "is_primary_contact": member.is_primary_contact,
+            }
+            for member in household_of(self.person)
+        ]
 
     def __repr__(self):
         return f"<Student {self.admission_number}>"

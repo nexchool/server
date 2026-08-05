@@ -345,3 +345,112 @@ def test_an_imported_students_details_are_not_blank(ctx, tenant, academic_year):
     assert payload["phone"] == "9800000000"
     assert payload["aadhar_number"] == "111122223333"
     assert _member(student, FAMILY_ROLE_MOTHER) is not None
+
+
+# ---------------------------------------------------------------------------
+# The household the form submits
+# ---------------------------------------------------------------------------
+
+def _household(student):
+    from modules.people.relationships import household_of
+
+    return [
+        {"name": m.person.full_name, "relationship": m.relationship,
+         "phone": m.person.phone_number, "contact": m.is_primary_contact}
+        for m in household_of(student.person)
+    ]
+
+
+def test_admission_names_the_adult_the_school_will_call(ctx, tenant, academic_year):
+    """v1 asked for a guardian; that is the contact, whatever their relation."""
+    student = _admit(academic_year, father="Rajesh Patel")
+
+    contacts = [m for m in _household(student) if m["contact"]]
+    assert len(contacts) == 1
+    assert contacts[0]["name"] == "Rajesh Patel"
+
+
+def test_the_form_can_hold_both_parents_and_say_who_to_ring(
+    ctx, tenant, academic_year
+):
+    from modules.students.services import update_student
+
+    student = _admit(academic_year, father="Rajesh Patel")
+
+    update_student(student.id, family=[
+        {"name": "Rajesh Patel", "relationship": "father", "phone": "9811111111"},
+        {"name": "Sunita Patel", "relationship": "mother", "phone": "9600000000",
+         "is_primary_contact": True},
+    ])
+
+    household = _household(student)
+    assert {m["name"] for m in household} == {"Rajesh Patel", "Sunita Patel"}
+    assert [m["name"] for m in household if m["contact"]] == ["Sunita Patel"]
+
+
+def test_a_household_has_one_contact_not_several(ctx, tenant, academic_year):
+    from modules.students.services import update_student
+
+    student = _admit(academic_year, father="Rajesh Patel")
+
+    update_student(student.id, family=[
+        {"name": "Rajesh Patel", "relationship": "father", "is_primary_contact": True},
+        {"name": "Sunita Patel", "relationship": "mother", "is_primary_contact": True},
+    ])
+
+    assert len([m for m in _household(student) if m["contact"]]) == 1
+
+
+def test_an_adult_dropped_from_the_form_leaves_the_household_but_survives(
+    ctx, tenant, academic_year
+):
+    """They may still be a parent elsewhere; forgetting the human would be wrong."""
+    from modules.people.models import Person
+    from modules.students.services import update_student
+
+    student = _admit(academic_year, father="Rajesh Patel")
+    update_student(student.id, family=[
+        {"name": "Rajesh Patel", "relationship": "father"},
+        {"name": "Bhavesh Patel", "relationship": "uncle"},
+    ])
+    uncle_id = next(
+        m.person_id for m in __import__(
+            "modules.people.relationships", fromlist=["household_of"]
+        ).household_of(student.person) if m.relationship == "uncle"
+    )
+
+    update_student(student.id, family=[
+        {"name": "Rajesh Patel", "relationship": "father"},
+    ])
+
+    assert {m["name"] for m in _household(student)} == {"Rajesh Patel"}
+    assert Person.query.get(uncle_id).full_name == "Bhavesh Patel"
+
+
+def test_editing_a_household_member_corrects_them_rather_than_adding_another(
+    ctx, tenant, academic_year
+):
+    from modules.people.relationships import household_of
+    from modules.students.services import update_student
+
+    student = _admit(academic_year, father="Rajesh Patel")
+    father = next(m for m in household_of(student.person) if m.relationship == "father")
+
+    update_student(student.id, family=[
+        {"person_id": father.person_id, "name": "Rajesh Patel",
+         "relationship": "father", "phone": "9700000000"},
+    ])
+
+    household = _household(student)
+    assert len(household) == 1
+    assert household[0]["phone"] == "9700000000"
+
+
+def test_the_student_payload_carries_the_household(ctx, tenant, academic_year):
+    student = _admit(academic_year, father="Rajesh Patel")
+
+    family = student.to_dict(include_profile_picture=False)["family"]
+
+    assert [m["name"] for m in family] == ["Rajesh Patel"]
+    assert family[0]["relationship"] == "father"
+    assert family[0]["is_primary_contact"] is True

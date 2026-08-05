@@ -54,3 +54,33 @@ def relationships_held_by(person) -> Set[PersonRelationship]:
         held.add(PersonRelationship.FAMILY_MEMBERSHIP)
 
     return held
+
+
+def household_of(person):
+    """The adults recorded as responsible for this person, and how.
+
+    Returns the other members of the household they belong to as a child —
+    parents, guardians, whoever the school recorded — in the order a school
+    reads them: the contact first, then parents, then everyone else.
+    """
+    from .models import FAMILY_ROLE_CHILD, FAMILY_ROLE_FATHER, FAMILY_ROLE_MOTHER
+
+    if person is None:
+        return []
+
+    child = next(
+        (m for m in person.family_memberships if m.relationship == FAMILY_ROLE_CHILD),
+        None,
+    )
+    if child is None:
+        return []
+
+    def reading_order(member):
+        by_role = {FAMILY_ROLE_FATHER: 1, FAMILY_ROLE_MOTHER: 2}.get(member.relationship, 3)
+        return (0 if member.is_primary_contact else 1, by_role, member.created_at)
+
+    return sorted(
+        (m for m in child.family.members if m.person_id != person.id
+         and m.relationship != FAMILY_ROLE_CHILD),
+        key=reading_order,
+    )
