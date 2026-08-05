@@ -78,6 +78,20 @@ def _csv_response(csv_text: str, filename: str):
 # ---------------------------------------------------------------------------
 
 
+def _requested_page():
+    """The page the client asked for, or (None, None) if it asked for none.
+
+    Both spellings are accepted because the API convention documents
+    `pageSize` while the students and teachers lists were built with
+    `per_page`; a transport screen should not have to know which came first.
+    """
+    page = request.args.get("page")
+    per_page = request.args.get("per_page") or request.args.get("pageSize")
+    if page is None and per_page is None:
+        return None, None
+    return page or 1, per_page or 20
+
+
 @transport_bp.route("/buses", methods=["GET"])
 @tenant_required
 @auth_required
@@ -92,7 +106,10 @@ def _csv_response(csv_text: str, filename: str):
 )
 def list_buses():
     ay = request.args.get("academic_year_id") or None
-    return success_response(data=services.list_buses(academic_year_id=ay))
+    page, per_page = _requested_page()
+    return success_response(
+        data=services.list_buses(academic_year_id=ay, page=page, per_page=per_page)
+    )
 
 
 @transport_bp.route("/buses/<bus_id>", methods=["GET"])
@@ -210,7 +227,8 @@ def delete_bus(bus_id):
     TRANSPORT_ASSIGNMENTS_CREATE,
 )
 def list_drivers():
-    return success_response(data=services.list_drivers())
+    page, per_page = _requested_page()
+    return success_response(data=services.list_drivers(page=page, per_page=per_page))
 
 
 @transport_bp.route("/drivers/<driver_id>", methods=["GET"])
@@ -376,7 +394,8 @@ def get_transport_staff_workload(staff_id):
     TRANSPORT_ASSIGNMENTS_READ,
 )
 def list_routes():
-    return success_response(data=services.list_routes())
+    page, per_page = _requested_page()
+    return success_response(data=services.list_routes(page=page, per_page=per_page))
 
 
 @transport_bp.route("/routes/<route_id>", methods=["GET"])
@@ -873,7 +892,12 @@ def create_assignment():
 @require_permission(TRANSPORT_ENROLLMENT_READ)
 def list_enrollments():
     ay = request.args.get("academic_year_id") or None
-    return success_response(data=services.list_enrollments(academic_year_id=ay))
+    page, per_page = _requested_page()
+    return success_response(
+        data=services.list_enrollments(
+            academic_year_id=ay, page=page, per_page=per_page
+        )
+    )
 
 
 @transport_bp.route("/enroll", methods=["POST"])

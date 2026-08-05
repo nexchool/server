@@ -94,6 +94,40 @@ def _deactivate_future_schedules_for_inactive_route(route_id: str, tenant_id: st
 
 
 
+
+# A page a client did not ask for is worse than a slow one: it would silently
+# hand back part of the fleet as though it were all of it. So pagination is
+# opt-in — a caller that asks for a page gets a page and the envelope that
+# describes it, and one that asks for nothing gets what it has always got.
+MAX_TRANSPORT_PAGE_SIZE = 100
+
+
+def paginate(rows: List[Any], page, per_page) -> Any:
+    """Return one page of rows with its envelope, or every row unchanged.
+
+    The envelope matches the students and teachers lists, so a client that can
+    read one can read all of them.
+    """
+    if page is None or per_page is None:
+        return rows
+
+    try:
+        page = max(1, int(page))
+        per_page = max(1, min(int(per_page), MAX_TRANSPORT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        return rows
+
+    total = len(rows)
+    start = (page - 1) * per_page
+    return {
+        "items": rows[start:start + per_page],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+    }
+
+
 class TransportPageReference:
     """Everything a page of enrollments needs about routes, stops and schedules.
 
@@ -696,7 +730,9 @@ def transport_summaries_for_students(
 def list_buses(
     include_occupancy: bool = True,
     academic_year_id: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+) -> Any:
     tenant_id = get_tenant_id()
     if not tenant_id:
         return []
@@ -757,7 +793,7 @@ def list_buses(
         warn = _bus_operational_warning(tenant_id, b.id, ay, on)
         d["transport_operational"] = warn
         out.append(d)
-    return out
+    return paginate(out, page, per_page)
 
 
 def get_bus(bus_id: str) -> Optional[Dict[str, Any]]:
@@ -834,11 +870,17 @@ def delete_bus(bus_id: str) -> Tuple[bool, Optional[str]]:
 # ---------------------------------------------------------------------------
 
 
-def list_drivers() -> List[Dict]:
+def list_drivers(page: Optional[int] = None, per_page: Optional[int] = None) -> Any:
     tenant_id = get_tenant_id()
     if not tenant_id:
         return []
-    return [d.to_dict() for d in TransportDriver.query.filter_by(tenant_id=tenant_id).order_by(TransportDriver.name).all()]
+    drivers = [
+        d.to_dict()
+        for d in TransportDriver.query.filter_by(tenant_id=tenant_id)
+        .order_by(TransportDriver.name)
+        .all()
+    ]
+    return paginate(drivers, page, per_page)
 
 
 def driver_crud_get(driver_id: str) -> Optional[Dict]:
@@ -894,7 +936,7 @@ def delete_driver(driver_id: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
-def list_routes() -> List[Dict]:
+def list_routes(page: Optional[int] = None, per_page: Optional[int] = None) -> Any:
     tenant_id = get_tenant_id()
     if not tenant_id:
         return []
@@ -928,7 +970,7 @@ def list_routes() -> List[Dict]:
         d["stops_count"] = stops_by_route.get(r.id, 0)
         d["schedules_count"] = schedules_by_route.get(r.id, 0)
         out.append(d)
-    return out
+    return paginate(out, page, per_page)
 
 
 def get_route(route_id: str, include_stops: bool = True) -> Optional[Dict]:
@@ -1304,7 +1346,11 @@ def _enrollment_transport_hints(
     return hints
 
 
-def list_enrollments(academic_year_id: Optional[str] = None) -> List[Dict]:
+def list_enrollments(
+    academic_year_id: Optional[str] = None,
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+) -> Any:
     tenant_id = get_tenant_id()
     if not tenant_id:
         return []
@@ -1319,7 +1365,31 @@ def list_enrollments(academic_year_id: Optional[str] = None) -> List[Dict]:
     ).filter_by(tenant_id=tenant_id)
     if academic_year_id:
         q = q.filter(TransportEnrollment.academic_year_id == academic_year_id)
-    rows = q.order_by(TransportEnrollment.created_at.desc()).all()
+    q = q.order_by(TransportEnrollment.created_at.desc())
+
+    # Paged in the query, not after building every row. The others are bounded
+    # by the size of the fleet; this one grows with the number of children, so
+    # slicing a fully-built list would still have done all the work.
+    envelope = None
+    if page is not None and per_page is not None:
+        try:
+            page = max(1, int(page))
+            per_page = max(1, min(int(per_page), MAX_TRANSPORT_PAGE_SIZE))
+        except (TypeError, ValueError):
+            page = per_page = None
+
+    if page is not None and per_page is not None:
+        total = q.count()
+        rows = q.limit(per_page).offset((page - 1) * per_page).all()
+        envelope = {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": max(1, (total + per_page - 1) // per_page),
+        }
+    else:
+        rows = q.all()
+
     result = []
     on = _today()
     reference = load_transport_reference(tenant_id, rows)
@@ -1337,7 +1407,10 @@ def list_enrollments(academic_year_id: Optional[str] = None) -> List[Dict]:
             d["student_name"] = st.user.name
             d["admission_number"] = st.admission_number
         result.append(d)
-    return result
+
+    if envelope is None:
+        return result
+    return {"items": result, **envelope}
 
 
 def create_enrollment(payload: Dict) -> Tuple[Optional[Dict], Optional[str]]:

@@ -127,3 +127,77 @@ def test_listing_enrollments_does_not_query_per_child(
         f"transport enrollment queries grew with the number of children "
         f"({few} -> {many}): N+1"
     )
+
+
+# ---------------------------------------------------------------------------
+# Asking for a page
+# ---------------------------------------------------------------------------
+
+def test_a_caller_that_asks_for_nothing_gets_what_it_always_got(
+    ctx, tenant, db_session, academic_year
+):
+    """admin-web and the Expo app both read these as plain arrays.
+
+    Handing them an envelope they cannot read, or a first page dressed up as
+    the whole fleet, are both worse than the query being slow.
+    """
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 3)
+
+    assert isinstance(services.list_enrollments(), list)
+    assert isinstance(services.list_buses(), list)
+    assert isinstance(services.list_routes(), list)
+    assert isinstance(services.list_drivers(), list)
+
+
+def test_asking_for_a_page_describes_the_whole(ctx, tenant, db_session, academic_year):
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 7)
+
+    first = services.list_enrollments(page=1, per_page=3)
+
+    assert len(first["items"]) == 3
+    assert first["total"] == 7
+    assert first["total_pages"] == 3
+    assert first["page"] == 1
+
+    last = services.list_enrollments(page=3, per_page=3)
+    assert len(last["items"]) == 1
+
+
+def test_a_page_of_children_does_not_read_every_child(
+    ctx, tenant, db_session, academic_year
+):
+    """The point of paging this list: it grows with the school, not the fleet."""
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 12)
+
+    assert len(services.list_enrollments(page=1, per_page=4)["items"]) == 4
+    assert len(services.list_enrollments()) == 12
+
+
+def test_a_client_cannot_ask_for_an_unbounded_page(ctx, tenant, db_session, academic_year):
+    """A page size is a promise about the largest response, not a suggestion."""
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 3)
+
+    asked_for_everything = services.list_enrollments(page=1, per_page=100_000)
+
+    assert asked_for_everything["per_page"] == services.MAX_TRANSPORT_PAGE_SIZE
+
+
+def test_nonsense_page_values_do_not_hide_rows(ctx, tenant, db_session, academic_year):
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 3)
+
+    assert len(services.list_buses(page="not-a-number", per_page="nonsense")) == 1

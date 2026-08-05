@@ -287,7 +287,8 @@ M5  Scale Pass                                           MOSTLY DONE
     students 403->3, teachers 30->5 (audit)
     transport enrollments 493->4, buses 18->12, routes 9->3
     duplicate detection: recognition is household-aware
-    remaining: pagination on the transport and catalogue lists
+    transport lists paginate (opt-in; clients read arrays today)
+    remaining: admin-web + Expo adopt the page, then the array goes
 
 M5  Scale Pass (original scope)
     duplicate detection, N+1s, query counts
