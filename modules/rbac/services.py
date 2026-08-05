@@ -78,12 +78,17 @@ def _load_user_permissions_from_db(user_id: str) -> List[str]:
         >>> print(permissions)
         ['attendance.mark', 'attendance.read.class', 'student.read']
     """
+    # Authority comes from two places while the migration runs (ADR-013): the
+    # account, as it always has, and the employment, where it belongs.
+    # Employment-held authority disappears when the employment ends.
+    permission_names = set(_permissions_held_through_employment(user_id))
+
     # Query user roles with eager loading of permissions
     user_roles = UserRole.query.filter_by(user_id=user_id).all()
-    
+
     if not user_roles:
-        return []
-    
+        return sorted(permission_names)
+
     # Get all role IDs for the user
     role_ids = [ur.role_id for ur in user_roles]
     
@@ -93,13 +98,28 @@ def _load_user_permissions_from_db(user_id: str) -> List[str]:
     ).filter(Role.id.in_(role_ids)).all()
     
     # Collect all unique permission names
-    permission_names = set()
     for role in roles:
         for permission in role.permissions:
             permission_names.add(permission.name)
     
     # Return sorted list for consistency
     return sorted(list(permission_names))
+
+
+def _permissions_held_through_employment(user_id: str) -> List[str]:
+    """Permission keys the account's person holds through their employment.
+
+    Isolated so that retiring account-held roles later means deleting the other
+    half of ``_load_user_permissions_from_db``, not untangling it.
+    """
+    from modules.auth.models import User
+
+    from .authority_service import permission_keys_for_person
+
+    account = User.query.get(user_id)
+    if account is None or not account.person_id:
+        return []
+    return permission_keys_for_person(account.person_id)
 
 
 def has_permission(user_id: str, permission_name: str) -> bool:

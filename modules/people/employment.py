@@ -63,6 +63,12 @@ EMPLOYED_STATUSES = frozenset(
     }
 )
 
+# Being employed and being able to act are different questions. Suspension is a
+# disciplinary measure whose whole purpose is to stop someone acting, so it
+# withholds authority without ending their employment. Leave does not: someone
+# on maternity leave is simply absent, not distrusted.
+AUTHORITY_BEARING_STATUSES = frozenset(EMPLOYED_STATUSES - {EMPLOYMENT_STATUS_SUSPENDED})
+
 # The basis on which the person is engaged.
 EMPLOYMENT_TYPE_PERMANENT = "permanent"
 EMPLOYMENT_TYPE_CONTRACT = "contract"
@@ -138,6 +144,15 @@ class Staff(TenantBaseModel):
     @property
     def is_employed(self) -> bool:
         return self.employment_status in EMPLOYED_STATUSES
+
+    @property
+    def may_act(self) -> bool:
+        """Whether this person may act on the organization's behalf.
+
+        Narrower than employment: a suspended employee remains employed and
+        keeps their record, but holds no authority while suspended.
+        """
+        return self.employment_status in AUTHORITY_BEARING_STATUSES
 
     def __repr__(self) -> str:
         return f"<Staff {self.id} person={self.person_id} {self.employment_status}>"
