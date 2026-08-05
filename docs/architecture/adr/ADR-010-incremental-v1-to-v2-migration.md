@@ -64,14 +64,15 @@ Concretely:
    made mandatory. Legacy columns are dropped in a separate, later migration once
    nothing reads them.
 
-2. **One Person per existing record.** The backfill creates exactly one Person
-   for each existing user, and one Family per existing student. It preserves
-   today's reality precisely rather than improving it.
+2. **The backfill merges only on conclusive evidence.** Where the evidence is
+   conclusive it merges automatically, because leaving thousands of known
+   duplicates for a human to clear is its own kind of data loss. Where the
+   evidence is merely suggestive it creates separate People and records a
+   suggestion for an administrator.
 
-3. **Merging people is a business decision, not a migration step.** The platform
-   surfaces suggested duplicates and provides an explicit merge workflow that a
-   school administrator performs and can review. The migration itself never
-   guesses.
+3. **Conclusive means same family role, same phone or email, and same name.**
+   The rule is defined in *Automatic Merging* below. Everything outside it is a
+   suggestion.
 
 4. **Per-module cutover.** A module moves to the v2 model as a unit: its reads
    move to Person, its writes follow, and only then are its legacy columns
@@ -79,28 +80,58 @@ Concretely:
 
 ---
 
-# Rationale
+# Automatic Merging
 
-## Why not merge automatically
+Two parent records describe the same human, and are merged automatically, when
+**all** of the following hold within one organization:
 
-The tempting rule is "same phone number means same person". In Indian schools
-that rule is wrong in both directions.
+- They occupy the **same family role** — father with father, mother with mother,
+  guardian with guardian.
+- Their **phone numbers match**, compared as digits only with any country code
+  or leading zero removed. An email match may substitute for a phone match.
+- Their **names match** after normalisation — lower-cased, punctuation and
+  honorifics removed, internal spacing collapsed.
 
-A father and a mother routinely share one phone number, so matching on phone
-would merge two different humans into one. Conversely a parent who is also a
-teacher often gives the school a different number in each capacity, so matching
-on phone would fail to merge one human recorded twice.
+A missing phone and email is never enough on its own. Names alone are never
+enough.
 
-The asymmetry that settles it: **merging two people is reversible only if the
-merge is recorded; splitting a wrongly merged person is not.** Once a father's
-and mother's records are fused, the information needed to separate them —
-which fact belonged to whom — is gone. A duplicate person, by contrast, is
-visible, harmless and correctable at any later date.
+Anything that does not satisfy every condition becomes two People and one
+suggestion.
 
-So the migration produces duplicates on purpose. A school with many siblings will
-see the same parent listed once per child until an administrator merges them.
-That is a known, stated cost, chosen because the alternative corrupts records
-irreversibly and silently.
+---
+
+## Why the family role guard is the important part
+
+The tempting rule is "same phone number means same person", and in Indian
+schools that rule is wrong in both directions.
+
+A father and a mother routinely share one household phone. Matching on phone
+alone would fuse two different humans into a single record. Conversely a parent
+who also teaches at the school often gives a different number in each capacity,
+so phone matching alone would also miss a genuine duplicate.
+
+Comparing only within the same family role removes the dangerous half of that
+problem by construction: a father can never be merged into a mother, no matter
+how much contact information the household shares. Requiring the name to match
+as well as the phone covers the remaining case of a recycled or mistyped number.
+
+## Why merge at all rather than leave it to administrators
+
+Sibling duplication is systematic, not occasional. In a school where a third of
+students have a sibling enrolled, refusing to merge produces thousands of
+duplicate parents — a backlog nobody will ever clear, which means parent
+communication and fee records stay fragmented indefinitely. Automating the cases
+that are beyond doubt is what makes the remaining suggestions few enough to be
+reviewed at all.
+
+## Why the boundary sits where it does
+
+**Merging is recoverable, unmerging is not.** A merge records what it combined,
+so it can be undone. A wrong merge that is never noticed silently destroys the
+knowledge of which fact belonged to which human. The rule above is therefore
+drawn to include only cases where being wrong is implausible, and to leave
+everything else — including a parent who appears to also be a staff member — to
+a human who can simply ask.
 
 ## Why additive rather than a rewrite
 
@@ -160,19 +191,20 @@ Rejected.
 
 ---
 
-## Option 3 — Additive, per-module, with explicit merging
+## Option 3 — Additive, per-module, with bounded automatic merging
 
 ### Advantages
 
 - Every step is reversible and independently deployable.
 - Production keeps running throughout.
-- People are never silently fused.
+- Systematic sibling duplication is resolved without human effort.
+- People are never fused on ambiguous evidence.
 - The transitional state is visible in the schema, so it cannot be forgotten.
 
 ### Disadvantages
 
 - A period during which both old columns and new tables exist.
-- Duplicate people persist until administrators merge them.
+- Suggested duplicates persist until an administrator reviews them.
 
 Decision:
 
@@ -186,13 +218,17 @@ Accepted.
 
 - Production continues serving schools during the migration.
 - Each migration step is small, reviewable and reversible.
-- No person record is ever corrupted by an automated guess.
+- Siblings resolve to one father and one mother without manual work.
+- No person record is corrupted by an automated guess.
 - The backfill is rehearsable: it can be run repeatedly against a copy.
 
 ## Trade-offs
 
 - The schema carries transitional duplication until cleanup migrations run.
-- Duplicate Person records exist until merged, most visibly for siblings' parents.
+- Parents recorded under different names or numbers for different children stay
+  separate until someone confirms the suggestion.
+- Every merge must record what it combined, or the guarantee that merges are
+  recoverable is not real.
 - Every migrated module needs a cleanup migration, which must actually be
   written rather than left indefinitely.
 
@@ -229,17 +265,20 @@ through the v2 model.
 
 # Duplicate Suggestions
 
-The platform may suggest that two Person records describe the same human.
-Suggestions are advisory and are shown to an administrator for confirmation.
+Everything short of the automatic rule becomes a suggestion shown to an
+administrator, who confirms or dismisses it.
 
-Reasonable signals include:
+Typical suggestions:
 
-- Same phone number and similar name.
+- Same phone, similar but not identical name.
+- Same name in different family roles — possibly one household phone, possibly
+  two different people.
+- A parent who appears to also be a staff member.
 - Same date of birth and similar name.
 - Same government identifier.
 
-A suggestion never results in an automatic merge, and a merge always records
-what was combined so the decision remains auditable.
+Every merge, automatic or confirmed, records what it combined, so the decision
+remains auditable and recoverable.
 
 ---
 

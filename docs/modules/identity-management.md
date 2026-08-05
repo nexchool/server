@@ -222,10 +222,13 @@ are never stored, so they cannot drift from the relationships they describe.
 | Staff | Staff |
 | Staff participating academically | Teacher |
 | Student Relationship | Student |
-| Family Member of a student | Parent |
+| Family Member of a student | Parent — only where the organization issues parent logins |
 
 A Person with no business relationship has no context and cannot use the
 application, even with a valid Account.
+
+Under the default family access model most people hold exactly one context, and
+the application presents it without asking (ADR-011).
 
 ---
 
@@ -259,6 +262,29 @@ Notifications belong to the Person, not to a context (ADR-004). Opening a
 notification switches the session to the context that notification belongs to,
 then navigates. The person never has to switch manually to read their own
 notification.
+
+---
+
+# Family Access
+
+Who in a household receives an Account is an organization setting, not a fixed
+rule (ADR-011).
+
+**Shared with student** — the default. The school issues one credential per
+student and the household uses it. Parents are recorded as People and Family
+Members but hold no Account, which is ordinary rather than exceptional:
+authentication has always been optional.
+
+**Separate parent login** — parents receive their own Account and a Parent
+context.
+
+Because parents are modelled as People in both modes, moving a school from one
+to the other means issuing Accounts to People who already exist. It requires no
+migration.
+
+While access is shared, everything the account can see, the student can see.
+Communication that is genuinely unsuitable for a child must not be delivered to
+a shared account.
 
 ---
 
@@ -373,3 +399,4 @@ Available contexts always derive from current relationships.
 - ../architecture/adr/ADR-003-identity-authentication-separation.md
 - ../architecture/adr/ADR-004-active-context.md
 - ../architecture/adr/ADR-010-incremental-v1-to-v2-migration.md
+- ../architecture/adr/ADR-011-family-access-model.md
