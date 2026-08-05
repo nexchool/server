@@ -627,3 +627,79 @@ def test_a_teaching_student_holds_both_kinds_of_access(db_session, tenant):
         "attendance.read.self",
         "student.read",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Authority stays inside the organization that granted it
+# ---------------------------------------------------------------------------
+
+def _other_tenant(db_session):
+    from core.models import BILLING_CYCLE_YEARLY, TENANT_STATUS_ACTIVE, Tenant
+
+    other = Tenant(
+        id=f"t-{uuid.uuid4().hex[:12]}",
+        name="Other School",
+        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        status=TENANT_STATUS_ACTIVE,
+        billing_cycle=BILLING_CYCLE_YEARLY,
+    )
+    db_session.add(other)
+    db_session.flush()
+    return other
+
+
+def test_a_role_from_another_organization_cannot_be_assigned(db_session, tenant):
+    """How the cross-tenant rows were created: an unscoped lookup by name."""
+    from modules.rbac.services import assign_role_to_user
+
+    user = _account(db_session, tenant)
+    elsewhere = _authority_profile(db_session, _other_tenant(db_session))
+
+    result = assign_role_to_user(user.id, elsewhere.id)
+
+    assert result["success"] is False
+    assert "another organization" in result["error"]
+
+
+def test_assigning_by_name_never_reaches_another_organizations_role(
+    db_session, tenant
+):
+    """Two schools both have a 'Student' profile; a name must not cross over."""
+    from modules.rbac.services import assign_role_to_user_by_email
+
+    other = _other_tenant(db_session)
+    shared_name = f"Student-{uuid.uuid4().hex[:6]}"
+    for owner in (other,):
+        role = _authority_profile(db_session, owner)
+        role.name = shared_name
+    db_session.flush()
+
+    user = _account(db_session, tenant)
+
+    # Only the other organization has a role by this name, so there is nothing
+    # here to assign — rather than silently reaching across.
+    result = assign_role_to_user_by_email(user.email, shared_name)
+
+    assert result["success"] is False
+    assert "not found" in result["error"]
+
+
+def test_the_database_refuses_a_cross_tenant_assignment(db_session, tenant):
+    """The durable guard: no code path can recreate this, however it asks."""
+    from sqlalchemy.exc import IntegrityError
+
+    from modules.rbac.models import UserRole
+
+    user = _account(db_session, tenant)
+    elsewhere = _authority_profile(db_session, _other_tenant(db_session))
+
+    with pytest.raises(IntegrityError):
+        with db_session.begin_nested():
+            db_session.add(
+                UserRole(
+                    id=f"ur-{uuid.uuid4().hex[:8]}",
+                    tenant_id=tenant.id,
+                    user_id=user.id,
+                    role_id=elsewhere.id,
+                )
+            )

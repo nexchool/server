@@ -45,6 +45,8 @@ def grant_authority(
             "That person no longer works here, so they cannot hold authority."
         )
 
+    # A profile belongs to the organization that defined it; holding one from
+    # elsewhere would be authority in a school this person has nothing to do with.
     role = Role.query.get(role_id)
     if role is None or role.tenant_id != employment.tenant_id:
         raise AuthorityRefused("That authority profile does not exist here.")

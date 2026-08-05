@@ -667,7 +667,16 @@ def assign_role_to_user(user_id: str, role_id: str) -> Dict:
         role = Role.query.get(role_id)
         if not role:
             return {'success': False, 'error': 'Role not found'}
-        
+
+        # A role belongs to the organization that defined it. Assigning one from
+        # elsewhere would give this user authority in a school they have nothing
+        # to do with, and the row would look ordinary afterwards.
+        if role.tenant_id != user.tenant_id:
+            return {
+                'success': False,
+                'error': 'That role belongs to another organization',
+            }
+
         # Check if already assigned
         existing = UserRole.query.filter_by(
             user_id=user_id,
@@ -711,8 +720,10 @@ def assign_role_to_user_by_email(email: str, role_name: str, tenant_id: str = No
     """
     Assign a role to a user by email and role name (convenience function).
 
-    When tenant_id is provided (recommended in multi-tenant context), looks up the user
-    and role within that tenant. When omitted, uses unscoped queries (legacy behavior).
+    When tenant_id is provided the user is looked up within it. The role is always
+    looked up within the user's own organization: an unscoped lookup by name would
+    match another school's role of the same name and hand this user authority
+    there, which is how cross-tenant assignments were created in the first place.
     """
     user_query = User.query.filter_by(email=email)
     if tenant_id is not None:
@@ -721,10 +732,7 @@ def assign_role_to_user_by_email(email: str, role_name: str, tenant_id: str = No
     if not user:
         return {'success': False, 'error': f'User with email "{email}" not found'}
 
-    role_query = Role.query.filter_by(name=role_name)
-    if tenant_id is not None:
-        role_query = role_query.filter_by(tenant_id=tenant_id)
-    role = role_query.first()
+    role = Role.query.filter_by(name=role_name, tenant_id=user.tenant_id).first()
     if not role:
         return {'success': False, 'error': f'Role "{role_name}" not found'}
 
