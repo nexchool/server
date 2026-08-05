@@ -282,7 +282,14 @@ M4  Authorization Domain                                          DONE
     Business Authority replaces RBAC (A1)
     account-held roles retired, user_roles dropped
 
-M5  Scale Pass
+M5  Scale Pass                                           MOSTLY DONE
+    every list endpoint measured against the demo tenant
+    students 403->3, teachers 30->5 (audit)
+    transport enrollments 493->4, buses 18->12, routes 9->3
+    duplicate detection: recognition is household-aware
+    remaining: pagination on the transport and catalogue lists
+
+M5  Scale Pass (original scope)
     duplicate detection, N+1s, query counts
 ```
 

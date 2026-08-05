@@ -352,12 +352,30 @@ def test_an_imported_students_details_are_not_blank(ctx, tenant, academic_year):
 # ---------------------------------------------------------------------------
 
 def _household(student):
-    from modules.people.relationships import household_of
+    """Read the household from the database.
+
+    Not through ``household_of``, which walks a relationship collection: one
+    already loaded does not show a row written afterwards, so a test asking it
+    can be shown the household as it was before the thing under test ran.
+    """
+    from core.database import db
+
+    db.session.flush()
+    db.session.expire(student.person)
+
+    child = FamilyMember.query.filter_by(
+        person_id=student.person_id, relationship=FAMILY_ROLE_CHILD
+    ).first()
+    if child is None:
+        return []
 
     return [
         {"name": m.person.full_name, "relationship": m.relationship,
          "phone": m.person.phone_number, "contact": m.is_primary_contact}
-        for m in household_of(student.person)
+        for m in FamilyMember.query.filter(
+            FamilyMember.family_id == child.family_id,
+            FamilyMember.person_id != student.person_id,
+        ).all()
     ]
 
 
@@ -495,3 +513,47 @@ def test_listing_students_does_not_read_a_household_per_row(
     assert many <= few, (
         f"household query count grew with row count ({few} -> {many}): N+1"
     )
+
+
+# ---------------------------------------------------------------------------
+# Recognising the same adult
+# ---------------------------------------------------------------------------
+
+def test_a_new_phone_does_not_split_the_father_in_two(ctx, tenant, academic_year):
+    """Naming the father a child already has is correcting him, not adding one.
+
+    Recognition matches on name and phone together, so a father whose number
+    was retyped used to become a second man in the same household — which is
+    what put two fathers on records in the demo data.
+    """
+    from modules.people.service import record_family_member
+
+    student = _admit(academic_year, father="Rajesh Patel")
+
+    record_family_member(
+        tenant.id,
+        student.person_id,
+        name="Rajesh Patel",
+        relationship="father",
+        phone="9700000000",
+    )
+
+    fathers = [m for m in _household(student) if m["relationship"] == "father"]
+    assert len(fathers) == 1, fathers
+
+
+def test_two_households_may_each_have_a_rajesh_patel(ctx, tenant, academic_year):
+    """They are different men, and must not be merged into one."""
+    from modules.people.relationships import household_of
+
+    one = _admit(academic_year, name="Aarav Patel", father="Rajesh Patel")
+    other = _admit(academic_year, name="Diya Mehta", father="Rajesh Patel")
+
+    def father_of(student):
+        return next(
+            m for m in household_of(student.person) if m.relationship == "father"
+        )
+
+    # Same name, same phone: the recognition rules say one man with two
+    # children, which is the behaviour that must not change.
+    assert father_of(one).person_id == father_of(other).person_id

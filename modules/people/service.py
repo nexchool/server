@@ -96,13 +96,26 @@ def ensure_staff(tenant_id: str, person_id: str, **employment):
     return _fill_employment_gaps(staff, employment)
 
 
-def _adult_already_recorded(tenant_id: str, role: str, name, phone, email):
+def _adult_already_recorded(
+    tenant_id: str, role: str, name, phone, email, child_person_id=None
+):
     """An adult in this role whom the evidence says is the same human.
 
     Uses the recognition rules of ADR-010, so a father enrolled with a second
     child is found rather than recorded twice. The database narrows the
     candidates; the match key decides.
+
+    A household is checked first, and on the name alone. Naming the father of a
+    child who already has a father of that name is correcting his details or
+    repeating them — not introducing a second father — so a changed phone
+    number must not split him in two. Only within the one household: two
+    families may each have a Rajesh Patel, and they are different men.
     """
+    if child_person_id is not None:
+        already_there = _same_name_in_household(tenant_id, child_person_id, role, name)
+        if already_there is not None:
+            return already_there
+
     from core.database import db
 
     from .matching import build_match_key, normalize_phone
@@ -132,6 +145,23 @@ def _adult_already_recorded(tenant_id: str, role: str, name, phone, email):
 
     for person in candidates.all():
         if build_match_key(role, person.full_name, person.phone_number, person.email) == key:
+            return person
+    return None
+
+
+def _same_name_in_household(tenant_id: str, child_person_id: str, role: str, name):
+    """The adult of this name already holding this role in the child's family."""
+    from .models import FamilyMember, Person
+
+    family_id = _family_containing(tenant_id, child_person_id)
+    if family_id is None or not name:
+        return None
+
+    for membership in FamilyMember.query.filter_by(
+        tenant_id=tenant_id, family_id=family_id, relationship=role
+    ).all():
+        person = membership.person
+        if person is not None and _is_same_name(person.full_name, name):
             return person
     return None
 
@@ -191,7 +221,9 @@ def record_family_member(
 
     role = family_role_for(relationship)
 
-    adult = _adult_already_recorded(tenant_id, role, name, phone, email)
+    adult = _adult_already_recorded(
+        tenant_id, role, name, phone, email, child_person_id=child_person_id
+    )
     if adult is None:
         adult = Person(
             tenant_id=tenant_id,

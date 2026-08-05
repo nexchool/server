@@ -174,10 +174,11 @@ role and by the stable part of a phone number, and a match key decides. Two
 adults with the same name in the same role are the same human if the evidence
 says so, and different humans if it does not.
 
-**Known gap.** The match key does not consider whether the two records are
-already in the same household. The same name in the same role with a different
-phone number is currently treated as two people, which a household-aware rule
-would catch.
+A household is checked first, and on the name alone. Naming the father of a
+child who already has a father of that name is correcting his details or
+repeating them — not introducing a second father — so a retyped phone number
+must not split him in two. Only within the one household: two families may each
+have a Rajesh Patel, and they are different men.
 
 ---
 
