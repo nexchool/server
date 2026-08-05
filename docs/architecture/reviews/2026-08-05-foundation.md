@@ -35,6 +35,17 @@ Identity exists).
 > **Finding P1 (medium).** People reads Identity. It is confined to the backfill
 > and the consistency listener, both migration-era code, but it is a boundary
 > violation and should not be copied into new People code.
+>
+> **Fixed 2026-08-05.** The listener moved to `modules/auth/person_link.py`:
+> deciding that an account implies a person is a fact about *accounts*, and
+> deriving a name from an email address is a rule about email addresses. People
+> now offers `record_person(tenant_id, full_name, ...)`, which takes what it is
+> told rather than an object to read it off. `merge.py` asks the person what
+> they hold (`accounts`, `employments`, `student_relationships`) instead of
+> importing three modules — Identity declares its backref onto Person like
+> everyone else. Only the backfill still walks accounts, which is its job, and
+> it takes the rule from Identity rather than keeping a copy. Enforced by
+> `tests/test_people_knows_no_identity.py`, verified to fail on a violation.
 
 **Documentation: incomplete.**
 
@@ -168,7 +179,7 @@ Every entry answers: why it exists, when it goes, and what removes it.
 - **Removed by:** Milestone **M1** — no reader outside creation now resolves a
   student's person through the account.
 
-### 3. Consistency listener in `people/service.py`
+### 3. Consistency listener — **relocated, not retired**
 
 - **Why:** accounts and student relationships are created from many places
   (services, two bulk importers, two seed scripts, test fixtures), and the NOT
@@ -179,6 +190,16 @@ Every entry answers: why it exists, when it goes, and what removes it.
 - **Note:** employment was removed from this listener on 2026-08-05 — creating
   employment is a business event and now lives in `employ()`. What remains is
   pure derivation with no business decision in it.
+- **Revised 2026-08-05.** The plan said retire it. On inspection the listener's
+  own argument is the right one: seventy-five creation sites each repeating the
+  same two lines is not more readable than one rule, it is more places to
+  forget — and the same argument already justifies the tenant scoping. What was
+  actually wrong is that a rule about *accounts* lived in People, which is why
+  People imported Identity. It now lives in `modules/auth/person_link.py`,
+  registered in `app.py` rather than left to import order. Making the eleven
+  production creation sites call an account service explicitly is still worth
+  doing — the listener then guards test fixtures and anything missed — but it
+  is no longer load-bearing.
 
 ### 4. v1 tables read by Identity to derive contexts
 
@@ -244,9 +265,11 @@ M2  Column Drop                                          SERVER DONE
                 address, date_of_joining, status
     parent/guardian columns remain — they move with the client
 
-M3  Creation Through Services
-    account and student creation funnel through People services
-    consistency listener retired
+M3  Creation Through Services                            PARTLY DONE
+    consistency listener moved to Identity (P1 closed)
+    People offers record_person(); knows nothing of accounts
+    boundary enforced by an import-level test
+    remaining: 11 production sites call an account service explicitly
 
 M4  Authorization Domain                                          DONE
     Business Authority replaces RBAC (A1)

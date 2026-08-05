@@ -454,83 +454,29 @@ def db_session_add(instance) -> None:
     db.session.flush()
 
 
-def name_for_account(user) -> str:
-    """A person must have a name; derive one when the account carries none."""
-    if getattr(user, "name", None) and user.name.strip():
-        return user.name.strip()
-    email = getattr(user, "email", None)
-    if email and "@" in email:
-        return email.split("@", 1)[0]
-    return "Unnamed"
+def record_person(
+    tenant_id: str,
+    full_name: str,
+    *,
+    email: Optional[str] = None,
+    photo_url: Optional[str] = None,
+) -> Person:
+    """Record a human this organization now knows about.
 
+    Takes what it is told rather than an object to read it off, so People does
+    not need to know what an account is. Whoever holds the identity — Identity
+    for an account, admissions for a student — decides what to pass.
 
-def build_person_for_account(user) -> Person:
-    """The Person an account implies, from what the account itself knows.
-
-    Only identity the account carries is copied. Anything the school knows
-    elsewhere — a student's date of birth, a teacher's address — is filled in by
-    whoever owns that information.
+    Only what the caller states is recorded. Anything the school learns
+    elsewhere is filled in by whoever owns it (see fill_blank_identity).
     """
     return Person(
         id=str(uuid.uuid4()),
-        tenant_id=user.tenant_id,
-        full_name=name_for_account(user),
-        email=getattr(user, "email", None),
-        photo_url=getattr(user, "profile_picture_url", None),
+        tenant_id=tenant_id,
+        full_name=full_name,
+        email=email,
+        photo_url=photo_url,
     )
-
-
-def _pending_account(session, user_id: str):
-    """The account with this id, whether already saved or still being saved."""
-    from modules.auth.models import User
-
-    for pending in session.new:
-        if isinstance(pending, User) and pending.id == user_id:
-            return pending
-    return session.get(User, user_id) if user_id else None
-
-
-def _person_behind(session, instance):
-    """The human whose account this relationship was created for."""
-    account = _pending_account(session, getattr(instance, "user_id", None))
-    return getattr(account, "person", None) if account is not None else None
-
-
-@event.listens_for(Session, "before_flush")
-def _relationships_belong_to_people(session, flush_context, instances) -> None:
-    """Keep every arriving record attached to the human it describes.
-
-    This enforces a structural rule and deliberately nothing more: an account
-    belongs to a person, and a student relationship belongs to the same person
-    as the account it was created for. Both are derivations with no business
-    decision in them, and assigning the relationship rather than the id is what
-    orders each insert ahead of the row referencing it.
-
-    Employment is deliberately *not* handled here. Employing someone is a
-    business event, so it lives in ``employ()`` where a reader can find it — an
-    ORM hook is the wrong place to learn that the organization hired somebody.
-
-    Autoflush is suspended because resolving these may read the database, and a
-    flush inside a flush would recurse.
-    """
-    # Imported here: this module loads while the models are still being defined.
-    from modules.auth.models import User
-    from modules.students.models import Student
-
-    with session.no_autoflush:
-        # Accounts first: the student relationships below borrow this person.
-        for instance in session.new:
-            if isinstance(instance, User) and not instance.person_id:
-                if not instance.tenant_id:
-                    # Nothing to attach a person to; the account is invalid and
-                    # will fail its own constraint.
-                    continue
-                instance.person = build_person_for_account(instance)
-
-        for instance in session.new:
-            if isinstance(instance, Student) and not instance.person_id:
-                instance.person = _person_behind(session, instance)
-
 
 
 def record_household(tenant_id: str, child_person_id: str, members) -> None:

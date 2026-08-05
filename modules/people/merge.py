@@ -71,19 +71,14 @@ def _snapshot(person: Person) -> Dict[str, Any]:
 
 def _refuse_if_both_hold(kept: Person, absorbed: Person) -> None:
     """Stop when both records carry something only one human may have."""
-    from modules.auth.models import User
-    from modules.people.employment import Staff
-    from modules.students.models import Student
-
-    for model, column, what in (
-        (User, User.person_id, "an account"),
-        (Staff, Staff.person_id, "an employment record"),
-        (Student, Student.person_id, "a student record"),
+    # Read through the relationships each module declares onto Person, so this
+    # does not have to know which modules exist.
+    for holding, what in (
+        ("accounts", "an account"),
+        ("employments", "an employment record"),
+        ("student_relationships", "a student record"),
     ):
-        if (
-            model.query.filter(column == kept.id).first() is not None
-            and model.query.filter(column == absorbed.id).first() is not None
-        ):
+        if getattr(kept, holding) and getattr(absorbed, holding):
             raise MergeRefused(
                 f"Both people have {what}. Merging would hide one of them; "
                 "decide which should remain before combining these records."
@@ -103,10 +98,6 @@ def merge_people(
     remains, blanks on the survivor are filled from the absorbed record, and
     what was combined is written down before the absorbed record is retired.
     """
-    from modules.auth.models import User
-    from modules.people.employment import Staff
-    from modules.students.models import Student
-
     if kept_person_id == absorbed_person_id:
         raise MergeRefused("A person cannot be merged into themselves.")
 
@@ -138,12 +129,9 @@ def merge_people(
             if value is not None:
                 setattr(kept, field, value)
 
-    for model, column in (
-        (User, User.person_id),
-        (Staff, Staff.person_id),
-        (Student, Student.person_id),
-    ):
-        for row in model.query.filter(column == absorbed.id).all():
+    # Everything the absorbed person held now belongs to the one kept.
+    for holding in ("accounts", "employments", "student_relationships"):
+        for row in list(getattr(absorbed, holding)):
             row.person_id = kept.id
 
     _move_family_memberships(kept, absorbed)

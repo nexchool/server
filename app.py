@@ -68,6 +68,11 @@ def create_app(config_name=None):
     # with SQLAlchemy regardless of which transports are mounted.
     import modules.people.models  # noqa: F401
 
+    # Registers the rule that an account belongs to a person. Imported here
+    # rather than left to whichever module happens to load first, because a
+    # structural guarantee that depends on import order is not a guarantee.
+    import modules.auth.person_link  # noqa: F401
+
     # Mount the GraphQL endpoint (/api/graphql)
     from graphql_api import register_graphql
     register_graphql(app)

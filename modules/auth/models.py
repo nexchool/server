@@ -38,7 +38,13 @@ class User(TenantBaseModel):
     )
     # Declared as a relationship, not just a column: it is what tells the unit
     # of work to insert the person before the account that references them.
-    person = db.relationship("Person", foreign_keys=[person_id])
+    # Declared from this side so People can see that a person signs in here
+    # without importing Identity (ADR-001, and the dependency order).
+    person = db.relationship(
+        "Person",
+        foreign_keys=[person_id],
+        backref=db.backref("accounts", lazy=True),
+    )
 
     email = db.Column(db.String(120), nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)

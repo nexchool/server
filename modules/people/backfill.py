@@ -42,7 +42,6 @@ from .models import (
     Person,
 )
 from .service import (
-    build_person_for_account,
     employment_status_for_legacy_flag,
     family_role_for,
     fill_blank_identity,
@@ -125,7 +124,7 @@ def _link_accounts_to_people(tenant_id: str, report: BackfillReport) -> Dict[str
             if person is not None and fill_blank_identity(person, known):
                 report.people_enriched += 1
         else:
-            person = build_person_for_account(user)
+            person = _person_for_account(user)
             for field, value in known.items():
                 setattr(person, field, value)
             db.session.add(person)
@@ -512,3 +511,15 @@ def _add_membership(
     )
     db.session.flush()
     report.memberships_created += 1
+
+
+def _person_for_account(user):
+    """The Person an account implies.
+
+    Imported from Identity at call time: this is migration-era code that walks
+    accounts, and the rule for turning one into a person is Identity's (see
+    modules/auth/person_link.py). People itself does not know accounts exist.
+    """
+    from modules.auth.person_link import person_for_account
+
+    return person_for_account(user)
