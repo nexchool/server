@@ -212,3 +212,221 @@ def test_an_account_with_no_employment_still_resolves_its_own_roles(
     db_session.flush()
 
     assert "student.read" in _load_user_permissions_from_db(user.id)
+
+
+# ---------------------------------------------------------------------------
+# Temporary delegation — the principal goes on leave, the deputy acts
+# ---------------------------------------------------------------------------
+
+def _two_employments(db_session, tenant):
+    principal = _account(db_session, tenant, name="Meera Shah")
+    deputy = _account(db_session, tenant, name="Rohit Mehta")
+    return (
+        employ(tenant.id, principal.person_id),
+        employ(tenant.id, deputy.person_id),
+        principal,
+        deputy,
+    )
+
+
+def test_a_deputy_acts_under_delegated_authority(db_session, tenant):
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, deputy = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today - timedelta(days=1),
+        effective_to=today + timedelta(days=7),
+        reason="Principal on leave",
+    )
+
+    assert permission_keys_for_person(deputy.person_id) == ["fee.refund"]
+
+
+def test_a_delegation_does_not_apply_before_it_begins(db_session, tenant):
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, deputy = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today + timedelta(days=3),
+        effective_to=today + timedelta(days=10),
+    )
+
+    assert permission_keys_for_person(deputy.person_id) == []
+
+
+def test_a_delegation_expires_without_anything_running(db_session, tenant):
+    """No job ends it: it simply stops being read once the window has passed."""
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, deputy = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today - timedelta(days=10),
+        effective_to=today - timedelta(days=1),
+    )
+
+    assert permission_keys_for_person(deputy.person_id) == []
+
+
+def test_a_delegation_can_be_ended_early(db_session, tenant):
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority, end_delegation
+
+    principal_staff, deputy_staff, _, deputy = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegation = delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today,
+        effective_to=today + timedelta(days=30),
+    )
+    assert permission_keys_for_person(deputy.person_id) == ["fee.refund"]
+
+    assert end_delegation(delegation.id) is True
+    assert permission_keys_for_person(deputy.person_id) == []
+
+
+def test_authority_that_is_not_held_cannot_be_lent(db_session, tenant):
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, _ = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant)
+
+    today = date.today()
+    with pytest.raises(AuthorityRefused, match="not held"):
+        delegate_authority(
+            role.id,
+            principal_staff.id,
+            deputy_staff.id,
+            effective_from=today,
+            effective_to=today + timedelta(days=5),
+        )
+
+
+def test_a_delegation_lapses_if_the_person_who_lent_it_leaves(db_session, tenant):
+    """Their authority ended, so there is nothing left to lend."""
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, deputy = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today,
+        effective_to=today + timedelta(days=30),
+    )
+    assert permission_keys_for_person(deputy.person_id) == ["fee.refund"]
+
+    principal_staff.employment_status = EMPLOYMENT_STATUS_RESIGNED
+    db_session.flush()
+
+    assert permission_keys_for_person(deputy.person_id) == []
+
+
+def test_a_delegation_survives_the_absence_that_caused_it(db_session, tenant):
+    """Leave is usually the reason for delegating, so it must not cancel it."""
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, deputy = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today,
+        effective_to=today + timedelta(days=30),
+    )
+
+    principal_staff.employment_status = EMPLOYMENT_STATUS_ON_LEAVE
+    db_session.flush()
+
+    assert permission_keys_for_person(deputy.person_id) == ["fee.refund"]
+
+
+def test_authority_cannot_be_delegated_to_someone_who_cannot_act(db_session, tenant):
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, _, _ = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant)
+    grant_authority(principal_staff.id, role.id)
+
+    deputy_staff.employment_status = EMPLOYMENT_STATUS_SUSPENDED
+    db_session.flush()
+
+    today = date.today()
+    with pytest.raises(AuthorityRefused, match="cannot act"):
+        delegate_authority(
+            role.id,
+            principal_staff.id,
+            deputy_staff.id,
+            effective_from=today,
+            effective_to=today + timedelta(days=5),
+        )
+
+
+def test_the_person_who_lent_authority_still_holds_it(db_session, tenant):
+    """Delegating is lending, not surrendering."""
+    from datetime import date, timedelta
+
+    from modules.rbac.authority_service import delegate_authority
+
+    principal_staff, deputy_staff, principal, _ = _two_employments(db_session, tenant)
+    role = _authority_profile(db_session, tenant, permissions=("fee.refund",))
+    grant_authority(principal_staff.id, role.id)
+
+    today = date.today()
+    delegate_authority(
+        role.id,
+        principal_staff.id,
+        deputy_staff.id,
+        effective_from=today,
+        effective_to=today + timedelta(days=30),
+    )
+
+    assert permission_keys_for_person(principal.person_id) == ["fee.refund"]

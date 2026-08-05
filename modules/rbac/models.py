@@ -202,3 +202,69 @@ class StaffAuthority(TenantBaseModel):
 
     def __repr__(self) -> str:
         return f"<StaffAuthority staff={self.staff_id} role={self.role_id}>"
+
+
+class AuthorityDelegation(TenantBaseModel):
+    """Authority lent from one employment to another for a period (ADR-006).
+
+    Schools do this constantly: a principal goes on leave and the vice
+    principal acts in their place until they return. It is deliberately
+    temporary — a delegation without an end date is not a delegation, it is a
+    grant, and should be made as one.
+
+    Expiry needs no job to run. Nothing reads a delegation outside its dates,
+    so it stops applying the day it ends.
+    """
+
+    __tablename__ = "authority_delegations"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    role_id = db.Column(
+        db.String(36),
+        db.ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = db.relationship("Role", foreign_keys=[role_id])
+
+    # Whose authority is being lent.
+    from_staff_id = db.Column(
+        db.String(36),
+        db.ForeignKey("staff.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Who is acting in their place.
+    to_staff_id = db.Column(
+        db.String(36),
+        db.ForeignKey("staff.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    effective_from = db.Column(db.Date, nullable=False)
+    effective_to = db.Column(db.Date, nullable=False)
+    reason = db.Column(db.Text, nullable=True)
+
+    # Set when the school ends a delegation before its date.
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "effective_to >= effective_from", name="ck_authority_delegations_dates"
+        ),
+        db.CheckConstraint(
+            "from_staff_id <> to_staff_id", name="ck_authority_delegations_distinct"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AuthorityDelegation {self.from_staff_id} -> {self.to_staff_id}>"

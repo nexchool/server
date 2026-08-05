@@ -82,15 +82,27 @@ The same follows for the other cases the domain describes:
 
 Stated so it cannot be mistaken for finished.
 
-1. **Temporary Delegation** — no representation yet. It belongs against the
-   employment, with effective and expiry dates, and it expires without
-   intervention.
-2. **Capabilities as data.** The catalog is a Python dictionary, so a school
-   cannot create the Authority Profiles the domain promises ("Academic
-   Coordinator", "Examination Coordinator"). Until it is data, School Authority
-   Profiles do not exist.
-3. **Retiring account-held roles.** `user_roles` remains during transition;
+1. ~~**Temporary Delegation**~~ — **added 2026-08-05.** `authority_delegations`
+   lends an Authority Profile from one employment to another between two dates.
+   Expiry needs no scheduled job: nothing reads a delegation outside its window,
+   so it stops applying the day it ends.
+
+2. **Retiring account-held roles.** `user_roles` remains during transition;
    permission resolution reads both. Migration debt, with an exit below.
+
+**Correction (2026-08-05).** An earlier draft of this record claimed that School
+Authority Profiles "do not exist" until the sub-admin catalog becomes data. That
+was wrong. `roles` and `role_permissions` are tenant-scoped, and
+`POST /api/rbac/roles` with permission assignment already lets a school define
+its own profiles — an Academic Coordinator can be created today.
+
+The catalog is not what blocks that. It is a deliberate *safety* boundary
+describing the curated subset a School Admin may hand to a sub-admin; it
+excludes `subadmin.manage` on purpose and grants explicit granular permissions
+for delete-sensitive modules rather than `manage`. Turning it into data would
+add seeding and drift for a capability nobody has asked for, while weakening a
+restraint that exists on purpose. It stays code until a school actually needs to
+author capability groupings.
 
 ---
 
