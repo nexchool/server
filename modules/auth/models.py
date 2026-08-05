@@ -33,9 +33,12 @@ class User(TenantBaseModel):
     person_id = db.Column(
         db.String(36),
         db.ForeignKey("persons.id", ondelete="RESTRICT"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
+    # Declared as a relationship, not just a column: it is what tells the unit
+    # of work to insert the person before the account that references them.
+    person = db.relationship("Person", foreign_keys=[person_id])
 
     email = db.Column(db.String(120), nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)

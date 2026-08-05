@@ -119,14 +119,20 @@ def test_a_signed_in_person_sees_their_own_identity(client, db_session, tenant):
     assert me["id"] == user.person_id
 
 
-def test_identity_is_refused_before_the_backfill_has_run(client, db_session, tenant):
-    _, token = _signed_in_user(db_session, tenant)
+def test_a_new_account_knows_its_person_without_any_backfill(client, db_session, tenant):
+    """An account cannot exist without the human it belongs to.
+
+    Nothing here runs the backfill: the person is created with the account.
+    """
+    user, token = _signed_in_user(db_session, tenant, name="Newly Created")
 
     response = client.post(
         GRAPHQL_PATH, json={"query": ME_QUERY}, headers=_headers(tenant, token)
     )
 
-    assert _errors(response) == ["NOT_FOUND"]
+    me = response.get_json()["data"]["me"]
+    assert me["fullName"] == "Newly Created"
+    assert me["id"] == user.person_id
 
 
 # ---------------------------------------------------------------------------

@@ -106,6 +106,47 @@ class Person(TenantBaseModel):
         return f"<Person {self.id} {self.full_name}>"
 
 
+class PersonMerge(TenantBaseModel):
+    """A record that two Person records were found to be one human.
+
+    ADR-010 promises merges are recoverable. That promise is only real if what
+    was combined is written down, so the absorbed person is kept here in full
+    rather than being deleted.
+    """
+
+    __tablename__ = "person_merges"
+
+    id = db.Column(db.String(36), primary_key=True, default=_new_id)
+
+    kept_person_id = db.Column(
+        db.String(36),
+        db.ForeignKey("persons.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    absorbed_person_id = db.Column(
+        db.String(36),
+        db.ForeignKey("persons.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    # Everything the absorbed person held at the moment of the merge.
+    absorbed_person_details = db.Column(db.JSON, nullable=False)
+
+    # Why they were judged the same human — an automatic rule or a person's name.
+    reason = db.Column(db.Text, nullable=True)
+    merged_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_now)
+
+    def __repr__(self) -> str:
+        return f"<PersonMerge {self.absorbed_person_id} into {self.kept_person_id}>"
+
+
 class Family(TenantBaseModel):
     """The household a school deals with for one or more students."""
 

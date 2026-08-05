@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import strawberry
 
-from graphql_api.errors import NotFoundError, TenantRequiredError
+from graphql_api.errors import TenantRequiredError
 from graphql_api.permissions import IsAuthenticated
 
 from .graphql.types import ActiveContext, SignedInPerson
@@ -32,8 +32,6 @@ class IdentityQuery:
 
         user = context.current_user
         person = person_for(user)
-        if person is None:
-            raise NotFoundError("No person is linked to this account yet.")
 
         return SignedInPerson(
             id=strawberry.ID(person.id),

@@ -19,13 +19,8 @@ class ActiveContext(enum.Enum):
 
 
 def person_for(user) -> Optional[object]:
-    """The human behind an account, or None while the backfill is pending."""
-    if not user.person_id:
-        return None
-
-    from modules.people.models import Person
-
-    return Person.query.get(user.person_id)
+    """The human behind an account."""
+    return user.person
 
 
 def available_contexts(user) -> List[ActiveContext]:

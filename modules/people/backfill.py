@@ -41,6 +41,7 @@ from .models import (
     FamilyMember,
     Person,
 )
+from .service import build_person_for_account
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class BackfillReport:
 
     tenant_id: str
     people_created: int = 0
+    people_enriched: int = 0
     accounts_linked: int = 0
     parents_created: int = 0
     parents_merged: int = 0
@@ -64,6 +66,7 @@ class BackfillReport:
     def summary(self) -> str:
         return (
             f"tenant={self.tenant_id} people={self.people_created} "
+            f"enriched={self.people_enriched} "
             f"accounts_linked={self.accounts_linked} parents={self.parents_created} "
             f"merged={self.parents_merged} families={self.families_created} "
             f"memberships={self.memberships_created} students={self.students_linked} "
@@ -72,17 +75,14 @@ class BackfillReport:
         )
 
 
-def _fallback_name(user) -> str:
-    """A Person must have a name; derive one when the account has none."""
-    if user.name and user.name.strip():
-        return user.name.strip()
-    if user.email and "@" in user.email:
-        return user.email.split("@", 1)[0]
-    return "Unnamed"
-
-
 def _link_accounts_to_people(tenant_id: str, report: BackfillReport) -> Dict[str, str]:
-    """Give every account a Person. Returns user_id -> person_id for the tenant."""
+    """Give every account a Person, carrying across what v1 knew about them.
+
+    Accounts created since the People model arrived already have a Person, built
+    from what the account itself knew. Those are enriched here rather than
+    skipped: the student and teacher rows hold identity — date of birth, phone,
+    address — that the account never saw.
+    """
     from modules.auth.models import User
     from modules.students.models import Student
     from modules.teachers.models import Teacher
@@ -100,37 +100,48 @@ def _link_accounts_to_people(tenant_id: str, report: BackfillReport) -> Dict[str
     person_by_user: Dict[str, str] = {}
 
     for user in users:
-        if user.person_id:
-            person_by_user[user.id] = user.person_id
-            continue
-
         student = students_by_user.get(user.id)
         teacher = teachers_by_user.get(user.id)
 
-        person = Person(
-            tenant_id=tenant_id,
-            full_name=_fallback_name(user),
-            email=user.email,
-            photo_url=user.profile_picture_url,
-            date_of_birth=getattr(student, "date_of_birth", None),
-            gender=getattr(student, "gender", None),
-            phone_number=(
+        known = {
+            "date_of_birth": getattr(student, "date_of_birth", None),
+            "gender": getattr(student, "gender", None),
+            "phone_number": (
                 getattr(student, "phone", None) or getattr(teacher, "phone", None)
             ),
-            address=(
+            "address": (
                 getattr(student, "address", None) or getattr(teacher, "address", None)
             ),
-            aadhaar_number=getattr(student, "aadhar_number", None),
-        )
-        db.session.add(person)
-        db.session.flush()
+            "aadhaar_number": getattr(student, "aadhar_number", None),
+        }
 
-        user.person_id = person.id
-        person_by_user[user.id] = person.id
-        report.people_created += 1
-        report.accounts_linked += 1
+        if user.person_id:
+            person = Person.query.get(user.person_id)
+            if person is not None and _fill_blanks(person, known):
+                report.people_enriched += 1
+        else:
+            person = build_person_for_account(user)
+            for field, value in known.items():
+                setattr(person, field, value)
+            db.session.add(person)
+            db.session.flush()
+            user.person_id = person.id
+            report.people_created += 1
+            report.accounts_linked += 1
+
+        person_by_user[user.id] = user.person_id
 
     return person_by_user
+
+
+def _fill_blanks(person: Person, known: Dict[str, Any]) -> bool:
+    """Fill only the fields the Person does not already have. Never overwrites."""
+    changed = False
+    for field, value in known.items():
+        if value is not None and getattr(person, field, None) is None:
+            setattr(person, field, value)
+            changed = True
+    return changed
 
 
 def _link_students_to_people(
