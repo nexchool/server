@@ -829,6 +829,10 @@ def import_students_from_rows(
                     )
                     db.session.add(student)
                     db.session.flush()
+                    # An imported student is a person like any other: the sheet
+                    # says who they are and who is responsible for them, and
+                    # that is where those facts are read from now.
+                    _record_the_person_behind_the_row(student, coerced)
                     enr = assign_student_to_class(
                         student.id,
                         coerced["class_id"],
@@ -962,3 +966,49 @@ def run_import(
         academic_year_id=academic_year_id,
         send_email=send_email,
     )
+
+
+def _record_the_person_behind_the_row(student, row: dict) -> None:
+    """Put an imported row's identity and family onto the People model.
+
+    A spreadsheet import creates the same records an admission form does, so it
+    has to reach the same places. Without this the row lands in the student
+    table and the person behind it stays blank — which is what the API reads.
+    """
+    from modules.people.service import fill_blank_identity, record_family_member
+
+    person = student.person
+    if person is None:
+        return
+
+    fill_blank_identity(
+        person,
+        {
+            "date_of_birth": row.get("date_of_birth"),
+            "gender": row.get("gender"),
+            "phone_number": row.get("phone"),
+            "address": row.get("address"),
+            "aadhaar_number": row.get("aadhar_number"),
+        },
+    )
+
+    for name_key, relationship, phone_key, email_key, occupation_key in (
+        ("father_name", "father", "father_phone", "father_email", "father_occupation"),
+        ("mother_name", "mother", "mother_phone", "mother_email", "mother_occupation"),
+        (
+            "guardian_name",
+            row.get("guardian_relationship"),
+            "guardian_phone",
+            "guardian_email",
+            "guardian_occupation",
+        ),
+    ):
+        record_family_member(
+            student.tenant_id,
+            student.person_id,
+            name=row.get(name_key),
+            relationship=relationship,
+            phone=row.get(phone_key),
+            email=row.get(email_key),
+            occupation=row.get(occupation_key),
+        )

@@ -972,6 +972,11 @@ def update_profile():
     # Update allowed fields
     if 'name' in data:
         user.name = data['name']
+        # A person's name belongs to the person, not to one of their logins
+        # (ADR-001) — it is what the student and teacher records show.
+        from modules.people.service import revise_identity
+
+        revise_identity(user.person, {"full_name": data['name']})
     
     if 'profile_picture_url' in data:
         user.profile_picture_url = normalize_stored_file_value_for_db(data['profile_picture_url'])

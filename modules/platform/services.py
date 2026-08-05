@@ -1056,6 +1056,9 @@ def update_tenant_admin(
         return {"success": False, "error": "User is not an admin for this tenant"}
     if name is not None:
         user.name = name
+        from modules.people.service import revise_identity
+
+        revise_identity(user.person, {"full_name": name})
     if email is not None:
         if email.strip() == "":
             return {"success": False, "error": "Email cannot be empty"}

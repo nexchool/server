@@ -382,6 +382,18 @@ def import_teachers_from_rows(
                         department_id=teacher_fields.get("department_id"),
                         joined_on=teacher_fields.get("date_of_joining"),
                     )
+                    # The sheet also says how to reach them, and that is read
+                    # from the person now rather than the teacher row.
+                    from modules.people.service import fill_blank_identity
+
+                    fill_blank_identity(
+                        staff.person,
+                        {
+                            "phone_number": teacher_fields.get("phone"),
+                            "address": teacher_fields.get("address"),
+                        },
+                    )
+
                     # Authority belongs to the employment, not the login.
                     from modules.rbac.authority_service import grant_authority
 

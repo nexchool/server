@@ -281,3 +281,67 @@ def test_a_teacher_who_has_left_is_not_offered_as_a_class_teacher(ctx, tenant):
     bulk_update_teacher_status([teacher.id], "inactive")
 
     assert teacher.id not in {t.id for t in _currently_teaching().all()}
+
+
+# ---------------------------------------------------------------------------
+# Every path that creates or renames someone reaches the person
+# ---------------------------------------------------------------------------
+
+def test_renaming_yourself_renames_the_person_not_just_the_login(
+    ctx, tenant, db_session
+):
+    """A name belongs to the human, not to one of their logins (ADR-001).
+
+    Otherwise the teachers list keeps showing the old name — it reads the
+    person — while the account shows the new one.
+    """
+    from modules.auth.models import User
+
+    user = User(
+        tenant_id=tenant.id,
+        email=f"{_unique('rename')}@test.school",
+        password_hash="x" * 60,
+        name="Rohit Mehta",
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    from modules.people.service import revise_identity
+
+    user.name = "Rohit Mehta-Shah"
+    revise_identity(user.person, {"full_name": "Rohit Mehta-Shah"})
+
+    assert user.person.full_name == "Rohit Mehta-Shah"
+
+
+def test_an_imported_students_details_are_not_blank(ctx, tenant, academic_year):
+    """The importer creates what admission creates, so it must fill the same
+    places — the payload reads the person, and a row that skipped it shows
+    empty fields for data the school supplied."""
+    from modules.students.bulk_student_import_service import (
+        _record_the_person_behind_the_row,
+    )
+
+    student = _admit(academic_year)
+    student.person.date_of_birth = None
+    student.person.gender = None
+    student.person.phone_number = None
+
+    _record_the_person_behind_the_row(
+        student,
+        {
+            "date_of_birth": __import__("datetime").date(2014, 5, 2),
+            "gender": "male",
+            "phone": "9800000000",
+            "aadhar_number": "111122223333",
+            "mother_name": "Sunita Patel",
+            "mother_phone": "9600000000",
+        },
+    )
+
+    payload = student.to_dict(include_profile_picture=False)
+    assert payload["date_of_birth"] == "2014-05-02"
+    assert payload["gender"] == "male"
+    assert payload["phone"] == "9800000000"
+    assert payload["aadhar_number"] == "111122223333"
+    assert _member(student, FAMILY_ROLE_MOTHER) is not None
