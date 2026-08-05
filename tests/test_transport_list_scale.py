@@ -253,3 +253,58 @@ def _student_of(student_id):
     from modules.students.models import Student
 
     return Student.query.get(student_id)
+
+
+# ---------------------------------------------------------------------------
+# The dashboard counts on the server
+# ---------------------------------------------------------------------------
+
+def test_the_dashboard_counts_children_waiting_for_a_bus(
+    ctx, tenant, db_session, academic_year
+):
+    """The browser used to fetch every student and every enrollment for this.
+
+    Comparing two whole tables in the client is the same scale problem as an
+    N+1, just paid in bandwidth instead of queries.
+    """
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+    _enroll(db_session, tenant, bus, route, academic_year, 2)
+
+    waiting = _child_who_rides(db_session, tenant)
+    waiting.is_transport_opted = True
+    db_session.flush()
+
+    stats = services.dashboard_stats()
+
+    assert stats["students_opted_without_enrollment"] == 1
+    assert stats["students_with_active_enrollment"] == 2
+
+
+def test_the_dashboard_does_not_query_per_child(ctx, tenant, db_session, academic_year):
+    from modules.transport import services
+
+    bus, route = _bus_and_route(db_session, tenant)
+
+    def queries_for(additional):
+        _enroll(db_session, tenant, bus, route, academic_year, additional)
+
+        seen = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            seen.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", record)
+        try:
+            services.dashboard_stats()
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record)
+        return len(seen)
+
+    few = queries_for(2)
+    many = queries_for(10)
+
+    assert many <= few, (
+        f"dashboard queries grew with the number of children ({few} -> {many}): N+1"
+    )

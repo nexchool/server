@@ -1738,23 +1738,55 @@ def get_bus_details(
 
 
 def dashboard_stats(academic_year_id: Optional[str] = None) -> Dict[str, Any]:
+    """The numbers the transport dashboard shows, counted on the server.
+
+    Every figure here is derived from the same two sets — the fleet and the
+    children riding it — so both are read once and everything is counted from
+    them in memory. Asking per bus and per route meant a school with three
+    thousand riders answered one screen with thousands of queries, and sent the
+    browser every enrollment so it could count them a second time.
+    """
     tenant_id = get_tenant_id()
     if not tenant_id:
         return {}
     on = _today()
     ay = academic_year_id or resolve_default_academic_year_id()
+
     buses = TransportBus.query.filter_by(tenant_id=tenant_id).all()
     active_buses = [b for b in buses if b.status == "active"]
-    total_buses = len(buses)
-    active_bus_count = len(active_buses)
-    students_using = 0
+
+    routes = {
+        r.id: r for r in TransportRoute.query.filter_by(tenant_id=tenant_id).all()
+    }
+
+    riding = TransportEnrollment.query.filter_by(tenant_id=tenant_id, status="active")
+    if ay:
+        riding = riding.filter(TransportEnrollment.academic_year_id == ay)
+    riders = [en for en in riding.all() if enrollment_active_on(en, on)]
+
+    seats_on_bus: Dict[str, int] = {}
+    route_distribution: Dict[str, int] = {}
+    students_on_inactive_routes = 0
+    children: set = set()
+
+    for en in riders:
+        if en.bus_id:
+            seats_on_bus[en.bus_id] = seats_on_bus.get(en.bus_id, 0) + 1
+        if en.route_id:
+            route_distribution[en.route_id] = route_distribution.get(en.route_id, 0) + 1
+            route = routes.get(en.route_id)
+            if route is not None and route.status != "active":
+                students_on_inactive_routes += 1
+        if en.student_id:
+            children.add(en.student_id)
+
     per_bus = []
     buses_high_or_full = 0
+    students_using = 0
     for b in buses:
-        used = count_enrollment_seats_on_bus(b.id, on, academic_year_id=ay)
+        used = seats_on_bus.get(b.id, 0)
         students_using += used
         cap = b.capacity or 1
-        pct = round(100.0 * used / cap, 2)
         health = occupancy_health_label(used, cap)
         if health in ("high", "full"):
             buses_high_or_full += 1
@@ -1765,48 +1797,43 @@ def dashboard_stats(academic_year_id: Optional[str] = None) -> Dict[str, Any]:
                 "status": b.status,
                 "capacity": b.capacity,
                 "occupancy": used,
-                "occupancy_percent": pct,
+                "occupancy_percent": round(100.0 * used / cap, 2),
                 "occupancy_health": health,
             }
         )
 
-    route_dist: Dict[str, int] = {}
-    qen = TransportEnrollment.query.filter_by(tenant_id=tenant_id, status="active")
-    if ay:
-        qen = qen.filter(TransportEnrollment.academic_year_id == ay)
-    for en in qen.all():
-        if not enrollment_active_on(en, on):
-            continue
-        route_dist[en.route_id] = route_dist.get(en.route_id, 0) + 1
+    route_labels = [
+        {
+            "route_id": route_id,
+            "route_name": routes[route_id].name if route_id in routes else route_id,
+            "students": count,
+        }
+        for route_id, count in route_distribution.items()
+    ]
 
-    route_labels = []
-    for rid, cnt in route_dist.items():
-        r = TransportRoute.query.filter_by(id=rid, tenant_id=tenant_id).first()
-        route_labels.append(
-            {"route_id": rid, "route_name": r.name if r else rid, "students": cnt}
-        )
-
-    students_on_inactive_routes = 0
-    qen2 = TransportEnrollment.query.filter_by(tenant_id=tenant_id, status="active")
-    if ay:
-        qen2 = qen2.filter(TransportEnrollment.academic_year_id == ay)
-    for en in qen2.all():
-        if not enrollment_active_on(en, on):
-            continue
-        rte = TransportRoute.query.filter_by(id=en.route_id, tenant_id=tenant_id).first()
-        if rte and rte.status != "active":
-            students_on_inactive_routes += 1
+    # Children the school said would use transport, who have no active
+    # enrollment. The dashboard used to work this out by downloading every
+    # student and every enrollment to compare two sets in the browser.
+    awaiting = Student.query.filter(
+        Student.tenant_id == tenant_id,
+        Student.is_transport_opted.is_(True),
+    )
+    if children:
+        awaiting = awaiting.filter(~Student.id.in_(children))
+    students_opted_without_enrollment = awaiting.count()
 
     buses_without_active_routes = 0
     for b in active_buses:
-        w = _bus_operational_warning(tenant_id, b.id, ay, on)
-        if w.get("code") != "ok":
+        warning = _bus_operational_warning(tenant_id, b.id, ay, on)
+        if warning.get("code") != "ok":
             buses_without_active_routes += 1
 
     drivers_without_schedules = 0
     if ay:
-        active_drivers = TransportDriver.query.filter_by(tenant_id=tenant_id, status="active").all()
-        scheduled_driver_ids = (
+        active_drivers = TransportDriver.query.filter_by(
+            tenant_id=tenant_id, status="active"
+        ).all()
+        scheduled = (
             db.session.query(TransportRouteSchedule.driver_id)
             .join(TransportRoute, TransportRouteSchedule.route_id == TransportRoute.id)
             .filter(
@@ -1819,14 +1846,22 @@ def dashboard_stats(academic_year_id: Optional[str] = None) -> Dict[str, Any]:
             .distinct()
             .all()
         )
-        sched_set = {r[0] for r in scheduled_driver_ids if r[0]}
-        drivers_without_schedules = len([x for x in active_drivers if x.id not in sched_set])
+        has_a_schedule = {row[0] for row in scheduled if row[0]}
+        drivers_without_schedules = len(
+            [d for d in active_drivers if d.id not in has_a_schedule]
+        )
 
     return {
         "academic_year_id": ay,
-        "total_buses": total_buses,
-        "active_buses": active_bus_count,
+        "total_buses": len(buses),
+        "active_buses": len(active_buses),
         "total_students_on_transport": students_using,
+        # Seats filled counts a child once per bus they ride; this counts the
+        # children. They differ the moment anyone rides two buses, and the
+        # dashboard was working the second one out for itself from the full
+        # enrollment list.
+        "students_with_active_enrollment": len(children),
+        "students_opted_without_enrollment": students_opted_without_enrollment,
         "buses_near_capacity_count": buses_high_or_full,
         "occupancy_per_bus": per_bus,
         "route_distribution": route_labels,
