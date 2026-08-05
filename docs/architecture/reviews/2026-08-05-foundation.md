@@ -163,6 +163,17 @@ Every entry answers: why it exists, when it goes, and what removes it.
   principle that architecture precedes optimisation.
 - **Removed by:** Milestone **M4 — Scale Pass**.
 
+### 6. Authority held by both the account and the employment — **CLOSED**
+
+- **Why:** every reader and writer in the system asked `user_roles`; moving them
+  in one commit would have been a blind cutover of the thing that decides who
+  can do anything.
+- **Went when:** readers, writers, bulk importers, platform and sub-admin
+  services, scripts and fixtures had each been moved and proven equivalent
+  across all 4,419 accounts.
+- **Removed by:** migration 089, 2026-08-05. The move now happens on upgrade in
+  every environment rather than depending on a script being run first.
+
 ---
 
 # Shortcuts Taken
@@ -198,15 +209,18 @@ M3  Creation Through Services
     account and student creation funnel through People services
     consistency listener retired
 
-M4  Authorization Domain
+M4  Authorization Domain                                          DONE
     Business Authority replaces RBAC (A1)
+    account-held roles retired, user_roles dropped
 
 M5  Scale Pass
     duplicate detection, N+1s, query counts
 ```
 
 Client migration begins **after M2**. Modules beyond the foundation —
-Attendance, Examination, Parent Portal — begin **after M4**.
+Attendance, Examination, Parent Portal — begin **after M4**, which is now
+complete: authority is held by employment, and `user_roles` is gone
+(migration 089).
 
 ---
 
