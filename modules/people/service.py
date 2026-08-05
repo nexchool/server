@@ -213,6 +213,108 @@ def record_family_member(
     return _ensure_membership(tenant_id, family_id, adult.id, role)
 
 
+def revise_identity(person: Person, values: dict) -> bool:
+    """Record a correction to what is known about this person.
+
+    ``fill_blank_identity`` is for learning a fact nobody had recorded. This is
+    the school saying the fact on record is wrong, so it overwrites — but only
+    the fields it was given, since an edit form that omits a field is silent
+    about it rather than clearing it.
+    """
+    if person is None:
+        return False
+
+    changed = False
+    for field, value in values.items():
+        if value is None:
+            continue
+        if getattr(person, field, None) != value:
+            setattr(person, field, value)
+            changed = True
+    return changed
+
+
+def revise_family_member(
+    tenant_id: str,
+    child_person_id: str,
+    *,
+    relationship: Optional[str],
+    name: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    occupation: Optional[str] = None,
+):
+    """The school has corrected who is responsible for a child, or how to reach them.
+
+    Two different statements arrive through the same form, and they must not be
+    treated alike:
+
+    Correcting a *detail* — a new phone number, a spelling fixed — corrects it
+    for every child of that adult. One human, one record, which is the whole
+    point of holding people once; a father whose number changes should not have
+    to be corrected on each of his children.
+
+    Changing the *name* is a different statement: this child's father is a
+    different man. Renaming the adult on record would rewrite him on his other
+    children too, so the household's membership moves to the new person and the
+    old one keeps their own record and their other families.
+    """
+    if not name or not name.strip():
+        return None
+
+    role = family_role_for(relationship)
+    held_by = _member_in_role(tenant_id, child_person_id, role)
+
+    if held_by is None:
+        return record_family_member(
+            tenant_id,
+            child_person_id,
+            name=name,
+            relationship=relationship,
+            phone=phone,
+            email=email,
+            occupation=occupation,
+        )
+
+    if _is_same_name(held_by.person.full_name, name):
+        revise_identity(
+            held_by.person,
+            {"phone_number": phone, "email": email, "occupation": occupation},
+        )
+        return held_by
+
+    from core.database import db
+
+    db.session.delete(held_by)
+    db.session.flush()
+    return record_family_member(
+        tenant_id,
+        child_person_id,
+        name=name,
+        relationship=relationship,
+        phone=phone,
+        email=email,
+        occupation=occupation,
+    )
+
+
+def _member_in_role(tenant_id: str, child_person_id: str, role: str):
+    """The household member holding this role for this child, if any."""
+    from .models import FamilyMember
+
+    family_id = _family_containing(tenant_id, child_person_id)
+    if family_id is None:
+        return None
+
+    return FamilyMember.query.filter_by(
+        tenant_id=tenant_id, family_id=family_id, relationship=role
+    ).first()
+
+
+def _is_same_name(recorded: Optional[str], written: Optional[str]) -> bool:
+    return (recorded or "").strip().casefold() == (written or "").strip().casefold()
+
+
 def employment_status_for_legacy_flag(legacy_status: Optional[str]) -> str:
     """Translate the v1 active/inactive flag into a business state.
 

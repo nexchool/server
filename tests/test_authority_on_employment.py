@@ -160,7 +160,7 @@ def test_authority_from_another_organization_is_refused(db_session, tenant):
     other = Tenant(
         id=f"t-{uuid.uuid4().hex[:12]}",
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -502,7 +502,7 @@ def _other_tenant(db_session):
     other = Tenant(
         id=f"t-{uuid.uuid4().hex[:12]}",
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )

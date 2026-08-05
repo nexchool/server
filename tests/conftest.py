@@ -141,7 +141,11 @@ def tenant(db_session):
     t = Tenant(
         id=_new_id("t-"),
         name="Test School",
-        subdomain=f"test-{uuid.uuid4().hex[:6]}",
+        # Full uuid, not a short prefix. Some tests commit their tenant, so the
+        # subdomains accumulate in the developer's database run after run, and a
+        # six-character name drawn against thousands of survivors collides often
+        # enough to fail a suite that has nothing wrong with it.
+        subdomain=f"test-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )

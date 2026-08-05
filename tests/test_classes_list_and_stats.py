@@ -341,7 +341,7 @@ def test_counts_ignore_other_tenants_rows(ctx, db_session, tenant, populated):
 
     other = Tenant(
         id=_new_id("t-"), name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
     )
     db_session.add(other)
     db_session.flush()

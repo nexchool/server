@@ -533,11 +533,52 @@ def update_teacher(
         if status is not None:
             teacher.status = status
 
+        _record_edit_against_the_employment(teacher, name=name, phone=phone,
+                                            address=address, status=status)
+
         teacher.save()
         return {'success': True, 'teacher': teacher.to_dict()}
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': safe_error(e, "Failed to update teacher")}
+
+
+def _record_edit_against_the_employment(teacher, *, name, phone, address, status):
+    """Send an edit of a teacher's record to the person and employment it describes.
+
+    A teacher record mixes three things: facts about the human (name, phone,
+    address), facts about the employment (designation, department, when they
+    joined, whether they still work here) and facts about the teaching itself
+    (qualification, specialisation, subjects). Only the first two have a home
+    outside this table, and each goes to its own owner.
+
+    Employment fields are deliberately not forwarded here — designation,
+    department and joining date reach Staff through ``employ()``, which is the
+    business action that owns them. What is left is identity, and the departure
+    that a status change represents.
+    """
+    from modules.people.employment import EMPLOYMENT_STATUS_LEFT
+    from modules.people.service import employment_status_for_legacy_flag, revise_identity
+
+    staff = teacher.staff
+    if staff is None:
+        return
+
+    revise_identity(
+        staff.person,
+        {"full_name": name, "phone_number": phone, "address": address},
+    )
+
+    if status is not None:
+        # v1 records only active/inactive, so a departure arrives without a
+        # reason. Translate it only when it changes whether the person works
+        # here at all: someone suspended or on leave is already "inactive" in
+        # v1's vocabulary, and flattening that back to plain working would
+        # quietly reinstate them.
+        works_here = staff.is_employed
+        says_works_here = employment_status_for_legacy_flag(status) != EMPLOYMENT_STATUS_LEFT
+        if works_here != says_works_here:
+            staff.employment_status = employment_status_for_legacy_flag(status)
 
 
 # Matches students' bulk cap: one request should not queue unbounded work, and

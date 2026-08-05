@@ -196,7 +196,7 @@ def test_people_from_different_organizations_are_not_one_human(db_session, tenan
     other = Tenant(
         id=f"t-{uuid.uuid4().hex[:12]}",
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )

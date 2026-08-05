@@ -57,7 +57,7 @@ def setup_tenant(db_session):
     t = Tenant(
         id=_new_id("t-"),
         name="Test School",
-        subdomain=f"god-{uuid.uuid4().hex[:6]}",
+        subdomain=f"god-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
         is_setup_complete=False,
@@ -73,7 +73,7 @@ def platform_home_tenant(db_session):
     t = Tenant(
         id=_new_id("t-"),
         name="Platform HQ",
-        subdomain=f"hq-{uuid.uuid4().hex[:6]}",
+        subdomain=f"hq-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
         is_setup_complete=True,

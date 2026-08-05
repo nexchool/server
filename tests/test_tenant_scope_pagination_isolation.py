@@ -27,7 +27,7 @@ def _make_tenant(db_session):
     t = Tenant(
         id=f"t-{uuid.uuid4().hex[:12]}",
         name="Isolation Test School",
-        subdomain=f"iso-{uuid.uuid4().hex[:6]}",
+        subdomain=f"iso-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )

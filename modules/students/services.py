@@ -1096,6 +1096,28 @@ def update_student(
         if academic_result is not None:
             student.academic_result = _clean_str(academic_result)
 
+        # The same edit reaches the human it describes. Until now only
+        # admission did this, so a Person recorded at admission stopped
+        # agreeing with the student the moment anyone corrected the record.
+        _record_edit_against_the_person(
+            student,
+            name=name,
+            date_of_birth=student.date_of_birth if date_of_birth is not None else None,
+            gender=gender,
+            phone=phone,
+            address=address,
+            aadhar_number=aadhar_number,
+            father=(father_name, father_phone, father_email, father_occupation),
+            mother=(mother_name, mother_phone, mother_email, mother_occupation),
+            guardian=(
+                guardian_name,
+                guardian_relationship or student.guardian_relationship,
+                guardian_phone,
+                guardian_email,
+                guardian_occupation,
+            ),
+        )
+
         perr = _apply_placement_update(
             student,
             class_id=class_id,
@@ -1124,6 +1146,86 @@ def update_student(
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': safe_error(e, "Failed to update student")}
+
+def _record_edit_against_the_person(
+    student, *, name, date_of_birth, gender, phone, address, aadhar_number,
+    father, mother, guardian,
+):
+    """Send an edit of a student's record to the person and family it describes.
+
+    A student profile carries two different kinds of fact: things true of the
+    human (their date of birth, how to reach them, who their parents are) and
+    things true of their studentship (roll number, house, previous school).
+    Only the first kind belongs to People, and only that is forwarded here.
+    """
+    from modules.people.service import revise_family_member, revise_identity
+
+    person = student.person
+    if person is None:
+        return
+
+    revise_identity(
+        person,
+        {
+            "full_name": _clean_str(name),
+            "date_of_birth": date_of_birth,
+            "gender": _clean_str(gender),
+            "phone_number": _clean_str(phone),
+            "address": _clean_str(address),
+            "aadhaar_number": _clean_str(aadhar_number),
+        },
+    )
+
+    father_name, father_phone, father_email, father_occupation = father
+    mother_name, mother_phone, mother_email, mother_occupation = mother
+    (
+        guardian_name,
+        guardian_relationship,
+        guardian_phone,
+        guardian_email,
+        guardian_occupation,
+    ) = guardian
+
+    for member_name, member_relationship, member_phone, member_email, member_occupation in (
+        (father_name, "father", father_phone, father_email, father_occupation),
+        (mother_name, "mother", mother_phone, mother_email, mother_occupation),
+        (
+            guardian_name,
+            guardian_relationship,
+            guardian_phone,
+            guardian_email,
+            guardian_occupation,
+        ),
+    ):
+        # An edit that names nobody in a role says nothing about that role. The
+        # school clearing a father's phone is a correction to the father the
+        # household already has, which needs his name to find him.
+        if not member_name:
+            member_name = _name_on_record(student, member_relationship)
+            if not member_name:
+                continue
+
+        revise_family_member(
+            student.tenant_id,
+            student.person_id,
+            relationship=member_relationship,
+            name=member_name,
+            phone=member_phone,
+            email=member_email,
+            occupation=member_occupation,
+        )
+
+
+def _name_on_record(student, relationship: Optional[str]) -> Optional[str]:
+    """The name the student record already carries for this role, if any."""
+    from modules.people.service import family_role_for
+
+    return {
+        "father": student.father_name,
+        "mother": student.mother_name,
+        "guardian": student.guardian_name,
+    }.get(family_role_for(relationship))
+
 
 def bulk_update_status(student_ids: List[str], student_status: str) -> Dict:
     """Set student_status for many students in one tenant-scoped transaction.

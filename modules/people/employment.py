@@ -180,7 +180,11 @@ class StaffEmploymentPeriod(TenantBaseModel):
         nullable=False,
         index=True,
     )
-    staff = db.relationship("Staff", foreign_keys=[staff_id])
+    staff = db.relationship(
+        "Staff",
+        foreign_keys=[staff_id],
+        backref=db.backref("periods", lazy=True),
+    )
 
     joined_on = db.Column(db.Date, nullable=True)
     left_on = db.Column(db.Date, nullable=True)

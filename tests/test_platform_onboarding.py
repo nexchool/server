@@ -234,7 +234,7 @@ def test_resolve_target_tenant_active_only(flask_app, db_session):
         t = Tenant(
             id=uuid.uuid4().hex,
             name=status,
-            subdomain=f"{status}-{uuid.uuid4().hex[:6]}",
+            subdomain=f"{status}-{uuid.uuid4().hex}",
             status=status,
         )
         db_session.add(t)

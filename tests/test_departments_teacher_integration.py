@@ -60,7 +60,7 @@ def _other_tenant(db_session, suffix):
     other = Tenant(
         id=str(uuid.uuid4()),
         name=f"Other School {suffix}",
-        subdomain=f"other-{suffix}-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{suffix}-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )

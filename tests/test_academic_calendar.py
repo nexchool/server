@@ -571,7 +571,7 @@ def test_calendar_not_visible_across_tenants(db_session, tenant, year, flask_app
     other = Tenant(
         id=str(uuid.uuid4()),
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
