@@ -43,7 +43,10 @@ _EMPLOY_UNRECORDED_HOLDERS = sa.text(
     INSERT INTO staff (id, tenant_id, person_id, employment_status,
                        created_at, updated_at)
     SELECT DISTINCT ON (ur.tenant_id, u.person_id)
-           'staff-' || replace(gen_random_uuid()::text, '-', ''),
+           -- Derived from the person and tenant, not generated: it has to fit
+           -- varchar(36), and a re-run must not open a second employment for
+           -- someone who already has one.
+           md5('staff:' || ur.tenant_id || ':' || u.person_id)::uuid::text,
            ur.tenant_id, u.person_id, 'working', now(), now()
       FROM user_roles ur
       JOIN users u ON u.id = ur.user_id
@@ -63,7 +66,7 @@ _OPEN_THEIR_EMPLOYMENT = sa.text(
     """
     INSERT INTO staff_employment_periods (id, tenant_id, staff_id,
                                           created_at, updated_at)
-    SELECT 'sep-' || replace(gen_random_uuid()::text, '-', ''),
+    SELECT md5('period:' || s.id)::uuid::text,
            s.tenant_id, s.id, now(), now()
       FROM staff s
      WHERE NOT EXISTS (SELECT 1 FROM staff_employment_periods p
@@ -75,7 +78,7 @@ _CARRY_AUTHORITY_ONTO_EMPLOYMENT = sa.text(
     """
     INSERT INTO staff_authorities (id, tenant_id, staff_id, role_id, granted_at)
     SELECT DISTINCT ON (s.id, ur.role_id)
-           'sa-' || replace(gen_random_uuid()::text, '-', ''),
+           md5('authority:' || s.id || ':' || ur.role_id)::uuid::text,
            ur.tenant_id, s.id, ur.role_id, now()
       FROM user_roles ur
       JOIN users u ON u.id = ur.user_id
