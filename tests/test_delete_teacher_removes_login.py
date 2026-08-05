@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from flask import g
+from tests.conftest import employ_for
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -37,6 +38,7 @@ def _make_teacher(db_session, tenant):
         id=uuid.uuid4().hex,
         tenant_id=tenant.id,
         user_id=user.id,
+        staff_id=employ_for(user).id,
         employee_id=f"EMP-{suffix}",
     )
     db_session.add(teacher)

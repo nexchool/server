@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from tests.conftest import employ_for
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -141,6 +142,7 @@ def _make_teacher(db_session, tenant, user):
         id=_nid("t-"),
         tenant_id=tenant.id,
         user_id=user.id,
+        staff_id=employ_for(user).id,
         employee_id=f"EMP-{uuid.uuid4().hex[:6]}",
     )
     db_session.add(t)

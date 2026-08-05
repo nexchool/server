@@ -264,3 +264,22 @@ def student2(db_session, tenant):
         name="Amit Singh",
         admission_suffix=uuid.uuid4().hex[:8],
     )
+
+
+# ---------------------------------------------------------------------------
+# Employment — teaching is a participation of it (ADR-005)
+# ---------------------------------------------------------------------------
+
+def employ_for(user, **employment):
+    """Record that the organization employs the person behind this account.
+
+    Tests that need a teacher go through the same business action the services
+    use, so a teaching record is never created against employment that does not
+    exist (ADR-005).
+    """
+    from core.database import db
+    from modules.people.service import employ
+
+    staff = employ(user.tenant_id, user.person_id, **employment)
+    db.session.flush()
+    return staff

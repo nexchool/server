@@ -253,21 +253,21 @@ def create_teacher(
         # A teacher is an employed person who teaches (ADR-005): the employment
         # is the Staff relationship, and teaching hangs off it. Someone already
         # employed here keeps the employment they have.
-        from modules.people.service import ensure_employment_period, ensure_staff
+        from modules.people.service import employ
 
         joined_on = (
             datetime.strptime(date_of_joining, '%Y-%m-%d').date()
             if date_of_joining
             else None
         )
-        staff = ensure_staff(
+        staff = employ(
             tenant_id,
             user.person_id,
             employee_number=employee_id,
             designation=designation,
             department_id=resolved_department_id,
+            joined_on=joined_on,
         )
-        ensure_employment_period(staff, joined_on)
 
         teacher = Teacher(
             tenant_id=tenant_id,

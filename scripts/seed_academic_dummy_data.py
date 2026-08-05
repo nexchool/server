@@ -50,7 +50,7 @@ from modules.finance.models import (
 from modules.notifications.models import Notification
 from modules.people.employment import Staff, StaffEmploymentPeriod
 from modules.people.models import Family, FamilyMember, Person
-from modules.people.service import ensure_employment_period, ensure_staff
+from modules.people.service import employ
 from modules.rbac.models import Role, UserRole
 from modules.schedule.models import ScheduleOverride
 from modules.students.models import Student, StudentDocument
@@ -246,13 +246,12 @@ def run_seed() -> None:
         u = _user(tenant_id, temail, tname, password)
         _assign_role(tenant_id, u.id, "Teacher")
         # A teacher is an employed person who teaches (ADR-005).
-        staff = ensure_staff(
+        staff = employ(
             tenant_id,
             u.person_id,
             employee_number=f"EMP{i:03d}",
             designation="Teacher",
         )
-        ensure_employment_period(staff)
         t = Teacher(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,

@@ -37,6 +37,7 @@ from modules.students.models import Student
 from modules.sub_admins.models import UserSchoolUnit
 from modules.timetable import services as timetable_services
 from modules.timetable.models import TimetableSlot
+from tests.conftest import employ_for
 
 
 def _new_id(prefix: str = "") -> str:
@@ -207,6 +208,7 @@ def _make_teacher(db_session, tenant):
         id=_new_id("t-"),
         tenant_id=tenant.id,
         user_id=u.id,
+        staff_id=employ_for(u).id,
         employee_id=f"EMP-{suffix}",
     )
     db_session.add(t)

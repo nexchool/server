@@ -23,6 +23,7 @@ from modules.auth.models import User
 from modules.classes import services as class_services
 from modules.classes.models import Class, ClassTeacher
 from modules.students.models import Student
+from tests.conftest import employ_for
 
 
 def _new_id(prefix: str = "") -> str:
@@ -274,6 +275,7 @@ def _make_teacher(db_session, tenant, name="Teacher"):
     db_session.flush()
     teacher = Teacher(
         id=_new_id("t-"), tenant_id=tenant.id, user_id=user.id,
+        staff_id=employ_for(user).id,
         employee_id=f"EMP-{suffix}",
     )
     db_session.add(teacher)
@@ -553,6 +555,7 @@ def test_stats_counts_a_teacher_once_across_several_classes(
     db_session.flush()
     teacher = Teacher(
         id=_new_id("t-"), tenant_id=tenant.id, user_id=teacher_user.id,
+        staff_id=employ_for(teacher_user).id,
         employee_id=f"EMP-{uuid.uuid4().hex[:6]}",
     )
     db_session.add(teacher)

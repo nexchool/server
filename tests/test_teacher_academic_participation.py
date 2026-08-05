@@ -27,12 +27,22 @@ def _add_user(db_session, tenant, name):
 
 
 def _add_teacher(db_session, tenant, user, *, status="active"):
+    """A teacher, employed first — teaching is a participation of employment."""
+    from modules.people.service import employ, employment_status_for_legacy_flag
     from modules.teachers.models import Teacher
+
+    staff = employ(
+        tenant.id,
+        user.person_id,
+        joined_on=date(2020, 6, 1),
+        employment_status=employment_status_for_legacy_flag(status),
+    )
 
     teacher = Teacher(
         id=f"t-{uuid.uuid4().hex[:8]}",
         tenant_id=tenant.id,
         user_id=user.id,
+        staff_id=staff.id,
         employee_id=f"EMP-{uuid.uuid4().hex[:6]}",
         status=status,
         date_of_joining=date(2020, 6, 1),

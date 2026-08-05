@@ -36,13 +36,26 @@ def _add_user(db_session, tenant, *, name, is_platform_admin=False):
 
 
 def _add_teacher(db_session, tenant, user, *, status="active", joined=None, employee_id=None):
+    """A teacher, employed first — teaching is a participation of employment."""
+    from modules.people.service import employ, employment_status_for_legacy_flag
     from modules.teachers.models import Teacher
+
+    number = employee_id or f"EMP-{uuid.uuid4().hex[:6]}"
+    staff = employ(
+        tenant.id,
+        user.person_id,
+        employee_number=number,
+        designation="Senior Teacher",
+        joined_on=joined,
+        employment_status=employment_status_for_legacy_flag(status),
+    )
 
     teacher = Teacher(
         id=f"t-{uuid.uuid4().hex[:8]}",
         tenant_id=tenant.id,
         user_id=user.id,
-        employee_id=employee_id or f"EMP-{uuid.uuid4().hex[:6]}",
+        staff_id=staff.id,
+        employee_id=number,
         status=status,
         date_of_joining=joined,
         designation="Senior Teacher",

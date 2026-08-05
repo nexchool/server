@@ -228,7 +228,45 @@ def employment_status_for_legacy_flag(legacy_status: Optional[str]) -> str:
     return EMPLOYMENT_STATUS_LEFT
 
 
-def ensure_employment_period(staff, joined_on=None):
+def employ(
+    tenant_id: str,
+    person_id: str,
+    *,
+    employee_number: Optional[str] = None,
+    designation: Optional[str] = None,
+    department_id: Optional[str] = None,
+    joined_on=None,
+    employment_status: Optional[str] = None,
+):
+    """Record that the organization employs this person — the StaffJoined event.
+
+    One business action, deliberately readable as one: employment begins, and it
+    covers a period. Someone already employed here keeps the employment they
+    have, because starting to teach is not a second job.
+
+    Teaching is layered on top of this by the Academic side (ADR-005); this
+    function knows nothing about it.
+    """
+    employment = {
+        "employee_number": employee_number,
+        "designation": designation,
+        "department_id": department_id,
+    }
+    if employment_status is not None:
+        employment["employment_status"] = employment_status
+
+    staff = ensure_staff(tenant_id, person_id, **employment)
+    # The period must agree with the employment it belongs to: recording someone
+    # who has already gone should not leave their period reading as ongoing.
+    ensure_employment_period(
+        staff,
+        joined_on,
+        end_reason=None if staff.is_employed else staff.employment_status,
+    )
+    return staff
+
+
+def ensure_employment_period(staff, joined_on=None, end_reason=None):
     """The employment period a staff member is currently serving.
 
     Opened once when they join. Someone who leaves and returns gets a second
@@ -242,7 +280,10 @@ def ensure_employment_period(staff, joined_on=None):
         return period
 
     period = StaffEmploymentPeriod(
-        tenant_id=staff.tenant_id, staff_id=staff.id, joined_on=joined_on
+        tenant_id=staff.tenant_id,
+        staff_id=staff.id,
+        joined_on=joined_on,
+        end_reason=end_reason,
     )
     db_session_add(period)
     return period
@@ -300,12 +341,17 @@ def _person_behind(session, instance):
 
 @event.listens_for(Session, "before_flush")
 def _relationships_belong_to_people(session, flush_context, instances) -> None:
-    """Attach every arriving record to the human it describes.
+    """Keep every arriving record attached to the human it describes.
 
-    An account gets the Person it belongs to, a student relationship gets that
-    same Person, and teaching gets the employment it is a participation of
-    (ADR-005). Assigning relationships rather than ids is what orders each
-    insert ahead of the row referencing it.
+    This enforces a structural rule and deliberately nothing more: an account
+    belongs to a person, and a student relationship belongs to the same person
+    as the account it was created for. Both are derivations with no business
+    decision in them, and assigning the relationship rather than the id is what
+    orders each insert ahead of the row referencing it.
+
+    Employment is deliberately *not* handled here. Employing someone is a
+    business event, so it lives in ``employ()`` where a reader can find it — an
+    ORM hook is the wrong place to learn that the organization hired somebody.
 
     Autoflush is suspended because resolving these may read the database, and a
     flush inside a flush would recurse.
@@ -313,10 +359,9 @@ def _relationships_belong_to_people(session, flush_context, instances) -> None:
     # Imported here: this module loads while the models are still being defined.
     from modules.auth.models import User
     from modules.students.models import Student
-    from modules.teachers.models import Teacher
 
     with session.no_autoflush:
-        # Accounts first: the records below borrow the Person created here.
+        # Accounts first: the student relationships below borrow this person.
         for instance in session.new:
             if isinstance(instance, User) and not instance.person_id:
                 if not instance.tenant_id:
@@ -329,54 +374,3 @@ def _relationships_belong_to_people(session, flush_context, instances) -> None:
             if isinstance(instance, Student) and not instance.person_id:
                 instance.person = _person_behind(session, instance)
 
-            elif isinstance(instance, Teacher) and not instance.staff_id:
-                person = _person_behind(session, instance)
-                if person is not None:
-                    instance.staff = _employment_for(session, instance, person)
-
-
-def _employment_for(session, teacher, person):
-    """The employment a teaching record participates in, opened if there is none."""
-    from .employment import Staff
-
-    employment = (
-        session.query(Staff)
-        .filter_by(tenant_id=teacher.tenant_id, person_id=person.id)
-        .first()
-    )
-    if employment is not None:
-        return _fill_employment_gaps(
-            employment,
-            {
-                "employee_number": getattr(teacher, "employee_id", None),
-                "designation": getattr(teacher, "designation", None),
-                "department_id": getattr(teacher, "department_id", None),
-            },
-        )
-
-    # No flush here: this runs inside one, so rows are added and ordered by
-    # their relationships instead.
-    from .employment import EMPLOYMENT_STATUS_WORKING, StaffEmploymentPeriod
-
-    status = employment_status_for_legacy_flag(getattr(teacher, "status", None))
-    employment = Staff(
-        tenant_id=teacher.tenant_id,
-        person=person,
-        employee_number=getattr(teacher, "employee_id", None),
-        designation=getattr(teacher, "designation", None),
-        department_id=getattr(teacher, "department_id", None),
-        employment_status=status,
-    )
-    session.add(employment)
-
-    # Employment always covers a period; someone who works here started
-    # sometime, even where the date was never recorded.
-    session.add(
-        StaffEmploymentPeriod(
-            tenant_id=teacher.tenant_id,
-            staff=employment,
-            joined_on=getattr(teacher, "date_of_joining", None),
-            end_reason=None if status == EMPLOYMENT_STATUS_WORKING else status,
-        )
-    )
-    return employment

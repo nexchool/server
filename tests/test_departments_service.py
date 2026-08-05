@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from tests.conftest import employ_for
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -241,6 +242,7 @@ def _make_teacher(db_session, tenant, department_id, suffix, status="active"):
         id=str(uuid.uuid4()),
         tenant_id=tenant.id,
         user_id=user.id,
+        staff_id=employ_for(user).id,
         employee_id=f"EMP{suffix}",
         department_id=department_id,
         status=status,

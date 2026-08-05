@@ -21,6 +21,7 @@ from modules.auth.models import User
 from modules.departments.models import Department
 from modules.teachers import services as teacher_services
 from modules.teachers.models import Teacher
+from tests.conftest import employ_for
 
 
 def _new_id(prefix: str = "") -> str:
@@ -46,6 +47,7 @@ def _make_teacher(db_session, tenant, name, *, department_id=None):
     db_session.flush()
     teacher = Teacher(
         id=_new_id("t-"), tenant_id=tenant.id, user_id=user.id,
+        staff_id=employ_for(user).id,
         employee_id=f"EMP-{suffix}", department_id=department_id,
     )
     db_session.add(teacher)
