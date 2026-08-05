@@ -122,21 +122,42 @@ something introduced here.
 
 Every entry answers: why it exists, when it goes, and what removes it.
 
-### 1. Dual-written identity, family and employment
+### 1. Dual-written identity, family and employment — **mostly closed**
 
 - **Why:** the API and three clients read the v1 columns. Writing only to the new
   model would break them; writing only to the old would abandon the new one.
 - **Goes when:** serializers read from Person / Family / Staff while emitting the
   same JSON keys, and the clients write through the new model.
 - **Removed by:** Milestone **M1 — Read Path Cutover**, then **M2 — Column Drop**.
+- **Done 2026-08-05:** teacher payloads read the Person and the employment
+  (verified identical for all 435); student identity reads the Person (identical
+  for all 1,524). Both edit paths now reach People — until then the dual write
+  was only a dual write on *create*, so every record drifted from the day it was
+  edited. That was the unbounded part of this debt, and it is closed.
+- **Still open — the student's family keys.** `father_*`, `mother_*` and
+  `guardian_*` still read the v1 columns. This is not a like-for-like switch:
+  where a school recorded the guardian's relationship as "father" there is one
+  adult in the household, so the guardian keys empty and the father keys fill (5
+  of 1,524 locally). And where two students share a household, a role lookup can
+  return a different adult than the one that student's record named (2 of 1,524).
+  Showing a parent the wrong name for a child is not a cosmetic regression, so
+  this moves with the client work that teaches the UI to speak in household
+  roles — **M2**, not before.
 
 ### 2. `students.person_id` alongside `students.user_id`
 
 - **Why:** a student's human is reachable both directly and through the account,
   and nothing keeps them in agreement.
-- **Goes when:** one path is chosen. Resolving through the account is the honest
-  one — the account already carries the person.
-- **Removed by:** Milestone **M1**.
+- **Goes when:** one path is chosen. **Corrected 2026-08-05:** the earlier answer
+  here — resolve through the account — is backwards for a person-centric model.
+  The account is a login, not the subject; ADR-011 already has a household
+  sharing the student's credentials, so the person behind the account is not
+  reliably the student. `students.person_id` is the truth, and nothing may
+  derive a student's human from their login. At admission the two are the same
+  human, which is why creation seeds one from the other; that is the only place
+  it is legitimate.
+- **Removed by:** Milestone **M1** — no reader outside creation now resolves a
+  student's person through the account.
 
 ### 3. Consistency listener in `people/service.py`
 
@@ -154,7 +175,10 @@ Every entry answers: why it exists, when it goes, and what removes it.
 
 - **Why:** the Staff and Student relationships were only recently populated.
 - **Goes when:** Finding I1 is fixed and derivation moves behind a service.
-- **Removed by:** Milestone **M1**.
+- **Removed by:** Milestone **M1**. **Done 2026-08-05:** `available_contexts`
+  asks `people/relationships.py`; each owning module declares its relationship
+  back onto Person or Staff, so People answers without importing Academic. The
+  boundary has an import-level test.
 
 ### 5. Duplicate-suggestion scan loads every person
 
@@ -196,10 +220,13 @@ Honest list, including ones that were fixed.
 # Milestones to Complete the Foundation
 
 ```
-M1  Read Path Cutover
+M1  Read Path Cutover                                    MOSTLY DONE
     serializers read Person / Family / Staff, same JSON keys
-    Identity stops reading Academic (I1)
-    students.person_id resolved through the account
+      teachers: done, all 435 identical
+      student identity: done, all 1,524 identical
+      student family keys: deferred to M2 with the client (see debt 1)
+    Identity stops reading Academic (I1)                  done
+    students.person_id is the single path                 done
 
 M2  Column Drop
     clients write through the new model
