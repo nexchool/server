@@ -235,7 +235,11 @@ class ClassTeacher(TenantBaseModel):
             "class_id": self.class_id,
             "teacher_id": self.teacher_id,
             "teacher_name": self.teacher.user.name if self.teacher and self.teacher.user else None,
-            "teacher_employee_id": self.teacher.employee_id if self.teacher else None,
+            "teacher_employee_id": (
+                self.teacher.staff.employee_number
+                if self.teacher and self.teacher.staff
+                else None
+            ),
             "subject": self.subject,
             "subject_id": self.subject_id,
             "subject_name": subject_name,

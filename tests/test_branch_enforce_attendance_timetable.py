@@ -208,8 +208,7 @@ def _make_teacher(db_session, tenant):
         id=_new_id("t-"),
         tenant_id=tenant.id,
         user_id=u.id,
-        staff_id=employ_for(u).id,
-        employee_id=f"EMP-{suffix}",
+        staff_id=employ_for(u, employee_number=f"EMP-{suffix}").id,
     )
     db_session.add(t)
     db_session.flush()

@@ -89,9 +89,7 @@ def _make_teacher(db_session, tenant, department_id, suffix):
         user_id=user.id,
         # The department belongs to the employment, which is where the
         # serializer reads it from.
-        staff_id=employ_for(user, department_id=department_id).id,
-        employee_id=f"EMP{suffix}",
-        department_id=department_id,
+        staff_id=employ_for(user, department_id=department_id, employee_number=f"EMP{suffix}").id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -457,7 +455,7 @@ def test_update_rejects_reassigning_to_an_inactive_department(ctx, tenant, db_se
     assert result["success"] is False
     assert "inactive" in result["error"]
     db_session.refresh(teacher)
-    assert teacher.department_id == primary["id"], "existing data must not change"
+    assert teacher.staff.department_id == primary["id"], "existing data must not change"
 
 
 def test_update_allows_keeping_an_already_assigned_inactive_department(
@@ -477,7 +475,7 @@ def test_update_allows_keeping_an_already_assigned_inactive_department(
 
     assert result["success"] is True
     db_session.refresh(teacher)
-    assert teacher.department_id == dept["id"]
+    assert teacher.staff.department_id == dept["id"]
 
 
 def test_update_can_still_clear_an_inactive_department(ctx, tenant, db_session, dept_svc):
@@ -491,7 +489,7 @@ def test_update_can_still_clear_an_inactive_department(ctx, tenant, db_session, 
 
     assert result["success"] is True
     db_session.refresh(teacher)
-    assert teacher.department_id is None
+    assert teacher.staff.department_id is None
 
 
 def test_listing_teachers_does_not_query_per_person_or_employment(

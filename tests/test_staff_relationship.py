@@ -55,10 +55,6 @@ def _add_teacher(db_session, tenant, user, *, status="active", joined=None, empl
         tenant_id=tenant.id,
         user_id=user.id,
         staff_id=staff.id,
-        employee_id=number,
-        status=status,
-        date_of_joining=joined,
-        designation="Senior Teacher",
     )
     db_session.add(teacher)
     db_session.flush()

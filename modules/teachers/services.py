@@ -75,8 +75,8 @@ def generate_employee_id(
     pattern = get_teacher_employee_pattern(tid)
     return allocate_next_id(
         tenant_id=tid,
-        model=Teacher,
-        col_name="employee_id",
+        model=Staff,
+        col_name="employee_number",
         pattern=pattern,
         reserved=reserved,
         max_len=MAX_TEACHER_ID_LEN,
@@ -282,16 +282,9 @@ def create_teacher(
             tenant_id=tenant_id,
             user_id=user.id,
             staff_id=staff.id,
-            employee_id=employee_id,
-            designation=designation,
-            department_id=resolved_department_id,
             qualification=qualification,
             specialization=specialization,
             experience_years=experience_years,
-            phone=phone,
-            address=address,
-            date_of_joining=joined_on,
-            status='active',
         )
         teacher.save()
 
@@ -526,44 +519,44 @@ def update_teacher(
         if not teacher:
             return {'success': False, 'error': 'Teacher not found'}
 
-        if name is not None:
-            teacher.user.name = name
-            teacher.user.save()
-        if phone is not None:
-            teacher.phone = phone
-        if designation is not None:
-            teacher.designation = designation
+        employment = teacher.staff
+        if employment is None:
+            return {'success': False, 'error': 'Teacher has no employment on record'}
+
         if department_id is not NOT_PROVIDED:
             resolved_department_id, department_error = _resolve_department(
                 department_id, None, teacher.tenant_id,
-                current_department_id=teacher.department_id,
+                current_department_id=employment.department_id,
             )
             if department_error:
                 return {'success': False, 'error': department_error}
-            teacher.department_id = resolved_department_id
+            employment.department_id = resolved_department_id
         elif department is not None:
             resolved_department_id, department_error = _resolve_department(
                 None, department, teacher.tenant_id,
-                current_department_id=teacher.department_id,
+                current_department_id=employment.department_id,
             )
             if department_error:
                 return {'success': False, 'error': department_error}
-            teacher.department_id = resolved_department_id
+            employment.department_id = resolved_department_id
+
+        # What the teaching record owns.
         if qualification is not None:
             teacher.qualification = qualification
         if specialization is not None:
             teacher.specialization = specialization
         if experience_years is not None:
             teacher.experience_years = experience_years
-        if address is not None:
-            teacher.address = address
-        if date_of_joining is not None:
-            teacher.date_of_joining = datetime.strptime(date_of_joining, '%Y-%m-%d').date()
-        if status is not None:
-            teacher.status = status
 
-        _record_edit_against_the_employment(teacher, name=name, phone=phone,
-                                            address=address, status=status)
+        _record_edit_against_the_employment(
+            teacher,
+            name=name,
+            phone=phone,
+            address=address,
+            status=status,
+            designation=designation,
+            date_of_joining=_parse_date(date_of_joining),
+        )
 
         teacher.save()
         return {'success': True, 'teacher': teacher.to_dict()}
@@ -572,7 +565,9 @@ def update_teacher(
         return {'success': False, 'error': safe_error(e, "Failed to update teacher")}
 
 
-def _record_edit_against_the_employment(teacher, *, name, phone, address, status):
+def _record_edit_against_the_employment(
+    teacher, *, name, phone, address, status, designation, date_of_joining,
+):
     """Send an edit of a teacher's record to the person and employment it describes.
 
     A teacher record mixes three things: facts about the human (name, phone,
@@ -592,22 +587,22 @@ def _record_edit_against_the_employment(teacher, *, name, phone, address, status
     if staff is None:
         return
 
+    if name is not None and teacher.user is not None:
+        teacher.user.name = name
+
     revise_identity(
         staff.person,
         {"full_name": name, "phone_number": phone, "address": address},
     )
 
-    # These are the employment's own facts, so the employment carries what the
-    # record now says — including a department cleared to nothing, which a
-    # correction that skipped empty values would quietly keep.
-    staff.designation = teacher.designation
-    staff.department_id = teacher.department_id
+    if designation is not None:
+        staff.designation = designation
 
-    if teacher.date_of_joining is not None:
-        period = ensure_employment_period(staff, teacher.date_of_joining)
+    if date_of_joining is not None:
+        period = ensure_employment_period(staff, date_of_joining)
         # Correcting when someone joined corrects the period they are serving.
         # Opening a second one would say they left and came back.
-        period.joined_on = teacher.date_of_joining
+        period.joined_on = date_of_joining
 
     record_employment_standing(staff, status)
 
@@ -643,9 +638,6 @@ def bulk_update_teacher_status(teacher_ids: List[str], status: str) -> Dict:
         ).all()
         found_ids = {t.id for t in teachers}
         for teacher in teachers:
-            teacher.status = status
-            # Marking a teacher inactive in bulk is the same business action as
-            # marking one, and must reach the employment the same way.
             record_employment_standing(teacher.staff, status)
         db.session.commit()
         return {

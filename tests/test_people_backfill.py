@@ -37,6 +37,16 @@ def _add_student(db_session, tenant, *, name, **parent_columns):
     db_session.add(user)
     db_session.flush()
 
+    # Identity lives on the Person now (migration 090); the family columns are
+    # still on the student row, which is what the family backfill reads.
+    identity = {
+        "date_of_birth": parent_columns.pop("date_of_birth", None),
+        "gender": parent_columns.pop("gender", None),
+        "phone_number": parent_columns.pop("phone", None),
+        "address": parent_columns.pop("address", None),
+        "aadhaar_number": parent_columns.pop("aadhar_number", None),
+    }
+
     student = Student(
         id=f"s-{suffix}",
         tenant_id=tenant.id,
@@ -45,6 +55,11 @@ def _add_student(db_session, tenant, *, name, **parent_columns):
         **parent_columns,
     )
     db_session.add(student)
+    db_session.flush()
+
+    for field, value in identity.items():
+        if value is not None:
+            setattr(student.person, field, value)
     db_session.flush()
     return student
 

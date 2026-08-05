@@ -43,9 +43,11 @@ def _tenant_emails_lower(tenant_id: str) -> Set[str]:
 
 
 def _tenant_employee_ids(tenant_id: str) -> Set[str]:
+    from modules.people.employment import Staff
+
     rows = (
-        db.session.query(Teacher.employee_id)
-        .filter(Teacher.tenant_id == tenant_id)
+        db.session.query(Staff.employee_number)
+        .filter(Staff.tenant_id == tenant_id)
         .all()
     )
     return {r[0] for r in rows if r[0]}
@@ -201,17 +203,20 @@ def _teacher_kwargs_from_coerced(coerced: Dict[str, Any]) -> Dict[str, Any]:
     if coerced.get("date_of_joining"):
         doj = datetime.strptime(coerced["date_of_joining"], "%Y-%m-%d").date()
 
+    # Only what teaching owns. The employment's facts — employee number,
+    # designation, department, joining date — reach Staff through employ(),
+    # and identity reaches the Person; see the caller.
     return {
-        "employee_id": coerced["employee_id"],
-        "designation": _clean_str(coerced.get("designation")),
-        "department_id": coerced.get("department_id"),
         "qualification": _clean_str(coerced.get("qualification")),
         "specialization": _clean_str(coerced.get("specialization")),
         "experience_years": coerced.get("experience_years"),
-        "phone": _clean_str(coerced.get("phone")),
-        "address": _clean_str(coerced.get("address")),
-        "date_of_joining": doj,
-        "status": coerced.get("status") or "active",
+        "_employee_id": coerced["employee_id"],
+        "_designation": _clean_str(coerced.get("designation")),
+        "_department_id": coerced.get("department_id"),
+        "_phone": _clean_str(coerced.get("phone")),
+        "_address": _clean_str(coerced.get("address")),
+        "_date_of_joining": doj,
+        "_status": coerced.get("status") or "active",
     }
 
 
@@ -371,16 +376,19 @@ def import_teachers_from_rows(
 
                     # Teaching is a participation of employment (ADR-005), so
                     # the imported teacher is employed before they teach.
-                    from modules.people.service import employ
+                    from modules.people.service import employ, employment_status_for_legacy_flag
 
                     teacher_fields = tkwargs(coerced)
                     staff = employ(
                         tenant_id,
                         user.person_id,
-                        employee_number=teacher_fields.get("employee_id"),
-                        designation=teacher_fields.get("designation"),
-                        department_id=teacher_fields.get("department_id"),
-                        joined_on=teacher_fields.get("date_of_joining"),
+                        employee_number=teacher_fields.pop("_employee_id", None),
+                        designation=teacher_fields.pop("_designation", None),
+                        department_id=teacher_fields.pop("_department_id", None),
+                        joined_on=teacher_fields.pop("_date_of_joining", None),
+                        employment_status=employment_status_for_legacy_flag(
+                            teacher_fields.pop("_status", "active")
+                        ),
                     )
                     # The sheet also says how to reach them, and that is read
                     # from the person now rather than the teacher row.
@@ -389,8 +397,8 @@ def import_teachers_from_rows(
                     fill_blank_identity(
                         staff.person,
                         {
-                            "phone_number": teacher_fields.get("phone"),
-                            "address": teacher_fields.get("address"),
+                            "phone_number": teacher_fields.pop("_phone", None),
+                            "address": teacher_fields.pop("_address", None),
                         },
                     )
 

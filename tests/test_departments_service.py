@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from modules.people.service import employment_status_for_legacy_flag
 from tests.conftest import employ_for
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
@@ -242,10 +243,13 @@ def _make_teacher(db_session, tenant, department_id, suffix, status="active"):
         id=str(uuid.uuid4()),
         tenant_id=tenant.id,
         user_id=user.id,
-        staff_id=employ_for(user).id,
-        employee_id=f"EMP{suffix}",
-        department_id=department_id,
-        status=status,
+        # Department and whether they still work here belong to the
+        # employment, which is what the counts read.
+        staff_id=employ_for(
+            user,
+            department_id=department_id,
+            employment_status=employment_status_for_legacy_flag(status),
+        ).id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -518,4 +522,4 @@ def test_delete_clears_department_id_on_inactive_teachers(db_session, tenant, sv
 
     assert result["success"] is True
     db_session.refresh(teacher)
-    assert teacher.department_id is None
+    assert teacher.staff.department_id is None

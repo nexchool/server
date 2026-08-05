@@ -275,8 +275,7 @@ def _make_teacher(db_session, tenant, name="Teacher"):
     db_session.flush()
     teacher = Teacher(
         id=_new_id("t-"), tenant_id=tenant.id, user_id=user.id,
-        staff_id=employ_for(user).id,
-        employee_id=f"EMP-{suffix}",
+        staff_id=employ_for(user, employee_number=f"EMP-{suffix}").id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -555,8 +554,7 @@ def test_stats_counts_a_teacher_once_across_several_classes(
     db_session.flush()
     teacher = Teacher(
         id=_new_id("t-"), tenant_id=tenant.id, user_id=teacher_user.id,
-        staff_id=employ_for(teacher_user).id,
-        employee_id=f"EMP-{uuid.uuid4().hex[:6]}",
+        staff_id=employ_for(teacher_user, employee_number=f"EMP-{uuid.uuid4().hex[:6]}").id,
     )
     db_session.add(teacher)
     db_session.flush()

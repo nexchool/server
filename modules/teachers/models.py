@@ -60,7 +60,6 @@ class Teacher(TenantBaseModel):
     """
     __tablename__ = "teachers"
     __table_args__ = (
-        db.UniqueConstraint("employee_id", "tenant_id", name="uq_teachers_employee_id_tenant"),
         db.UniqueConstraint("user_id", "tenant_id", name="uq_teachers_user_id_tenant"),
     )
 
@@ -86,33 +85,19 @@ class Teacher(TenantBaseModel):
         backref=db.backref("teaching_participations", lazy=True),
     )
 
-    # Professional Info
-    employee_id = db.Column(db.String(20), nullable=False, index=True)
-    designation = db.Column(db.String(100), nullable=True)        # e.g. "Senior Teacher", "HOD"
-    department_id = db.Column(
-        db.String(36),
-        db.ForeignKey("departments.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
-    )
+    # What this person is qualified to teach. Employment — their employee
+    # number, designation, department, joining date and whether they still work
+    # here — belongs to Staff (ADR-005) and was dropped from here in migration
+    # 090.
     qualification = db.Column(db.String(200), nullable=True)      # e.g. "M.Ed", "Ph.D"
     specialization = db.Column(db.String(200), nullable=True)     # e.g. "Algebra", "Organic Chemistry"
     experience_years = db.Column(db.Integer, nullable=True)
-
-    # Personal Info
-    phone = db.Column(db.String(20), nullable=True)
-    address = db.Column(db.Text, nullable=True)
-    date_of_joining = db.Column(db.Date, nullable=True)
-
-    # Status
-    status = db.Column(db.String(20), nullable=False, default='active')  # active / inactive
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     user = db.relationship('User', backref=db.backref('teacher_profile', uselist=False))
-    department_ref = db.relationship("Department", foreign_keys=[department_id])
 
     def save(self):
         db.session.add(self)
@@ -303,7 +288,11 @@ class TeacherLeave(TenantBaseModel):
             "id": self.id,
             "teacher_id": self.teacher_id,
             "teacher_name": self.teacher.user.name if self.teacher and self.teacher.user else None,
-            "teacher_employee_id": self.teacher.employee_id if self.teacher else None,
+            "teacher_employee_id": (
+                self.teacher.staff.employee_number
+                if self.teacher and self.teacher.staff
+                else None
+            ),
             "teacher_profile_picture": profile_picture_public_url(self.teacher.user.profile_picture_url)
             if self.teacher and self.teacher.user
             else None,

@@ -81,7 +81,7 @@ def test_import_row_with_a_known_department_persists_department_id(
     assert result["failed"] == 0
 
     teacher = Teacher.query.filter_by(tenant_id=tenant.id).one()
-    assert teacher.department_id == dept["id"]
+    assert teacher.staff.department_id == dept["id"]
 
 
 def test_blank_department_is_not_an_error(db_session, tenant, importer):

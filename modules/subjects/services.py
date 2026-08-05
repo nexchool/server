@@ -409,11 +409,13 @@ ROLE_ADMIN_PERMISSION = "subject.manage"
 
 
 def _teacher_display_name(teacher) -> Optional[str]:
-    """Teacher has no name column; the name lives on the linked User."""
+    """Teacher has no name column; the name belongs to the person (ADR-001)."""
     if teacher is None:
         return None
-    name = teacher.user.name if teacher.user else None
-    return name or teacher.employee_id
+    employment = teacher.staff
+    person = employment.person if employment else None
+    name = person.full_name if person else None
+    return name or (employment.employee_number if employment else None)
 
 
 def _class_label(klass) -> Optional[str]:

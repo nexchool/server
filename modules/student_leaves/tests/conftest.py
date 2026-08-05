@@ -84,7 +84,6 @@ def class_with_teacher(db_session, tenant, academic_year):
         tenant_id=tenant.id,
         user_id=teacher_user.id,
         staff_id=staff.id,
-        employee_id=f"T-{uuid.uuid4().hex[:6]}",
     )
     db_session.add(teacher)
     db_session.flush()
@@ -149,7 +148,6 @@ def other_teacher_user(db_session, tenant):
         tenant_id=tenant.id,
         user_id=user.id,
         staff_id=staff.id,
-        employee_id=f"OT-{uuid.uuid4().hex[:6]}",
     )
     db_session.add(teacher)
     db_session.flush()

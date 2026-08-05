@@ -139,6 +139,11 @@ class Staff(TenantBaseModel):
 
     __table_args__ = (
         db.UniqueConstraint("tenant_id", "person_id", name="uq_staff_tenant_person"),
+        # The guarantee that came off teachers.employee_id when that column was
+        # dropped. An employee number identifies an employee, not a teacher.
+        db.UniqueConstraint(
+            "tenant_id", "employee_number", name="uq_staff_tenant_employee_number"
+        ),
         db.CheckConstraint(
             "employment_status IN ("
             "'working','probation','on_leave','notice_period','suspended',"

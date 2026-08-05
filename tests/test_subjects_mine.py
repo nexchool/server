@@ -139,8 +139,7 @@ def _make_teacher(db_session, tenant, user):
         id=_nid("t-"),
         tenant_id=tenant.id,
         user_id=user.id,
-        staff_id=employ_for(user).id,
-        employee_id=f"EMP-{uuid.uuid4().hex[:6]}",
+        staff_id=employ_for(user, employee_number=f"EMP-{uuid.uuid4().hex[:6]}").id,
     )
     db_session.add(t)
     db_session.flush()

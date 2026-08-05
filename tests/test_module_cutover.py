@@ -68,7 +68,7 @@ def test_a_new_teacher_is_employed_before_they_teach(ctx, tenant):
 
     staff = Staff.query.get(teacher.staff_id)
     assert staff.person_id == teacher.user.person_id
-    assert staff.employee_number == teacher.employee_id
+    assert staff.employee_number == teacher.staff.employee_number
     assert staff.designation == "Senior Teacher"
 
 

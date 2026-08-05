@@ -8,6 +8,8 @@ from sqlalchemy import or_
 
 from core.database import db
 from core.tenant import get_tenant_id
+from modules.people.employment import Staff
+from modules.people.models import Person
 from modules.rbac.services import has_permission
 
 
@@ -87,18 +89,26 @@ def _search_teachers(user, q: str, limit: int) -> List[Dict[str, Any]]:
     from modules.auth.models import User
 
     rows = (
-        db.session.query(Teacher, User)
-        .join(User, User.id == Teacher.user_id)
+        db.session.query(Teacher, Person)
+        .join(Staff, Staff.id == Teacher.staff_id)
+        .join(Person, Person.id == Staff.person_id)
         .filter(
             Teacher.tenant_id == tenant_id,
-            or_(User.name.ilike(_like(q)), Teacher.employee_id.ilike(_like(q))),
+            or_(
+                Person.full_name.ilike(_like(q)),
+                Staff.employee_number.ilike(_like(q)),
+            ),
         )
         .limit(limit)
         .all()
     )
     return [
-        {"id": teacher.id, "name": u.name if u else None, "employee_id": teacher.employee_id}
-        for teacher, u in rows
+        {
+            "id": teacher.id,
+            "name": person.full_name if person else None,
+            "employee_id": teacher.staff.employee_number if teacher.staff else None,
+        }
+        for teacher, person in rows
     ]
 
 

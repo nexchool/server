@@ -20,6 +20,7 @@ from modules.rbac.services import (
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.academic_programmes.models import AcademicProgramme
 from modules.classes.models import Class
+from modules.people.models import Person
 from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
@@ -425,10 +426,6 @@ def create_student(
             academic_year_id=ay_id,
             roll_number=roll_number,
             class_id=class_id,
-            date_of_birth=parsed_date_of_birth,
-            gender=gender,
-            phone=phone,
-            address=address,
             guardian_name=guardian_name,
             guardian_relationship=guardian_relationship,
             guardian_phone=guardian_phone,
@@ -458,7 +455,6 @@ def create_student(
             guardian_occupation=_clean_str(guardian_occupation),
             guardian_aadhar_number=_clean_str(guardian_aadhar_number),
 
-            aadhar_number=_clean_str(aadhar_number),
             apaar_id=_clean_str(apaar_id),
             emis_number=_clean_str(emis_number),
             udise_student_id=_clean_str(udise_student_id),
@@ -634,7 +630,10 @@ def list_students(
     """
     from core.branch_scope import filter_students_by_branch
 
-    query = Student.query.join(User)
+    # Person is inner-joined: every student relationship belongs to a human
+    # (ADR-001), and filtering, searching and sorting must read the same facts
+    # the payload shows rather than the columns left over beside them.
+    query = Student.query.join(User).join(Person, Student.person_id == Person.id)
 
     # Branch scope backstop: restrict to students in allowed-branch classes
     # (classless excluded) regardless of client filters. No-op if unrestricted.
@@ -674,7 +673,7 @@ def list_students(
         query = query.filter(Student.class_id.in_(class_filter))
 
     if gender:
-        query = query.filter(db.func.lower(Student.gender) == gender.strip().lower())
+        query = query.filter(db.func.lower(Person.gender) == gender.strip().lower())
 
     if student_status:
         query = query.filter(
@@ -711,7 +710,7 @@ def list_students(
     if term:
         pattern = f"%{term}%"
         if field == "name":
-            query = query.filter(User.name.ilike(pattern))
+            query = query.filter(Person.full_name.ilike(pattern))
         elif field == "admission_number":
             query = query.filter(Student.admission_number.ilike(pattern))
         elif field == "email":
@@ -723,9 +722,11 @@ def list_students(
         else:
             query = query.filter(
                 db.or_(
-                    User.name.ilike(pattern),
+                    Person.full_name.ilike(pattern),
                     User.email.ilike(pattern),
                     Student.admission_number.ilike(pattern),
+                    # Guardian details still live on the student row until the
+                    # family read moves with the client (see the debt register).
                     Student.guardian_phone.ilike(pattern),
                     AcademicProgramme.name.ilike(pattern),
                 )
@@ -753,7 +754,7 @@ def list_students(
             _ordered(Class.section, nulls_last=True),
         ]
     elif sort_key == "name":
-        order_cols = [_ordered(User.name)]
+        order_cols = [_ordered(Person.full_name)]
     elif sort_key == "roll_number":
         order_cols = [_ordered(Student.roll_number, nulls_last=True)]
     else:  # admission_number (default)
@@ -1103,7 +1104,10 @@ def update_student(
         _record_edit_against_the_person(
             student,
             name=name,
-            date_of_birth=student.date_of_birth if date_of_birth is not None else None,
+            date_of_birth=(
+                datetime.strptime(date_of_birth, '%Y-%m-%d').date()
+                if date_of_birth else None
+            ),
             gender=gender,
             phone=phone,
             address=address,

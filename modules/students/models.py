@@ -152,11 +152,9 @@ class Student(TenantBaseModel):
     # Current Class Assignment
     class_id = db.Column(db.String(36), db.ForeignKey('classes.id'), nullable=True)
     
-    # Personal Info
-    date_of_birth = db.Column(db.Date, nullable=True)
-    gender = db.Column(db.String(10), nullable=True)
-    phone = db.Column(db.String(20), nullable=True)
-    address = db.Column(db.Text, nullable=True)
+    # Personal identity — date of birth, gender, phone, address and Aadhaar —
+    # belongs to the Person (ADR-001) and was dropped from here in migration
+    # 090. The family columns below stay until the household read moves.
 
     # ---------------------------------------------------------------------
     # Extended profile fields (all optional; backward compatible)
@@ -188,7 +186,6 @@ class Student(TenantBaseModel):
     guardian_aadhar_number = db.Column(db.String(20), nullable=True)
 
     # Identity / Demographic
-    aadhar_number = db.Column(db.String(20), nullable=True)
     apaar_id = db.Column(db.String(50), nullable=True)
     emis_number = db.Column(db.String(50), nullable=True)
     udise_student_id = db.Column(db.String(50), nullable=True)

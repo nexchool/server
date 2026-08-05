@@ -205,9 +205,7 @@ def test_delete_blocked_while_teacher_assigned_returns_409(client, db_session, a
     teacher = Teacher(
         tenant_id=tenant.id,
         user_id=teacher_user.id,
-        staff_id=employ_for(teacher_user).id,
-        employee_id=f"T-{uuid.uuid4().hex[:6]}",
-        department_id=created["id"],
+        staff_id=employ_for(teacher_user, department_id=created["id"], employee_number=f"T-{uuid.uuid4().hex[:6]}").id,
     )
     db_session.add(teacher)
     db_session.flush()
