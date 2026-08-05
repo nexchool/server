@@ -279,6 +279,76 @@ def permission_keys_for_person(
     return sorted(keys)
 
 
+def user_ids_holding_profiles(
+    tenant_id: str,
+    role_names,
+    *,
+    must_be_able_to_act: bool = False,
+) -> set:
+    """Accounts whose person holds any of these Authority Profiles.
+
+    The one way to ask "who are the Admins / Teachers / Students?", whether the
+    caller wants an audience or a list of people to act. Answered from the same
+    two sources as authorization: profiles held through employment, and profiles
+    a business relationship implies.
+
+    Matching is case-insensitive because callers ask for "Admin" and "admin"
+    interchangeably.
+
+    Set ``must_be_able_to_act`` when the answer is a list of people expected to
+    do something — a suspended member of staff should not be asked.
+    """
+    from sqlalchemy import func
+
+    from modules.auth.models import User
+    from modules.people.employment import (
+        AUTHORITY_BEARING_STATUSES,
+        EMPLOYED_STATUSES,
+        Staff,
+    )
+    from modules.students.models import Student
+
+    from .models import StaffAuthority
+
+    wanted = [str(name).lower() for name in role_names if name]
+    if not wanted:
+        return set()
+
+    profiles = Role.query.filter(
+        Role.tenant_id == tenant_id, func.lower(Role.name).in_(wanted)
+    ).all()
+    if not profiles:
+        return set()
+
+    usable = AUTHORITY_BEARING_STATUSES if must_be_able_to_act else EMPLOYED_STATUSES
+    holders = {
+        user_id
+        for (user_id,) in db.session.query(User.id)
+        .join(Staff, Staff.person_id == User.person_id)
+        .join(StaffAuthority, StaffAuthority.staff_id == Staff.id)
+        .filter(
+            User.tenant_id == tenant_id,
+            Staff.tenant_id == tenant_id,
+            StaffAuthority.role_id.in_([profile.id for profile in profiles]),
+            Staff.employment_status.in_(list(usable)),
+        )
+        .all()
+    }
+
+    # Nobody is assigned the student profile; holding the relationship is what
+    # makes someone a student.
+    if any(p.implied_by_relationship == RELATIONSHIP_STUDENT for p in profiles):
+        holders.update(
+            user_id
+            for (user_id,) in db.session.query(User.id)
+            .join(Student, Student.person_id == User.person_id)
+            .filter(User.tenant_id == tenant_id, Student.tenant_id == tenant_id)
+            .all()
+        )
+
+    return holders
+
+
 def _forget_cached_permissions_for(employment) -> None:
     """Drop the cached permission set of whoever holds this employment.
 

@@ -733,16 +733,15 @@ def admin_fallback_queue(user):
 def _admin_user_ids_for_tenant(tenant_id: str) -> list:
     """All users with the Admin role for this tenant."""
     try:
-        from modules.rbac.models import UserRole, Role
-        from modules.auth.models import User
-        rows = (
-            db.session.query(User.id)
-            .join(UserRole, UserRole.user_id == User.id)
-            .join(Role, Role.id == UserRole.role_id)
-            .filter(User.tenant_id == tenant_id, Role.name.in_(("Admin", "admin")))
-            .all()
+        from modules.rbac.authority_service import user_ids_holding_profiles
+
+        # Administrators are expected to act on these, so anyone who cannot is
+        # left out rather than asked.
+        return sorted(
+            user_ids_holding_profiles(
+                tenant_id, ("Admin",), must_be_able_to_act=True
+            )
         )
-        return [r[0] for r in rows]
     except Exception:
         return []
 

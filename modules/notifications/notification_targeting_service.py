@@ -45,39 +45,9 @@ def get_users_by_role(role_name: str, tenant_id: str) -> List[User]:
     meaning someone the day they leave — rather than depending on whether an
     assignment was tidied up.
     """
-    from modules.people.employment import EMPLOYED_STATUSES, Staff
-    from modules.rbac.authority_service import RELATIONSHIP_STUDENT
-    from modules.rbac.models import StaffAuthority
+    from modules.rbac.authority_service import user_ids_holding_profiles
 
-    role = Role.query.filter_by(name=role_name, tenant_id=tenant_id).first()
-    if not role:
-        return []
-
-    holder_ids = {
-        user_id
-        for (user_id,) in db.session.query(User.id)
-        .join(Staff, Staff.person_id == User.person_id)
-        .join(StaffAuthority, StaffAuthority.staff_id == Staff.id)
-        .filter(
-            User.tenant_id == tenant_id,
-            Staff.tenant_id == tenant_id,
-            StaffAuthority.role_id == role.id,
-            Staff.employment_status.in_(list(EMPLOYED_STATUSES)),
-        )
-        .all()
-    }
-
-    # Nobody is assigned the student profile; holding the relationship is what
-    # makes someone a student, so that is who the audience is.
-    if role.implied_by_relationship == RELATIONSHIP_STUDENT:
-        holder_ids.update(
-            user_id
-            for (user_id,) in db.session.query(User.id)
-            .join(Student, Student.person_id == User.person_id)
-            .filter(User.tenant_id == tenant_id, Student.tenant_id == tenant_id)
-            .all()
-        )
-
+    holder_ids = user_ids_holding_profiles(tenant_id, (role_name,))
     if not holder_ids:
         return []
 

@@ -192,20 +192,9 @@ def _resolve_audience(tenant_id: str, audience_json: Dict[str, Any]) -> Set[str]
         role_names = [r for r in audience_json.get("roles", []) if r in KNOWN_AUDIENCE_ROLES]
         if not role_names:
             return set()
-        from modules.rbac.models import UserRole, Role
-        from sqlalchemy import func as sfunc
-        normalized = [n.lower() for n in role_names]
-        rows = (
-            db.session.query(User.id)
-            .join(UserRole, UserRole.user_id == User.id)
-            .join(Role, Role.id == UserRole.role_id)
-            .filter(
-                User.tenant_id == tenant_id,
-                sfunc.lower(Role.name).in_(normalized),
-            )
-            .all()
-        )
-        return {r[0] for r in rows}
+        from modules.rbac.authority_service import user_ids_holding_profiles
+
+        return user_ids_holding_profiles(tenant_id, role_names)
 
     if scope == "classes":
         class_ids = audience_json.get("class_ids", []) or []
