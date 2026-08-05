@@ -64,6 +64,10 @@ def create_app(config_name=None):
     # Register blueprints
     register_blueprints(app)
 
+    # Mount the GraphQL endpoint (/api/graphql)
+    from graphql_api import register_graphql
+    register_graphql(app)
+
     # Tenant resolution: resolve by subdomain or X-Tenant-ID for /api/* (except health)
     register_tenant_middleware(app)
 
@@ -101,6 +105,11 @@ def register_tenant_middleware(app: Flask):
             return None
         # Auth routes resolve tenant in the route (supports body subdomain/tenant_id, header, host, default)
         if request.path.startswith("/api/auth/"):
+            return None
+        # GraphQL resolves tenant inside its own context: one endpoint serves both
+        # public (login) and tenant-scoped operations, so failing the whole request
+        # here would block the public ones. See graphql_api.context.
+        if path == "/api/graphql":
             return None
         # CORS preflight: skip tenant resolution so OPTIONS succeeds and browser can send actual request
         if request.method == "OPTIONS":

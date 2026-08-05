@@ -107,6 +107,16 @@ class Config:
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
 
+    # GraphQL — one endpoint accepting client-composed queries, so the limits
+    # below bound the work a single request can ask for. Introspection and the
+    # IDE are development conveniences; ProductionConfig turns both off.
+    GRAPHQL_IDE_ENABLED = _get_bool_env('GRAPHQL_IDE_ENABLED', True)
+    GRAPHQL_INTROSPECTION_ENABLED = _get_bool_env('GRAPHQL_INTROSPECTION_ENABLED', True)
+    GRAPHQL_MAX_DEPTH = int(os.getenv('GRAPHQL_MAX_DEPTH', 12))
+    GRAPHQL_MAX_TOKENS = int(os.getenv('GRAPHQL_MAX_TOKENS', 2000))
+    GRAPHQL_MAX_ALIASES = int(os.getenv('GRAPHQL_MAX_ALIASES', 25))
+    GRAPHQL_RATE_LIMIT = os.getenv('GRAPHQL_RATE_LIMIT', '120 per minute')
+
     # Max upload size (bytes). Bounds streamed uploads (announcement attachments, docs)
     # so a single request can't grow unbounded. Keep in sync with nginx client_max_body_size.
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(64 * 1024 * 1024)))
@@ -154,6 +164,10 @@ class ProductionConfig(Config):
 
     DEBUG = False
     TESTING = False
+
+    # The schema is not public documentation, and the IDE has no place in prod.
+    GRAPHQL_IDE_ENABLED = _get_bool_env('GRAPHQL_IDE_ENABLED', False)
+    GRAPHQL_INTROSPECTION_ENABLED = _get_bool_env('GRAPHQL_INTROSPECTION_ENABLED', False)
 
     # Production must have these set
     BACKEND_URL = os.getenv('BACKEND_URL')  # Must be set in production

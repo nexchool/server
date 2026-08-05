@@ -279,6 +279,14 @@ Existing business REST APIs will gradually migrate to GraphQL.
 
 GraphQL becomes the primary business API.
 
+It is served at `/api/graphql`. Concerns shared by every operation — request
+context (tenant and identity), the error contract, query limits and schema
+assembly — live in `graphql_api/`. Modules contribute their own types and
+resolvers to that schema; they never build a transport of their own.
+
+Authentication is implemented once, in `core/authentication.py`, and consumed by
+both transports. The same is true of tenant resolution in `core/tenant.py`.
+
 All new business features should be exposed through GraphQL.
 
 GraphQL should represent business language rather than database models.

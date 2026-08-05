@@ -1,89 +1,43 @@
-"""
-Authentication Decorator
+"""Authentication decorator for REST routes.
 
-Provides the @auth_required decorator for protecting routes that need authentication.
-Handles JWT validation and token refresh logic.
+The authentication rules live in :mod:`core.authentication`, shared with the
+GraphQL transport. This module only maps the outcome onto HTTP.
 """
 
 from functools import wraps
-from flask import request, jsonify, g
-from datetime import datetime
 
+from flask import jsonify, request
 
-def _load_without_tenant_scope(loader):
-    """Run ``loader()`` with tenant scoping disabled, then restore g.tenant_id.
-
-    Auth identity comes from the token/session, not the request's tenant. A
-    platform admin god-logging into another tenant has ``g.tenant_id`` set to the
-    *entered* tenant while their User/Session rows live in their home tenant, so a
-    tenant-scoped identity lookup would 401 ("User not found") on every tenant
-    route. Clearing ``g.tenant_id`` for just the lookup keeps identity resolution
-    tenant-agnostic; ``_acts_outside_own_tenant`` re-imposes isolation afterwards.
-    """
-    saved_tenant_id = getattr(g, "tenant_id", None)
-    if saved_tenant_id is not None:
-        g.tenant_id = None
-    try:
-        return loader()
-    finally:
-        if saved_tenant_id is not None:
-            g.tenant_id = saved_tenant_id
-
-
-def _acts_outside_own_tenant(user):
-    """True if a non-platform user's token is being used in another tenant.
-
-    Now that identity is resolved unscoped, this re-imposes tenant isolation: a
-    normal user may only act within their own tenant, while a platform admin may
-    operate in any tenant (god-login).
-    """
-    current_tenant_id = getattr(g, "tenant_id", None)
-    return (
-        current_tenant_id is not None
-        and getattr(user, "tenant_id", None) != current_tenant_id
-        and not getattr(user, "is_platform_admin", False)
-    )
+from core.authentication import authenticate_request
 
 
 def auth_required(fn):
     """
     Decorator to protect routes requiring authentication.
-    
+
     This decorator:
     1. Validates the access token from Authorization header
     2. If expired, attempts to refresh using X-Refresh-Token header
     3. Sets g.current_user for use in route handlers
     4. Returns 401 if authentication fails
-    
+
     The decorator must be the OUTERMOST decorator (closest to the route).
     Other decorators like @require_permission should come after this.
-    
+
     Usage:
         @bp.route('/protected')
         @auth_required
         def protected_route():
             # g.current_user is now available
             return jsonify({'user_id': g.current_user.id})
-    
+
     Headers:
         Authorization: Bearer <access_token>
         X-Refresh-Token: <refresh_token> (optional, for token refresh)
-        
+
     Response Headers:
         X-New-Access-Token: <new_access_token> (if token was refreshed)
     """
-    def _account_inactive(user):
-        """True if the user is soft-deleted or suspended.
-
-        A live access token outlives suspension/soft-delete (~15 min) unless we
-        re-check status on every request. Returning True here lets the caller
-        reject with 401 immediately, so revocation takes effect at once instead
-        of only on the next refresh.
-        """
-        return (
-            getattr(user, "deleted_at", None) is not None
-            or getattr(user, "is_suspended", False)
-        )
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -91,90 +45,19 @@ def auth_required(fn):
         if request.method == "OPTIONS":
             return ("", 204)
 
-        # Import here to avoid circular imports
-        from modules.auth.models import User, Session
-        from modules.auth.services import validate_jwt_token, refresh_access_token
-        
-        # Check for Authorization header or auth-token cookie (for panel / Super Admin)
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            access_token = auth_header.split(" ", 1)[1]
-        else:
-            access_token = request.cookies.get("auth-token")
-        if not access_token:
-            return jsonify({"error": "Missing access token"}), 401
+        outcome = authenticate_request()
+        if outcome.failed:
+            return jsonify({"error": outcome.error}), 401
 
-        # Try to validate the access token
-        payload = validate_jwt_token(access_token, token_type="access")
-        if payload:
-            # Token is valid. Resolve identity from the token's global user id
-            # without tenant scoping, then re-impose isolation for non-platform
-            # users (see _load_without_tenant_scope / _acts_outside_own_tenant).
-            user = _load_without_tenant_scope(lambda: User.query.get(payload["sub"]))
-            if not user or _acts_outside_own_tenant(user):
-                return jsonify({"error": "User not found"}), 401
-
-            # Re-check account status on every request so a suspension or
-            # soft-delete cuts the user off immediately, not when the live
-            # access token finally expires. 401 (not 403) routes admin-web
-            # through its logout+redirect-to-login path, where a re-login then
-            # surfaces the proper 403 AccountSuspended / invalid-credentials.
-            if _account_inactive(user):
-                return jsonify({"error": "Session expired"}), 401
-
-            g.current_user = user
-            return fn(*args, **kwargs)
-
-        # Access token expired, try to refresh
-        refresh_token = request.headers.get("X-Refresh-Token")
-        if not refresh_token:
-            return jsonify({"error": "Access token expired"}), 401
-
-        new_access_token = refresh_access_token(refresh_token, request)
-        if not new_access_token:
-            return jsonify({"error": "Invalid refresh token"}), 401
-
-        # Get session and user — resolved without tenant scoping (the session /
-        # user rows live in the account's home tenant, which may differ from the
-        # entered tenant during a platform-admin god-login).
-        session = _load_without_tenant_scope(
-            lambda: Session.query.filter_by(
-                refresh_token=refresh_token,
-                revoked=False,
-            ).first()
-        )
-
-        if not session:
-            return jsonify({"error": "Session not found"}), 401
-
-        # Set current user from session, then re-impose tenant isolation.
-        user = _load_without_tenant_scope(lambda: User.query.get(session.user_id))
-        if not user or _acts_outside_own_tenant(user):
-            return jsonify({"error": "Session not found"}), 401
-
-        # Defense in depth: the refresh path already revokes sessions on
-        # suspend/delete, but re-check here too so a stale-but-unrevoked
-        # session can never re-mint access for an inactive account.
-        if _account_inactive(user):
-            return jsonify({"error": "Session expired"}), 401
-
-        g.current_user = user
-
-        # Update session last accessed time
-        session.last_accessed_at = datetime.utcnow()
-        session.save()
-
-        # Call the route handler
         response = fn(*args, **kwargs)
-        
-        # Add new access token to response headers
-        if hasattr(response, 'headers'):
-            response.headers["X-New-Access-Token"] = new_access_token
-        else:
-            # Handle tuple responses like (data, status_code)
-            from flask import make_response
-            response = make_response(response)
-            response.headers["X-New-Access-Token"] = new_access_token
+
+        if outcome.new_access_token:
+            if not hasattr(response, "headers"):
+                # Handle tuple responses like (data, status_code)
+                from flask import make_response
+
+                response = make_response(response)
+            response.headers["X-New-Access-Token"] = outcome.new_access_token
 
         return response
 

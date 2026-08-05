@@ -56,7 +56,7 @@ def test_redeem_rejects_invalid_code(monkeypatch):
 
 def test_redeem_valid_code_finalizes_god_login(monkeypatch):
     from modules.auth import routes, handoff
-    import core.decorators.auth as auth_dec
+    import core.authentication as authentication
     import core.models as core_models
 
     monkeypatch.setattr(
@@ -67,8 +67,8 @@ def test_redeem_valid_code_finalizes_god_login(monkeypatch):
     fake_user = types.SimpleNamespace(id="pa-1", is_platform_admin=True)
     fake_tenant = types.SimpleNamespace(id="t-9", subdomain="acme")
 
-    # _load_without_tenant_scope(loader) just runs the loader in these tests.
-    monkeypatch.setattr(auth_dec, "_load_without_tenant_scope", lambda loader: fake_user)
+    # load_without_tenant_scope(loader) just runs the loader in these tests.
+    monkeypatch.setattr(authentication, "load_without_tenant_scope", lambda loader: fake_user)
 
     class _Q:
         def filter_by(self, **kw):

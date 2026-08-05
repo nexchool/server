@@ -490,7 +490,7 @@ def login_link_redeem():
     admin-web's session handling is unchanged.
     """
     from .handoff import redeem as redeem_handoff
-    from core.decorators.auth import _load_without_tenant_scope
+    from core.authentication import load_without_tenant_scope
     from core.models import Tenant, TENANT_STATUS_ACTIVE
 
     data = request.get_json(silent=True) or {}
@@ -505,7 +505,7 @@ def login_link_redeem():
 
     # Identity comes from the code, not the request tenant. Load the platform
     # admin unscoped (their User row lives in their home tenant) and the target.
-    user = _load_without_tenant_scope(
+    user = load_without_tenant_scope(
         lambda: User.query.filter_by(
             id=payload['admin_id'], is_platform_admin=True
         ).filter(User.deleted_at.is_(None)).first()
