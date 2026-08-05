@@ -33,7 +33,7 @@ from core.feature_flags import (
     get_tenant_feature_flags,
 )
 from modules.auth.models import User
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noqa: F401 (re-exported)
 from modules.students.models import Student
 from modules.teachers.models import Teacher
@@ -643,9 +643,12 @@ def get_school_admin_user_for_tenant(tenant_id: str) -> Optional[User]:
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return None
-    ur = UserRole.query.filter_by(tenant_id=tenant_id, role_id=admin_role.id).first()
-    if not ur:
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    holders = user_ids_holding_profiles(tenant_id, (admin_role.name,))
+    if not holders:
         return None
+    ur = type("_Holder", (), {"user_id": sorted(holders)[0]})()
     return User.query.get(ur.user_id)
 
 
@@ -886,7 +889,9 @@ def list_tenant_admins(tenant_id: str) -> Dict[str, Any]:
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return {"success": True, "admins": []}
-    role_user_ids = [ur.user_id for ur in UserRole.query.filter_by(tenant_id=tenant_id, role_id=admin_role.id).all()]
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    role_user_ids = sorted(user_ids_holding_profiles(tenant_id, (admin_role.name,)))
     admins = []
     for uid in role_user_ids:
         user = User.query.get(uid)
@@ -999,21 +1004,21 @@ def remove_tenant_admin(
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return {"success": False, "error": "Admin role not found for tenant"}
-    admin_user_count = UserRole.query.filter_by(
-        tenant_id=tenant_id,
-        role_id=admin_role.id,
-    ).count()
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    admin_user_count = len(user_ids_holding_profiles(tenant_id, (admin_role.name,)))
     if admin_user_count <= 1:
         return {"success": False, "error": "Cannot remove the last admin. A tenant must have at least one admin."}
-    ur = UserRole.query.filter_by(
-        tenant_id=tenant_id,
-        user_id=admin_user_id,
-        role_id=admin_role.id,
-    ).first()
-    if not ur:
+    from modules.people.employment import Staff
+    from modules.rbac.authority_service import authorities_held_by, withdraw_authority
+    from modules.rbac.models import StaffAuthority
+
+    employment = Staff.query.filter_by(tenant_id=tenant_id, person_id=user.person_id).first()
+    if employment is None or not withdraw_authority(employment.id, admin_role.id):
         return {"success": False, "error": "User is not an admin for this tenant"}
-    db.session.delete(ur)
-    remaining_roles = UserRole.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).count()
+
+    # Only an account that administers nothing and is nobody here is removed.
+    remaining_roles = StaffAuthority.query.filter_by(staff_id=employment.id).count()
     has_student = Student.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).first() is not None
     has_teacher = Teacher.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).first() is not None
     if remaining_roles == 0 and not has_student and not has_teacher:
@@ -1045,12 +1050,9 @@ def update_tenant_admin(
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return {"success": False, "error": "Admin role not found for tenant"}
-    ur = UserRole.query.filter_by(
-        tenant_id=tenant_id,
-        user_id=admin_user_id,
-        role_id=admin_role.id,
-    ).first()
-    if not ur:
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    if admin_user_id not in user_ids_holding_profiles(tenant_id, (admin_role.name,)):
         return {"success": False, "error": "User is not an admin for this tenant"}
     if name is not None:
         user.name = name

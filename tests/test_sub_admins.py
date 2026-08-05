@@ -95,7 +95,7 @@ def _create(tenant, **overrides):
 
 def test_create_happy_path(db_session, seeded_tenant, mock_dispatch):
     from modules.auth.models import User
-    from modules.rbac.models import Role, UserRole
+    from modules.rbac.models import Role
 
     email = _email()
     result = _create(seeded_tenant, email=email)
@@ -106,10 +106,16 @@ def test_create_happy_path(db_session, seeded_tenant, mock_dispatch):
     assert user.email_verified is True
     assert user.force_password_reset is True  # admin-typed creds: force first-login change
 
-    # Private is_subadmin role linked via UserRole
-    ur = UserRole.query.filter_by(user_id=user.id, tenant_id=seeded_tenant.id).first()
-    assert ur is not None
-    role = Role.query.get(ur.role_id)
+    # The private is_subadmin profile is held by their employment (ADR-013).
+    from modules.people.employment import Staff
+    from modules.rbac.models import StaffAuthority
+
+    employment = Staff.query.filter_by(
+        tenant_id=seeded_tenant.id, person_id=user.person_id
+    ).one()
+    held = StaffAuthority.query.filter_by(staff_id=employment.id).first()
+    assert held is not None
+    role = Role.query.get(held.role_id)
     assert role.is_subadmin is True
     assert role.name == f"subadmin:{user.id}"
 
@@ -488,7 +494,7 @@ def test_subadmin_lacks_subadmin_manage_permission(db_session, seeded_tenant, mo
 def test_seeded_admin_has_subadmin_manage(db_session, seeded_tenant, mock_dispatch):
     """The seeded Admin role carries subadmin.manage so the School Admin passes the guard."""
     from modules.auth.models import User
-    from modules.rbac.models import Role, UserRole
+    from modules.rbac.models import Role
     from modules.rbac.services import has_permission
 
     admin_role = Role.query.filter_by(name="Admin", tenant_id=seeded_tenant.id).first()
@@ -503,9 +509,12 @@ def test_seeded_admin_has_subadmin_manage(db_session, seeded_tenant, mock_dispat
     )
     db_session.add(admin_user)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=seeded_tenant.id, user_id=admin_user.id, role_id=admin_role.id)
-    )
+    # Authority reaches them through their employment, not their account.
+    from modules.people.service import employ
+    from modules.rbac.authority_service import grant_authority
+
+    employment = employ(seeded_tenant.id, admin_user.person_id)
+    grant_authority(employment.id, admin_role.id)
     db_session.flush()
 
     assert has_permission(admin_user.id, "subadmin.manage") is True

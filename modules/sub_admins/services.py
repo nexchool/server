@@ -1,7 +1,7 @@
 """
 Sub-Admin services (tenant-scoped).
 
-A "sub-admin" is a tenant User (not soft-deleted) linked via UserRole to a
+A "sub-admin" is a tenant User (not soft-deleted) whose employment holds a
 private Role with ``is_subadmin=True``. Each sub-admin owns exactly one private
 role named ``subadmin:<user_id>``; that role's RolePermission rows are the
 module permissions the School Admin granted.
@@ -23,7 +23,8 @@ from sqlalchemy.orm import joinedload
 from core.database import db
 from modules.auth.models import User
 from modules.auth.services import revoke_all_user_sessions
-from modules.rbac.models import Permission, Role, RolePermission, UserRole
+from modules.people.employment import Staff
+from modules.rbac.models import Permission, Role, RolePermission, StaffAuthority
 from shared.utils import paginate_query
 
 from .catalog import (
@@ -74,11 +75,12 @@ def _get_subadmin_user(tenant_id: str, user_id: str) -> Optional[User]:
         return None
 
     is_subadmin = (
-        db.session.query(UserRole.id)
-        .join(Role, Role.id == UserRole.role_id)
+        db.session.query(StaffAuthority.id)
+        .join(Staff, Staff.id == StaffAuthority.staff_id)
+        .join(Role, Role.id == StaffAuthority.role_id)
         .filter(
-            UserRole.user_id == user_id,
-            UserRole.tenant_id == tenant_id,
+            Staff.person_id == user.person_id,
+            StaffAuthority.tenant_id == tenant_id,
             Role.is_subadmin.is_(True),
         )
         .first()
@@ -89,10 +91,12 @@ def _get_subadmin_user(tenant_id: str, user_id: str) -> Optional[User]:
 def _get_private_role(tenant_id: str, user_id: str) -> Optional[Role]:
     """Return the sub-admin's private is_subadmin role within the tenant."""
     return (
-        Role.query.join(UserRole, UserRole.role_id == Role.id)
+        Role.query.join(StaffAuthority, StaffAuthority.role_id == Role.id)
+        .join(Staff, Staff.id == StaffAuthority.staff_id)
+        .join(User, User.person_id == Staff.person_id)
         .filter(
-            UserRole.user_id == user_id,
-            UserRole.tenant_id == tenant_id,
+            User.id == user_id,
+            StaffAuthority.tenant_id == tenant_id,
             Role.is_subadmin.is_(True),
         )
         .first()
@@ -352,12 +356,13 @@ def list_sub_admins(
 ) -> Dict:
     """Paginated list of sub-admins for a tenant (excludes soft-deleted)."""
     query = (
-        User.query.join(UserRole, UserRole.user_id == User.id)
-        .join(Role, Role.id == UserRole.role_id)
+        User.query.join(Staff, Staff.person_id == User.person_id)
+        .join(StaffAuthority, StaffAuthority.staff_id == Staff.id)
+        .join(Role, Role.id == StaffAuthority.role_id)
         .filter(
             User.tenant_id == tenant_id,
             User.deleted_at.is_(None),
-            UserRole.tenant_id == tenant_id,
+            StaffAuthority.tenant_id == tenant_id,
             Role.is_subadmin.is_(True),
         )
         .distinct()
@@ -384,12 +389,14 @@ def list_sub_admins(
     roles_by_user = {}
     if user_ids:
         rows = (
-            db.session.query(UserRole.user_id, Role)
-            .join(Role, Role.id == UserRole.role_id)
+            db.session.query(User.id, Role)
+            .join(Staff, Staff.person_id == User.person_id)
+            .join(StaffAuthority, StaffAuthority.staff_id == Staff.id)
+            .join(Role, Role.id == StaffAuthority.role_id)
             .options(joinedload(Role.permissions))
             .filter(
-                UserRole.tenant_id == tenant_id,
-                UserRole.user_id.in_(user_ids),
+                StaffAuthority.tenant_id == tenant_id,
+                User.id.in_(user_ids),
                 Role.is_subadmin.is_(True),
             )
             .all()
@@ -515,9 +522,6 @@ def create_sub_admin(
         employment = employ(tenant_id, user.person_id)
         grant_authority(employment.id, role.id)
 
-        db.session.add(
-            UserRole(tenant_id=tenant_id, user_id=user.id, role_id=role.id)
-        )
 
         _sync_user_school_units(tenant_id, user.id, branch_unit_ids)
         db.session.commit()
