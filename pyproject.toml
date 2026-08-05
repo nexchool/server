@@ -1,3 +1,9 @@
+[tool.pytest.ini_options]
+# Some suites live beside the module they cover rather than under tests/.
+# Both are named here so a suite cannot rot unnoticed: student_leaves sat
+# broken for a while because `pytest tests/` never collected it.
+testpaths = ["tests", "modules"]
+
 [tool.coverage.run]
 branch = true
 include = [
