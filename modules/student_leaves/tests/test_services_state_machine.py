@@ -263,11 +263,29 @@ def test_admin_cannot_approve_when_class_teacher_available(
 # helpers
 # ---------------------------------------------------------------------------
 
+def _next_school_days(count=2):
+    """The next `count` weekdays, so a leave lands on days the school runs.
+
+    "Tomorrow and the day after" is not a fixed thing: run on a Friday it means
+    Saturday and Sunday, no attendance is taken, and a test asserting that
+    approval created attendance rows fails for reasons that have nothing to do
+    with approval. Tests must not depend on the day they run.
+    """
+    days = []
+    day = date.today()
+    while len(days) < count:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            days.append(day)
+    return days
+
+
 def _sample_payload(student_user):
+    school_days = _next_school_days(2)
     return {
         "student_id": student_user.student.id,
         "leave_type": "sick",
-        "start_date": (date.today() + timedelta(days=1)).isoformat(),
-        "end_date": (date.today() + timedelta(days=2)).isoformat(),
+        "start_date": school_days[0].isoformat(),
+        "end_date": school_days[-1].isoformat(),
         "reason": "x",
     }
