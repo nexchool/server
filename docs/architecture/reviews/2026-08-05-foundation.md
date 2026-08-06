@@ -164,6 +164,18 @@ something introduced here.
 > that picks the wrong table gets a different answer about who teaches a
 > subject. The branch-scope filter added for B1 has to union both, which is the
 > ambiguity costing code today.
+>
+> **Resolved by ADR-014 (decided 2026-08-05, not yet implemented).**
+> `class_subject_teachers` owns subject teaching; `class_teacher_assignments`
+> owns class-teacher responsibility; `is_class_teacher` is removed;
+> `classes.teacher_id` and `students.class_id` are caches and never business
+> owners; operational modules resolve teaching through the Teaching Assignment
+> service rather than the tables; current operations use active assignments and
+> historical operations use the assignment in effect at the time.
+>
+> No data migration: every `class_teachers` row is already recorded elsewhere
+> (51 in `class_subject_teachers`, 12 in `class_teacher_assignments`). The work
+> is five reader modules, one writer, and a table drop.
 
 ---
 
