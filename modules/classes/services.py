@@ -9,7 +9,11 @@ from datetime import datetime
 
 from core.database import db
 from core.tenant import get_tenant_id
-from .models import Class, ClassTeacher
+from modules.academics.backbone.models import (
+    ClassSubjectTeacher,
+    ClassTeacherAssignment,
+)
+from .models import Class, ClassSubject, ClassTeacher
 
 logger = logging.getLogger(__name__)
 
@@ -253,39 +257,58 @@ SEARCH_FIELDS = {"all", "name", "section", "grade", "programme", "branch"}
 MAX_PER_PAGE = 100
 
 
-def _teacher_links(tenant_id: str):
-    """(class_id, user_id) for every teacher attached to a class, deduplicated.
+def _name_the_class_teacher(cls, teacher_user_id):
+    """Record who is responsible for this class, and refresh the cache.
 
-    A class reaches its teachers two ways and both have to be counted:
-
-    - `class_teachers` rows — subject-teacher assignments, keyed by `teachers.id`.
-    - `classes.teacher_id` — the class teacher, keyed by `users.id`.
-
-    `assign_teacher_to_class` writes both, but `create_class` / `update_class`
-    set only `classes.teacher_id`, so a class whose teacher came from the normal
-    form has no junction row at all. Counting the junction alone reported
-    `teacher_count: 0` next to a populated `teacher_name` on the same row.
-
-    The two columns point at different tables, so they're unioned in *user* id
-    space — `teachers.user_id` is the common denominator — and UNION dedupes a
-    teacher who is both class teacher and subject teacher.
+    The class form identifies a teacher by their login, which is what
+    `classes.teacher_id` holds. The responsibility itself belongs to
+    `class_teacher_assignments` (ADR-014), so it is written there first and the
+    cache is set from it. A class form that wrote only the cache is how the
+    concept came to have two homes.
     """
+    from modules.academics.backbone.models import ClassTeacherAssignment
     from modules.teachers.models import Teacher
 
-    via_junction = (
-        db.session.query(
-            ClassTeacher.class_id.label("class_id"),
-            Teacher.user_id.label("user_id"),
-        )
-        .join(Teacher, Teacher.id == ClassTeacher.teacher_id)
-        .filter(ClassTeacher.tenant_id == tenant_id)
-    )
-    via_class_teacher = db.session.query(
-        Class.id.label("class_id"),
-        Class.teacher_id.label("user_id"),
-    ).filter(Class.tenant_id == tenant_id, Class.teacher_id.isnot(None))
+    for held in ClassTeacherAssignment.query.filter_by(
+        tenant_id=cls.tenant_id, class_id=cls.id, role="primary", is_active=True
+    ).all():
+        held.is_active = False
+        db.session.add(held)
+    db.session.flush()
 
-    return via_junction.union(via_class_teacher)
+    if not teacher_user_id:
+        cls.teacher_id = None
+        return
+
+    teacher = Teacher.query.filter_by(
+        tenant_id=cls.tenant_id, user_id=teacher_user_id
+    ).first()
+    if teacher is not None:
+        db.session.add(
+            ClassTeacherAssignment(
+                tenant_id=cls.tenant_id,
+                class_id=cls.id,
+                teacher_id=teacher.id,
+                role="primary",
+                is_active=True,
+            )
+        )
+    cls.teacher_id = teacher_user_id
+
+
+def _teacher_links(tenant_id: str):
+    """(class_id, teacher_id) for everyone currently teaching a class.
+
+    Asks Teaching Assignment rather than joining tables here, so this module
+    does not need to know that teaching is expressed by two of them (ADR-014).
+
+    Counted in teacher-id space now, not user-id. The previous version unioned
+    `classes.teacher_id`, which is a cache — nothing may decide anything from
+    it — and normalising on user_id only existed to make that union possible.
+    """
+    from modules.academics.teaching_assignment import current_teaching_links
+
+    return current_teaching_links(tenant_id)
 
 
 def _count_subqueries(tenant_id: str):
@@ -315,7 +338,7 @@ def _count_subqueries(tenant_id: str):
     teacher_counts = (
         db.session.query(
             links.c.class_id.label("class_id"),
-            func.count(distinct(links.c.user_id)).label("count"),
+            func.count(distinct(links.c.teacher_id)).label("count"),
         )
         .group_by(links.c.class_id)
         .subquery()
@@ -515,12 +538,10 @@ def get_classes_stats(
         .scalar()
     ) or 0
 
-    # Counts both attachment routes (see `_teacher_links`) in user-id space, so
-    # a class teacher set through the class form is included and a teacher who
-    # is both class teacher and subject teacher is counted once.
+    # A teacher who is both class teacher and subject teacher is counted once.
     links = _teacher_links(tenant_id).subquery()
     total_teachers = (
-        db.session.query(func.count(distinct(links.c.user_id)))
+        db.session.query(func.count(distinct(links.c.teacher_id)))
         .filter(links.c.class_id.in_(class_ids))
         .scalar()
     ) or 0
@@ -657,7 +678,10 @@ def update_class(
         if academic_year_id is not None:
             cls.academic_year_id = academic_year_id
         if teacher_id is not None:
-            cls.teacher_id = teacher_id if teacher_id else None
+            # The class form names a class teacher by their login. Record the
+            # responsibility where it is owned, then let the cache follow —
+            # writing only the cache is what let this concept have two homes.
+            _name_the_class_teacher(cls, teacher_id or None)
         if start_date is not None:
             cls.start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
         if end_date is not None:
@@ -926,42 +950,84 @@ def assign_teacher_to_class(
                     'error': 'This teacher is already the class teacher of another class. A teacher can only be class teacher of one class.',
                 }
 
-            existing_as_ct_via_junction = ClassTeacher.query.filter(
-                ClassTeacher.tenant_id == cls.tenant_id,
-                ClassTeacher.teacher_id == teacher_id,
-                ClassTeacher.is_class_teacher == True,
-                ClassTeacher.class_id != class_id,
+            elsewhere = ClassTeacherAssignment.query.filter(
+                ClassTeacherAssignment.tenant_id == cls.tenant_id,
+                ClassTeacherAssignment.teacher_id == teacher_id,
+                ClassTeacherAssignment.role == "primary",
+                ClassTeacherAssignment.is_active.is_(True),
+                ClassTeacherAssignment.deleted_at.is_(None),
+                ClassTeacherAssignment.class_id != class_id,
             ).first()
-            if existing_as_ct_via_junction:
+            if elsewhere:
                 return {
                     'success': False,
                     'error': 'This teacher is already the class teacher of another class. A teacher can only be class teacher of one class.',
                 }
 
-            # Only one class teacher per class: clear any existing for this class
-            cls.teacher_id = None
-            for ct_row in ClassTeacher.query.filter_by(class_id=class_id, is_class_teacher=True).all():
-                ct_row.is_class_teacher = False
-                db.session.add(ct_row)
-            db.session.add(cls)
+            # Only one class teacher per class: stand down whoever held it.
+            for held in ClassTeacherAssignment.query.filter_by(
+                tenant_id=cls.tenant_id, class_id=class_id, role="primary", is_active=True
+            ).all():
+                held.is_active = False
+                db.session.add(held)
+            db.session.flush()
 
-        ct = ClassTeacher(
-            tenant_id=cls.tenant_id,
-            class_id=class_id,
-            teacher_id=teacher_id,
-            subject_id=subject_id_val,
-            subject=None,  # Use subject_id only
-            is_class_teacher=is_class_teacher,
-        )
-        db.session.add(ct)
-
-        # Keep Class.teacher_id in sync when adding as class teacher
-        if is_class_teacher:
+            db.session.add(
+                ClassTeacherAssignment(
+                    tenant_id=cls.tenant_id,
+                    class_id=class_id,
+                    teacher_id=teacher_id,
+                    role="primary",
+                    is_active=True,
+                )
+            )
+            # The cache follows the owner; nothing decides from it (ADR-014).
             cls.teacher_id = teacher.user_id
             db.session.add(cls)
 
+        if subject_id_val:
+            offered = ClassSubject.query.filter_by(
+                tenant_id=cls.tenant_id, class_id=class_id, subject_id=subject_id_val
+            ).first()
+            if offered is None:
+                return {
+                    'success': False,
+                    'error': (
+                        'This class does not offer that subject yet. Add it to the '
+                        "class's subjects first, then assign a teacher to it."
+                    ),
+                }
+
+            already = ClassSubjectTeacher.query.filter_by(
+                tenant_id=cls.tenant_id,
+                class_subject_id=offered.id,
+                teacher_id=teacher_id,
+            ).first()
+            if already is None:
+                db.session.add(
+                    ClassSubjectTeacher(
+                        tenant_id=cls.tenant_id,
+                        class_subject_id=offered.id,
+                        teacher_id=teacher_id,
+                        role="primary",
+                        is_active=True,
+                    )
+                )
+            else:
+                already.is_active = True
+                db.session.add(already)
+
         db.session.commit()
-        return {'success': True, 'assignment': ct.to_dict(), 'message': 'Teacher assigned to class'}
+        return {
+            'success': True,
+            'assignment': {
+                'class_id': class_id,
+                'teacher_id': teacher_id,
+                'subject_id': subject_id_val,
+                'is_class_teacher': is_class_teacher,
+            },
+            'message': 'Teacher assigned to class',
+        }
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': safe_error(e)}

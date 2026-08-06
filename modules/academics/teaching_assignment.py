@@ -316,3 +316,54 @@ def _counts_on(row, held: TeachingAssignment, on: Optional[date]) -> bool:
     if on is None:
         return bool(getattr(row, "is_active", True)) and held.was_in_effect_on(date.today())
     return held.was_in_effect_on(on)
+
+
+# ---------------------------------------------------------------------------
+# For callers that must compose SQL
+# ---------------------------------------------------------------------------
+
+def current_teaching_links(tenant_id: str):
+    """(class_id, teacher_id) for everyone currently teaching, as a query.
+
+    Some callers cannot use the Python API above: a class list that sorts by
+    how many teachers a class has must compute that aggregate in SQL, or the
+    sort cannot be applied before the page is taken.
+
+    They still must not know *which tables* express teaching — that is the
+    knowledge this module exists to hold — so it is offered as a composable
+    query instead. The same shape `core.branch_scope` uses for the same reason.
+
+    Current only. A caller needing history wants the dated API above, because
+    "as of when" cannot be expressed in a join without saying when.
+    """
+    from modules.academics.backbone.models import (
+        ClassSubjectTeacher,
+        ClassTeacherAssignment,
+    )
+    from modules.classes.models import ClassSubject
+
+    responsible = (
+        db.session.query(
+            ClassTeacherAssignment.class_id.label("class_id"),
+            ClassTeacherAssignment.teacher_id.label("teacher_id"),
+        )
+        .filter(
+            ClassTeacherAssignment.tenant_id == tenant_id,
+            ClassTeacherAssignment.is_active.is_(True),
+            ClassTeacherAssignment.deleted_at.is_(None),
+        )
+    )
+
+    teaching_a_subject = (
+        db.session.query(
+            ClassSubject.class_id.label("class_id"),
+            ClassSubjectTeacher.teacher_id.label("teacher_id"),
+        )
+        .join(ClassSubject, ClassSubject.id == ClassSubjectTeacher.class_subject_id)
+        .filter(
+            ClassSubjectTeacher.tenant_id == tenant_id,
+            ClassSubjectTeacher.is_active.is_(True),
+        )
+    )
+
+    return responsible.union(teaching_a_subject)

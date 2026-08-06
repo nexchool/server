@@ -13,7 +13,6 @@ from sqlalchemy.orm import load_only
 
 from core.database import db
 from modules.auth.models import User
-from modules.classes.models import ClassTeacher
 from modules.rbac.models import Role
 from modules.students.models import Student
 from modules.teachers.models import Teacher
@@ -75,21 +74,24 @@ def get_students_by_class(class_id: str, tenant_id: str) -> List[User]:
 
 
 def get_teachers_by_class(class_id: str, tenant_id: str) -> List[User]:
-    """Login users for teachers assigned to class_id via class_teachers."""
-    ct_subq = (
-        db.session.query(ClassTeacher.teacher_id)
-        .filter(
-            ClassTeacher.tenant_id == tenant_id,
-            ClassTeacher.class_id == class_id,
-        )
-        .subquery()
-    )
+    """Login users for the teachers who currently teach this class.
+
+    Asks Teaching Assignment rather than a table, so a notification reaches
+    whoever teaches the class today — the class teacher and every subject
+    teacher alike, since both have a reason to hear about it.
+    """
+    from modules.academics.teaching_assignment import teacher_ids_teaching_in
+
+    teaching_here = teacher_ids_teaching_in([class_id])
+    if not teaching_here:
+        return []
+
     return (
         db.session.query(User)
         .join(Teacher, Teacher.user_id == User.id)
         .filter(
             Teacher.tenant_id == tenant_id,
-            Teacher.id.in_(ct_subq),
+            Teacher.id.in_(teaching_here),
             User.tenant_id == tenant_id,
         )
         .options(load_only(User.id, User.email, User.name, User.tenant_id))

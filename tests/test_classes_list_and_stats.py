@@ -282,16 +282,66 @@ def _make_teacher(db_session, tenant, name="Teacher"):
     return teacher, user
 
 
+def _make_subject_teacher(db_session, tenant, cls, teacher):
+    """Record that this teacher takes a subject in this class.
+
+    Owned by class_subject_teachers, which hangs off the subject the class
+    offers (ADR-014).
+    """
+    from modules.academics.backbone.models import ClassSubjectTeacher
+    from modules.classes.models import ClassSubject
+    from modules.subjects.models import Subject
+
+    subject = Subject(
+        id=_new_id("sub-"), tenant_id=tenant.id, name=f"Subject {uuid.uuid4().hex[:4]}",
+        code=f"S{uuid.uuid4().hex[:4]}",
+    )
+    db_session.add(subject)
+    db_session.flush()
+    offered = ClassSubject(
+        id=_new_id("cs-"), tenant_id=tenant.id, class_id=cls.id,
+        subject_id=subject.id, weekly_periods=4,
+    )
+    db_session.add(offered)
+    db_session.flush()
+    db_session.add(
+        ClassSubjectTeacher(
+            id=_new_id("cst-"), tenant_id=tenant.id,
+            class_subject_id=offered.id, teacher_id=teacher.id,
+            role="primary", is_active=True,
+        )
+    )
+    db_session.flush()
+
+
+def _make_class_teacher(db_session, tenant, cls, teacher, user):
+    """Name a class teacher the way the application does.
+
+    The responsibility is recorded in class_teacher_assignments, which owns it;
+    classes.teacher_id is a cache that follows (ADR-014). Setting the cache
+    alone is a state no supported path can produce any more.
+    """
+    from modules.academics.backbone.models import ClassTeacherAssignment
+
+    db_session.add(
+        ClassTeacherAssignment(
+            id=_new_id("cta-"), tenant_id=tenant.id, class_id=cls.id,
+            teacher_id=teacher.id, role="primary", is_active=True,
+        )
+    )
+    cls.teacher_id = user.id
+    db_session.add(cls)
+    db_session.flush()
+
+
 def test_teacher_count_includes_a_class_teacher_set_on_the_class(
     ctx, db_session, tenant, populated
 ):
     """create_class/update_class set classes.teacher_id without a junction row,
     so counting class_teachers alone showed 0 teachers beside a teacher name."""
     nursery_a, _, _ = populated
-    _, user = _make_teacher(db_session, tenant)
-    nursery_a.teacher_id = user.id
-    db_session.add(nursery_a)
-    db_session.flush()
+    teacher, user = _make_teacher(db_session, tenant)
+    _make_class_teacher(db_session, tenant, nursery_a, teacher, user)
 
     row = next(
         c for c in class_services.get_all_classes()["items"] if c["id"] == nursery_a.id
@@ -303,16 +353,11 @@ def test_teacher_count_includes_a_class_teacher_set_on_the_class(
 def test_teacher_counted_once_when_class_teacher_and_subject_teacher(
     ctx, db_session, tenant, populated
 ):
-    """The two routes use different id spaces; the union must still dedupe."""
+    """Holding both responsibilities for a class still makes one teacher."""
     nursery_a, _, _ = populated
     teacher, user = _make_teacher(db_session, tenant)
-    nursery_a.teacher_id = user.id
-    db_session.add(nursery_a)
-    db_session.add(ClassTeacher(
-        id=_new_id("ct-"), tenant_id=tenant.id,
-        class_id=nursery_a.id, teacher_id=teacher.id,
-    ))
-    db_session.flush()
+    _make_class_teacher(db_session, tenant, nursery_a, teacher, user)
+    _make_subject_teacher(db_session, tenant, nursery_a, teacher)
 
     row = next(
         c for c in class_services.get_all_classes()["items"] if c["id"] == nursery_a.id
@@ -324,10 +369,8 @@ def test_stats_counts_a_class_teacher_set_on_the_class(
     ctx, db_session, tenant, populated
 ):
     nursery_a, _, _ = populated
-    _, user = _make_teacher(db_session, tenant)
-    nursery_a.teacher_id = user.id
-    db_session.add(nursery_a)
-    db_session.flush()
+    teacher, user = _make_teacher(db_session, tenant)
+    _make_class_teacher(db_session, tenant, nursery_a, teacher, user)
 
     assert class_services.get_classes_stats()["total_teachers"] == 1
 
@@ -559,11 +602,7 @@ def test_stats_counts_a_teacher_once_across_several_classes(
     db_session.add(teacher)
     db_session.flush()
     for cls in (nursery_a, grade_one_a):
-        db_session.add(ClassTeacher(
-            id=_new_id("ct-"), tenant_id=tenant.id,
-            class_id=cls.id, teacher_id=teacher.id,
-        ))
-    db_session.flush()
+        _make_subject_teacher(db_session, tenant, cls, teacher)
 
     assert class_services.get_classes_stats()["total_teachers"] == 1
 
