@@ -369,6 +369,14 @@ M4  Authorization Domain                                          DONE
     Business Authority replaces RBAC (A1)
     account-held roles retired, user_roles dropped
 
+M6  Teaching Assignment Ownership                        DONE 2026-08-07
+    class_subject_teachers owns subject teaching
+    class_teacher_assignments owns class-teacher responsibility
+    is_class_teacher removed, class_teachers dropped (migration 092)
+    every consumer asks the TeachingAssignmentService
+    caches proven not to drift; ORM hooks and transports pinned by test
+    See docs/architecture/reviews/2026-08-07-architecture-compliance.md
+
 M5  Scale Pass                                           MOSTLY DONE
     every list endpoint measured against the demo tenant
     students 403->3, teachers 30->5 (audit)
