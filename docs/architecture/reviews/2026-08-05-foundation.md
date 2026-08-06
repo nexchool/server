@@ -129,6 +129,24 @@ something introduced here.
 > `modules/academic_programmes` and `modules/subjects` with no single owner
 > module. Ownership is documented; it is not visible in the code layout.
 
+> **Finding AC2 (high) — added 2026-08-05.** **A student's class is stored
+> twice.** ADR-007 separates Admission from Academic Enrollment, and
+> `student_class_enrollments` implements it (278 rows, 43 code references) —
+> but `students.class_id` and `students.academic_year_id` still exist, are set
+> for all 278 students, and are read in 22 places. Both models are live at once.
+>
+> This is the same disease cured in People this session — one concept, two
+> owners, kept in step only by every writer remembering — except here nobody had
+> listed it. The People version produced wrong data within days.
+
+> **Finding AC3 (high) — added 2026-08-05.** **A teaching assignment is stored
+> three times.** `classes.teacher_id` (12 classes), `class_teachers` (59 rows)
+> and `class_teacher_assignments` (16 rows) all record who teaches what. ADR-008
+> names the assignment as *the* academic responsibility; three tables cannot all
+> be it. The branch-scope filter added for B1 has to union all three to answer
+> "whose teacher is this", which is the cost of the ambiguity showing up
+> already.
+
 ---
 
 ## Branch scope
