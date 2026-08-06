@@ -42,7 +42,7 @@ PERM_MANAGE = "holiday.manage"
 @holidays_bp.route("/", methods=["GET"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def list_holidays():
     """
@@ -82,7 +82,7 @@ def list_holidays():
 @holidays_bp.route("/upcoming", methods=["GET"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_upcoming_holidays():
     """Upcoming non-recurring holidays from today. Query: limit (default 10, max 50)."""
@@ -100,7 +100,7 @@ def get_upcoming_holidays():
 @holidays_bp.route("/recurring", methods=["GET"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_recurring_holidays():
     """Return all recurring weekly-off entries for the tenant."""
@@ -113,7 +113,7 @@ def get_recurring_holidays():
 @holidays_bp.route("/", methods=["POST"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_CREATE, PERM_MANAGE)
 def create_holiday():
     """
@@ -150,7 +150,7 @@ def create_holiday():
 @holidays_bp.route("/<string:holiday_id>", methods=["GET"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def get_holiday(holiday_id):
     result = services.get_holiday(holiday_id, tenant_id=g.tenant_id)
@@ -164,7 +164,7 @@ def get_holiday(holiday_id):
 @holidays_bp.route("/<string:holiday_id>", methods=["PUT"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_UPDATE, PERM_MANAGE)
 def update_holiday(holiday_id):
     """Update a holiday. All body fields are optional — only sent fields are changed."""
@@ -186,7 +186,7 @@ def update_holiday(holiday_id):
 @holidays_bp.route("/<string:holiday_id>", methods=["DELETE"])
 @tenant_required
 @auth_required
-@require_feature("holiday_management")
+@require_feature("academic_calendar")
 @require_any_permission(PERM_DELETE, PERM_MANAGE)
 def delete_holiday(holiday_id):
     result = services.delete_holiday(holiday_id, tenant_id=g.tenant_id)

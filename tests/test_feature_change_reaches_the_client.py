@@ -63,6 +63,48 @@ def _stamp_of(client, headers) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# What is on offer
+# ---------------------------------------------------------------------------
+
+def test_only_things_a_school_can_be_without_are_switchable():
+    """Pins the list, because two other places have to agree with it.
+
+    admin-web mirrors it in `src/lib/optionalModules.ts`, which its own test
+    uses to prove each one has a page that refuses. And a super-admin sees
+    these as checkboxes — a key here that the product cannot survive without
+    is a switch that decapitates a live school.
+
+    Changing this list is a business decision, so it should be a deliberate
+    edit here rather than a side effect of adding a module. If you do change
+    it, update admin-web's copy in the same breath.
+    """
+    assert set(OPTIONAL_FEATURES) == {
+        "attendance",
+        "fees_management",
+        "timetable",
+        "transport",
+        "hostel",
+        "notifications",
+        "academic_calendar",
+    }
+
+
+def test_the_product_itself_cannot_be_switched_off():
+    """Students, teachers, classes and the structure they hang off.
+
+    These were switchable. Nobody ever switched them off, which is the point:
+    they are not options, and offering them as options only ever risked
+    somebody finding out the hard way.
+    """
+    from core.feature_flags import is_feature_enabled
+
+    for key in ("students", "teachers", "classes", "academics_advanced", "search",
+                "student_management", "teacher_management", "class_management"):
+        assert key not in OPTIONAL_FEATURES, f"{key} must not be switchable"
+        assert is_feature_enabled("any-tenant", key) is True
+
+
+# ---------------------------------------------------------------------------
 # The stamp itself
 # ---------------------------------------------------------------------------
 

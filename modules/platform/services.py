@@ -29,6 +29,7 @@ from core.feature_flags import (
     OPTIONAL_FEATURES,
     CORE_FEATURES,
     FEATURE_LABELS,
+    LEGACY_ALIASES,
     default_feature_flags,
     get_tenant_feature_flags,
 )
@@ -619,9 +620,16 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
 
 
 def list_feature_catalog() -> List[Dict[str, Any]]:
-    """Catalog used by the super-admin Features tab to render checkboxes."""
+    """Catalog used by the super-admin Features tab to render checkboxes.
+
+    Legacy aliases are left out: showing "Students" and "Student management"
+    as two separate always-on rows tells the reader there are two things when
+    there is one.
+    """
     items = []
     for key in CORE_FEATURES:
+        if key in LEGACY_ALIASES:
+            continue
         items.append({
             "key": key,
             "label": FEATURE_LABELS.get(key, key),

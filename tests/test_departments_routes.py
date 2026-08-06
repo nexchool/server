@@ -273,19 +273,22 @@ def test_delete_with_read_only_permission_returns_403(client, auth_headers, read
     assert response.status_code == 403
 
 
-def test_list_returns_403_when_class_management_feature_disabled(client, auth_headers, tenant):
-    # No existing route test in this codebase exercises require_feature at
-    # the HTTP layer (checked: no sibling module's route tests assert a
-    # feature-disabled 403), so this test goes straight to the fixture the
-    # decorator itself reads — Tenant.feature_flags — rather than inventing
-    # a borrowed pattern. See core/feature_flags.py: missing keys default to
-    # enabled, so flipping the key explicitly is the only way to disable it.
+def test_departments_are_not_something_a_school_can_be_sold_without(
+    client, auth_headers, tenant
+):
+    """This used to assert the opposite, and the opposite was the bug.
+
+    `class_management` was a switch a super-admin could throw, and throwing it
+    took away departments, grades, programmes, mediums, subjects and branches —
+    everything a class is made of. That is not a module a school declines; it
+    is the school. It is core now, and stays reachable however the flag map is
+    written.
+    """
     tenant.feature_flags = {"class_management": False}
 
     response = client.get("/api/departments", headers=auth_headers)
 
-    assert response.status_code == 403
-    assert response.get_json()["error"] == "FeatureDisabled"
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

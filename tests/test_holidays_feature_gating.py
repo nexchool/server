@@ -1,4 +1,4 @@
-"""Holidays cross-feature gating: when `holiday_management` is disabled,
+"""Holidays cross-feature gating: when `academic_calendar` is disabled,
 holiday helpers should treat every day as a working day so attendance
 and leave logic don't see stale holidays.
 """

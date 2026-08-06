@@ -6,12 +6,21 @@ Replaces the old plan-based feature gating. Each tenant has its own
 to enabled (so a freshly-created tenant gets everything until super-admin
 opts out).
 
-Features are split into two groups:
-- CORE_FEATURES: cannot be disabled (auth, users, RBAC, students, classes,
-  teachers). The decorator allows them through unconditionally.
-- OPTIONAL_FEATURES: super-admin-toggleable per tenant. Disabling one returns
-  403 from gated endpoints and is observed by side-effect callers
-  (e.g. notification dispatcher silently skips when 'notifications' is off).
+The split is a business one, not a technical one.
+
+CORE is the product. A school cannot run without students, teachers, classes
+and the structure they hang off — branches, grades, programmes, mediums,
+subjects, terms. Offering those as switches would let a super-admin
+decapitate a live school with a checkbox, so they are not offered.
+
+OPTIONAL is what schools genuinely differ on: buses, a hostel, whether fees
+are kept here or in the accountant's existing software, whether attendance is
+still on paper. Every key here is something a real school either does or does
+not do — not a slice of the product held back for a higher price.
+
+That distinction is what keeps onboarding simple. A new school is asked seven
+questions it knows the answers to, rather than shown a list of internal module
+names and asked to guess.
 """
 
 from __future__ import annotations
@@ -27,51 +36,65 @@ CORE_FEATURES: List[str] = [
     "auth",
     "users",
     "rbac",
+    # The three things a school is made of. `*_management` are the keys the
+    # route decorators actually use; the bare names are what the clients read.
+    # Both are core, so the pair can never disagree about whether a school is
+    # allowed to have students.
     "students",
-    "classes",
+    "student_management",
     "teachers",
+    "teacher_management",
+    "classes",
+    "class_management",
+    # Branches, grades, programmes, mediums, subjects, terms, year rollover.
+    # Not an upsell: without them there is nothing to put a class in.
+    "academics_advanced",
+    # Finding a child by name. Part of using the product, not a module.
+    "search",
 ]
 
 OPTIONAL_FEATURES: List[str] = [
     "attendance",
     "fees_management",
     "timetable",
-    "schedule_management",
     "transport",
-    "notifications",
-    "holiday_management",
-    "academic_calendar",
     "hostel",
-    "search",
-    "academics_advanced",
+    "notifications",
+    # Terms, events, exam windows and holidays. Holidays are managed inside
+    # the calendar in the UI and were a separate flag by accident.
+    "academic_calendar",
+]
+
+ALL_FEATURE_KEYS: List[str] = CORE_FEATURES + OPTIONAL_FEATURES
+
+# Two keys for one capability, from before the two halves agreed on a name:
+# the clients read `students`, the route decorators say `student_management`.
+# Both are core and both resolve the same, so nothing has to change on either
+# side — but only one of each pair is worth showing a human.
+LEGACY_ALIASES: List[str] = [
     "student_management",
     "teacher_management",
     "class_management",
 ]
 
-ALL_FEATURE_KEYS: List[str] = CORE_FEATURES + OPTIONAL_FEATURES
-
+# What the super-admin reads. Written the way a school talks, not the way the
+# code is organised — the person choosing these runs schools, not modules.
 FEATURE_LABELS: Dict[str, str] = {
-    "auth": "Authentication",
+    "auth": "Sign-in",
     "users": "User accounts",
     "rbac": "Roles & permissions",
     "students": "Students",
-    "classes": "Classes",
     "teachers": "Teachers",
-    "attendance": "Attendance",
-    "fees_management": "Fees & finance",
-    "timetable": "Timetable",
-    "schedule_management": "Schedule management",
-    "transport": "Transport",
-    "notifications": "Notifications",
-    "holiday_management": "Holiday management",
-    "academic_calendar": "Academic calendar",
-    "hostel": "Hostel",
+    "classes": "Classes",
+    "academics_advanced": "Academic structure",
     "search": "Search",
-    "academics_advanced": "Advanced academics",
-    "student_management": "Student management",
-    "teacher_management": "Teacher management",
-    "class_management": "Class management",
+    "attendance": "Attendance",
+    "fees_management": "Fees & payments",
+    "timetable": "Timetable",
+    "transport": "School transport",
+    "hostel": "Hostel & boarding",
+    "notifications": "Announcements & notifications",
+    "academic_calendar": "Academic calendar & holidays",
 }
 
 
