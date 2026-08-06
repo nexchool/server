@@ -1,0 +1,69 @@
+# =============================================================================
+# Nexchool Demo School — LOCAL test tenant (`default`)
+#
+# Single campus running three programmes side by side (the "two boards on one
+# campus" case from the scale contract): GSEB Gujarati medium, GSEB English
+# medium, and a CBSE English wing. Grades 1-12 in the catalogue; classes are
+# created only for the cells listed below, including two Grade 11 stream cells.
+#
+# Subjects and offerings are DERIVED from each programme's `template_board_code`
+# (subject_template_groups) and must NOT be declared here.
+# =============================================================================
+
+tenant:
+  subdomain: default
+
+academic_year:
+  name: "2026-2027"
+  start: 2026-06-01
+  end: 2027-03-31
+  active: true
+
+terms:
+  - { name: "Term 1", start: 2026-06-01, end: 2026-10-31 }
+  - { name: "Term 2", start: 2026-11-01, end: 2027-03-31 }
+
+units:
+  - { code: "MAIN", name: "Nexchool Demo School" }
+
+programmes:
+  - { code: "GSEB-GUJ", name: "GSEB Gujarati Medium", board: "GSEB", medium: "Gujarati", template_board_code: "gseb_gujarati" }
+  - { code: "GSEB-ENG", name: "GSEB English Medium",  board: "GSEB", medium: "English",  template_board_code: "gseb_english" }
+  - { code: "CBSE-ENG", name: "CBSE English Medium",  board: "CBSE", medium: "English",  template_board_code: "cbse" }
+
+grades:
+  - { name: "1",  sequence: 1 }
+  - { name: "2",  sequence: 2 }
+  - { name: "3",  sequence: 3 }
+  - { name: "4",  sequence: 4 }
+  - { name: "5",  sequence: 5 }
+  - { name: "6",  sequence: 6 }
+  - { name: "7",  sequence: 7 }
+  - { name: "8",  sequence: 8 }
+  - { name: "9",  sequence: 9 }
+  - { name: "10", sequence: 10 }
+  - { name: "11", sequence: 11 }
+  - { name: "12", sequence: 12 }
+
+# 12 class cells for Std 1-10.
+#
+# No Std 11-12 cells: streams are not supported end to end yet. Every Std 11-12
+# subject_template_item carries a stream, but onboarding_service.derive_config
+# always calls resolve_template with stream=None, so no offering resolves. The
+# root cause is one layer down -- subject_contexts has no stream column (its
+# unique key is programme+grade+subject+medium+role), so a Science and a
+# Commerce class in the same programme+grade cannot carry different offerings.
+classes:
+  # GSEB Gujarati medium — the older, larger wing
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "1",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "2",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "3",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "4",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "5",  sections: [A] }
+  # GSEB English medium — parallel sections, same campus
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "1",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "2",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "3",  sections: [A] }
+  # CBSE English wing — upper grades
+  - { unit: "MAIN", programme: "CBSE-ENG", grade: "9",  sections: [A] }
+  - { unit: "MAIN", programme: "CBSE-ENG", grade: "10", sections: [A] }

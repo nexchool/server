@@ -4,6 +4,10 @@
     python scripts/seed_scale_fixture.py --size medium --measure
     python scripts/seed_scale_fixture.py --drop
 
+Generation is additive, so **--drop before changing size**. Running `medium`
+over an existing `large` leaves the large rows in place and measures those,
+which is a quietly wrong answer rather than a loud one.
+
 Why this exists
 ---------------
 
