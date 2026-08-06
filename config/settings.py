@@ -96,7 +96,11 @@ class Config:
     CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] if _cors_env else ['*']
     CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
     CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain']
-    CORS_EXPOSE_HEADERS = ['X-New-Access-Token']
+    # A browser can only read response headers named here. X-Feature-Stamp has
+    # to be on the list or admin-web, served from a different origin than the
+    # API in production, silently never notices a module being switched off —
+    # while working fine locally behind nginx.
+    CORS_EXPOSE_HEADERS = ['X-New-Access-Token', 'X-Feature-Stamp']
     CORS_SUPPORTS_CREDENTIALS = True
 
     # Rate limiting (storage URL optional; default in-memory)

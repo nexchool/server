@@ -16,6 +16,7 @@ Features are split into two groups:
 
 from __future__ import annotations
 
+import hashlib
 from functools import wraps
 from typing import Dict, List
 
@@ -79,21 +80,43 @@ def default_feature_flags() -> Dict[str, bool]:
     return {key: True for key in OPTIONAL_FEATURES}
 
 
-def get_tenant_feature_flags(tenant_id: str) -> Dict[str, bool]:
-    """
-    Return the effective per-tenant feature flag map. Core features are
-    always True. Optional features take their stored value, defaulting to
-    True when missing.
-    """
-    from core.models import Tenant
+def effective_flags(stored: object) -> Dict[str, bool]:
+    """Resolve a tenant's stored flag map into the full effective one.
 
+    Core features are always on. Optional features take their stored value and
+    default to on when absent, so a tenant created before a feature existed
+    gets it rather than silently losing it.
+    """
     flags: Dict[str, bool] = {key: True for key in CORE_FEATURES}
-    tenant = Tenant.query.get(tenant_id)
-    stored = tenant.feature_flags if tenant and isinstance(tenant.feature_flags, dict) else {}
+    values = stored if isinstance(stored, dict) else {}
     for key in OPTIONAL_FEATURES:
-        val = stored.get(key)
+        val = values.get(key)
         flags[key] = True if val is None else bool(val)
     return flags
+
+
+def get_tenant_feature_flags(tenant_id: str) -> Dict[str, bool]:
+    """The effective flag map for a tenant, read from the database."""
+    from core.models import Tenant
+
+    tenant = Tenant.query.get(tenant_id)
+    return effective_flags(tenant.feature_flags if tenant else None)
+
+
+def feature_stamp(stored: object) -> str:
+    """A short value that changes if and only if the enabled set changes.
+
+    Sent on every API response so a client can notice a super-admin turning a
+    module on or off without being told, and without polling. It is derived
+    from the flags rather than from a timestamp so that saving the same
+    settings again does not look like a change and force needless refreshes.
+
+    Not a secret and not a signature — it only says "different from what you
+    last saw". The client's answer to a change is to re-ask the server.
+    """
+    flags = effective_flags(stored)
+    enabled = ",".join(sorted(key for key, on in flags.items() if on))
+    return hashlib.sha256(enabled.encode()).hexdigest()[:12]
 
 
 def get_tenant_enabled_features(tenant_id: str) -> List[str]:

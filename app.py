@@ -14,7 +14,7 @@ Usage:
 
 import logging
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -359,6 +359,28 @@ def register_error_handlers(app: Flask):
             response.headers.setdefault(
                 "Vary", "X-Tenant-ID, X-Tenant-Subdomain, Authorization"
             )
+        return response
+
+    @app.after_request
+    def stamp_tenant_features(response):
+        """Tell the client, on every response, which feature set it is seeing.
+
+        A super-admin switching a module off used to reach admin-web only when
+        the user logged out and back in — so the school kept a Transport link
+        it was no longer entitled to, and only found out by clicking it.
+
+        The stamp changes when the enabled set changes; the client compares it
+        against the last one it saw and re-reads its profile when they differ.
+        Costs nothing: tenant resolution has already loaded this row, so the
+        flags are in memory by the time we get here.
+        """
+        if not request.path.startswith("/api/"):
+            return response
+        tenant = getattr(g, "tenant", None)
+        if tenant is not None:
+            from core.feature_flags import feature_stamp
+
+            response.headers["X-Feature-Stamp"] = feature_stamp(tenant.feature_flags)
         return response
 
     @app.after_request
