@@ -142,6 +142,14 @@ def _today_ops(tenant_id: str) -> Dict[str, Any]:
 def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = True) -> Dict[str, Any]:
     timetable_enabled = is_feature_enabled(tenant_id, "timetable")
 
+    # Every class the school runs. Needed by two unrelated alerts below, so it
+    # is read here rather than inside either — a school that does not use
+    # timetables still has classes, and still wants to know which have no
+    # subjects on them.
+    all_class_ids = [
+        c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
+    ]
+
     # Timetable conflicts: same teacher, same dow, same period in two active timetables.
     # Skipped entirely when timetable is off — disabled feature shouldn't surface alerts.
     timetable_conflicts = 0
@@ -174,9 +182,6 @@ def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = Tru
         )
         timetable_conflicts = len(conflict_rows)
 
-        all_class_ids = [
-            c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
-        ]
         classes_with_timetable = {
             row[0]
             for row in db.session.query(TimetableVersion.class_id)
