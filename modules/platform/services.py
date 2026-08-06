@@ -531,9 +531,22 @@ def update_tenant_feature_flags(
     platform_admin_id: str,
     flags: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Replace tenant.feature_flags with the supplied map. Core features
-    can never be disabled — keys for those are silently dropped. Unknown
-    keys are dropped to keep storage clean."""
+    """Apply the supplied switches to a tenant's stored flag map.
+
+    Only keys in OPTIONAL_FEATURES are written. Core features and anything
+    unrecognised in the payload are ignored, so a super-admin cannot switch
+    off the product by posting `{"students": false}`.
+
+    What is *stored* is left alone otherwise — this merges into the existing
+    map rather than replacing it. Two reasons. Keys from retired modules
+    (`library`, `schedule_management`, `holiday_management`) linger there but
+    have no effect: `effective_flags` reads only the keys it knows, and core
+    always wins. And `feature_flags` does double duty as a per-tenant settings
+    bag — `login_variant` is a *string* living in the same column — so pruning
+    everything unrecognised would silently delete a school's login layout.
+
+    That double duty is worth undoing. Until it is, do not add a prune here.
+    """
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
