@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 from sqlalchemy import distinct, func, or_
 from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import joinedload
-from datetime import datetime
+from datetime import date, datetime
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -13,7 +13,7 @@ from modules.academics.backbone.models import (
     ClassSubjectTeacher,
     ClassTeacherAssignment,
 )
-from .models import Class, ClassSubject, ClassTeacher
+from .models import Class, ClassSubject
 
 logger = logging.getLogger(__name__)
 
@@ -572,9 +572,37 @@ def get_class_detail(class_id: str) -> Optional[Dict]:
     students = Student.query.filter_by(class_id=class_id).all()
     students_data = [s.to_dict() for s in students]
 
-    # Get assigned teachers via ClassTeacher junction
-    class_teachers = ClassTeacher.query.filter_by(class_id=class_id).all()
-    teachers_data = [ct.to_dict() for ct in class_teachers]
+    # Everyone currently teaching this class, whatever their responsibility.
+    from modules.academics.teaching_assignment import (
+        class_teachers_for,
+        subject_teachers_for,
+    )
+    from modules.teachers.models import Teacher
+
+    holding = list(class_teachers_for([class_id]).get(class_id, []))
+    for subject_held in subject_teachers_for([class_id]).values():
+        holding.extend(subject_held)
+
+    by_id = {
+        teacher.id: teacher
+        for teacher in Teacher.query.filter(
+            Teacher.id.in_({held.teacher_id for held in holding} or {""})
+        ).all()
+    }
+    teachers_data = [
+        {
+            "teacher_id": held.teacher_id,
+            "teacher_name": (
+                by_id[held.teacher_id].to_dict()["name"]
+                if held.teacher_id in by_id
+                else None
+            ),
+            "subject_id": held.subject_id,
+            "role": held.role,
+            "is_class_teacher": held.subject_id is None,
+        }
+        for held in holding
+    ]
 
     data = cls.to_dict()
     data['students'] = students_data
@@ -932,9 +960,9 @@ def assign_teacher_to_class(
                 return {'success': False, 'error': 'Subject not found'}
             subject_id_val = subj.id
 
-        # Check if already assigned
-        existing = ClassTeacher.query.filter_by(class_id=class_id, teacher_id=teacher_id).first()
-        if existing:
+        from modules.academics.teaching_assignment import teaches_anything_in
+
+        if teaches_anything_in(teacher_id, class_id):
             return {'success': False, 'error': 'Teacher already assigned to this class'}
 
         if is_class_teacher:
@@ -1034,13 +1062,52 @@ def assign_teacher_to_class(
 
 
 def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
-    """Remove a teacher from a class."""
+    """Stand this teacher's responsibilities for the class down.
+
+    Ended rather than deleted: a teacher who taught this class until today did
+    teach it, and marks and attendance already attributed to them must keep
+    resolving to them when asked about a date in the past (ADR-014).
+    """
     try:
-        ct = ClassTeacher.query.filter_by(class_id=class_id, teacher_id=teacher_id).first()
-        if not ct:
+        from modules.academics.backbone.models import (
+            ClassSubjectTeacher,
+            ClassTeacherAssignment,
+        )
+        from modules.academics.teaching_assignment import teaches_anything_in
+        from modules.teachers.models import Teacher
+
+        if not teaches_anything_in(teacher_id, class_id):
             return {'success': False, 'error': 'Teacher is not assigned to this class'}
 
-        db.session.delete(ct)
+        ended_on = date.today()
+        for held in ClassTeacherAssignment.query.filter_by(
+            tenant_id=get_tenant_id(), class_id=class_id,
+            teacher_id=teacher_id, is_active=True,
+        ).all():
+            held.is_active = False
+            held.effective_to = held.effective_to or ended_on
+            db.session.add(held)
+
+        offered_here = db.session.query(ClassSubject.id).filter(
+            ClassSubject.tenant_id == get_tenant_id(),
+            ClassSubject.class_id == class_id,
+        )
+        for held in ClassSubjectTeacher.query.filter(
+            ClassSubjectTeacher.tenant_id == get_tenant_id(),
+            ClassSubjectTeacher.teacher_id == teacher_id,
+            ClassSubjectTeacher.class_subject_id.in_(offered_here),
+            ClassSubjectTeacher.is_active.is_(True),
+        ).all():
+            held.is_active = False
+            held.effective_to = held.effective_to or ended_on
+            db.session.add(held)
+
+        cls = Class.query.filter_by(id=class_id, tenant_id=get_tenant_id()).first()
+        teacher = Teacher.query.filter_by(id=teacher_id).first()
+        if cls and teacher and cls.teacher_id == teacher.user_id:
+            cls.teacher_id = None
+            db.session.add(cls)
+
         db.session.commit()
         return {'success': True, 'message': 'Teacher removed from class'}
     except Exception as e:
@@ -1082,7 +1149,9 @@ def _currently_teaching():
 def get_unassigned_teachers(class_id: str) -> List[Dict]:
     """Get teachers not yet assigned to this class."""
     from modules.teachers.models import Teacher
-    assigned_ids = [ct.teacher_id for ct in ClassTeacher.query.filter_by(class_id=class_id).all()]
+    from modules.academics.teaching_assignment import teacher_ids_teaching_in
+
+    assigned_ids = list(teacher_ids_teaching_in([class_id]))
     query = _currently_teaching()
     if assigned_ids:
         query = query.filter(~Teacher.id.in_(assigned_ids))
@@ -1094,7 +1163,7 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
     Get teachers who can be selected as class teacher.
     Excludes teachers who are already class teachers of another class.
     If class_id is given (e.g. when editing), includes the current class's teacher.
-    A teacher is "class teacher" if: Class.teacher_id = user_id, or ClassTeacher.is_class_teacher = True.
+    A teacher is a class teacher if class_teacher_assignments says so (ADR-014).
     """
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -1111,14 +1180,16 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
         class_filter = class_filter.filter(Class.id != class_id)
     class_teacher_user_ids = {c.teacher_id for c in class_filter.all()}
 
-    # Teacher IDs already assigned as class teacher via ClassTeacher.is_class_teacher (exclude class_id if editing)
-    ct_filter = ClassTeacher.query.filter(
-        ClassTeacher.tenant_id == tenant_id,
-        ClassTeacher.is_class_teacher == True,
+    # Teachers already responsible for another class.
+    ct_filter = ClassTeacherAssignment.query.filter(
+        ClassTeacherAssignment.tenant_id == tenant_id,
+        ClassTeacherAssignment.role == "primary",
+        ClassTeacherAssignment.is_active.is_(True),
+        ClassTeacherAssignment.deleted_at.is_(None),
     )
     if class_id:
-        ct_filter = ct_filter.filter(ClassTeacher.class_id != class_id)
-    ct_class_teacher_ids = {ct.teacher_id for ct in ct_filter.all()}
+        ct_filter = ct_filter.filter(ClassTeacherAssignment.class_id != class_id)
+    ct_class_teacher_ids = {held.teacher_id for held in ct_filter.all()}
 
     query = _currently_teaching()
     if class_teacher_user_ids:

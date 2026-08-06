@@ -92,7 +92,7 @@ def init_db(app):
         from modules.subjects.models import Subject
         from modules.departments.models import Department  # noqa: F401
         from modules.teachers.models import Teacher
-        from modules.classes.models import Class, ClassTeacher, ClassSubject
+        from modules.classes.models import Class, ClassSubject
         from modules.academics.backbone.models import (
             AcademicSettings,
             AcademicTerm,

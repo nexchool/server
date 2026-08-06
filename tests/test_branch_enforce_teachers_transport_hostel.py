@@ -18,7 +18,7 @@ import pytest
 from flask import g
 
 from modules.auth.models import User
-from modules.classes.models import Class, ClassTeacher
+from modules.classes.models import Class
 from modules.students.models import Student
 from modules.sub_admins.models import UserSchoolUnit
 from modules.teachers.models import Teacher
@@ -112,10 +112,13 @@ def _make_teacher(db_session, tenant, class_id=None):
     db_session.flush()
 
     if class_id:
+        from modules.academics.backbone.models import ClassTeacherAssignment
+
         db_session.add(
-            ClassTeacher(
-                id=_new_id("ct-"), tenant_id=tenant.id,
+            ClassTeacherAssignment(
+                id=_new_id("cta-"), tenant_id=tenant.id,
                 class_id=class_id, teacher_id=teacher.id,
+                role="primary", is_active=True,
             )
         )
         db_session.flush()

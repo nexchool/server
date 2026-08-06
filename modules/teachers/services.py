@@ -694,11 +694,8 @@ def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
         found_ids = [t.id for t in teachers]
         user_ids = [t.user_id for t in teachers if t.user_id]
 
-        from modules.classes.models import ClassTeacher, Class
+        from modules.classes.models import Class
 
-        ClassTeacher.query.filter(ClassTeacher.teacher_id.in_(found_ids)).delete(
-            synchronize_session=False
-        )
         if user_ids:
             Class.query.filter(
                 Class.tenant_id == tenant_id, Class.teacher_id.in_(user_ids)
@@ -745,8 +742,7 @@ def delete_teacher(teacher_id: str) -> Dict:
         # class_teachers has no ON DELETE CASCADE on its FK, so SQLAlchemy would
         # try to SET teacher_id = NULL (NOT NULL column) and raise a violation.
         # Explicitly remove those rows before deleting the teacher.
-        from modules.classes.models import ClassTeacher, Class
-        ClassTeacher.query.filter_by(teacher_id=teacher_id).delete(synchronize_session=False)
+        from modules.classes.models import Class
         # Clear the legacy homeroom pointer (classes.teacher_id -> users.id) so no
         # class still lists this departed teacher as its class teacher.
         Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).update(

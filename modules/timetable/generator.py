@@ -67,7 +67,11 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from core.database import db
 from core.tenant import get_tenant_id
-from modules.classes.models import Class, ClassTeacher, SubjectLoad
+from modules.academics.teaching_assignment import (
+    class_teacher_of,
+    subjects_taught_by,
+)
+from modules.classes.models import Class, SubjectLoad
 from modules.teachers.models import (
     Teacher,
     TeacherAvailability,
@@ -173,23 +177,26 @@ class _ConstraintData:
         self.config = TimetableConfig.query.filter_by(tenant_id=tenant_id).first()
         self.period_schedule, self.periods_per_day = _compute_period_schedule(self.config)
 
-        # Class-teacher subject IDs for period-1 prioritisation
+        # A class teacher takes their own class for the first period where the
+        # timetable allows it, which is what schools do so the day starts with
+        # the person responsible for the class.
         self.class_teacher_subject_ids: Set[str] = set()
-        if self.cls and self.cls.teacher_id:
-            ct_row = ClassTeacher.query.filter_by(
-                class_id=class_id, tenant_id=tenant_id, is_class_teacher=True
-            ).first()
-            if ct_row and ct_row.subject_id:
-                self.class_teacher_subject_ids.add(ct_row.subject_id)
+        responsible = class_teacher_of(class_id)
+        if responsible is not None:
+            here = [
+                held.subject_id
+                for held in subjects_taught_by(responsible.teacher_id)
+                if held.class_id == class_id and held.subject_id
+            ]
+            if here:
+                self.class_teacher_subject_ids.update(here)
             else:
-                teacher = Teacher.query.filter_by(
-                    tenant_id=tenant_id, user_id=self.cls.teacher_id
-                ).first()
-                if teacher:
-                    for ts in TeacherSubject.query.filter_by(
-                        tenant_id=tenant_id, teacher_id=teacher.id
-                    ).all():
-                        self.class_teacher_subject_ids.add(ts.subject_id)
+                # No subject recorded for them in this class: fall back to what
+                # they are qualified to teach at all.
+                for expertise in TeacherSubject.query.filter_by(
+                    tenant_id=tenant_id, teacher_id=responsible.teacher_id
+                ).all():
+                    self.class_teacher_subject_ids.add(expertise.subject_id)
 
         # Subject loads → expanded pool
         loads = SubjectLoad.query.filter_by(class_id=class_id, tenant_id=tenant_id).all()

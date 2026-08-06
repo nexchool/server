@@ -290,47 +290,29 @@ def filter_students_by_branch(query):
 def _allowed_teacher_id_subquery(allowed_units: Set[str]):
     """Scalar subquery: teachers who teach at least one class in the allowed set.
 
-    A teacher reaches a campus through the classes they teach, by any of the
-    three ways the school records that — the class teacher, a subject teacher,
-    or the newer assignment table. Teaching one class at a campus makes you
-    that campus's teacher, which is what a head of campus means by "my staff".
+    Asks Teaching Assignment which teachers are attached to which classes,
+    rather than knowing that teaching is expressed by more than one table
+    (ADR-014). This function used to union three of them, which is what the
+    ambiguity cost before teaching had one owner.
     """
-    from modules.academics.backbone.models import (
-        ClassSubjectTeacher,
-        ClassTeacherAssignment,
-    )
-    from modules.classes.models import ClassSubject, ClassTeacher
+    from modules.academics.teaching_assignment import current_teaching_links
+    from modules.classes.models import Class
 
     tenant_id = getattr(g, "tenant_id", None)
     class_subq = _allowed_class_id_subquery(allowed_units)
 
-    parts = []
-    for model in (ClassTeacher, ClassTeacherAssignment):
-        query = (
-            model.query
-            .with_entities(model.teacher_id)
-            .filter(model.class_id.in_(class_subq.select()))
-        )
-        if tenant_id is not None:
-            query = query.filter(model.tenant_id == tenant_id)
-        parts.append(query)
-
-    # A subject teacher is attached to the subject-in-a-class, not the class,
-    # so this one reaches the campus through class_subjects.
-    subjects_here = ClassSubject.query.with_entities(ClassSubject.id).filter(
-        ClassSubject.class_id.in_(class_subq.select())
+    links = current_teaching_links(tenant_id).subquery()
+    return (
+        db_session().query(links.c.teacher_id)
+        .filter(links.c.class_id.in_(class_subq.select()))
+        .subquery()
     )
-    if tenant_id is not None:
-        subjects_here = subjects_here.filter(ClassSubject.tenant_id == tenant_id)
 
-    by_subject = ClassSubjectTeacher.query.with_entities(
-        ClassSubjectTeacher.teacher_id
-    ).filter(ClassSubjectTeacher.class_subject_id.in_(subjects_here.subquery().select()))
-    if tenant_id is not None:
-        by_subject = by_subject.filter(ClassSubjectTeacher.tenant_id == tenant_id)
-    parts.append(by_subject)
 
-    return parts[0].union(*parts[1:]).subquery()
+def db_session():
+    from core.database import db
+
+    return db.session
 
 
 def filter_teachers_by_branch(query):

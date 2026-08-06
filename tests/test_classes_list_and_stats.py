@@ -21,7 +21,7 @@ from flask import g
 from core.models import Tenant
 from modules.auth.models import User
 from modules.classes import services as class_services
-from modules.classes.models import Class, ClassTeacher
+from modules.classes.models import Class
 from modules.students.models import Student
 from tests.conftest import employ_for
 

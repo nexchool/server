@@ -37,7 +37,7 @@ from modules.academics.backbone.models import (
 )
 from modules.attendance.models import Attendance as LegacyAttendance
 from modules.auth.models import Session, User
-from modules.classes.models import Class, ClassSubject, ClassTeacher, SubjectLoad
+from modules.classes.models import Class, ClassSubject, SubjectLoad
 from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
 from modules.finance.models import (
     FeeComponent,
@@ -102,7 +102,6 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
     StudentClassEnrollment.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     SubjectLoad.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
-    ClassTeacher.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     LegacyAttendance.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
 
     Payment.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
