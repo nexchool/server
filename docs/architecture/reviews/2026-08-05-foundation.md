@@ -129,23 +129,41 @@ something introduced here.
 > `modules/academic_programmes` and `modules/subjects` with no single owner
 > module. Ownership is documented; it is not visible in the code layout.
 
-> **Finding AC2 (high) — added 2026-08-05.** **A student's class is stored
-> twice.** ADR-007 separates Admission from Academic Enrollment, and
-> `student_class_enrollments` implements it (278 rows, 43 code references) —
-> but `students.class_id` and `students.academic_year_id` still exist, are set
-> for all 278 students, and are read in 22 places. Both models are live at once.
+> **Finding AC2 — WITHDRAWN 2026-08-05, same day it was raised.**
 >
-> This is the same disease cured in People this session — one concept, two
-> owners, kept in step only by every writer remembering — except here nobody had
-> listed it. The People version produced wrong data within days.
+> It claimed a student's class was stored twice with no owner. That was wrong,
+> and it was raised without reading the code that maintains it.
+> `class_enrollment_service.py` says in its first line that
+> `StudentClassEnrollment` is the source of truth and that `students.class_id`
+> is kept in sync for legacy queries. **Every** placement path — admission,
+> transfer, promotion, bulk import, school setup — goes through
+> `assign_student_to_class`, which writes both. On real data: 0 students with a
+> class and no enrollment, 0 with an enrollment and no class, 0 disagreements
+> out of 278.
+>
+> That is a denormalised current-placement pointer with a single writer and a
+> declared owner. It is a legitimate design, not a second source of truth. The
+> only thing missing is a guard that it cannot silently drift.
 
-> **Finding AC3 (high) — added 2026-08-05.** **A teaching assignment is stored
-> three times.** `classes.teacher_id` (12 classes), `class_teachers` (59 rows)
-> and `class_teacher_assignments` (16 rows) all record who teaches what. ADR-008
-> names the assignment as *the* academic responsibility; three tables cannot all
-> be it. The branch-scope filter added for B1 has to union all three to answer
-> "whose teacher is this", which is the cost of the ambiguity showing up
-> already.
+> **Finding AC3 (high) — corrected 2026-08-05.** First stated as "a teaching
+> assignment is stored three times". That conflated two different concepts.
+>
+> **Being a class's teacher** is healthy: `class_teacher_assignments` is the
+> model, `classes.teacher_id` is a declared legacy mirror
+> (`academics/backbone/helpers.py` says so). Same shape as AC2.
+>
+> **Teaching a subject in a class is the real duplication.** Two tables record
+> it and *neither is declared the owner*:
+>
+> - `class_teachers` — teacher + class + subject. 59 rows, 51 carrying a
+>   subject, 8 legacy free-text rows with none.
+> - `class_subject_teachers` — teacher + class_subject. 55 rows.
+>
+> 51 rows say the same thing in both. **Four exist only in
+> `class_subject_teachers`** — so they are already out of step, and a reader
+> that picks the wrong table gets a different answer about who teaches a
+> subject. The branch-scope filter added for B1 has to union both, which is the
+> ambiguity costing code today.
 
 ---
 
