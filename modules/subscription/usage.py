@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.database import db
 from core.models import TenantUsage
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +68,12 @@ def recompute_tenant_usage(tenant_id: str, *, commit: bool = True) -> Optional[i
                 id=str(uuid.uuid4()),
                 tenant_id=tenant_id,
                 active_students_count=count,
-                last_updated_at=datetime.utcnow(),
+                last_updated_at=utc_now(),
             )
             db.session.add(row)
         else:
             row.active_students_count = count
-            row.last_updated_at = datetime.utcnow()
+            row.last_updated_at = utc_now()
 
         if commit:
             db.session.commit()

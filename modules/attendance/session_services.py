@@ -28,6 +28,7 @@ from modules.academics.calendar.holiday_services import get_holiday_for_date
 from modules.rbac.services import has_permission
 from modules.students.models import Student
 from modules.teachers.models import Teacher
+from core.school_time import school_today
 
 
 def serialize_session(s: AttendanceSession, class_name: Optional[str] = None) -> Dict[str, Any]:
@@ -216,11 +217,11 @@ def get_or_create_session(
     # Branch scope: restricted sub-admins may only touch classes in their units.
     assert_class_allowed(class_id)
 
-    # Attendance can only be taken for a day that has occurred. date.today() is the
+    # Attendance can only be taken for a day that has occurred. school_today() is the
     # server date, matching the rest of this module (e.g. the route default); for
     # IST / UTC+ tenants the only divergence is before dawn local time, outside
     # marking hours.
-    if session_date > date.today():
+    if session_date > school_today():
         return {
             "success": False,
             "error": "Attendance cannot be taken for a future date",

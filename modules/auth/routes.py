@@ -38,6 +38,7 @@ from core.decorators import auth_required, tenant_required  # tenant_required st
 from core.database import db
 from core.extensions import limiter
 from shared.helpers import success_response, error_response
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,7 @@ def login():
                     message='Logins are temporarily disabled. Please try again later.',
                     status_code=503
                 )
-            if user_by_email.login_locked_until and user_by_email.login_locked_until > datetime.utcnow():
+            if user_by_email.login_locked_until and user_by_email.login_locked_until > utc_now():
                 return error_response(
                     error='TooManyAttempts',
                     message='Account temporarily locked due to too many failed attempts. Try again later.',
@@ -266,7 +267,7 @@ def login():
                     max_attempts = int(max_attempts_str) if max_attempts_str and str(max_attempts_str).isdigit() else 5
                     user_by_email.failed_login_count = (user_by_email.failed_login_count or 0) + 1
                     if user_by_email.failed_login_count >= max_attempts:
-                        user_by_email.login_locked_until = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+                        user_by_email.login_locked_until = utc_now() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
                         user_by_email.failed_login_count = 0
                     user_by_email.save()
                 return error_response(
@@ -309,7 +310,7 @@ def login():
                     message='Logins are temporarily disabled. Please try again later.',
                     status_code=503
                 )
-            if user.login_locked_until and user.login_locked_until > datetime.utcnow():
+            if user.login_locked_until and user.login_locked_until > utc_now():
                 return error_response(
                     error='TooManyAttempts',
                     message='Account temporarily locked due to too many failed attempts. Try again later.',
@@ -377,7 +378,7 @@ def _finalize_login(user, tenant, is_god_login):
         user.failed_login_count = 0
         user.login_locked_until = None
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = utc_now()
     user.save()
 
     access_minutes = None

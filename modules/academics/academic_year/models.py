@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class AcademicYear(TenantBaseModel):
@@ -32,8 +33,8 @@ class AcademicYear(TenantBaseModel):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=text("true"))
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     def to_dict(self):
         return {

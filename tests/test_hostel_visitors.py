@@ -11,6 +11,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from tests._model_loader import load_all_models  # noqa: E402
+from core.school_time import utc_now
 
 load_all_models()
 
@@ -137,7 +138,7 @@ def test_visitor_log_is_currently_inside_false_after_checkout():
 def test_visitor_log_is_currently_inside_false_when_soft_deleted():
     """is_currently_inside is False for soft-deleted logs (audit safety)."""
     log = _build_visitor_log()
-    log.deleted_at = datetime.utcnow()
+    log.deleted_at = utc_now()
     assert log.is_currently_inside is False
 
 

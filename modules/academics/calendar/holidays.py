@@ -20,6 +20,7 @@ import uuid
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 HOLIDAY_TYPES = ("public", "national", "school", "regional", "optional", "weekly_off", "vacation")
 
@@ -78,10 +79,10 @@ class Holiday(TenantBaseModel):
         index=True,
     )
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
         db.DateTime, nullable=False,
-        default=datetime.utcnow, onupdate=datetime.utcnow,
+        default=utc_now, onupdate=utc_now,
     )
 
     academic_year = db.relationship(

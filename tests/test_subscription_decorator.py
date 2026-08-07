@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import core.decorators.subscription as subscription_module
+from core.school_time import utc_now
 
 
 def _install_tenant_lookup(monkeypatch, status, trial_ends_at):
@@ -35,7 +36,7 @@ def test_active_tenant_allows_writes(monkeypatch):
 
 
 def test_trial_within_window_allows_writes(monkeypatch):
-    future = datetime.utcnow() + timedelta(days=5)
+    future = utc_now() + timedelta(days=5)
     _install_tenant_lookup(monkeypatch, "trial", future)
     monkeypatch.setattr(subscription_module, "g", SimpleNamespace())
     state = subscription_module.get_subscription_state("t1")
@@ -53,7 +54,7 @@ def test_trial_with_no_end_date_allows_writes(monkeypatch):
 
 
 def test_trial_expired_blocks_writes(monkeypatch):
-    past = datetime.utcnow() - timedelta(days=1)
+    past = utc_now() - timedelta(days=1)
     _install_tenant_lookup(monkeypatch, "trial", past)
     monkeypatch.setattr(subscription_module, "g", SimpleNamespace())
     state = subscription_module.get_subscription_state("t1")

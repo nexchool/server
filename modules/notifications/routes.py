@@ -41,6 +41,7 @@ from shared.helpers import (
     success_response,
     validation_error_response,
 )
+from core.school_time import utc_now
 
 PERM_MANAGE = "finance.manage"
 
@@ -202,7 +203,7 @@ def mark_read(notification_id):
     if not n:
         return not_found_response("Notification")
 
-    now = datetime.utcnow()
+    now = utc_now()
 
     if n.user_id == user_id:
         try:
@@ -262,7 +263,7 @@ def mark_all_read():
     if not tenant_id or not user_id:
         return error_response("AuthError", "Context required", 400)
 
-    now = datetime.utcnow()
+    now = utc_now()
     try:
         legacy_updated = (
             Notification.query.filter_by(tenant_id=tenant_id, user_id=user_id)

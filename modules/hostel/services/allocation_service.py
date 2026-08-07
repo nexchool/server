@@ -24,6 +24,7 @@ from modules.hostel.models import (
     HostelAllocation,
     HostelBed,
 )
+from core.school_time import utc_now
 
 
 class AllocationService:
@@ -109,7 +110,7 @@ class AllocationService:
             )
 
         allocation.status = HostelAllocation.STATUS_COMPLETED
-        allocation.check_out_at = check_out_at or datetime.utcnow()
+        allocation.check_out_at = check_out_at or utc_now()
 
         # Free the bed.
         bed = self.session.get(HostelBed, allocation.bed_id)

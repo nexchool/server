@@ -7,6 +7,7 @@ broker / serialization) against the real postgres test fixtures.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from core.school_time import utc_now
 
 
 def test_mark_overdue_task_flips_active_to_overdue(
@@ -23,8 +24,8 @@ def test_mark_overdue_task_flips_active_to_overdue(
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() - timedelta(hours=10),
-        expected_return_datetime=datetime.utcnow() - timedelta(hours=1),
+        departure_datetime=utc_now() - timedelta(hours=10),
+        expected_return_datetime=utc_now() - timedelta(hours=1),
         reason="Home",
         parent_phone="9876543210",
     )
@@ -39,8 +40,8 @@ def test_mark_overdue_task_flips_active_to_overdue(
         student_id=student2.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() - timedelta(hours=1),
-        expected_return_datetime=datetime.utcnow() + timedelta(hours=5),
+        departure_datetime=utc_now() - timedelta(hours=1),
+        expected_return_datetime=utc_now() + timedelta(hours=5),
         reason="Home",
         parent_phone="9876543211",
     )
@@ -67,8 +68,8 @@ def test_mark_overdue_task_idempotent(db_session, tenant, hostel, student):
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() - timedelta(hours=10),
-        expected_return_datetime=datetime.utcnow() - timedelta(hours=1),
+        departure_datetime=utc_now() - timedelta(hours=10),
+        expected_return_datetime=utc_now() - timedelta(hours=1),
         reason="Home",
         parent_phone="9876543210",
     )
@@ -98,8 +99,8 @@ def test_mark_overdue_writes_audit_row(db_session, tenant, hostel, student):
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() - timedelta(hours=10),
-        expected_return_datetime=datetime.utcnow() - timedelta(hours=1),
+        departure_datetime=utc_now() - timedelta(hours=10),
+        expected_return_datetime=utc_now() - timedelta(hours=1),
         reason="Home",
         parent_phone="9876543210",
     )

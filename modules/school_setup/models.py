@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core.database import db
+from core.school_time import utc_now
 
 
 class SetupModuleEvent(db.Model):
@@ -96,5 +97,5 @@ class TenantOnboardingDraft(db.Model):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )

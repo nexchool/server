@@ -28,12 +28,13 @@ from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import StudentClassEnrollment
 
 from .models import TransportEnrollment, TransportFeePlan
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
 
 def _today() -> date:
-    return date.today()
+    return school_today()
 
 
 def rollover_transport(

@@ -20,6 +20,7 @@ from modules.teachers.models import (
     TeacherWorkloadRule,
 )
 from .models import TimetableSlot
+from core.school_time import school_today
 
 DAYS_PER_WEEK = 5
 MAX_SAME_SUBJECT_PER_DAY = 2
@@ -30,7 +31,7 @@ DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
 
 
 def _monday_of_week(today: Optional[date] = None) -> date:
-    d = today or date.today()
+    d = today or school_today()
     return d - timedelta(days=d.weekday())
 
 

@@ -20,6 +20,7 @@ from sqlalchemy import CheckConstraint, Index, text
 from core.database import db
 from core.models import TenantBaseModel
 from sqlalchemy.dialects.postgresql import JSONB
+from core.school_time import utc_now
 
 
 class AcademicSettings(TenantBaseModel):
@@ -52,7 +53,7 @@ class AcademicSettings(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
 
     current_academic_year = db.relationship("AcademicYear", foreign_keys=[current_academic_year_id])
@@ -98,7 +99,7 @@ class AcademicTerm(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
@@ -124,7 +125,7 @@ class BellSchedule(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
@@ -199,7 +200,7 @@ class ClassSubjectTeacher(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     created_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -250,7 +251,7 @@ class ClassTeacherAssignment(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     created_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -308,7 +309,7 @@ class StudentClassEnrollment(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
 
     student = db.relationship("Student", foreign_keys=[student_id], passive_deletes=True)
@@ -349,7 +350,7 @@ class TimetableVersion(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     created_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
@@ -404,7 +405,7 @@ class TimetableEntry(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
 
     timetable_version = db.relationship("TimetableVersion", back_populates="entries")
@@ -458,7 +459,7 @@ class AttendanceSession(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     created_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -503,7 +504,7 @@ class AttendanceRecord(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     updated_by_user_id = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 

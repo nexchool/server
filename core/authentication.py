@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 from flask import g, request
+from core.school_time import utc_now
 
 
 def load_without_tenant_scope(loader: Callable[[], Any]) -> Any:
@@ -149,7 +150,7 @@ def authenticate_request() -> AuthenticatedRequest:
         return AuthenticatedRequest(error="Session expired")
 
     g.current_user = user
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = utc_now()
     session.save()
 
     return AuthenticatedRequest(user=user, new_access_token=new_access_token)

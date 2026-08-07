@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 from modules.classes.models import Class
 from modules.teachers.models import Teacher
+from core.school_time import school_today
 
 
 def get_class_for_tenant(class_id: str, tenant_id: str) -> Optional[Class]:
@@ -26,7 +27,7 @@ def teacher_is_active_for_class(teacher: Teacher, cls: Class, on_date: Optional[
     # Someone can only be given a class while they still work here (ADR-005).
     if not employment.is_employed:
         return False
-    d = on_date or date.today()
+    d = on_date or school_today()
     if cls.start_date and d < cls.start_date:
         return False
     if cls.end_date and d > cls.end_date:

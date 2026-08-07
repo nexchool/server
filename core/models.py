@@ -9,6 +9,7 @@ from datetime import datetime
 import uuid
 
 from core.database import db
+from core.school_time import utc_now
 
 
 # Status values for Tenant
@@ -53,12 +54,12 @@ class Plan(db.Model):
     max_students = db.Column(db.Integer, nullable=False)
     max_teachers = db.Column(db.Integer, nullable=False)
     features_json = db.Column(db.JSON, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     def __repr__(self):
@@ -103,12 +104,27 @@ class Tenant(db.Model):
     discount_end_date = db.Column(db.Date, nullable=True)
     feature_flags = db.Column(db.JSON, nullable=False, default=dict)
 
+    # The clocks the school runs on, as an IANA zone name. Everything the
+    # school would call "today" — is attendance being taken for a day that has
+    # not happened, which lesson is on now, is this fee overdue — is answered
+    # against this rather than the server's own date, which is UTC and so on
+    # yesterday between midnight and 05:30 in India.
+    #
+    # One zone per organization, not per campus: a trust runs its campuses on
+    # one calendar, and no plausible customer spans two.
+    timezone = db.Column(
+        db.String(64),
+        nullable=False,
+        default="Asia/Kolkata",
+        server_default="Asia/Kolkata",
+    )
+
     # Subscription state (Phase 5).
     # The pricing columns above already capture price/discount; the new
     # columns track lifecycle. `status` carries trial/active/suspended/
     # deleted (see TENANT_STATUSES); a dedicated TenantSubscription table
     # would duplicate the pricing columns we already have.
-    trial_ends_at = db.Column(db.DateTime, nullable=True)
+    trial_ends_at = db.Column(db.DateTime(timezone=True), nullable=True)
     billing_cycle = db.Column(
         db.String(20),
         nullable=False,
@@ -150,12 +166,12 @@ class Tenant(db.Model):
         ),
     )
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     plan = db.relationship("Plan", backref="tenants", lazy=True)
@@ -188,7 +204,7 @@ class AuditLog(db.Model):
     action = db.Column(db.String(100), nullable=False, index=True)
     # Python name 'extra_data' to avoid conflict with SQLAlchemy's reserved 'metadata'
     extra_data = db.Column("metadata", db.JSON, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, index=True)
 
     def __repr__(self):
         return f"<AuditLog {self.action} {self.created_at}>"
@@ -223,10 +239,10 @@ class TenantUsage(db.Model):
         db.Integer, nullable=False, default=0, server_default="0"
     )
     last_updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     def __repr__(self):
@@ -243,7 +259,7 @@ class PlatformSetting(db.Model):
 
     key = db.Column(db.String(100), primary_key=True)
     value = db.Column(db.Text, nullable=True)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
 class TenantBaseModel(db.Model):

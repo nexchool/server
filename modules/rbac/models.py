@@ -8,6 +8,7 @@ from core.database import db
 from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
+from core.school_time import utc_now
 
 
 class Role(TenantBaseModel):
@@ -35,7 +36,7 @@ class Role(TenantBaseModel):
     # assigns it. Marked here rather than matched by name so that renaming the
     # profile cannot silently remove everyone's access.
     implied_by_relationship = db.Column(db.String(30), nullable=True, index=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Relationships
     permissions = db.relationship(
@@ -76,7 +77,7 @@ class Permission(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     description = db.Column(db.String(255), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     def __repr__(self):
         return f"<Permission {self.name}>"
@@ -115,7 +116,7 @@ class RolePermission(TenantBaseModel):
         nullable=False,
         index=True
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     def __repr__(self):
         return f"<RolePermission role_id={self.role_id} permission_id={self.permission_id}>"
@@ -159,7 +160,7 @@ class StaffAuthority(TenantBaseModel):
         index=True,
     )
 
-    granted_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    granted_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     granted_by_user_id = db.Column(
         db.String(36),
         db.ForeignKey("users.id", ondelete="SET NULL"),
@@ -216,7 +217,7 @@ class AuthorityDelegation(TenantBaseModel):
     # Set when the school ends a delegation before its date.
     revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     created_by_user_id = db.Column(
         db.String(36),
         db.ForeignKey("users.id", ondelete="SET NULL"),

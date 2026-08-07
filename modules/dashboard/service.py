@@ -35,10 +35,12 @@ from modules.transport.models import (
     TransportEnrollment,
     TransportRoute,
 )
+from core.school_time import utc_now
+from core.school_time import school_today
 
 
 def _today() -> date:
-    return date.today()
+    return school_today()
 
 
 def _active_academic_year(tenant_id: str) -> Dict[str, Any]:
@@ -353,7 +355,7 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
     )
 
     # Last 7 days collection grouped by date
-    cutoff = datetime.utcnow() - timedelta(days=6)
+    cutoff = utc_now() - timedelta(days=6)
     rows = (
         db.session.query(
             cast(Payment.created_at, Date).label("pay_date"),
@@ -382,8 +384,8 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
     current_7_total = sum(d["amount"] for d in last_7)
 
     # Previous week window (days 8–14 ago) for trend comparison
-    prev_start = datetime.utcnow() - timedelta(days=14)
-    prev_end = datetime.utcnow() - timedelta(days=7)
+    prev_start = utc_now() - timedelta(days=14)
+    prev_end = utc_now() - timedelta(days=7)
     prev_total_row = (
         db.session.query(func.coalesce(func.sum(Payment.amount), 0))
         .filter(

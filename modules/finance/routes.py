@@ -38,6 +38,7 @@ from core.branch_scope import (
 from . import services
 from .services import payment_service
 from .services.payment_service import list_recent_payments
+from core.school_time import utc_now
 
 
 def _assert_payment_branch_access(payment, tenant_id):
@@ -600,7 +601,7 @@ def update_tenant_profile():
     for field in updatable:
         if field in data:
             setattr(tenant, field, data[field] or None)
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     return success_response(message="School profile updated", data={
         "id": tenant.id,

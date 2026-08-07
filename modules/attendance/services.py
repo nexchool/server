@@ -32,6 +32,7 @@ from modules.academics.calendar.holiday_services import get_holiday_for_date
 
 from . import session_services as session_svc
 from .models import Attendance
+from core.school_time import school_today
 
 
 def get_teacher_class_ids(user_id: str) -> List[str]:
@@ -89,7 +90,7 @@ def mark_attendance(
 
         att_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
-        if att_date > date.today():
+        if att_date > school_today():
             return {"success": False, "error": "Cannot mark attendance for future dates"}
 
         tenant_id = get_tenant_id()

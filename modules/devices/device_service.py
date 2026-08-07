@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.database import db
 from modules.auth.models import User
 from modules.devices.models import DeviceToken
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,11 @@ def register_device_token(
     if not user:
         return None, "User not found for tenant"
 
-    if user.login_locked_until and user.login_locked_until > datetime.utcnow():
+    if user.login_locked_until and user.login_locked_until > utc_now():
         return None, "Account temporarily locked"
 
     prov = _infer_provider(raw, provider)
-    now = datetime.utcnow()
+    now = utc_now()
     app_ver = (app_version or "").strip()[:40] or None
 
     existing = DeviceToken.query.filter_by(device_token=raw).first()
@@ -113,7 +114,7 @@ def unregister_device_token(
     if row.tenant_id != tenant_id or row.user_id != user_id:
         return False, "Token not registered for this user"
     row.is_active = False
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utc_now()
     db.session.add(row)
     return True, None
 
@@ -167,7 +168,7 @@ def deactivate_tokens_by_ids(token_row_ids: List[str]) -> int:
     return (
         DeviceToken.query.filter(DeviceToken.id.in_(token_row_ids))
         .update(
-            {"is_active": False, "updated_at": datetime.utcnow()},
+            {"is_active": False, "updated_at": utc_now()},
             synchronize_session=False,
         )
     )

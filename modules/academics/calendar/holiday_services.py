@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 from core.database import db
 from . import activity
 from .holidays import Holiday, HOLIDAY_TYPES, HOLIDAY_APPLIES_TO, DAY_NAMES
+from core.school_time import school_today
 
 
 def _holiday_label(h: Holiday) -> str:
@@ -326,7 +327,7 @@ def calendar_range_summary(
 def get_upcoming_holidays(tenant_id: str, limit: int = 10) -> Dict:
     """Return upcoming non-recurring holidays starting from today."""
     try:
-        today = date.today()
+        today = school_today()
         holidays = (
             Holiday.query
             .filter(Holiday.tenant_id == tenant_id)

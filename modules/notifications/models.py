@@ -13,6 +13,7 @@ from core.database import db
 from core.models import TenantBaseModel
 
 from modules.notifications.enums import NotificationRecipientStatus
+from core.school_time import utc_now
 
 
 class Notification(TenantBaseModel):
@@ -41,7 +42,7 @@ class Notification(TenantBaseModel):
     body = db.Column(db.Text(), nullable=True)
     read_at = db.Column(db.DateTime(), nullable=True)
     extra_data = db.Column(db.JSON(), nullable=True)
-    created_at = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow, index=True)
+    created_at = db.Column(db.DateTime(), nullable=False, default=utc_now, index=True)
 
     user = db.relationship("User", backref=db.backref("notifications", lazy=True))
     recipients = db.relationship(
@@ -101,7 +102,7 @@ class NotificationRecipient(db.Model):
         index=True,
     )
     read_at = db.Column(db.DateTime(), nullable=True)
-    created_at = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(), nullable=False, default=utc_now)
 
     notification = db.relationship("Notification", back_populates="recipients")
     user = db.relationship("User", backref=db.backref("notification_recipient_rows", lazy=True))
@@ -144,8 +145,8 @@ class NotificationTemplate(db.Model):
     is_system = db.Column(db.Boolean(), nullable=False, default=False)
     subject_template = db.Column(db.String(500), nullable=False)
     body_template = db.Column(db.Text(), nullable=False)
-    created_at = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(), nullable=False, default=utc_now, onupdate=utc_now)
 
     def to_dict(self):
         return {

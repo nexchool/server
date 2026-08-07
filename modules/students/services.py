@@ -32,6 +32,7 @@ from .class_enrollment_service import (
     student_matches_class_filter,
     student_matches_any_class_filter,
 )
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -169,9 +170,9 @@ def generate_student_password(name: str, date_of_birth: Optional[str]) -> str:
         try:
             birth_year = datetime.strptime(date_of_birth, '%Y-%m-%d').year
         except ValueError:
-            birth_year = datetime.utcnow().year
+            birth_year = utc_now().year
     else:
-        birth_year = datetime.utcnow().year
+        birth_year = utc_now().year
     
     return f"{name_part}{birth_year}"
 

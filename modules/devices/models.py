@@ -7,6 +7,7 @@ from datetime import datetime
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class DeviceToken(TenantBaseModel):
@@ -29,12 +30,12 @@ class DeviceToken(TenantBaseModel):
     app_version = db.Column(db.String(40), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     last_used_at = db.Column(db.DateTime(), nullable=True)
-    created_at = db.Column(db.DateTime(), nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(), nullable=False, default=utc_now)
     updated_at = db.Column(
         db.DateTime(),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     user = db.relationship("User", backref=db.backref("device_tokens", lazy=True))

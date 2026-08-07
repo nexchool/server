@@ -42,6 +42,8 @@ from .models import (
     TransportStaff,
     TransportStop,
 )
+from core.school_time import utc_now
+from core.school_time import school_today
 
 TRANSPORT_FS_NAME = "Transport (monthly)"
 TRANSPORT_COMPONENT_NAME = "Transport Fee"
@@ -355,7 +357,7 @@ def resolve_default_academic_year_id() -> Optional[str]:
 
 
 def _today() -> date:
-    return date.today()
+    return school_today()
 
 
 def assignment_active_on(a: TransportBusAssignment, on_date: date) -> bool:
@@ -495,7 +497,7 @@ def _sync_student_transport_fee_amounts(student_fee: StudentFee, monthly_fee: De
             item.amount = monthly_fee
         total += item.amount or Decimal("0")
     student_fee.total_amount = total
-    student_fee.updated_at = datetime.utcnow()
+    student_fee.updated_at = utc_now()
 
 
 def sync_transport_fee_for_enrollment(enrollment: TransportEnrollment, monthly_fee: Decimal) -> Tuple[bool, Optional[str]]:
@@ -3107,8 +3109,12 @@ def delete_schedule_exception(exception_id: str) -> Tuple[bool, ScheduleError]:
 
 
 def _minutes_span(st: time, et: time) -> int:
-    a = datetime.combine(date.today(), st)
-    b = datetime.combine(date.today(), et)
+    # The date is scaffolding for subtracting two times of day, not a school
+    # day — so it is fixed. Two separate date.today() calls could also straddle
+    # midnight and return different days, which would make the span a day out.
+    anchor = date.min
+    a = datetime.combine(anchor, st)
+    b = datetime.combine(anchor, et)
     return max(0, int((b - a).total_seconds() // 60))
 
 
@@ -3280,7 +3286,7 @@ def get_driver_workload(
     else:
         return None, "Staff not found"
 
-    d = on_date or date.today()
+    d = on_date or school_today()
     ay_id = str(academic_year_id).strip()
     ay = AcademicYear.query.filter_by(id=ay_id, tenant_id=tenant_id).first()
     if not ay:
@@ -3670,7 +3676,7 @@ def get_student_transport_assignment(
     if student is None:
         return None  # route → 403
 
-    today = date.today()
+    today = school_today()
 
     # Query enrollments active TODAY in SQL. Picking newest-by-created_at
     # and then date-checking misses a student who has an older active row

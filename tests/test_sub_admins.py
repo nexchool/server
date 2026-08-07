@@ -30,6 +30,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from core.school_time import utc_now
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -153,7 +154,7 @@ def test_create_duplicate_email_soft_deleted_returns_409(db_session, seeded_tena
     assert created["success"]
 
     user = User.get_user_by_email(email, tenant_id=seeded_tenant.id)
-    user.deleted_at = datetime.utcnow()
+    user.deleted_at = utc_now()
     db_session.flush()
 
     dup = _create(seeded_tenant, email=email)
@@ -279,7 +280,7 @@ def test_list_returns_only_sub_admins_excludes_deleted(db_session, seeded_tenant
 
     # Soft-delete the sub-admin -> excluded
     user = User.get_user_by_email(sa_email, tenant_id=seeded_tenant.id)
-    user.deleted_at = datetime.utcnow()
+    user.deleted_at = utc_now()
     db_session.flush()
     listed2 = list_sub_admins(seeded_tenant.id)
     assert sa_email not in {i["email"] for i in listed2["items"]}

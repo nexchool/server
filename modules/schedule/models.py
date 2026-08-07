@@ -10,6 +10,7 @@ from datetime import datetime
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class ScheduleOverride(TenantBaseModel):
@@ -59,8 +60,8 @@ class ScheduleOverride(TenantBaseModel):
         db.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     slot_ref = db.relationship("TimetableSlot", foreign_keys=[slot_id], lazy=True)
     timetable_entry = db.relationship("TimetableEntry", foreign_keys=[timetable_entry_id], lazy=True)

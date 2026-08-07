@@ -21,6 +21,7 @@ from core.tenant import get_tenant_id
 from modules.academics.backbone.models import StudentClassEnrollment
 from modules.classes.models import Class
 from modules.students.models import Student
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def assign_student_to_class(
     if not student:
         return {"success": False, "error": "Student not found"}
 
-    today = datetime.utcnow().date()
+    today = utc_now().date()
 
     def _run() -> Optional[str]:
         err = _assign_student_to_class_impl(

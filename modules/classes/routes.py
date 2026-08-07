@@ -26,6 +26,7 @@ from core.branch_scope import (
 )
 from . import services
 from .class_schemas import validate_class_payload
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ def export_classes():
     for item in result.get('items', []):
         writer.writerow(['' if item.get(k) is None else item.get(k) for k, _ in columns])
 
-    filename = f"classes_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    filename = f"classes_{utc_now().strftime('%Y%m%d')}.csv"
     return Response(
         buf.getvalue(),
         mimetype='text/csv',

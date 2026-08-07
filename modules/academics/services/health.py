@@ -10,10 +10,11 @@ from modules.academics.backbone.models import ClassSubjectTeacher, TimetableEntr
 from modules.classes.models import Class, ClassSubject
 
 from modules.attendance.session_services import attendance_pending_for_class_today
+from core.school_time import school_today
 
 
 def compute_health(tenant_id: str) -> Dict[str, Any]:
-    today = date.today()
+    today = school_today()
 
     # Load the tenant's classes once, then answer each question with a single
     # batched query + in-memory set membership — no per-class / per-subject N+1.

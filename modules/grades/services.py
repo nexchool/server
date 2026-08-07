@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from .models import Grade
+from core.school_time import utc_now
 
 
 def _active(query):
@@ -127,7 +128,7 @@ def delete_grade(grade_id: str, tenant_id: str) -> Dict:
         }
 
     try:
-        grade.deleted_at = datetime.utcnow()
+        grade.deleted_at = utc_now()
         db.session.commit()
     except Exception as e:
         db.session.rollback()

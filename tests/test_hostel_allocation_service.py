@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+from core.school_time import utc_now
 
 
 def test_create_allocation_happy_path(db_session, tenant, hostel, room, bed, student):
@@ -45,7 +46,7 @@ def test_create_allocation_flips_bed_is_allocated(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=bed.id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     db_session.refresh(bed)
     assert bed.is_allocated is True
@@ -65,7 +66,7 @@ def test_create_allocation_fails_when_bed_occupied(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=bed.id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     with pytest.raises(ValueError, match="Bed already occupied"):
@@ -75,7 +76,7 @@ def test_create_allocation_fails_when_bed_occupied(
             hostel_id=hostel.id,
             room_id=room.id,
             bed_id=bed.id,
-            check_in_at=datetime.utcnow(),
+            check_in_at=utc_now(),
         )
 
 
@@ -92,7 +93,7 @@ def test_create_allocation_fails_when_student_already_allocated(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     # Same student, different bed → still rejected.
@@ -103,7 +104,7 @@ def test_create_allocation_fails_when_student_already_allocated(
             hostel_id=hostel.id,
             room_id=room.id,
             bed_id=beds[1].id,
-            check_in_at=datetime.utcnow(),
+            check_in_at=utc_now(),
         )
 
 
@@ -121,7 +122,7 @@ def test_create_allocation_fails_when_bed_missing(
             hostel_id=hostel.id,
             room_id=room.id,
             bed_id="nonexistent-bed-id",
-            check_in_at=datetime.utcnow(),
+            check_in_at=utc_now(),
         )
 
 
@@ -173,7 +174,7 @@ def test_checkout_allocation_already_completed_raises(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=bed.id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     service.checkout_allocation(a.id)
 
@@ -194,7 +195,7 @@ def test_get_allocation_by_student_returns_active(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=bed.id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     found = service.get_allocation_by_student(tenant_id=tenant.id, student_id=student.id)
@@ -225,7 +226,7 @@ def test_get_allocation_by_student_ignores_completed(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     service.checkout_allocation(a.id)
 
@@ -243,7 +244,7 @@ def test_list_allocations_no_filters(db_session, tenant, hostel, room, beds, stu
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     service.create_allocation(
         tenant_id=tenant.id,
@@ -251,7 +252,7 @@ def test_list_allocations_no_filters(db_session, tenant, hostel, room, beds, stu
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[1].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     rows = service.list_allocations(tenant_id=tenant.id)
@@ -271,7 +272,7 @@ def test_list_allocations_filter_by_student(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     service.create_allocation(
         tenant_id=tenant.id,
@@ -279,7 +280,7 @@ def test_list_allocations_filter_by_student(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[1].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     rows = service.list_allocations(tenant_id=tenant.id, student_id=student.id)
@@ -300,7 +301,7 @@ def test_list_allocations_filter_by_status_active(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     a2 = service.create_allocation(
         tenant_id=tenant.id,
@@ -308,7 +309,7 @@ def test_list_allocations_filter_by_status_active(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[1].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     service.checkout_allocation(a2.id)
 
@@ -330,7 +331,7 @@ def test_list_allocations_filter_by_hostel(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     rows = service.list_allocations(tenant_id=tenant.id, hostel_id=hostel.id)

@@ -24,10 +24,11 @@ from modules.attendance.session_services import (
 from .common import class_display_name, get_class_for_tenant
 from .health import compute_health
 from .timetable_v2 import _bell_period_map, _serialize_entry
+from core.school_time import school_today
 
 
 def _today_weekday() -> int:
-    return date.today().isoweekday()
+    return school_today().isoweekday()
 
 
 def teacher_today_schedule(tenant_id: str, user_id: str) -> Dict[str, Any]:
@@ -35,7 +36,7 @@ def teacher_today_schedule(tenant_id: str, user_id: str) -> Dict[str, Any]:
     if not teacher:
         return {"success": False, "error": "Teacher profile not found"}
 
-    today = date.today()
+    today = school_today()
     dow = _today_weekday()
 
     entries = (
@@ -144,7 +145,7 @@ def student_dashboard(tenant_id: str, user_id: str) -> Dict[str, Any]:
 
 
 def admin_academic_dashboard(tenant_id: str) -> Dict[str, Any]:
-    today = date.today()
+    today = school_today()
     dow = _today_weekday()
 
     total_classes = Class.query.filter_by(tenant_id=tenant_id).count()

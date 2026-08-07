@@ -17,6 +17,7 @@ from typing import List, Optional
 from core.database import db
 
 from .models import AuthorityDelegation, Role, StaffAuthority
+from core.school_time import school_today
 
 
 class AuthorityRefused(Exception):
@@ -186,7 +187,7 @@ def delegations_in_effect_for(staff_id: str, on_date: Optional[date] = None):
     """
     from modules.people.employment import Staff
 
-    today = on_date or date.today()
+    today = on_date or school_today()
 
     delegations = (
         db.session.query(AuthorityDelegation)

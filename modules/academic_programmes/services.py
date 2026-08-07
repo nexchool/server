@@ -16,6 +16,7 @@ from .models import (
     PROGRAMME_STATUSES,
     PROGRAMME_STATUS_ACTIVE,
 )
+from core.school_time import utc_now
 
 
 _EDITABLE_FIELDS = ("name", "board", "medium", "code", "status")
@@ -209,7 +210,7 @@ def delete_programme(programme_id: str, tenant_id: str) -> Dict:
         }
 
     try:
-        programme.deleted_at = datetime.utcnow()
+        programme.deleted_at = utc_now()
         programme.status = "inactive"
         db.session.commit()
     except Exception as e:

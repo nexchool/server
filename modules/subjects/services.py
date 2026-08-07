@@ -16,6 +16,7 @@ from core.database import db
 from core.tenant import get_tenant_id
 
 from .models import Subject
+from core.school_time import utc_now
 
 # Keep in sync with seed_service (mts.yaml uses language / co_curricular) and
 # admin-web src/types/subject.ts.
@@ -343,7 +344,7 @@ def update_subject(subject_id: str, data: Dict, tenant_id: str) -> Dict:
         if "is_active" in data and data["is_active"] is not None:
             subject.is_active = bool(data["is_active"])
 
-        subject.updated_at = datetime.utcnow()
+        subject.updated_at = utc_now()
         subject.save()
         return {"success": True, "subject": subject.to_dict()}
     except IntegrityError as e:

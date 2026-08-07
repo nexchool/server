@@ -20,11 +20,12 @@ from core.branch_scope import (
 from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment
 from modules.students.models import Student
 from modules.audit.services import log_finance_action
+from core.school_time import school_today
 
 
 def _next_invoice_number(tenant_id: str, academic_year: str) -> str:
     """Generate next invoice number: INV-YYYY-NNN."""
-    prefix = f"INV-{academic_year[:4] if academic_year else date.today().year}-"
+    prefix = f"INV-{academic_year[:4] if academic_year else school_today().year}-"
     last = (
         FeeInvoice.query.filter(
             FeeInvoice.tenant_id == tenant_id,

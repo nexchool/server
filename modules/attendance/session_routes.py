@@ -11,6 +11,7 @@ from shared.helpers import error_response, success_response, validation_error_re
 from modules.rbac.services import has_permission
 
 from . import session_services as svc
+from core.school_time import school_today
 
 PERM_MARK = "attendance.mark"
 PERM_READ_CLASS = "attendance.read.class"
@@ -25,7 +26,7 @@ PERM_MANAGE = "attendance.manage"
 @require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_MANAGE)
 def eligible_classes():
-    d = date.today()
+    d = school_today()
     ds = request.args.get("date")
     if ds:
         d = date.fromisoformat(ds[:10])
@@ -41,7 +42,7 @@ def eligible_classes():
 @require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_READ_CLASS, PERM_READ_ALL, PERM_MANAGE)
 def get_class_attendance_session(class_id):
-    ds = request.args.get("date") or date.today().isoformat()
+    ds = request.args.get("date") or school_today().isoformat()
     try:
         d = date.fromisoformat(ds[:10])
     except ValueError:

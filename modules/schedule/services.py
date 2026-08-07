@@ -24,6 +24,7 @@ from modules.academics.services.timetable_v2 import _bell_period_map
 from modules.classes.models import Class
 from modules.timetable.models import TimetableSlot
 from modules.schedule.models import ScheduleOverride
+from core.school_time import school_today
 
 
 def _time_to_str(t) -> Optional[str]:
@@ -242,7 +243,7 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
 
     Enriched with leave/unavailability detection and active overrides.
     """
-    today = date.today()
+    today = school_today()
     day_of_week = today.weekday()  # 0=Monday … 6=Sunday (legacy slots + availability tuples)
     dow_iso = today.isoweekday()  # 1=Monday … 7=Sunday (TimetableEntry)
 
@@ -324,7 +325,7 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
 
 def get_all_slots_today(tenant_id: str) -> List[Dict]:
     """Admin view: all timetable slots today, enriched with coverage data."""
-    today = date.today()
+    today = school_today()
     day_of_week = today.weekday()
     dow_iso = today.isoweekday()
 

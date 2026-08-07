@@ -17,6 +17,8 @@ from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeRecei
 from modules.students.models import Student
 from modules.audit.services import log_finance_action
 from .invoice_service import _recalculate_invoice_status
+from core.school_time import utc_now
+from core.school_time import school_today
 
 
 VALID_PAYMENT_METHODS = ("cash", "bank", "upi", "online")
@@ -24,7 +26,7 @@ VALID_PAYMENT_METHODS = ("cash", "bank", "upi", "online")
 
 def _next_receipt_number(tenant_id: str) -> str:
     """Generate receipt number: RCP-YYYY-NNN."""
-    year = str(datetime.utcnow().year)
+    year = str(utc_now().year)
     prefix = f"RCP-{year}-"
     last = (
         FeeReceipt.query.filter(
@@ -99,7 +101,7 @@ def record_fee_payment(
                 "message": "Duplicate payment_reference; existing payment returned",
             }
 
-    pay_date = payment_date or date.today()
+    pay_date = payment_date or school_today()
     student_id = invoice.student_id
 
     payment = FeePayment(
@@ -122,7 +124,7 @@ def record_fee_payment(
         tenant_id=tenant_id,
         payment_id=payment.id,
         receipt_number=receipt_number,
-        generated_at=datetime.utcnow(),
+        generated_at=utc_now(),
         pdf_url=None,  # Generated on download
     )
     db.session.add(receipt)

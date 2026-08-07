@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 ANNOUNCEMENT_STATUSES = ("draft", "scheduled", "published", "recalled")
@@ -35,7 +36,7 @@ class Announcement(TenantBaseModel):
     revision_count = db.Column(db.Integer, nullable=False, default=1, server_default=text("1"))
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=datetime.utcnow
+        db.DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=utc_now
     )
 
     author = db.relationship("User", foreign_keys=[author_user_id])

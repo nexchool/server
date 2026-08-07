@@ -28,6 +28,7 @@ from core.branch_scope import (
 from . import services
 from .document_schemas import validate_document_type
 from .student_schemas import validate_student_payload
+from core.school_time import utc_now
 
 # Permissions
 PERM_CREATE = 'student.create'
@@ -751,7 +752,7 @@ def export_students():
         writer.writerow(['' if item.get(k) is None else item.get(k) for k, _ in columns])
 
     csv_text = buf.getvalue()
-    filename = f"students_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    filename = f"students_{utc_now().strftime('%Y%m%d')}.csv"
     return Response(
         csv_text,
         mimetype='text/csv',

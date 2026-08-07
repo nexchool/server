@@ -15,6 +15,7 @@ from .models import User, Session
 from core.database import db
 from core.models import Tenant
 from core.models import TENANT_STATUS_ACTIVE
+from core.school_time import utc_now
 
 
 # JWT Configuration
@@ -43,8 +44,8 @@ def generate_access_token(user: User, access_minutes: Optional[int] = None) -> s
         "email": user.email,
         "is_platform_admin": bool(getattr(user, "is_platform_admin", False)),
         "type": "access",
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(minutes=minutes),
+        "iat": utc_now(),
+        "exp": utc_now() + timedelta(minutes=minutes),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -68,8 +69,8 @@ def generate_refresh_token(user: User) -> str:
     payload = {
         "sub": str(user.id),
         "type": "refresh",
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(days=JWT_REFRESH_DAYS),
+        "iat": utc_now(),
+        "exp": utc_now() + timedelta(days=JWT_REFRESH_DAYS),
     }
 
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -157,14 +158,14 @@ def refresh_access_token(refresh_token: str, request: Request = None) -> Optiona
         revoked=False
     ).first()
 
-    if not session or session.refresh_token_expires_at < datetime.utcnow():
+    if not session or session.refresh_token_expires_at < utc_now():
         return None
 
     # Generate new access token
     new_access_token = generate_access_token(session.user)
 
     # Update session metadata
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = utc_now()
     if request:
         session.ip_address = request.remote_addr
         session.user_agent = request.headers.get("User-Agent")
@@ -195,7 +196,7 @@ def create_session(user: User, request: Request = None) -> Session:
         user_id=user.id,
         tenant_id=user.tenant_id,
         refresh_token=refresh_token,
-        refresh_token_expires_at=datetime.utcnow() + timedelta(days=JWT_REFRESH_DAYS)
+        refresh_token_expires_at=utc_now() + timedelta(days=JWT_REFRESH_DAYS)
     )
 
     # Add device metadata if request provided
@@ -255,7 +256,7 @@ def cleanup_expired_sessions():
         Number of sessions deleted
     """
     expired_sessions = Session.query.filter(
-        Session.refresh_token_expires_at < datetime.utcnow()
+        Session.refresh_token_expires_at < utc_now()
     ).all()
     
     count = len(expired_sessions)
@@ -387,7 +388,7 @@ def login_user(
         return None
 
     # Update last login
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = utc_now()
     user.save()
 
     # Create session and generate tokens

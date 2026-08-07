@@ -2,6 +2,7 @@ from core.database import db
 from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
+from core.school_time import utc_now
 
 
 class Attendance(TenantBaseModel):
@@ -30,8 +31,8 @@ class Attendance(TenantBaseModel):
     # Who marked the attendance
     marked_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         db.UniqueConstraint(

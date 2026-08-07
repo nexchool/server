@@ -7,6 +7,7 @@ from core.database import db
 from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
+from core.school_time import utc_now
 
 
 # Document type labels for API responses
@@ -64,9 +65,9 @@ class StudentDocument(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        db.DateTime, nullable=False, default=utc_now, onupdate=utc_now
     )
 
     student = db.relationship(
@@ -242,8 +243,8 @@ class Student(TenantBaseModel):
     guardian_phone = db.Column(db.String(20), nullable=True)
     guardian_email = db.Column(db.String(120), nullable=True)
     
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     # Access user fields via student.user.email etc.
@@ -442,7 +443,7 @@ class StudentPromotionBatch(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     def to_dict(self):
         return {

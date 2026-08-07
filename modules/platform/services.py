@@ -39,6 +39,8 @@ from modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noq
 from modules.students.models import Student
 from modules.teachers.models import Teacher
 from modules.platform.audit import log_platform_action
+from core.school_time import is_valid_timezone, utc_now
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,7 @@ def _serialize_tenant(tenant: Tenant) -> Dict[str, Any]:
         "discount_end_date": tenant.discount_end_date.isoformat() if tenant.discount_end_date else None,
         "trial_ends_at": tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None,
         "billing_cycle": tenant.billing_cycle,
+        "timezone": tenant.timezone,
         "feature_flags": get_tenant_feature_flags(tenant.id),
         "student_count": student_count,
         "teacher_count": teacher_count,
@@ -121,7 +124,7 @@ def get_dashboard_stats() -> Dict[str, Any]:
     total_teachers = db.session.query(Teacher).count()
 
     revenue_yearly = Decimal("0")
-    today = date.today()
+    today = school_today()
     for t in tenants:
         if t.status != TENANT_STATUS_ACTIVE:
             continue
@@ -296,7 +299,7 @@ def suspend_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
     tenant.status = TENANT_STATUS_SUSPENDED
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -312,7 +315,7 @@ def activate_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
     tenant.status = TENANT_STATUS_ACTIVE
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -360,7 +363,7 @@ def update_tenant_pricing(
     ):
         return {"success": False, "error": "discount_start_date must be on or before discount_end_date"}
 
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -509,7 +512,7 @@ def update_tenant_subscription(
             "error": "discount_start_date must be on or before discount_end_date",
         }
 
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -559,7 +562,7 @@ def update_tenant_feature_flags(
             current[key] = bool(value)
         # Silently ignore CORE_FEATURES and unknown keys.
     tenant.feature_flags = current
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -586,7 +589,7 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
 
-    on_date = on_date or date.today()
+    on_date = on_date or school_today()
     inactive_statuses = ("inactive", "withdrawn", "graduated", "transferred")
     active_students = (
         db.session.query(Student)
@@ -806,10 +809,18 @@ def update_tenant(
     logo_url: Optional[str] = None,
     tagline: Optional[str] = None,
     board_affiliation: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
+    if timezone is not None:
+        # Refused rather than coerced: a zone the system cannot resolve would
+        # silently fall back to India, and the school would be told its clocks
+        # were set when they were not.
+        if not is_valid_timezone(timezone):
+            return {"success": False, "error": f"Unknown timezone: {timezone}"}
+        tenant.timezone = timezone
     if name is not None:
         tenant.name = name
     if contact_email is not None:
@@ -824,7 +835,7 @@ def update_tenant(
         tenant.tagline = tagline or None
     if board_affiliation is not None:
         tenant.board_affiliation = board_affiliation or None
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -840,7 +851,7 @@ def delete_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
     tenant.status = TENANT_STATUS_DELETED
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -1454,7 +1465,7 @@ def update_platform_settings(updates: Dict[str, Any], platform_admin_id: Optiona
             str_val = str(value).lower() if isinstance(value, bool) else str(value)
             if stored:
                 stored.value = str_val
-                stored.updated_at = datetime.utcnow()
+                stored.updated_at = utc_now()
             else:
                 db.session.add(PlatformSetting(key=key, value=str_val))
     db.session.commit()

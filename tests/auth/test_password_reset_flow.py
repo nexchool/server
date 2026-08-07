@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from core.school_time import utc_now
 
 SERVER_DIR = Path(__file__).resolve().parent.parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -162,7 +163,7 @@ def test_reset_invalid_token_returns_400(flask_app, db_session, tenant):
 def test_reset_expired_token_returns_400(flask_app, db_session, tenant):
     user = _make_user(db_session, tenant)
     token = _issue_token(db_session, user)
-    user.reset_password_sent_at = datetime.utcnow() - timedelta(minutes=31)
+    user.reset_password_sent_at = utc_now() - timedelta(minutes=31)
     db_session.flush()
 
     resp = _post(

@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class TransportBus(TenantBaseModel):
@@ -24,12 +25,12 @@ class TransportBus(TenantBaseModel):
     vehicle_number = db.Column(db.String(50), nullable=True)
     capacity = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     def to_dict(self):
@@ -56,7 +57,7 @@ class TransportDriver(TenantBaseModel):
     license_number = db.Column(db.String(80), nullable=True)
     address = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     def to_dict(self):
         return {
@@ -87,12 +88,12 @@ class TransportStaff(TenantBaseModel):
     license_number = db.Column(db.String(80), nullable=True)
     address = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     def to_dict(self):
@@ -129,12 +130,12 @@ class TransportRoute(TenantBaseModel):
     approx_stops_needs_review = db.Column(
         db.Boolean, nullable=False, default=False, server_default=text("false")
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     route_stop_links = db.relationship(
@@ -198,7 +199,7 @@ class TransportRouteStop(TenantBaseModel):
     sequence_order = db.Column(db.Integer, nullable=False)
     pickup_time = db.Column(db.Time, nullable=True)
     drop_time = db.Column(db.Time, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     route = db.relationship("TransportRoute", back_populates="route_stop_links")
     stop = db.relationship("TransportStop", back_populates="route_links")
@@ -242,12 +243,12 @@ class TransportStop(TenantBaseModel):
     pickup_time = db.Column(db.Time, nullable=True)
     drop_time = db.Column(db.Time, nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=text("true"))
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     route = db.relationship(
@@ -312,12 +313,12 @@ class TransportBusAssignment(TenantBaseModel):
     effective_from = db.Column(db.Date, nullable=False)
     effective_to = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     bus = db.relationship("TransportBus", backref=db.backref("assignments", lazy=True))
@@ -399,12 +400,12 @@ class TransportEnrollment(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     student = db.relationship(
@@ -486,7 +487,7 @@ class TransportFeePlan(TenantBaseModel):
     )
     amount = db.Column(db.Numeric(12, 2), nullable=False)
     fee_cycle = db.Column(db.String(20), nullable=True, server_default="monthly")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     route = db.relationship("TransportRoute", backref=db.backref("fee_plans", lazy=True))
     academic_year = db.relationship("AcademicYear", foreign_keys=[academic_year_id], lazy=True)
@@ -551,12 +552,12 @@ class TransportRouteSchedule(TenantBaseModel):
         nullable=True,
     )
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=text("true"))
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     route = db.relationship("TransportRoute", backref=db.backref("schedules", lazy=True))
@@ -623,7 +624,7 @@ class TransportScheduleException(TenantBaseModel):
         nullable=True,
     )
     reason = db.Column(db.String(500), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     route = db.relationship("TransportRoute", foreign_keys=[route_id])
     bus = db.relationship("TransportBus", foreign_keys=[bus_id])

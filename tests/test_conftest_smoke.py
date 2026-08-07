@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+from core.school_time import utc_now
 
 
 def test_tenant_fixture(tenant):
@@ -68,7 +69,7 @@ def test_active_allocation_unique_per_bed(db_session, tenant, hostel, room, bed,
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=bed.id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     db_session.add(a1)
     db_session.flush()
@@ -82,7 +83,7 @@ def test_active_allocation_unique_per_bed(db_session, tenant, hostel, room, bed,
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=bed.id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     db_session.add(a2)
 

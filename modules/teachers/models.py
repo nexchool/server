@@ -3,6 +3,7 @@ from core.database import db
 from core.models import TenantBaseModel
 from datetime import datetime
 import uuid
+from core.school_time import utc_now
 
 LEAVE_TYPES = ["casual", "sick", "emergency", "unpaid", "other"]
 
@@ -93,8 +94,8 @@ class Teacher(TenantBaseModel):
     specialization = db.Column(db.String(200), nullable=True)     # e.g. "Algebra", "Organic Chemistry"
     experience_years = db.Column(db.Integer, nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     user = db.relationship('User', backref=db.backref('teacher_profile', uselist=False))
@@ -178,7 +179,7 @@ class TeacherSubject(TenantBaseModel):
     teacher_id = db.Column(db.String(36), db.ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = db.Column(db.String(36), db.ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("subject_expertise", lazy=True, passive_deletes=True))
     subject = db.relationship("Subject", backref=db.backref("assigned_teachers", lazy=True))
@@ -221,7 +222,7 @@ class TeacherAvailability(TenantBaseModel):
     period_number = db.Column(db.Integer, nullable=False)
     available = db.Column(db.Boolean, nullable=False, default=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("availability_slots", lazy=True, passive_deletes=True))
 
@@ -270,8 +271,8 @@ class TeacherLeave(TenantBaseModel):
     working_days = db.Column(db.Float, nullable=True)       # working (non-holiday) days in the leave period
     academic_year = db.Column(db.String(10), nullable=True)  # e.g. "2025-26", for balance tracking
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("leaves", lazy=True, passive_deletes=True))
 
@@ -325,8 +326,8 @@ class TeacherWorkloadRule(TenantBaseModel):
     max_periods_per_day = db.Column(db.Integer, nullable=False, default=6)
     max_periods_per_week = db.Column(db.Integer, nullable=False, default=30)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("workload_rule", uselist=False, lazy=True, passive_deletes=True))
 
@@ -374,8 +375,8 @@ class LeavePolicy(TenantBaseModel):
     allow_negative = db.Column(db.Boolean, nullable=False, default=False)
     requires_reason = db.Column(db.Boolean, nullable=False, default=False)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     def save(self):
         db.session.add(self)
@@ -424,10 +425,10 @@ class TeacherLeaveBalance(TenantBaseModel):
     carried_forward_days = db.Column(db.Integer, nullable=False, default=0)
     notes = db.Column(db.Text, nullable=True)
     last_adjusted_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    last_adjusted_at = db.Column(db.DateTime, nullable=True)
+    last_adjusted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     teacher = db.relationship(
         "Teacher", backref=db.backref("leave_balances", lazy=True, passive_deletes=True)

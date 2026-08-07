@@ -17,6 +17,7 @@ from sqlalchemy import CheckConstraint, Index, text
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 SCHOOL_UNIT_TYPE_CAMPUS = "campus"
@@ -84,14 +85,14 @@ class SchoolUnit(TenantBaseModel):
         index=True,
     )
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True, index=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
 
     # Classes assigned to this unit. Explicit `class_records` rather than a
     # generic `classes` collection so callers read intentionally.

@@ -80,6 +80,7 @@ from modules.teachers.models import (
     TeacherWorkloadRule,
 )
 from .models import TimetableSlot, TimetableConfig
+from core.school_time import school_today
 
 # ---------------------------------------------------------------------------
 # Configuration constants
@@ -156,7 +157,7 @@ def _period_times(period_number: int, schedule: List[Tuple[time, time]]) -> Tupl
 
 
 def _monday_of_week(today: Optional[date] = None) -> date:
-    d = today or date.today()
+    d = today or school_today()
     return d - timedelta(days=d.weekday())
 
 

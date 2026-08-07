@@ -20,6 +20,7 @@ from core.models import Tenant
 from shared.helpers import error_response, success_response
 
 from .usage import get_tenant_usage
+from core.school_time import school_today
 
 
 subscription_bp = Blueprint("subscription", __name__)
@@ -35,7 +36,7 @@ def _bill_summary(tenant: Tenant, active_students: int):
     base = (price * Decimal(active_students)).quantize(Decimal("0.01"))
 
     discount_pct = tenant.discount_percentage or Decimal("0")
-    today = date.today()
+    today = school_today()
     discount_active = False
     discount_amount = Decimal("0")
     if discount_pct > 0:

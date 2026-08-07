@@ -4,6 +4,7 @@ from datetime import datetime
 import uuid
 
 from sqlalchemy import CheckConstraint, Index, text
+from core.school_time import utc_now
 
 
 class Class(TenantBaseModel):
@@ -85,8 +86,8 @@ class Class(TenantBaseModel):
     # DEPRECATED: free-text standard number. Use grade_id instead.
     grade_level = db.Column(db.SmallInteger, nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         # Structural identity: a section is unique within a
@@ -221,7 +222,7 @@ class ClassSubject(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
@@ -257,8 +258,8 @@ class SubjectLoad(TenantBaseModel):
     subject_id = db.Column(db.String(36), db.ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     weekly_periods = db.Column(db.Integer, nullable=False, default=1)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     class_ref = db.relationship(
         "Class",

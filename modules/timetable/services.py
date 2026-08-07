@@ -20,6 +20,7 @@ from core.database import db
 from core.tenant import get_tenant_id
 
 from .models import TimetableSlot, TimetableConfig, DEFAULT_BREAKS_JSON
+from core.school_time import school_today
 
 
 # ---------------------------------------------------------------------------
@@ -876,7 +877,7 @@ def get_teacher_weekly_timetable(
     if ay is None:
         raise TimetableNotFoundError("No active academic year")
 
-    base = week_start_date or date.today()
+    base = week_start_date or school_today()
     week_start = _normalize_to_iso_monday(base)
     week_end = week_start + timedelta(days=6)
 
@@ -910,7 +911,7 @@ def get_student_weekly_timetable(
     if ay is None:
         raise TimetableNotFoundError("No active academic year")
 
-    base = week_start_date or date.today()
+    base = week_start_date or school_today()
     week_start = _normalize_to_iso_monday(base)
     week_end = week_start + timedelta(days=6)
 

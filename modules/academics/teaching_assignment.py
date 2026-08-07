@@ -50,6 +50,7 @@ from datetime import date
 from typing import Dict, Iterable, List, Optional
 
 from core.database import db
+from core.school_time import school_today
 
 
 # Roles a teaching responsibility can carry. "primary" is the person answerable
@@ -314,7 +315,7 @@ def _counts_on(row, held: TeachingAssignment, on: Optional[date]) -> bool:
     a report card for November must say so.
     """
     if on is None:
-        return bool(getattr(row, "is_active", True)) and held.was_in_effect_on(date.today())
+        return bool(getattr(row, "is_active", True)) and held.was_in_effect_on(school_today())
     return held.was_in_effect_on(on)
 
 

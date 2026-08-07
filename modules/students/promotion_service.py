@@ -19,6 +19,7 @@ from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import StudentClassEnrollment
 from modules.classes.models import Class
 from modules.students.models import Student, StudentPromotionBatch
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -449,7 +450,7 @@ def execute_promotion(
         len(placements),
     )
 
-    today = datetime.utcnow().date()
+    today = utc_now().date()
     promoted_count = 0
     repeated_count = 0
     graduated_count = 0

@@ -14,6 +14,7 @@ from modules.academics.backbone.models import (
     ClassTeacherAssignment,
 )
 from .models import Class, ClassSubject
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
@@ -1079,7 +1080,7 @@ def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
         if not teaches_anything_in(teacher_id, class_id):
             return {'success': False, 'error': 'Teacher is not assigned to this class'}
 
-        ended_on = date.today()
+        ended_on = school_today()
         for held in ClassTeacherAssignment.query.filter_by(
             tenant_id=get_tenant_id(), class_id=class_id,
             teacher_id=teacher_id, is_active=True,

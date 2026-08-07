@@ -21,6 +21,7 @@ from modules.hostel.models import (
     HostelVisitor,
     HostelVisitorLog,
 )
+from core.school_time import utc_now
 
 
 class VisitorService:
@@ -63,7 +64,7 @@ class VisitorService:
             student_id=student_id,
             hostel_id=hostel_id,
             room_id=room_id,
-            check_in_at=datetime.utcnow(),
+            check_in_at=utc_now(),
             purpose=purpose,
         )
         self.session.add(log)
@@ -87,7 +88,7 @@ class VisitorService:
         if log.check_out_at is not None:
             raise ValueError(f"Visitor log {log_id!r} already checked out")
 
-        log.check_out_at = check_out_at or datetime.utcnow()
+        log.check_out_at = check_out_at or utc_now()
         self.session.flush()
         return log
 

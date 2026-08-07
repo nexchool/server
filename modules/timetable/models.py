@@ -10,6 +10,7 @@ import uuid
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 # Default breaks structure: [{"after_period": 3, "duration_minutes": 15, "label": "Short Break"}, ...]
@@ -39,8 +40,8 @@ class TimetableConfig(TenantBaseModel):
     periods_per_day = db.Column(db.Integer, nullable=False, default=8)
     school_start_time = db.Column(db.Time, nullable=False, default=lambda: time(8, 0))
     breaks_json = db.Column(db.JSON, nullable=True)  # List of {after_period, duration_minutes, label}
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     def get_breaks(self):
         return self.breaks_json if self.breaks_json is not None else DEFAULT_BREAKS_JSON
@@ -99,8 +100,8 @@ class TimetableSlot(TenantBaseModel):
     end_time = db.Column(db.Time, nullable=False)
     room = db.Column(db.String(50), nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     class_ref = db.relationship("Class", foreign_keys=[class_id], lazy=True)
