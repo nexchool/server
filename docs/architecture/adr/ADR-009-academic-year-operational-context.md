@@ -319,7 +319,13 @@ Modules should not independently determine the current Academic Year.
 
 # Multiple Programmes
 
-Each Programme owns its own Academic Years.
+**Correction (2026-08-08).** This section originally said each Programme owns
+its own Academic Years. ADR-012 settled the opposite, and v1 was right: the
+Academic Year belongs to the organization — a trust running CBSE and GSEB has
+one 2026-27, not two. What varies per Programme (terms, promotion rules,
+academic structure) attaches to the (Programme, Academic Year) pair.
+
+Academic Years are organizational and shared across Programmes.
 
 For organizations operating multiple Programmes, the operational context is therefore the combination of Programme and Academic Year.
 

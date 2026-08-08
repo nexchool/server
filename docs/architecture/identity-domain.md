@@ -6,13 +6,18 @@
 >
 > **Last Updated:** August 2026
 
+> **Terminology.** This canon's word for a login is **Account** (naming rule
+> 17). The code model and table are still named `User` / `users`; those
+> technical names remain until a refactor makes renaming them safe. Documents
+> always say Account.
+
 ---
 
 # Purpose
 
 The Identity Domain defines how people access Nexchool.
 
-Its responsibility is to authenticate users, establish secure sessions, and provide controlled access to the platform without becoming part of the school's business model.
+Its responsibility is to authenticate people, establish secure sessions, and provide controlled access to the platform without becoming part of the school's business model.
 
 Identity answers the question:
 
@@ -32,7 +37,7 @@ The separation between business identity and technical identity is a fundamental
 
 Schools know people.
 
-Software knows users.
+Software knows accounts.
 
 These are not the same thing.
 
@@ -70,7 +75,7 @@ Business domains should never depend on authentication to understand who a perso
 
 The Identity Domain is responsible for:
 
-- User accounts
+- Accounts
 - Authentication
 - Session management
 - Password management
@@ -104,16 +109,16 @@ Those responsibilities belong to their respective domains.
 
 The Identity Domain revolves around two concepts.
 
-- User
+- Account
 - Active Context
 
 ---
 
-# User
+# Account
 
-A User represents a technical identity capable of accessing Nexchool.
+An Account represents a technical identity capable of accessing Nexchool.
 
-A User exists solely for authentication and application access.
+An Account exists solely for authentication and application access.
 
 It does not represent a teacher, student, parent, or employee.
 
@@ -123,15 +128,15 @@ Those identities already exist within the People Domain.
 
 # Relationship with Person
 
-Every User belongs to exactly one Person.
+Every Account belongs to exactly one Person.
 
 ```
 Person
     │
-    └── User (Optional)
+    └── Account (Optional)
 ```
 
-A Person may exist without a User.
+A Person may exist without an Account.
 
 Examples include:
 
@@ -145,26 +150,26 @@ Authentication should never be required for someone to exist within the school's
 
 ---
 
-# One Person, One User
+# One Person, One Account
 
-A Person may have at most one User account.
+A Person may have at most one Account.
 
 ```
 Person
         │
         ▼
-User
+Account
 ```
 
 The same individual should never maintain multiple login accounts for different responsibilities.
 
 Examples:
 
-✅ Teacher + Parent → One User
+✅ Teacher + Parent → One Account
 
-✅ Receptionist + Parent → One User
+✅ Receptionist + Parent → One Account
 
-✅ Student → One User
+✅ Student → One Account
 
 This simplifies authentication, notifications, auditing, and overall user experience.
 
@@ -196,7 +201,7 @@ It only provides access to them.
 
 # Authentication
 
-Authentication verifies that the User is who they claim to be.
+Authentication verifies that the Account holder is who they claim to be.
 
 Authentication methods may include:
 
@@ -215,7 +220,7 @@ Future authentication methods should integrate into the Identity Domain without 
 
 After successful authentication, Nexchool establishes a secure session.
 
-The session represents the authenticated User.
+The session represents the authenticated Account.
 
 It does not determine business identity.
 
@@ -223,7 +228,14 @@ It does not determine business identity.
 
 # Active Context
 
-A User may participate in multiple business relationships simultaneously.
+> **Implementation status (2026-08-08):** available contexts are derived and
+> served today (the GraphQL `me` query). Session-stored context, switching,
+> and notification-driven context routing are **deliberately deferred**
+> (ADR-011) — under the default family access model nearly everyone holds
+> exactly one context. The sections below describe the target design, not
+> current behaviour.
+
+A Person may participate in multiple business relationships simultaneously.
 
 Examples include:
 
@@ -239,7 +251,7 @@ This experience is called the Active Context.
 
 # What is Active Context?
 
-Active Context determines which application experience is currently presented to the user.
+Active Context determines which application experience is currently presented to the person.
 
 It affects:
 
@@ -273,7 +285,7 @@ Person
 │
 ├── Family Member
 │
-└── User
+└── Account
 ```
 
 Available contexts:
@@ -295,7 +307,7 @@ It simply changes the application experience.
 
 # Context Switching
 
-Users may switch between available contexts without logging out.
+A person may switch between available contexts without logging out.
 
 Example:
 
@@ -320,7 +332,7 @@ The authenticated session remains unchanged.
 
 # Context Persistence
 
-The application remembers the user's last Active Context.
+The application remembers the person's last Active Context.
 
 Example:
 
@@ -380,7 +392,7 @@ Deep Link
 /children/fees
 ```
 
-When the user opens the notification:
+When the person opens the notification:
 
 1. Authenticate session if required.
 2. Switch Active Context automatically.
@@ -389,13 +401,13 @@ When the user opens the notification:
 
 The context switch should happen transparently.
 
-The user should never manually switch contexts to open a notification.
+The person should never manually switch contexts to open a notification.
 
 ---
 
 # Permissions
 
-Permissions determine what a User may access.
+Permissions determine what a person may access.
 
 The Active Context determines how the application is presented.
 
@@ -429,7 +441,7 @@ Person Created
 
 ↓
 
-User Created (Optional)
+Account Created (Optional)
 
 ↓
 
@@ -448,7 +460,7 @@ Account Disabled
 Account Archived
 ```
 
-Disabling a User account never deletes the underlying Person.
+Disabling an Account never deletes the underlying Person.
 
 ---
 
@@ -476,11 +488,11 @@ Identity follows several architectural principles.
 
 ---
 
-## One Person owns at most one User.
+## One Person owns at most one Account.
 
 ---
 
-## Sessions belong to Users.
+## Sessions belong to Accounts.
 
 ---
 
@@ -519,9 +531,9 @@ These concepts belong to their respective business domains.
 
 The Identity Domain provides secure access to Nexchool while remaining independent from the school's business model.
 
-A Person may optionally receive a User account to access the platform.
+A Person may optionally receive an Account to access the platform.
 
-Each User authenticates once, maintains a single session, and may switch between multiple application contexts without creating additional accounts or logging in again.
+Each Account authenticates once, maintains a single session, and may switch between multiple application contexts without creating additional accounts or logging in again.
 
 Business identity remains the responsibility of the People Domain.
 

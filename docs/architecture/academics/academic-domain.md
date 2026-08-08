@@ -229,7 +229,6 @@ Each Programme owns its own:
 - Academic Structure
 - Subjects
 - Promotion Rules
-- Academic Years
 
 An organization may operate multiple Programmes simultaneously — including two Programmes on the same Campus.
 

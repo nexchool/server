@@ -181,13 +181,25 @@ docs/
 │
 │   Core architecture and engineering decisions.
 │
+├── architecture/adr/
+│
+│   Architectural Decision Records.
+│
+├── architecture/reviews/
+│
+│   Point-in-time reviews of the implementation against this canon.
+│
+├── architecture/debt-register.md
+│
+│   The living register of open migration debt and its exits.
+│
 ├── modules/
 │
 │   Business workflows implemented by the platform.
 │
-└── architecture/adr/
+└── archive/
 │
-│   Architectural Decision Records.
+│   Pre-v2 documentation, kept for history. Never build against it.
 ```
 
 ---
@@ -224,12 +236,24 @@ Read Architectural Decision Records to understand why important architectural ch
 
 ---
 
+## Reviews and Debt
+
+After the ADRs, read the **newest** review in `architecture/reviews/` for the
+current state of the implementation, and `architecture/debt-register.md` for
+what is temporary and when it goes.
+
+Reviews are point-in-time records. Where an older review disagrees with a
+newer one, the newer one is right.
+
+---
+
 ## Modules
 
 Module documentation explains how business workflows are implemented.
 
 Examples include:
 
+- People
 - Identity Management
 - Student Management
 - Staff Management
@@ -280,17 +304,20 @@ The Service Layer remains the single source of business behavior.
 
 ---
 
-# Architecture Freeze
+# Architecture Stability
 
-The current architecture should be considered stable.
-
-Architectural changes should occur only when:
+The architectural *decisions* are stable. They change only when:
 
 - Business requirements change.
 - An architectural flaw is discovered.
 - A new ADR is approved.
 
 Implementation should not gradually redefine architecture.
+
+The *implementation* of those decisions is still in progress. The current
+state is recorded in `architecture/reviews/` (newest review wins) and the open
+gaps in `architecture/debt-register.md`. Declaring the decisions stable is not
+a claim that the migration is finished.
 
 ---
 

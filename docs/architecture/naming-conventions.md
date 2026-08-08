@@ -633,9 +633,13 @@ Permission
 
 An action a user is allowed to perform.
 
-User
+Account
 
-An authentication account.
+An authentication credential belonging to a Person (ADR-003).
+
+The code model and table are named `User` / `users`; the technical names stay
+until a refactor makes renaming them safe. Documents always say Account —
+"User" is never a business term.
 
 Never interchange these words.
 

@@ -87,8 +87,9 @@ Stated so it cannot be mistaken for finished.
    Expiry needs no scheduled job: nothing reads a delegation outside its window,
    so it stops applying the day it ends.
 
-2. **Retiring account-held roles.** `user_roles` remains during transition;
-   permission resolution reads both. Migration debt, with an exit below.
+2. ~~**Retiring account-held roles.**~~ — **closed 2026-08-05.** Migration 089
+   dropped `user_roles`; authority is now held only by employment
+   (`staff_authorities`), relationship-implied profiles, and delegations.
 
 **Correction (2026-08-05).** An earlier draft of this record claimed that School
 Authority Profiles "do not exist" until the sub-admin catalog becomes data. That

@@ -141,8 +141,10 @@ nothing reads them, following the additive sequence in ADR-010.
   and this record is what keeps them reconciled. It must be read alongside them.
 - Some v1 tables carry columns the v2 model places elsewhere, until the cleanup
   migrations run.
-- `classes.teacher_id` remains as a deprecated pointer beside
-  `class_teacher_assignments`, and should be removed when its last reader is.
+- `classes.teacher_id` remains beside `class_teacher_assignments`. Its fate
+  was settled later by ADR-014: it stays permanently as a performance cache,
+  never a business owner, guarded against drift by test — it is no longer
+  scheduled for removal.
 
 ---
 

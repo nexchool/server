@@ -309,7 +309,7 @@ Every entry answers: why it exists, when it goes, and what removes it.
 - **Why:** written for correctness first, on tenants of a few thousand people.
 - **Goes when:** the model stabilises. Documented, not yet optimised, per the
   principle that architecture precedes optimisation.
-- **Removed by:** Milestone **M4 — Scale Pass**.
+- **Removed by:** Milestone **M5 — Scale Pass**.
 
 ### 6. Authority held by both the account and the employment — **CLOSED**
 
@@ -369,14 +369,6 @@ M4  Authorization Domain                                          DONE
     Business Authority replaces RBAC (A1)
     account-held roles retired, user_roles dropped
 
-M6  Teaching Assignment Ownership                        DONE 2026-08-07
-    class_subject_teachers owns subject teaching
-    class_teacher_assignments owns class-teacher responsibility
-    is_class_teacher removed, class_teachers dropped (migration 092)
-    every consumer asks the TeachingAssignmentService
-    caches proven not to drift; ORM hooks and transports pinned by test
-    See docs/architecture/reviews/2026-08-07-architecture-compliance.md
-
 M5  Scale Pass                                           MOSTLY DONE
     every list endpoint measured against the demo tenant
     students 403->3, teachers 30->5 (audit)
@@ -385,8 +377,13 @@ M5  Scale Pass                                           MOSTLY DONE
     transport lists paginate (opt-in; clients read arrays today)
     remaining: admin-web + Expo adopt the page, then the array goes
 
-M5  Scale Pass (original scope)
-    duplicate detection, N+1s, query counts
+M6  Teaching Assignment Ownership                        DONE 2026-08-07
+    class_subject_teachers owns subject teaching
+    class_teacher_assignments owns class-teacher responsibility
+    is_class_teacher removed, class_teachers dropped (migration 092)
+    every consumer asks the TeachingAssignmentService
+    caches proven not to drift; ORM hooks and transports pinned by test
+    See docs/architecture/reviews/2026-08-07-architecture-compliance.md
 ```
 
 Client migration begins **after M2**. Modules beyond the foundation —
@@ -402,12 +399,19 @@ The implementation follows the documented architecture rather than inventing its
 own, and where documentation and reality disagreed the disagreements were
 recorded as decisions (ADR-010, ADR-011, ADR-012) rather than resolved silently.
 
-But the foundation is **not complete**:
+**As written on 2026-08-05,** the foundation was **not complete**:
 
-- Authorization has not been started, and it is a foundation domain.
-- Identity reads Academic, which the architecture forbids.
-- Three business concepts are written to two places, unbounded.
+- Authorization had not been started, and it is a foundation domain.
+- Identity read Academic, which the architecture forbids.
+- Three business concepts were written to two places, unbounded.
 
-Client migration should not begin. The next work is M1, and the next
-architectural decision to take is A1 — Authorization — because everything built
-before it will otherwise be written against a model that is being replaced.
+**Updated 2026-08-08 — all three findings are closed.** Authorization moved to
+employment and `user_roles` is dropped (M4, migration 089). Identity no longer
+reads Academic (I1, `people/relationships.py`, import-level test). Identity and
+employment columns are dropped (migration 090); only the student family keys
+remain dual-written, blocked on the Expo client (debt 1). Teaching ownership is
+settled and implemented (ADR-014, migration 092, M6).
+
+The current statement of record is `2026-08-07-architecture-compliance.md`;
+open debt lives in `../debt-register.md`. This review stays as the record of
+what the foundation walk found on its date.

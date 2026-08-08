@@ -1,5 +1,11 @@
 # Implementation Review — Architecture Compliance
 
+> **Point-in-time record.** Statuses below were true on 2026-08-05. Several
+> have since moved — ADR-008 and ADR-014 are implemented as of 2026-08-07
+> (migration 092). The current statement of record is
+> `2026-08-07-architecture-compliance.md`; open debt lives in
+> `../debt-register.md`. Where reviews disagree, the newer one wins.
+
 **Date:** 2026-08-05
 **Scope:** the whole v2 implementation to date, reviewed against `server/docs`.
 **Method:** the code and the database, not recollection. Performance measured on
@@ -203,13 +209,13 @@ eager-loading and page-reference work holds at scale.
 | 005 teacher as participation of employment | **Yes** | `teachers.staff_id` NOT NULL; employment columns dropped |
 | 006 business authority | **Partial** | Holder moved to employment. Capabilities / Business Actions / Authority Profiles not built; `has_permission` strings remain. |
 | 007 admission vs academic enrollment | **Yes** | `student_class_enrollments` is the owner; `students.class_id` is a maintained cache, now ratified by ADR-014 |
-| 008 teaching assignment | **Partial** | Class-teacher responsibility has an owner; subject teaching does not yet |
+| 008 teaching assignment | **Partial** *(implemented 2026-08-07)* | On this date subject teaching had no single owner; closed by ADR-014, migration 092 |
 | 009 academic year as operational context | **Yes** | Year on enrollments, assignments, transport, fees |
 | 010 incremental migration | **Yes** | Every cutover followed read → write → drop with equivalence proven on real data |
 | 011 family access | **Yes** | Household shares the student's login |
 | 012 academic reconciliation | **Partial** | Mapping honoured, `sections` table correctly never created; no owner module (AC1) |
 | 013 authority belongs to the relationship | **Yes** | `staff_authorities`; ending employment ends authority |
-| 014 teaching single ownership | **No — just decided** | Nothing implemented |
+| 014 teaching single ownership | **No — just decided** *(implemented 2026-08-07)* | Nothing was implemented on this date; since built — migration 092, `TeachingAssignmentService`, drift guard `test_caches_follow_their_owner.py` |
 
 ## Deviations
 

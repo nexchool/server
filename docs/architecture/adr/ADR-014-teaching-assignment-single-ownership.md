@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted — implemented 2026-08-07 (migration `092_teaching_has_one_owner`;
+service `modules/academics/teaching_assignment.py`)
 
 ---
 
@@ -128,7 +129,7 @@ migration and a table drop, with no data to carry.
 
 Two caches remain by design (`classes.teacher_id`, `students.class_id`). They
 are not debt, but they need a guard proving they cannot drift from their owner
-— that guard does not exist yet.
+— `tests/test_caches_follow_their_owner.py` is that guard (added 2026-08-07).
 
 ---
 

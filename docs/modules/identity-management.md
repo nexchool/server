@@ -197,6 +197,13 @@ every context (ADR-006).
 
 ---
 
+> **Implementation status (2026-08-08):** context *derivation* is live — the
+> GraphQL `me` query returns a person's available contexts. Session-stored
+> context and switching are **deliberately deferred** (ADR-011): under the
+> default family access model nearly everyone holds exactly one context, so
+> there is nothing to switch yet. Everything below describes the target
+> design, not current behaviour.
+
 ## Where it lives
 
 Active Context belongs to the **session**, not to the person.

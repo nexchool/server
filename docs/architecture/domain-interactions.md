@@ -83,8 +83,8 @@ The following table defines the owner of the major business concepts within Nexc
 | Staff | People |
 | Student Relationship | People |
 | Family | People |
-| Family Membership | People |
-| User | Identity |
+| Family Member | People |
+| Account | Identity |
 | Authentication | Identity |
 | Session | Identity |
 | Active Context | Identity |
@@ -103,6 +103,9 @@ The following table defines the owner of the major business concepts within Nexc
 | Teacher | Academic |
 | Academic Enrollment | Academic |
 | Teaching Assignment | Academic |
+| Class Teacher | Academic |
+| Promotion | Academic |
+| Graduation | Academic |
 
 Campus (Trust → School → Campus) belongs to the organization structure managed during Organization Setup. Academic concepts reference Campus; they do not own it.
 

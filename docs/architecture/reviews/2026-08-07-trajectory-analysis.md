@@ -68,9 +68,12 @@ switchability — barely at all.
 `tenants` carries `price_per_student_per_year`, `discount_percentage`,
 `discount_start_date`, `discount_end_date`, `billing_cycle` and `trial_ends_at`.
 
-That is a price list. There is no invoice table, no payment record, no receipt,
-no dunning, no record anywhere that a school has ever paid. Searching the schema
-for `subscription|billing|platform_invoice|tenant_invoice` returns **nothing**.
+That is a price list. Subscription *scaffolding* exists — a `plans` catalogue,
+`tenant_usage`, per-tenant billing fields (migrations 043, 047) — but there is
+no tenant invoice table, no record of a payment made *to Nexchool*, no receipt,
+no dunning. (The `payments` table records school-side fee collection from
+parents, not tenant billing.) Nothing anywhere records that a school has ever
+paid for the product.
 
 The panel will tell you a school owes 270 students × ₹0.00. It cannot tell you
 whether they paid.
@@ -85,6 +88,12 @@ notice it is not a customer. Revenue lives in a spreadsheet somewhere outside
 the system, and reconciling it is manual for as long as that stays true.
 
 ## R2 — The system has no idea what time it is at the school
+
+> **Closed 2026-08-07, one commit after this review:** migration
+> `093_the_school_has_a_clock` adds `tenants.timezone` and converts the naive
+> timestamp columns, and `core/school_time.py` (`school_today()`,
+> `school_now()`) replaces the bare `date.today()` calls. The analysis below
+> is kept as written, for the record.
 
 **Severity: high. A correctness bug now, a hard blocker for expansion.**
 
@@ -109,8 +118,9 @@ gate passes and the morning bus run both happen inside that window.
 
 The same root cause shows in the schema: **141 of 232 timestamp columns are
 `timestamp without time zone`**, against 91 that are not — and
-`database-conventions.md` says *"Timestamps: always `TIMESTAMP WITH TIME ZONE`.
-No local times."* The code is split too: 75 calls to the deprecated
+the repo's engineering rules (`.claude/rules/database-conventions.md`, outside
+this canon) say *"Timestamps: always `TIMESTAMP WITH TIME ZONE`. No local
+times."* The code is split too: 75 calls to the deprecated
 `datetime.utcnow()`, which returns a naive value, against 60 timezone-aware
 ones.
 

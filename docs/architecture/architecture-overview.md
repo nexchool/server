@@ -110,11 +110,15 @@ server/docs/architecture/
 ├── people-domain.md
 ├── identity-domain.md
 ├── authorization-domain.md
+├── business-events.md
 ├── academics/
 │   ├── academic-domain.md
 │   ├── academic-participants.md
 │   └── domain-ownership.md
-└── domain-interactions.md
+├── domain-interactions.md
+├── adr/                  Architectural Decision Records (ADR-001 … ADR-014)
+├── reviews/              point-in-time reviews of implementation vs canon
+└── debt-register.md      the living register of open migration debt
 ```
 
 ---
@@ -160,6 +164,10 @@ ADR-010 Incremental Migration from the v1 Schema
 ADR-011 Family Access Model
 
 ADR-012 The Academic Domain Is Reconciled, Not Rebuilt
+
+ADR-013 Authority Belongs to the Relationship
+
+ADR-014 One Owner for Teaching, Reached Through a Service
 ```
 
 ---
