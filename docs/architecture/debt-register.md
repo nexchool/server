@@ -76,6 +76,22 @@ broken since. Restored on `list_students`, which the export already reads, and
 the filter parsing plus the read.all/read.class ceiling are now extracted so
 the list and the export share one of each.
 
+**A payload-shape audit followed, and found a sixth break, also older than
+mine: the Expo Classes screen crashed on load.** `GET /api/classes/` has
+answered with `{items, total, page, ...}` since the paginated list landed, but
+`classService.getClasses` typed it `ClassItem[]` and handed the object
+straight to `groupByGrade`, which iterates it — an object is not iterable, so
+the screen threw the moment the fetch resolved. The finance class picker made
+the same assumption more quietly, falling back to `[]`, so it was merely
+always empty. Both now unwrap the envelope, the way `studentService` already
+did. `scripts/audit_client_shapes.py` keeps the check; it reports only the
+case that breaks a screen — a bare `X[]` meeting an object — because an
+earlier version flagged all seven collection reads and the five harmless ones
+buried the two real ones.
+
+**A type assertion is a claim about the server that nothing verifies.** `tsc`
+was perfectly happy with all of this.
+
 The audit script itself needed two rounds before it could be trusted: its
 first version missed two of three *known* breaks, because a URL assigned to a
 variable never appears inside `apiGet(...)`, and because truncating a path at
