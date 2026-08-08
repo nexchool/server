@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import strawberry
 
-from graphql_api.errors import TenantRequiredError
-from graphql_api.permissions import IsAuthenticated
+from graphql_api.permissions import IsAuthenticated, RequiresTenant
 
 from .graphql.types import ActiveContext, SignedInPerson
 from .identity_service import available_contexts, person_for
@@ -19,17 +18,11 @@ from .identity_service import available_contexts, person_for
 @strawberry.type
 class IdentityQuery:
     @strawberry.field(
-        permission_classes=[IsAuthenticated],
+        permission_classes=[IsAuthenticated, RequiresTenant],
         description="The person this request is signed in as, and the experiences they may use.",
     )
     def me(self, info: strawberry.Info) -> SignedInPerson:
         context = info.context
-
-        if context.tenant_id is None:
-            raise TenantRequiredError(
-                context.tenant_error or "This operation requires a tenant."
-            )
-
         user = context.current_user
         person = person_for(user)
 

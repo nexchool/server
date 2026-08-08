@@ -24,9 +24,11 @@ def process_overdue_fees_task(self):
     today = date.today()
     changed_count = 0
 
-    # StudentFee is tenant-scoped; without request context, query all overdue
-    # (tenant filter is via __tenant_scoped__ which uses g.tenant_id - not set in worker)
-    # So we must filter by tenant explicitly. Get all unpaid/partial with due_date < today
+    # Deliberately every tenant: this job ages fees for the whole platform.
+    # Note the scope is not merely absent here, it CANNOT apply — the listener
+    # in core/database.py returns early without a request context, so a worker
+    # query is never tenant-filtered. Any job that must stay within one tenant
+    # has to say so itself.
     query = db.session.query(StudentFee).filter(
         StudentFee.status != StudentFeeStatus.paid.value,
         StudentFee.due_date < today,

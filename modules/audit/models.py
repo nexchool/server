@@ -7,21 +7,21 @@ from datetime import datetime, timezone
 import uuid
 
 from core.database import db
+from core.models import TenantBaseModel
 
 
-class TenantAuditLog(db.Model):
-    """Rich audit trail for tenant admin actions (finance, setup, students, users)."""
+class TenantAuditLog(TenantBaseModel):
+    """Rich audit trail for tenant admin actions (finance, setup, students, users).
+
+    A TenantBaseModel so the tenant scope actually applies. It previously
+    declared ``__tenant_scoped__ = True`` on a plain db.Model — a flag nothing
+    reads — which left one school's admin action trail, `meta` payloads and
+    all, readable by any query that forgot its own tenant filter.
+    """
 
     __tablename__ = "tenant_audit_logs"
-    __tenant_scoped__ = True
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    tenant_id = db.Column(
-        db.String(36),
-        db.ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
     unit_id = db.Column(
         db.String(36),
         db.ForeignKey("school_units.id", ondelete="SET NULL"),

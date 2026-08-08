@@ -186,7 +186,6 @@ class AuditLog(db.Model):
     Not tenant-scoped; tenant_id nullable for platform-wide actions.
     """
     __tablename__ = "audit_logs"
-    __tenant_scoped__ = False
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = db.Column(
@@ -225,7 +224,6 @@ class TenantUsage(db.Model):
     """
 
     __tablename__ = "tenant_usage"
-    __tenant_scoped__ = False
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = db.Column(
@@ -255,7 +253,6 @@ class PlatformSetting(db.Model):
     Not tenant-scoped.
     """
     __tablename__ = "platform_settings"
-    __tenant_scoped__ = False
 
     key = db.Column(db.String(100), primary_key=True)
     value = db.Column(db.Text, nullable=True)
@@ -270,12 +267,20 @@ class TenantBaseModel(db.Model):
     - Subclasses are automatically filtered by tenant in queries when
       tenant resolution middleware has set g.tenant_id.
 
+    **Inheriting this class is what applies the scope.** `core/database.py`
+    passes this class to `with_loader_criteria`, so the filter reaches every
+    subclass and nothing else. There is no opt-in flag: a model that holds
+    tenant data and does not inherit from here is simply unscoped, however it
+    is annotated.
+
+    The scope is also inert with no request context (Celery, scripts) and when
+    no tenant is resolved — it protects requests, not every query ever run.
+
     All business models (users, sessions, roles, staff_authorities, role_permissions,
     students, teachers, classes, class_teachers, attendance) must inherit
     from this to prevent cross-tenant data leakage.
     """
     __abstract__ = True
-    __tenant_scoped__ = True  # Used by query filter to apply tenant scope
 
     tenant_id = db.Column(
         db.String(36),

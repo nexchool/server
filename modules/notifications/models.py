@@ -80,7 +80,6 @@ class NotificationRecipient(db.Model):
     """
 
     __tablename__ = "notification_recipients"
-    __tenant_scoped__ = False
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     notification_id = db.Column(
@@ -130,7 +129,6 @@ class NotificationTemplate(db.Model):
     """
 
     __tablename__ = "notification_templates"
-    __tenant_scoped__ = False
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = db.Column(

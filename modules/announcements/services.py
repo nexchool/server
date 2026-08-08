@@ -226,6 +226,9 @@ def _resolve_audience(tenant_id: str, audience_json: Dict[str, Any]) -> Set[str]
                 r[0]
                 for r in db.session.query(Teacher.user_id)
                 .filter(
+                    # Named explicitly: this resolves inside the fan-out task,
+                    # where there is no request and so no ORM tenant scope.
+                    Teacher.tenant_id == tenant_id,
                     Teacher.id.in_(responsible_teacher_ids),
                     Teacher.user_id.isnot(None),
                 )
@@ -288,14 +291,39 @@ def _validate_audience(audience: Optional[Dict[str, Any]]) -> None:
         roles = audience.get("roles") or []
         if not isinstance(roles, list) or not roles:
             raise ValidationError("audience roles[] required for scope=roles")
+    # An audience names ids that a Celery task later resolves — outside any
+    # request, where the ORM tenant scope does not apply. So the ids are
+    # checked to be this school's HERE, while a tenant is still in context.
+    # Without this, one school could address another's classes and learn which
+    # of their ids exist from the recipients that came back.
     if scope == "classes":
         cids = audience.get("class_ids") or []
         if not isinstance(cids, list) or not cids:
             raise ValidationError("audience class_ids[] required for scope=classes")
+        from modules.classes.models import Class
+
+        _reject_ids_from_another_school(Class, cids, "class_ids")
     if scope == "students":
         sids = audience.get("student_ids") or []
         if not isinstance(sids, list) or not sids:
             raise ValidationError("audience student_ids[] required for scope=students")
+        from modules.students.models import Student
+
+        _reject_ids_from_another_school(Student, sids, "student_ids")
+
+
+def _reject_ids_from_another_school(model, ids, field: str) -> None:
+    """Every id must name a row this tenant owns."""
+    tenant_id = get_tenant_id()
+    found = {
+        row[0]
+        for row in db.session.query(model.id)
+        .filter(model.tenant_id == tenant_id, model.id.in_(list(ids)))
+        .all()
+    }
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise ValidationError(f"{field} contains ids that do not belong to this school")
 
 
 def _append_revision(announcement: Announcement, *, editor_user_id: str, edit_note: Optional[str]) -> None:
@@ -403,11 +431,16 @@ def get_for_user(announcement_id: str, user) -> Announcement:
             return a
         raise AuthorizationError("Not allowed")
     # Published or recalled — check recipient membership via notification_recipients.
+    # `notification_recipients` has no tenant_id of its own, so the tenant is
+    # named explicitly here rather than left to the ORM scope: that scope is
+    # inert outside a request, and this predicate decides who may read an
+    # announcement.
     from modules.notifications.models import Notification, NotificationRecipient
     is_recipient = (
         db.session.query(NotificationRecipient.id)
         .join(Notification, NotificationRecipient.notification_id == Notification.id)
         .filter(
+            Notification.tenant_id == a.tenant_id,
             NotificationRecipient.user_id == user.id,
             Notification.extra_data["announcement_id"].as_string() == a.id,
         )

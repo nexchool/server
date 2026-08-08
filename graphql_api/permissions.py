@@ -11,7 +11,7 @@ from typing import Any
 
 from strawberry.permission import BasePermission
 
-from .errors import AuthenticationError
+from .errors import AuthenticationError, TenantRequiredError
 
 
 class IsAuthenticated(BasePermission):
@@ -29,5 +29,30 @@ class IsAuthenticated(BasePermission):
         if getattr(context, "current_user", None) is None:
             raise AuthenticationError(
                 getattr(context, "authentication_error", None) or self.message
+            )
+        return True
+
+
+class RequiresTenant(BasePermission):
+    """Require a resolved school before the field runs.
+
+    This endpoint deliberately serves tenant-less operations too — signing in
+    happens before a tenant is known — so, unlike the REST middleware, it does
+    not abort the request when no tenant resolves. The consequence is sharp:
+    with no tenant in context the ORM scope in `core/database.py` is inert, so
+    a business field that runs anyway reads **every** school's rows.
+
+    Declaring it here rather than checking inside each resolver is the point.
+    Every business field must carry this permission; the check is easy to
+    forget once, and forgetting it once is a cross-tenant read.
+    """
+
+    message = "This operation requires a tenant."
+
+    def has_permission(self, source: Any, info: Any, **kwargs: Any) -> bool:
+        context = info.context
+        if getattr(context, "tenant_id", None) is None:
+            raise TenantRequiredError(
+                getattr(context, "tenant_error", None) or self.message
             )
         return True
