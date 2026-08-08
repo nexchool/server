@@ -35,8 +35,7 @@ from modules.classes.models import Class
 from modules.schedule import services as schedule_services
 from modules.students.models import Student
 from modules.sub_admins.models import UserSchoolUnit
-from modules.timetable import services as timetable_services
-from modules.timetable.models import TimetableSlot
+from modules.academics.services import timetable_v2 as timetable_services
 from tests.conftest import employ_for
 
 
@@ -217,35 +216,46 @@ def _make_teacher(db_session, tenant):
 
 @pytest.fixture
 def timetable_slots(db_session, tenant, classes):
-    """One legacy TimetableSlot per class."""
+    """One active timetable entry per class (the v2 model owns timetables)."""
+    from modules.academics.backbone.models import TimetableEntry, TimetableVersion
+    from modules.classes.models import ClassSubject
+
     class_a, class_b = classes
     subject = _make_subject(db_session, tenant)
     teacher = _make_teacher(db_session, tenant)
-    slot_a = TimetableSlot(
-        id=_new_id("tts-"),
-        tenant_id=tenant.id,
-        class_id=class_a.id,
-        subject_id=subject.id,
-        teacher_id=teacher.id,
-        day_of_week=0,
-        period_number=1,
-        start_time=time(8, 0),
-        end_time=time(8, 45),
-    )
-    slot_b = TimetableSlot(
-        id=_new_id("tts-"),
-        tenant_id=tenant.id,
-        class_id=class_b.id,
-        subject_id=subject.id,
-        teacher_id=teacher.id,
-        day_of_week=0,
-        period_number=1,
-        start_time=time(8, 0),
-        end_time=time(8, 45),
-    )
-    db_session.add_all([slot_a, slot_b])
+
+    made = []
+    for cls in (class_a, class_b):
+        class_subject = ClassSubject(
+            id=_new_id("cs-"),
+            tenant_id=tenant.id,
+            class_id=cls.id,
+            subject_id=subject.id,
+            status="active",
+            weekly_periods=5,
+        )
+        version = TimetableVersion(
+            id=_new_id("tv-"),
+            tenant_id=tenant.id,
+            class_id=cls.id,
+            status="active",
+        )
+        db_session.add_all([class_subject, version])
+        db_session.flush()
+        entry = TimetableEntry(
+            id=_new_id("te-"),
+            tenant_id=tenant.id,
+            timetable_version_id=version.id,
+            class_subject_id=class_subject.id,
+            teacher_id=teacher.id,
+            day_of_week=1,
+            period_number=1,
+            entry_status="active",
+        )
+        db_session.add(entry)
+        made.append(entry)
     db_session.flush()
-    return slot_a, slot_b
+    return made[0], made[1]
 
 
 @pytest.fixture
@@ -449,10 +459,10 @@ def test_class_history_unit_b_forbidden_for_restricted(
 
 
 # ---------------------------------------------------------------------------
-# Timetable — list / read
+# Timetable — read / write (v2 owns the timetable; A's slot API is gone)
 # ---------------------------------------------------------------------------
 
-def test_timetable_slots_by_class_unit_b_forbidden_for_restricted(
+def test_timetable_bundle_unit_b_forbidden_for_restricted(
     flask_app, db_session, tenant, classes, timetable_slots, restricted_user
 ):
     _class_a, class_b = classes
@@ -460,108 +470,70 @@ def test_timetable_slots_by_class_unit_b_forbidden_for_restricted(
         g.tenant_id = tenant.id
         g.current_user = restricted_user
         with pytest.raises(BranchForbidden):
-            timetable_services.get_slots_by_class(class_b.id, tenant.id)
+            timetable_services.list_entries_for_active_or_draft(tenant.id, class_b.id)
 
 
-def test_timetable_slots_by_class_unit_a_ok_for_restricted(
+def test_timetable_bundle_unit_a_ok_for_restricted(
     flask_app, db_session, tenant, classes, timetable_slots, restricted_user
 ):
     class_a, _class_b = classes
-    slot_a, _slot_b = timetable_slots
+    entry_a, _entry_b = timetable_slots
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = restricted_user
-        slots = timetable_services.get_slots_by_class(class_a.id, tenant.id)
-        ids = {s["id"] for s in slots}
-        assert slot_a.id in ids
+        bundle = timetable_services.list_entries_for_active_or_draft(tenant.id, class_a.id)
+        assert entry_a.id in {i["id"] for i in bundle["items"]}
 
 
-def test_timetable_slots_by_class_unrestricted_sees_both(
+def test_timetable_bundle_unrestricted_sees_both(
     flask_app, db_session, tenant, classes, timetable_slots, unrestricted_user
 ):
     class_a, class_b = classes
-    slot_a, slot_b = timetable_slots
+    entry_a, entry_b = timetable_slots
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = unrestricted_user
-        a_ids = {s["id"] for s in timetable_services.get_slots_by_class(class_a.id, tenant.id)}
-        b_ids = {s["id"] for s in timetable_services.get_slots_by_class(class_b.id, tenant.id)}
-        assert slot_a.id in a_ids
-        assert slot_b.id in b_ids
+        a_ids = {i["id"] for i in timetable_services.list_entries_for_active_or_draft(tenant.id, class_a.id)["items"]}
+        b_ids = {i["id"] for i in timetable_services.list_entries_for_active_or_draft(tenant.id, class_b.id)["items"]}
+        assert entry_a.id in a_ids
+        assert entry_b.id in b_ids
 
 
-# ---------------------------------------------------------------------------
-# Timetable — mutate slot (update / delete)
-# ---------------------------------------------------------------------------
-
-def test_timetable_update_slot_unit_b_forbidden_for_restricted(
-    flask_app, db_session, tenant, timetable_slots, restricted_user
+def test_timetable_update_entry_unit_b_forbidden_for_restricted(
+    flask_app, db_session, tenant, classes, timetable_slots, restricted_user
 ):
-    _slot_a, slot_b = timetable_slots
+    _class_a, class_b = classes
+    _entry_a, entry_b = timetable_slots
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = restricted_user
         with pytest.raises(BranchForbidden):
-            timetable_services.update_slot(slot_b.id, {"room": "X"}, tenant.id)
+            timetable_services.update_entry(tenant.id, class_b.id, entry_b.id, {"room": "X"})
 
 
-def test_timetable_delete_slot_unit_b_forbidden_for_restricted(
-    flask_app, db_session, tenant, timetable_slots, restricted_user
+def test_timetable_delete_entry_unit_b_forbidden_for_restricted(
+    flask_app, db_session, tenant, classes, timetable_slots, restricted_user
 ):
-    _slot_a, slot_b = timetable_slots
+    _class_a, class_b = classes
+    _entry_a, entry_b = timetable_slots
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = restricted_user
         with pytest.raises(BranchForbidden):
-            timetable_services.delete_slot(slot_b.id, tenant.id)
-
-
-def test_timetable_update_slot_unit_a_ok_for_restricted(
-    flask_app, db_session, tenant, timetable_slots, restricted_user
-):
-    slot_a, _slot_b = timetable_slots
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = restricted_user
-        result = timetable_services.update_slot(slot_a.id, {"room": "R1"}, tenant.id)
-        assert result["success"] is True
-
-
-# ---------------------------------------------------------------------------
-# Timetable config — tenant-global -> DENY for restricted
-# ---------------------------------------------------------------------------
-# The config route guards with:
-#   if get_allowed_unit_ids() is not None: raise BranchForbidden(...)
-# so the gate is truthy (denied) for restricted, None (passes) for unrestricted.
-
-def _deny_if_restricted():
-    if get_allowed_unit_ids() is not None:
-        raise BranchForbidden("Tenant-global config denied for restricted")
-
-
-def test_timetable_config_denied_for_restricted(
-    flask_app, db_session, tenant, units, restricted_user
-):
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = restricted_user
-        assert get_allowed_unit_ids() is not None
-        with pytest.raises(BranchForbidden):
-            _deny_if_restricted()
-
-
-def test_timetable_config_not_blocked_for_unrestricted(
-    flask_app, db_session, tenant, units, unrestricted_user
-):
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = unrestricted_user
-        assert get_allowed_unit_ids() is None  # route would proceed normally
+            timetable_services.delete_entry(tenant.id, class_b.id, entry_b.id)
 
 
 # ---------------------------------------------------------------------------
 # Schedule — /today/all is a tenant-wide aggregate -> DENY for restricted
 # ---------------------------------------------------------------------------
+# The route gate is the shape the endpoint applies:
+#   if get_allowed_unit_ids() is not None: raise BranchForbidden(...)
+# truthy (denied) for a restricted user, None (passes) for an unrestricted one.
+
+def _deny_if_restricted():
+    if get_allowed_unit_ids() is not None:
+        raise BranchForbidden("Tenant-wide aggregate denied for restricted")
+
 
 def test_schedule_today_all_denied_for_restricted(
     flask_app, db_session, tenant, units, restricted_user
@@ -626,8 +598,8 @@ def test_unrestricted_counts_unchanged(
         g.current_user = unrestricted_user
 
         att = attendance_services.list_attendance_records(tenant.id)["data"]["items"]
-        slots_a = timetable_services.get_slots_by_class(class_a.id, tenant.id)
-        slots_b = timetable_services.get_slots_by_class(class_b.id, tenant.id)
+        slots_a = timetable_services.list_entries_for_active_or_draft(tenant.id, class_a.id)["items"]
+        slots_b = timetable_services.list_entries_for_active_or_draft(tenant.id, class_b.id)["items"]
 
         # Both attendance rows visible; both classes' slots readable.
         assert len({r["id"] for r in att}) == 2
@@ -713,90 +685,8 @@ def test_upsert_records_reports_skipped_instead_of_silently_dropping(
 
 
 # ===========================================================================
-# Timetable: create_slot must prevent teacher double-booking (not only move/swap)
+# Legacy attendance entry point
 # ===========================================================================
-
-def test_create_slot_blocks_teacher_double_booking(
-    flask_app, db_session, tenant, classes, unrestricted_user
-):
-    class_a, class_b = classes
-    subject = _make_subject(db_session, tenant)
-    teacher = _make_teacher(db_session, tenant)
-    base = {
-        "subject_id": subject.id,
-        "teacher_id": teacher.id,
-        "day_of_week": 0,
-        "period_number": 1,
-        "start_time": "08:00",
-        "end_time": "08:45",
-    }
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = unrestricted_user
-        first = timetable_services.create_slot({**base, "class_id": class_a.id}, tenant.id)
-        assert first["success"] is True
-        # Same teacher, same day + period, a different class -> double-booking.
-        second = timetable_services.create_slot({**base, "class_id": class_b.id}, tenant.id)
-    assert second["success"] is False
-    assert "already teaching" in second["error"].lower()
-
-
-def test_create_slot_allows_same_teacher_at_a_different_period(
-    flask_app, db_session, tenant, classes, unrestricted_user
-):
-    class_a, class_b = classes
-    subject = _make_subject(db_session, tenant)
-    teacher = _make_teacher(db_session, tenant)
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = unrestricted_user
-        first = timetable_services.create_slot(
-            {
-                "class_id": class_a.id, "subject_id": subject.id, "teacher_id": teacher.id,
-                "day_of_week": 0, "period_number": 1,
-                "start_time": "08:00", "end_time": "08:45",
-            },
-            tenant.id,
-        )
-        # Same teacher, DIFFERENT period -> allowed.
-        second = timetable_services.create_slot(
-            {
-                "class_id": class_b.id, "subject_id": subject.id, "teacher_id": teacher.id,
-                "day_of_week": 0, "period_number": 2,
-                "start_time": "08:45", "end_time": "09:30",
-            },
-            tenant.id,
-        )
-    assert first["success"] is True
-    assert second["success"] is True
-
-
-def test_update_slot_blocks_teacher_double_booking(
-    flask_app, db_session, tenant, classes, unrestricted_user
-):
-    class_a, class_b = classes
-    subject = _make_subject(db_session, tenant)
-    t1 = _make_teacher(db_session, tenant)
-    t2 = _make_teacher(db_session, tenant)
-    common = {
-        "subject_id": subject.id, "day_of_week": 0, "period_number": 1,
-        "start_time": "08:00", "end_time": "08:45",
-    }
-    with flask_app.test_request_context("/"):
-        g.tenant_id = tenant.id
-        g.current_user = unrestricted_user
-        a = timetable_services.create_slot(
-            {**common, "class_id": class_a.id, "teacher_id": t1.id}, tenant.id
-        )
-        b = timetable_services.create_slot(
-            {**common, "class_id": class_b.id, "teacher_id": t2.id}, tenant.id
-        )
-        assert a["success"] is True and b["success"] is True
-        # Re-pointing class_b's slot to t1 would double-book t1 at day 0 period 1.
-        upd = timetable_services.update_slot(b["slot"]["id"], {"teacher_id": t1.id}, tenant.id)
-    assert upd["success"] is False
-    assert "already teaching" in upd["error"].lower()
-
 
 def test_legacy_mark_attendance_passes_through_skipped(
     flask_app, db_session, tenant, classes, students, unrestricted_user, monkeypatch

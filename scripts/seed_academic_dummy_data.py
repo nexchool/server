@@ -56,7 +56,6 @@ from modules.schedule.models import ScheduleOverride
 from modules.students.models import Student, StudentDocument
 from modules.subjects.models import Subject
 from modules.teachers.models import Teacher
-from modules.timetable.models import TimetableSlot
 
 
 def _get_default_tenant_id() -> str:
@@ -95,7 +94,6 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
     AttendanceSession.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     TimetableEntry.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     TimetableVersion.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
-    TimetableSlot.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
 
     ClassSubjectTeacher.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     ClassSubject.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)

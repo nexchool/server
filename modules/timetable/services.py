@@ -1,690 +1,43 @@
+"""My weekly timetable — a read view over the timetable a school publishes.
+
+This module owns no timetable data. The timetable is `TimetableVersion` +
+`TimetableEntry` (migration 023, ADR-014's neighbourhood); the parallel
+`timetable_slots` table this module used to own was deleted in migration 096
+along with its second generator, editor and config.
+
+What is left is the one thing that surface had which the class-centric API
+does not: a signed-in teacher or student asking for *their own* week. A class
+timetable is read per class; a person's week is assembled across classes and
+resolved through the bell schedule that gives each period its clock time.
 """
-Timetable Services
 
-Business logic for timetable slot CRUD and config. All operations are tenant-scoped.
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
 
-TODO (phase 2): Migrate to TimetableVersion + TimetableEntry; timetable_slots kept for
-compatibility after migration 023.
-"""
-from shared.safe_error import safe_error
-
-from datetime import date, time, timedelta
-from typing import Any, Dict, List, Optional, Tuple
-
-from sqlalchemy import exists
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
-from core.branch_scope import BranchForbidden, assert_class_allowed
 from core.database import db
-from core.tenant import get_tenant_id
-
-from .models import TimetableSlot, TimetableConfig, DEFAULT_BREAKS_JSON
 from core.school_time import school_today
+from modules.academics.backbone.models import (
+    BellSchedulePeriod,
+    TimetableEntry,
+    TimetableVersion,
+)
 
-
-# ---------------------------------------------------------------------------
-# Domain exception (used by weekly views; rest of module uses dict-return style)
-# ---------------------------------------------------------------------------
 
 class TimetableNotFoundError(Exception):
-    """Raised when no published timetable exists for the requested AY scope."""
+    """No published timetable exists for the requested academic year."""
 
 
 class StudentNotEnrolledError(Exception):
-    """Raised when a student has no class enrollment for the resolved AY.
-    Routes translate to a 409 Conflict so the mobile client can render a
-    distinct empty state ("you're not enrolled in a class yet") instead of
-    the generic 'no timetable' message."""
+    """The student holds no class for the requested academic year."""
 
 
-def _parse_time(s: str) -> Optional[time]:
-    """Parse 'HH:MM' or 'HH:MM:SS' string to time object."""
-    if not s or not isinstance(s, str):
-        return None
-    s = s.strip()
-    if not s:
-        return None
-    parts = s.split(":")
-    if len(parts) >= 2:
-        try:
-            h, m = int(parts[0]), int(parts[1])
-            sec = int(parts[2]) if len(parts) >= 3 else 0
-            return time(hour=h, minute=m, second=sec)
-        except (ValueError, IndexError):
-            pass
-    return None
+# The weekly payload speaks 0=Monday..6=Sunday; timetable entries are stored
+# ISO (1=Monday..7=Sunday). One place converts, so no caller has to know.
+def _iso_to_payload_day(day_of_week: int) -> int:
+    return day_of_week - 1
 
-
-def create_slot(data: Dict, tenant_id: str) -> Dict:
-    """
-    Create a new timetable slot (tenant-scoped).
-
-    Args:
-        data: Dict with class_id, subject_id, teacher_id, day_of_week, period_number,
-              start_time, end_time, room (optional)
-        tenant_id: Tenant ID for scoping
-
-    Returns:
-        Dict with success status and slot data or error
-    """
-    try:
-        if not tenant_id:
-            return {"success": False, "error": "Tenant context is required"}
-
-        from modules.classes.models import Class
-        from modules.subjects.models import Subject
-        from modules.teachers.models import Teacher
-
-        class_id = data.get("class_id")
-        subject_id = data.get("subject_id")
-        teacher_id = data.get("teacher_id")
-        try:
-            day_of_week = int(data.get("day_of_week")) if data.get("day_of_week") is not None else None
-        except (TypeError, ValueError):
-            day_of_week = None
-        try:
-            period_number = int(data.get("period_number")) if data.get("period_number") is not None else None
-        except (TypeError, ValueError):
-            period_number = None
-        start_time_str = data.get("start_time")
-        end_time_str = data.get("end_time")
-
-        if not class_id:
-            return {"success": False, "error": "class_id is required"}
-        if not subject_id:
-            return {"success": False, "error": "subject_id is required"}
-        if not teacher_id:
-            return {"success": False, "error": "teacher_id is required"}
-        if day_of_week is None:
-            return {"success": False, "error": "day_of_week is required"}
-        if period_number is None:
-            return {"success": False, "error": "period_number is required"}
-
-        if not start_time_str:
-            return {"success": False, "error": "start_time is required"}
-        if not end_time_str:
-            return {"success": False, "error": "end_time is required"}
-
-        # Validate class exists
-        cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
-        if not cls:
-            return {"success": False, "error": "Class not found"}
-
-        # Branch scope: restricted sub-admins may only create slots in their units.
-        assert_class_allowed(class_id)
-
-        # Validate subject exists
-        subj = Subject.query.filter_by(id=subject_id, tenant_id=tenant_id).first()
-        if not subj:
-            return {"success": False, "error": "Subject not found"}
-
-        # Validate teacher exists
-        teacher = Teacher.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
-        if not teacher:
-            return {"success": False, "error": "Teacher not found"}
-
-        start_t = _parse_time(start_time_str)
-        end_t = _parse_time(end_time_str)
-        if not start_t:
-            return {"success": False, "error": "Invalid start_time format (use HH:MM or HH:MM:SS)"}
-        if not end_t:
-            return {"success": False, "error": "Invalid end_time format (use HH:MM or HH:MM:SS)"}
-
-        if day_of_week < 0 or day_of_week > 6:
-            return {"success": False, "error": "day_of_week must be 0-6 (0=Monday, 6=Sunday)"}
-        if period_number < 1:
-            return {"success": False, "error": "period_number must be >= 1"}
-
-        # Check unique (class_id, day_of_week, period_number)
-        existing = TimetableSlot.query.filter_by(
-            tenant_id=tenant_id,
-            class_id=class_id,
-            day_of_week=day_of_week,
-            period_number=period_number,
-        ).first()
-        if existing:
-            return {"success": False, "error": "Slot already exists for this class, day, and period"}
-
-        # Enforce the same constraints as move/swap so a slot cannot be CREATED
-        # double-booking a teacher (or breaking availability / workload / subject
-        # limits). create_slot previously skipped this, letting the timetable be
-        # built with conflicts that only surfaced later in the health dashboard.
-        from . import validators
-        conflict_check = validators.check_slot_conflicts(
-            class_id=class_id,
-            teacher_id=teacher_id,
-            subject_id=subject_id,
-            day=day_of_week,
-            period=period_number,
-            tenant_id=tenant_id,
-        )
-        if conflict_check["has_conflict"]:
-            return {
-                "success": False,
-                "error": "; ".join(c["message"] for c in conflict_check["conflicts"]),
-                "conflicts": conflict_check["conflicts"],
-            }
-
-        slot = TimetableSlot(
-            tenant_id=tenant_id,
-            class_id=class_id,
-            subject_id=subject_id,
-            teacher_id=teacher_id,
-            day_of_week=day_of_week,
-            period_number=period_number,
-            start_time=start_t,
-            end_time=end_t,
-            room=(data.get("room") or "").strip() or None,
-        )
-        slot.save()
-
-        return {"success": True, "slot": slot.to_dict()}
-    except BranchForbidden:
-        raise
-    except IntegrityError as e:
-        db.session.rollback()
-        error_msg = str(getattr(e, "orig", None) or e)
-        if "uq_timetable_slots" in error_msg or "unique" in error_msg.lower():
-            return {"success": False, "error": "Slot already exists for this class, day, and period"}
-        return {"success": False, "error": "Database constraint violation"}
-    except Exception as e:
-        db.session.rollback()
-        return {"success": False, "error": safe_error(e)}
-
-
-def get_slots_by_class(class_id: str, tenant_id: str) -> List[Dict]:
-    """
-    Get all timetable slots for a class.
-
-    Args:
-        class_id: Class UUID
-        tenant_id: Tenant ID for scoping
-
-    Returns:
-        List of slot dicts, ordered by day_of_week, period_number
-    """
-    # Branch scope: restricted sub-admins may only read classes in their units.
-    assert_class_allowed(class_id)
-    slots = (
-        TimetableSlot.query.filter_by(tenant_id=tenant_id, class_id=class_id)
-        .order_by(TimetableSlot.day_of_week, TimetableSlot.period_number)
-        .all()
-    )
-    return [s.to_dict() for s in slots]
-
-
-def get_slot_by_id(slot_id: str, tenant_id: str) -> Optional[Dict]:
-    """
-    Get a timetable slot by ID (tenant-scoped).
-
-    Args:
-        slot_id: Slot UUID
-        tenant_id: Tenant ID for scoping
-
-    Returns:
-        Slot dict or None if not found
-    """
-    slot = TimetableSlot.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
-    return slot.to_dict() if slot else None
-
-
-def update_slot(slot_id: str, data: Dict, tenant_id: str) -> Dict:
-    """
-    Update a timetable slot (tenant-scoped).
-
-    Args:
-        slot_id: Slot UUID
-        data: Dict with optional class_id, subject_id, teacher_id, day_of_week,
-              period_number, start_time, end_time, room
-        tenant_id: Tenant ID for scoping
-
-    Returns:
-        Dict with success status and updated slot data or error
-    """
-    try:
-        slot = TimetableSlot.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
-        if not slot:
-            return {"success": False, "error": "Timetable slot not found"}
-
-        # Branch scope: restricted sub-admins may only edit slots whose class is
-        # in their units.
-        assert_class_allowed(slot.class_id)
-
-        from modules.classes.models import Class
-        from modules.subjects.models import Subject
-        from modules.teachers.models import Teacher
-
-        if "class_id" in data and data["class_id"] is not None:
-            cls = Class.query.filter_by(id=data["class_id"], tenant_id=tenant_id).first()
-            if not cls:
-                return {"success": False, "error": "Class not found"}
-            # Branch scope: cannot reassign a slot into an out-of-branch class.
-            assert_class_allowed(data["class_id"])
-            slot.class_id = data["class_id"]
-
-        if "subject_id" in data and data["subject_id"] is not None:
-            subj = Subject.query.filter_by(id=data["subject_id"], tenant_id=tenant_id).first()
-            if not subj:
-                return {"success": False, "error": "Subject not found"}
-            slot.subject_id = data["subject_id"]
-
-        if "teacher_id" in data and data["teacher_id"] is not None:
-            teacher = Teacher.query.filter_by(id=data["teacher_id"], tenant_id=tenant_id).first()
-            if not teacher:
-                return {"success": False, "error": "Teacher not found"}
-            slot.teacher_id = data["teacher_id"]
-
-        if "day_of_week" in data and data["day_of_week"] is not None:
-            d = data["day_of_week"]
-            if d < 0 or d > 6:
-                return {"success": False, "error": "day_of_week must be 0-6"}
-            slot.day_of_week = d
-
-        if "period_number" in data and data["period_number"] is not None:
-            p = data["period_number"]
-            if p < 1:
-                return {"success": False, "error": "period_number must be >= 1"}
-            slot.period_number = p
-
-        if "start_time" in data and data["start_time"] is not None:
-            t = _parse_time(data["start_time"])
-            if not t:
-                return {"success": False, "error": "Invalid start_time format"}
-            slot.start_time = t
-
-        if "end_time" in data and data["end_time"] is not None:
-            t = _parse_time(data["end_time"])
-            if not t:
-                return {"success": False, "error": "Invalid end_time format"}
-            slot.end_time = t
-
-        if "room" in data:
-            slot.room = (data["room"] or "").strip() or None
-
-        # Check unique when changing class/day/period
-        class_id = slot.class_id
-        day = slot.day_of_week
-        period = slot.period_number
-        existing = TimetableSlot.query.filter(
-            TimetableSlot.tenant_id == tenant_id,
-            TimetableSlot.class_id == class_id,
-            TimetableSlot.day_of_week == day,
-            TimetableSlot.period_number == period,
-            TimetableSlot.id != slot_id,
-        ).first()
-        if existing:
-            return {"success": False, "error": "Slot already exists for this class, day, and period"}
-
-        # Re-validate conflicts only when the placement actually changed
-        # (teacher / day / period / subject / class). A room- or time-only edit
-        # must not be blocked by a pre-existing conflict it doesn't touch.
-        placement_changed = any(
-            k in data and data[k] is not None
-            for k in ("teacher_id", "day_of_week", "period_number", "subject_id", "class_id")
-        )
-        if placement_changed:
-            from . import validators
-            conflict_check = validators.check_slot_conflicts(
-                class_id=class_id,
-                teacher_id=slot.teacher_id,
-                subject_id=slot.subject_id,
-                day=day,
-                period=period,
-                tenant_id=tenant_id,
-                exclude_slot_id=slot_id,
-            )
-            if conflict_check["has_conflict"]:
-                return {
-                    "success": False,
-                    "error": "; ".join(c["message"] for c in conflict_check["conflicts"]),
-                    "conflicts": conflict_check["conflicts"],
-                }
-
-        slot.save()
-        return {"success": True, "slot": slot.to_dict()}
-    except BranchForbidden:
-        raise
-    except IntegrityError as e:
-        db.session.rollback()
-        error_msg = str(getattr(e, "orig", None) or e)
-        if "uq_timetable_slots" in error_msg or "unique" in error_msg.lower():
-            return {"success": False, "error": "Slot already exists for this class, day, and period"}
-        return {"success": False, "error": "Database constraint violation"}
-    except Exception as e:
-        db.session.rollback()
-        return {"success": False, "error": safe_error(e)}
-
-
-def delete_slot(slot_id: str, tenant_id: str) -> Dict:
-    """
-    Delete a timetable slot (tenant-scoped).
-
-    Args:
-        slot_id: Slot UUID
-        tenant_id: Tenant ID for scoping
-
-    Returns:
-        Dict with success status or error
-    """
-    try:
-        slot = TimetableSlot.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
-        if not slot:
-            return {"success": False, "error": "Timetable slot not found"}
-
-        # Branch scope: restricted sub-admins may only delete slots whose class
-        # is in their units.
-        assert_class_allowed(slot.class_id)
-
-        slot.delete()
-        return {"success": True, "message": "Timetable slot deleted successfully"}
-    except BranchForbidden:
-        raise
-    except Exception as e:
-        db.session.rollback()
-        return {"success": False, "error": safe_error(e)}
-
-
-def get_timetable_config(tenant_id: str) -> Dict:
-    """Get timetable config for tenant. Creates default if none exists."""
-    cfg = TimetableConfig.query.filter_by(tenant_id=tenant_id).first()
-    if cfg:
-        return {"success": True, "config": cfg.to_dict()}
-    # Create default
-    cfg = TimetableConfig(
-        tenant_id=tenant_id,
-        general_class_duration_minutes=45,
-        first_class_duration_minutes=50,
-        gap_between_classes_minutes=5,
-        periods_per_day=8,
-        school_start_time=time(8, 0),
-        breaks_json=DEFAULT_BREAKS_JSON,
-    )
-    db.session.add(cfg)
-    db.session.commit()
-    return {"success": True, "config": cfg.to_dict()}
-
-
-def upsert_timetable_config(tenant_id: str, data: Dict) -> Dict:
-    """Create or update timetable config for tenant."""
-    cfg = TimetableConfig.query.filter_by(tenant_id=tenant_id).first()
-    if not cfg:
-        cfg = TimetableConfig(tenant_id=tenant_id)
-        db.session.add(cfg)
-        db.session.flush()
-
-    if "general_class_duration_minutes" in data and data["general_class_duration_minutes"] is not None:
-        cfg.general_class_duration_minutes = int(data["general_class_duration_minutes"])
-    if "first_class_duration_minutes" in data and data["first_class_duration_minutes"] is not None:
-        cfg.first_class_duration_minutes = int(data["first_class_duration_minutes"])
-    if "gap_between_classes_minutes" in data and data["gap_between_classes_minutes"] is not None:
-        cfg.gap_between_classes_minutes = int(data["gap_between_classes_minutes"])
-    if "periods_per_day" in data and data["periods_per_day"] is not None:
-        cfg.periods_per_day = int(data["periods_per_day"])
-    if "school_start_time" in data and data["school_start_time"] is not None:
-        cfg.school_start_time = _parse_time(data["school_start_time"]) or time(8, 0)
-    if "breaks" in data and data["breaks"] is not None:
-        cfg.breaks_json = data["breaks"]
-
-    db.session.commit()
-    return {"success": True, "config": cfg.to_dict()}
-
-
-# ---------------------------------------------------------------------------
-# Period-time resolution (reuses generator's schedule logic)
-# ---------------------------------------------------------------------------
-
-def _get_period_times(period_number: int, tenant_id: str) -> Tuple[time, time]:
-    """Look up (start_time, end_time) for a period from TimetableConfig."""
-    from .generator import _compute_period_schedule, _period_times
-
-    config = TimetableConfig.query.filter_by(tenant_id=tenant_id).first()
-    schedule, _ppd = _compute_period_schedule(config)
-    return _period_times(period_number, schedule)
-
-
-# ---------------------------------------------------------------------------
-# Drag-and-drop editing helpers
-# ---------------------------------------------------------------------------
-
-def move_slot(slot_id: str, day: int, period: int, tenant_id: str) -> Dict:
-    """
-    Move a timetable slot to a new (day, period) position.
-
-    1. Load slot
-    2. Run conflict checks at new position (excluding self)
-    3. If conflicts → return them without mutating
-    4. Update slot and recompute start/end times
-    """
-    from . import validators
-
-    slot = TimetableSlot.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
-    if not slot:
-        return {"success": False, "error": "Timetable slot not found"}
-
-    # Branch scope: restricted sub-admins may only move slots whose class is in
-    # their units.
-    assert_class_allowed(slot.class_id)
-
-    if day < 0 or day > 6:
-        return {"success": False, "error": "day must be 0-6 (0=Monday, 6=Sunday)"}
-    if period < 1:
-        return {"success": False, "error": "period must be >= 1"}
-
-    if slot.day_of_week == day and slot.period_number == period:
-        return {"success": True, "slot": slot.to_dict()}
-
-    collision = TimetableSlot.query.filter(
-        TimetableSlot.tenant_id == tenant_id,
-        TimetableSlot.class_id == slot.class_id,
-        TimetableSlot.day_of_week == day,
-        TimetableSlot.period_number == period,
-        TimetableSlot.id != slot_id,
-    ).first()
-    if collision:
-        return {
-            "success": False,
-            "conflicts": [{
-                "type": "slot_occupied",
-                "message": "Another slot already occupies this position in the class timetable",
-                "day": day,
-                "period": period,
-            }],
-        }
-
-    check = validators.check_slot_conflicts(
-        class_id=slot.class_id,
-        teacher_id=slot.teacher_id,
-        subject_id=slot.subject_id,
-        day=day,
-        period=period,
-        tenant_id=tenant_id,
-        exclude_slot_id=slot_id,
-    )
-    if check["has_conflict"]:
-        return {"success": False, "conflicts": check["conflicts"]}
-
-    start_t, end_t = _get_period_times(period, tenant_id)
-    slot.day_of_week = day
-    slot.period_number = period
-    slot.start_time = start_t
-    slot.end_time = end_t
-
-    try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return {
-            "success": False,
-            "conflicts": [{
-                "type": "slot_occupied",
-                "message": "Another slot already occupies this position in the class timetable",
-                "day": day,
-                "period": period,
-            }],
-        }
-
-    return {"success": True, "slot": slot.to_dict()}
-
-
-def swap_slots(slot_a_id: str, slot_b_id: str, tenant_id: str) -> Dict:
-    """
-    Swap the (day, period) positions of two timetable slots.
-
-    1. Load both slots
-    2. Simulate swapped positions
-    3. Run conflict checks for both at their new positions
-    4. If valid → perform the swap atomically
-    """
-    from . import validators
-
-    slot_a = TimetableSlot.query.filter_by(id=slot_a_id, tenant_id=tenant_id).first()
-    slot_b = TimetableSlot.query.filter_by(id=slot_b_id, tenant_id=tenant_id).first()
-
-    if not slot_a:
-        return {"success": False, "error": "Slot A not found"}
-    if not slot_b:
-        return {"success": False, "error": "Slot B not found"}
-
-    # Branch scope: restricted sub-admins may only swap slots whose classes are
-    # both in their units.
-    assert_class_allowed(slot_a.class_id)
-    assert_class_allowed(slot_b.class_id)
-
-    if slot_a_id == slot_b_id:
-        return {"success": True, "slot_a": slot_a.to_dict(), "slot_b": slot_b.to_dict()}
-
-    new_a_day, new_a_period = slot_b.day_of_week, slot_b.period_number
-    new_b_day, new_b_period = slot_a.day_of_week, slot_a.period_number
-
-    conflicts: List[Dict] = []
-
-    # Validate slot A moving to B's position.
-    # Exclude both slots: A is leaving its old position, B is leaving its position too.
-    check_a = validators.check_slot_conflicts(
-        class_id=slot_a.class_id,
-        teacher_id=slot_a.teacher_id,
-        subject_id=slot_a.subject_id,
-        day=new_a_day,
-        period=new_a_period,
-        tenant_id=tenant_id,
-        exclude_slot_id=slot_a_id,
-    )
-    # If slots are in different classes, B's old position might collide with
-    # another slot in A's class.  For same-class swaps the unique constraint
-    # is safe because both slots participate.
-    if slot_a.class_id != slot_b.class_id:
-        col = TimetableSlot.query.filter(
-            TimetableSlot.tenant_id == tenant_id,
-            TimetableSlot.class_id == slot_a.class_id,
-            TimetableSlot.day_of_week == new_a_day,
-            TimetableSlot.period_number == new_a_period,
-            TimetableSlot.id != slot_a_id,
-        ).first()
-        if col:
-            check_a["has_conflict"] = True
-            check_a["conflicts"].append({
-                "type": "slot_occupied",
-                "message": "Target position already occupied in slot A's class timetable",
-                "day": new_a_day,
-                "period": new_a_period,
-            })
-
-    if check_a["has_conflict"]:
-        for c in check_a["conflicts"]:
-            c["slot"] = "A"
-        conflicts.extend(check_a["conflicts"])
-
-    check_b = validators.check_slot_conflicts(
-        class_id=slot_b.class_id,
-        teacher_id=slot_b.teacher_id,
-        subject_id=slot_b.subject_id,
-        day=new_b_day,
-        period=new_b_period,
-        tenant_id=tenant_id,
-        exclude_slot_id=slot_b_id,
-    )
-    if slot_a.class_id != slot_b.class_id:
-        col = TimetableSlot.query.filter(
-            TimetableSlot.tenant_id == tenant_id,
-            TimetableSlot.class_id == slot_b.class_id,
-            TimetableSlot.day_of_week == new_b_day,
-            TimetableSlot.period_number == new_b_period,
-            TimetableSlot.id != slot_b_id,
-        ).first()
-        if col:
-            check_b["has_conflict"] = True
-            check_b["conflicts"].append({
-                "type": "slot_occupied",
-                "message": "Target position already occupied in slot B's class timetable",
-                "day": new_b_day,
-                "period": new_b_period,
-            })
-
-    if check_b["has_conflict"]:
-        for c in check_b["conflicts"]:
-            c["slot"] = "B"
-        conflicts.extend(check_b["conflicts"])
-
-    if conflicts:
-        return {"success": False, "conflicts": conflicts}
-
-    # Perform the swap — use a sentinel to avoid unique-constraint clash
-    # when both slots share the same class_id.
-    a_start, a_end = _get_period_times(new_a_period, tenant_id)
-    b_start, b_end = _get_period_times(new_b_period, tenant_id)
-
-    if slot_a.class_id == slot_b.class_id:
-        # Temporarily move A to an impossible period to avoid the unique
-        # constraint (class_id, day_of_week, period_number) mid-swap.
-        slot_a.day_of_week = -1
-        slot_a.period_number = -1
-        db.session.flush()
-
-        slot_b.day_of_week = new_b_day
-        slot_b.period_number = new_b_period
-        slot_b.start_time = b_start
-        slot_b.end_time = b_end
-        db.session.flush()
-
-        slot_a.day_of_week = new_a_day
-        slot_a.period_number = new_a_period
-        slot_a.start_time = a_start
-        slot_a.end_time = a_end
-    else:
-        slot_a.day_of_week = new_a_day
-        slot_a.period_number = new_a_period
-        slot_a.start_time = a_start
-        slot_a.end_time = a_end
-        slot_b.day_of_week = new_b_day
-        slot_b.period_number = new_b_period
-        slot_b.start_time = b_start
-        slot_b.end_time = b_end
-
-    try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return {
-            "success": False,
-            "conflicts": [{
-                "type": "slot_occupied",
-                "message": "Swap would violate a unique-slot constraint",
-                "day": new_a_day,
-                "period": new_a_period,
-            }],
-        }
-
-    return {
-        "success": True,
-        "slot_a": slot_a.to_dict(),
-        "slot_b": slot_b.to_dict(),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Weekly timetable views (mobile teacher/student)
-# ---------------------------------------------------------------------------
 
 def _normalize_to_iso_monday(d: date) -> date:
     """Return the ISO Monday of the week containing `d`."""
@@ -721,120 +74,116 @@ def _resolve_academic_year(tenant_id: str, academic_year_id: Optional[str]):
     )
 
 
-def _class_ids_for_academic_year(tenant_id: str, academic_year_id: str) -> List[str]:
+def _active_versions_for_year(tenant_id: str, academic_year_id: str):
+    """The published timetable of every class in this academic year.
+
+    Only active versions: a draft is what a school is still working on, and
+    nobody's personal week should show it.
+    """
     from modules.classes.models import Class
 
-    rows = (
-        Class.query
-        .filter_by(tenant_id=tenant_id, academic_year_id=academic_year_id)
-        .with_entities(Class.id)
+    return (
+        db.session.query(TimetableVersion, Class)
+        .join(Class, Class.id == TimetableVersion.class_id)
+        .filter(
+            TimetableVersion.tenant_id == tenant_id,
+            TimetableVersion.status == "active",
+            Class.academic_year_id == academic_year_id,
+        )
         .all()
     )
-    return [r[0] for r in rows]
 
 
-def _weekly_eagerload_options():
-    """Eager-load the relationship chain the weekly response builder reads.
-    Prevents N+1 lookups on subject_ref / class_ref / teacher_ref / teacher.user.
-    Imports are lazy to avoid circular imports at module load time."""
-    from modules.teachers.models import Teacher
-    return (
-        joinedload(TimetableSlot.subject_ref),
-        joinedload(TimetableSlot.class_ref),
-        joinedload(TimetableSlot.teacher_ref).joinedload(Teacher.user),
-    )
-
-
-def _query_periods_for_teacher(tenant_id: str, teacher_id: str,
-                               academic_year_id: str) -> List[TimetableSlot]:
-    class_ids = _class_ids_for_academic_year(tenant_id, academic_year_id)
-    if not class_ids:
+def _entries_for_versions(version_ids: List[str]) -> List[TimetableEntry]:
+    if not version_ids:
         return []
+    from modules.teachers.models import Teacher
+    from modules.classes.models import ClassSubject
+    from modules.people.employment import Staff
+
     return (
-        TimetableSlot.query
-        .options(*_weekly_eagerload_options())
-        .filter(
-            TimetableSlot.tenant_id == tenant_id,
-            TimetableSlot.teacher_id == teacher_id,
-            TimetableSlot.class_id.in_(class_ids),
+        TimetableEntry.query
+        .options(
+            joinedload(TimetableEntry.class_subject).joinedload(ClassSubject.subject_ref),
+            joinedload(TimetableEntry.teacher)
+            .joinedload(Teacher.staff)
+            .joinedload(Staff.person),
         )
-        .order_by(TimetableSlot.day_of_week, TimetableSlot.start_time)
+        .filter(TimetableEntry.timetable_version_id.in_(version_ids))
+        .order_by(TimetableEntry.day_of_week, TimetableEntry.period_number)
         .all()
     )
 
 
-def _query_periods_for_class(tenant_id: str, class_id: str) -> List[TimetableSlot]:
-    return (
-        TimetableSlot.query
-        .options(*_weekly_eagerload_options())
-        .filter(
-            TimetableSlot.tenant_id == tenant_id,
-            TimetableSlot.class_id == class_id,
-        )
-        .order_by(TimetableSlot.day_of_week, TimetableSlot.start_time)
+def _period_times_by_schedule(bell_schedule_ids: List[str]) -> Dict[tuple, Any]:
+    """(bell_schedule_id, period_number) -> the period, read in one query.
+
+    A person's week can span classes on different bell schedules, so the
+    times cannot come from a single schedule.
+    """
+    ids = [b for b in set(bell_schedule_ids) if b]
+    if not ids:
+        return {}
+    rows = (
+        BellSchedulePeriod.query
+        .filter(BellSchedulePeriod.bell_schedule_id.in_(ids))
         .all()
     )
-
-
-def _published_timetable_exists_for_ay(tenant_id: str, academic_year_id: str) -> bool:
-    """A timetable is considered 'published' if any slot exists for any
-    class in the academic year. The legacy TimetableSlot model has no
-    explicit published flag — presence is the signal."""
-    class_ids = _class_ids_for_academic_year(tenant_id, academic_year_id)
-    if not class_ids:
-        return False
-    # Canonical EXISTS form — version-safe across SQLAlchemy 2.x, avoids the
-    # nested `db.session.query(Query.exists())` form that depends on subtle
-    # entity-vs-column treatment of the wrapped Query.
-    return bool(
-        db.session.query(
-            exists().where(
-                TimetableSlot.tenant_id == tenant_id,
-                TimetableSlot.class_id.in_(class_ids),
-            )
-        ).scalar()
-    )
+    return {(r.bell_schedule_id, r.period_number): r for r in rows}
 
 
 def _teacher_display_name(teacher_row) -> Optional[str]:
+    """The teacher's name, from the Person (ADR-001) — not their login."""
     if teacher_row is None:
         return None
-    user = getattr(teacher_row, "user", None)
-    if user is not None and getattr(user, "name", None):
-        return user.name
-    return None
+    staff = getattr(teacher_row, "staff", None)
+    person = getattr(staff, "person", None) if staff is not None else None
+    return getattr(person, "full_name", None) if person is not None else None
 
 
-def _build_weekly_response(ay, week_start: date, week_end: date,
-                           periods: List[TimetableSlot]) -> Dict:
-    """Bucket periods into 7 days (0..6, 0=Monday). Each day carries its date."""
+def _fmt(t) -> Optional[str]:
+    return t.strftime("%H:%M") if t is not None else None
+
+
+def _build_weekly_response(
+    ay,
+    week_start: date,
+    week_end: date,
+    rows: List[tuple],
+) -> Dict:
+    """Bucket periods into 7 days (0..6, 0=Monday). Each day carries its date.
+
+    ``rows`` is (entry, class, period) — the period may be None when the
+    class's bell schedule does not describe that period number, which is
+    exactly the state the class timetable flags as a conflict.
+    """
     days_by_dow: Dict[int, List[Dict]] = {dow: [] for dow in range(0, 7)}
 
-    for p in periods:
-        dow = p.day_of_week
+    for entry, cls, period in rows:
+        dow = _iso_to_payload_day(entry.day_of_week)
         if dow < 0 or dow > 6:
             continue
-        subject_ref = getattr(p, "subject_ref", None)
-        class_ref = getattr(p, "class_ref", None)
-        teacher_ref = getattr(p, "teacher_ref", None)
+        class_subject = entry.class_subject
+        subject = class_subject.subject_ref if class_subject else None
+        teacher = entry.teacher
         days_by_dow[dow].append({
-            "id": str(p.id),
-            "period_number": getattr(p, "period_number", None),
-            "start_time": p.start_time.strftime("%H:%M") if p.start_time else None,
-            "end_time": p.end_time.strftime("%H:%M") if p.end_time else None,
+            "id": str(entry.id),
+            "period_number": entry.period_number,
+            "start_time": _fmt(period.starts_at) if period else None,
+            "end_time": _fmt(period.ends_at) if period else None,
             "subject": (
-                {"id": str(subject_ref.id), "name": subject_ref.name}
-                if subject_ref is not None else None
+                {"id": str(subject.id), "name": subject.name}
+                if subject is not None else None
             ),
             "class": (
-                {"id": str(class_ref.id), "name": getattr(class_ref, "name", None)}
-                if class_ref is not None else None
+                {"id": str(cls.id), "name": getattr(cls, "name", None)}
+                if cls is not None else None
             ),
             "teacher": (
-                {"id": str(teacher_ref.id), "name": _teacher_display_name(teacher_ref)}
-                if teacher_ref is not None else None
+                {"id": str(teacher.id), "name": _teacher_display_name(teacher)}
+                if teacher is not None else None
             ),
-            "room": getattr(p, "room", None),
+            "room": entry.room,
         })
 
     days = []
@@ -857,6 +206,45 @@ def _build_weekly_response(ay, week_start: date, week_end: date,
     }
 
 
+def _week_rows(
+    tenant_id: str,
+    academic_year_id: str,
+    *,
+    teacher_id: Optional[str] = None,
+    class_id: Optional[str] = None,
+) -> tuple:
+    """(rows, published) for one person's week.
+
+    ``published`` distinguishes "the school has published nothing for this
+    year" from "there is a timetable and this person simply has no periods
+    in it" — the mobile client renders those differently.
+    """
+    versions = _active_versions_for_year(tenant_id, academic_year_id)
+    if class_id is not None:
+        versions = [(v, c) for v, c in versions if v.class_id == class_id]
+    published = bool(_active_versions_for_year(tenant_id, academic_year_id))
+
+    class_by_version = {v.id: c for v, c in versions}
+    schedule_by_version = {v.id: v.bell_schedule_id for v, _ in versions}
+
+    entries = _entries_for_versions(list(class_by_version.keys()))
+    if teacher_id is not None:
+        entries = [e for e in entries if e.teacher_id == teacher_id]
+
+    periods = _period_times_by_schedule(list(schedule_by_version.values()))
+
+    rows = []
+    for entry in entries:
+        version_id = entry.timetable_version_id
+        bell_schedule_id = schedule_by_version.get(version_id)
+        rows.append((
+            entry,
+            class_by_version.get(version_id),
+            periods.get((bell_schedule_id, entry.period_number)),
+        ))
+    return rows, published
+
+
 def get_teacher_weekly_timetable(
     *,
     tenant_id: str,
@@ -877,18 +265,16 @@ def get_teacher_weekly_timetable(
     if ay is None:
         raise TimetableNotFoundError("No active academic year")
 
-    base = week_start_date or school_today()
-    week_start = _normalize_to_iso_monday(base)
+    week_start = _normalize_to_iso_monday(week_start_date or school_today())
     week_end = week_start + timedelta(days=6)
 
-    periods = _query_periods_for_teacher(tenant_id, teacher.id, ay.id)
-
-    if not periods and not _published_timetable_exists_for_ay(tenant_id, ay.id):
+    rows, published = _week_rows(tenant_id, ay.id, teacher_id=teacher.id)
+    if not rows and not published:
         raise TimetableNotFoundError(
             "No published timetable for this academic year"
         )
 
-    return _build_weekly_response(ay, week_start, week_end, periods)
+    return _build_weekly_response(ay, week_start, week_end, rows)
 
 
 def get_student_weekly_timetable(
@@ -911,8 +297,7 @@ def get_student_weekly_timetable(
     if ay is None:
         raise TimetableNotFoundError("No active academic year")
 
-    base = week_start_date or school_today()
-    week_start = _normalize_to_iso_monday(base)
+    week_start = _normalize_to_iso_monday(week_start_date or school_today())
     week_end = week_start + timedelta(days=6)
 
     class_id = getattr(student, "class_id", None)
@@ -923,11 +308,10 @@ def get_student_weekly_timetable(
             "Student is not enrolled in a class for this academic year"
         )
 
-    periods = _query_periods_for_class(tenant_id, class_id)
-
-    if not periods and not _published_timetable_exists_for_ay(tenant_id, ay.id):
+    rows, published = _week_rows(tenant_id, ay.id, class_id=class_id)
+    if not rows and not published:
         raise TimetableNotFoundError(
             "No published timetable for this academic year"
         )
 
-    return _build_weekly_response(ay, week_start, week_end, periods)
+    return _build_weekly_response(ay, week_start, week_end, rows)

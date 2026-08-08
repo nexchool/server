@@ -126,7 +126,6 @@ def init_db(app):
             NotificationRecipient,
             NotificationTemplate,
         )
-        from modules.timetable.models import TimetableSlot, TimetableConfig
         from modules.schedule.models import ScheduleOverride
         from modules.academics.calendar.holidays import Holiday
         from modules.devices.models import DeviceToken

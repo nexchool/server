@@ -491,7 +491,6 @@ def stage_timetable(ctx: Ctx) -> None:
     )
     from modules.classes.models import ClassSubject
     from modules.teachers.models import Teacher, TeacherAvailability, TeacherWorkloadRule
-    from modules.timetable.models import TimetableSlot
 
     tid = ctx.tenant_id
     teachers = Teacher.query.filter_by(tenant_id=tid).all()
@@ -671,25 +670,12 @@ def stage_timetable(ctx: Ctx) -> None:
                         day_of_week=day,
                         period_number=period,
                         room=f"R{grade_seq(cls):02d}{cls.section}",
-                        entry_status="scheduled",
+                        # "active" is the only status any reader recognises;
+                        # seeding "scheduled" hid 90% of the demo timetable
+                        # from every dashboard and from /api/schedule/today.
+                        entry_status="active",
                     )
                 )
-                if teacher_id:
-                    starts, ends = period_times[period]
-                    db.session.add(
-                        TimetableSlot(
-                            id=str(uuid.uuid4()),
-                            tenant_id=tid,
-                            class_id=cls.id,
-                            subject_id=cs.subject_id,
-                            teacher_id=teacher_id,
-                            day_of_week=day,
-                            period_number=period,
-                            start_time=starts,
-                            end_time=ends,
-                            room=f"R{grade_seq(cls):02d}{cls.section}",
-                        )
-                    )
                 class_cell.add((cls.id, day, period))
                 subject_day[(cls.id, day, cs.subject_id)] = (
                     subject_day.get((cls.id, day, cs.subject_id), 0) + 1

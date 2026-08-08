@@ -7,7 +7,10 @@ Source of truth (new code):
 - AttendanceSession + AttendanceRecord
 
 Deprecated (backward compatibility; see migration 023 docstring):
-- SubjectLoad (subject_load), TimetableSlot (timetable_slots), Attendance (attendance)
+- SubjectLoad (subject_load), Attendance (attendance)
+
+`TimetableSlot` (timetable_slots) was the parallel timetable this backbone
+replaced; it and its API were deleted in migration 096.
 """
 
 from __future__ import annotations
