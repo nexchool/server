@@ -6,7 +6,7 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-08 (item 1 closed by migration 094; item 15 added)
+**Last updated:** 2026-08-08 (items 1–3 closed — migrations 094, 095; item 15 updated)
 
 **Sequencing (locked 2026-08-08):** Phase 0 canon cleanup → Phase 1
 architectural debt → Phase 2 finish existing domain workflows → Phase 3
@@ -20,9 +20,8 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
-| 15 | **Nested display names still read the login** — ~20 guarded `x.user.name` sites degrade to `null` / "A teacher" for account-less rows instead of reading `person.full_name`: serializers (`teachers/models.py` TeacherLeave, `attendance/models.py`, `student_leaves/models.py`, `timetable/models.py`, `schedule/models.py`), services (`attendance/services.py` ×5, `session_services.py`, `schedule/services.py`, `timetable_v2.py`, `class_teacher_assignments.py`, `class_subject_teachers.py`, `transport/services.py` incl. two CSV exports, `finance/pdf_service.py` receipt, `student_fee_service.py`, notification fallbacks in `constraint_services.py` / `student_leaves/services.py`). Each swap must also swap its eager load (N+1). | display copies predate the Person read cutover | with the attendance/timetable ADR-014 refactor (debt 2), which rewrites most of these sites anyway |
-| 2 | **Attendance resolves teaching outside the ADR-014 service**: keys on `class_id` + `marked_by → users.id`; sessions carry `class_teacher_assignment_id` (class-teacher responsibility, not subject teaching) | attendance predates ADR-014 | Phase 1 attendance refactor — **before Examination exists**, or exams copy the wrong shape |
-| 3 | **`classes.teacher_id` is an FK to `users.id`** — the class-teacher cache keys on a login, not the teacher (against ADR-001/ADR-013) | v1 column retained as cache | Phase 1, together with the attendance / teaching-assignment cleanup |
+| 15 | **Nested display names still read the login** — guarded `x.user.name` sites degrade to `null` / "A teacher" for account-less rows instead of reading `person.full_name`: serializers (`teachers/models.py` TeacherLeave, `attendance/models.py`, `student_leaves/models.py`, `timetable/models.py`, `schedule/models.py`), services (`attendance/services.py` marker names, `session_services.py`, `schedule/services.py`, `timetable_v2.py` teacher label, `transport/services.py` incl. two CSV exports, `finance/pdf_service.py` receipt, `student_fee_service.py`, notification fallbacks in `constraint_services.py` / `student_leaves/services.py`). Each swap must also swap its eager load (N+1). *(2026-08-08: the CTA/CST serializers and class/attendance class-teacher names now read Staff/Person.)* | display copies predate the Person read cutover | sweep with Phase 2 attendance workflows |
+| 2b | **Mobile client sends the login id when naming a class teacher** (`client CreateClassModal`), and seeds its edit form from `class.teacher_id` expecting one. The server maps legacy login ids, so assignment works — but the modal's preselect no longer matches since the cache re-key. Fix = send/compare `teacher.id`, like admin-web already does. | two frontends disagreed on the id long before the re-key | with the next Expo release |
 | 4 | **Two live timetable implementations**: `modules/timetable/` (mounted at `/api/timetable`) and `modules/academics/services/timetable_v2.py` | parallel build never reconciled | Phase 1: pick the canonical one, migrate consumers, delete the other |
 | 5 | **Student family columns dual-written**: `father_*` / `mother_*` / `guardian_*` still read v1 columns while households exist | like-for-like switch shows some children a wrong parent name; Expo still reads the flat keys | M2 client work: Expo + admin-web speak household roles, then a migration drops the columns |
 | 6 | **Authorization vocabulary still v1**: `has_permission` strings in 16 non-test files; no Capability / Business Action / Authority Profile models. (The *holder* migration is done — migrations 085–089. Do not redo it.) | vocabulary deferred when the holder moved | Phase 1 vocabulary migration |
@@ -42,6 +41,8 @@ control.
 | Debt | Closed by |
 |------|-----------|
 | `students.user_id` / `teachers.user_id` NOT NULL — a student or teacher could not exist without a login (ADR-003/ADR-010's named v1 defect). Placeholder accounts (@student.placeholder, @teacher.school) no longer minted; create paths record the Person directly; lists/search/import/deletion handle the missing login. Also found and fixed in passing: create_student with an email had been broken since migration 089 (Student role granted instead of relationship-implied). | migration 094 + commits 9237928, 08a51b0 (2026-08-08) |
+| Attendance resolved teaching outside the ADR-014 service (legacy `classes.teacher_id == login` branches; hand-rolled dated CTA lookup; write-only `class_teacher_assignment_id` on sessions; unvalidated cross-tenant session markers). All attendance decisions now ask the Teaching Assignment service, dated with the session day; announcements, search, student-leaves and the timetable generator moved off the cache with it. | commit be63ce9 (2026-08-08) |
+| `classes.teacher_id` FK'd `users.id` — the class-teacher cache keyed on a login. Now keys on `teachers.id` (owner rows backfilled for cache-only class teachers first), FK `ON DELETE SET NULL` (repairing migration 018), CTA writers refresh the cache, `create_class` records the responsibility. Found in passing: both CTA/CST serializers crashed reading `teachers.employee_id` (dropped in 090) — now read Staff/Person. | migration 095 + commit be63ce9 (2026-08-08) |
 | Dual-written identity + employment columns | migration 090 |
 | Authority held on the account (`user_roles`) | migration 089 |
 | `class_teachers` triple ownership / `is_class_teacher` | migration 092 (ADR-014) |
