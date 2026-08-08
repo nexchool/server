@@ -52,12 +52,15 @@ def _build_query_type() -> type:
     Imported here rather than at module scope because module resolvers import
     the transport's errors and permissions.
     """
+    from modules.attendance.resolvers import AttendanceQuery
     from modules.auth.resolvers import IdentityQuery
     from modules.people.resolvers import PeopleQuery
     from modules.students.resolvers import StudentQuery
 
     @strawberry.type(description="Every read the platform exposes.")
-    class Query(TransportQuery, IdentityQuery, PeopleQuery, StudentQuery):
+    class Query(
+        TransportQuery, IdentityQuery, PeopleQuery, StudentQuery, AttendanceQuery
+    ):
         pass
 
     return Query
@@ -72,11 +75,12 @@ def _build_mutation_type() -> type:
     resolved the ORM scope is inert, so an unguarded write reaches every
     school.
     """
+    from modules.attendance.resolvers import AttendanceMutation
     from modules.people.resolvers import PeopleMutation
     from modules.students.resolvers import StudentMutation
 
     @strawberry.type(description="Every change the platform accepts.")
-    class Mutation(PeopleMutation, StudentMutation):
+    class Mutation(PeopleMutation, StudentMutation, AttendanceMutation):
         pass
 
     return Mutation

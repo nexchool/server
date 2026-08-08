@@ -78,6 +78,16 @@ def is_locked(session: AttendanceSession) -> bool:
     return utc_now().replace(tzinfo=None) > deadline
 
 
+def _refuse(code: str, message: str) -> Dict[str, Any]:
+    """Say no in a way both transports can read.
+
+    The message is for a person; the code is for a caller deciding what kind
+    of failure this is. Matching on the sentence works until somebody rewords
+    it — see `students/lifecycle_service.py`, which learned this first.
+    """
+    return {"success": False, "code": code, "error": message}
+
+
 def request_correction(
     tenant_id: str,
     record_id: str,
@@ -96,18 +106,23 @@ def request_correction(
     """
     to_status = (to_status or "").strip()
     if to_status not in VALID_STATUSES:
-        return {"success": False, "error": f"status must be one of {', '.join(VALID_STATUSES)}"}
+        return _refuse(
+            "INVALID_STATUS",
+            f"status must be one of {', '.join(VALID_STATUSES)}",
+        )
     if not (reason or "").strip():
-        return {
-            "success": False,
-            "error": "A reason is required — a correction without one is an edit",
-        }
+        return _refuse(
+            "REASON_REQUIRED",
+            "A reason is required — a correction without one is an edit",
+        )
 
     record = AttendanceRecord.query.filter_by(id=record_id, tenant_id=tenant_id).first()
     if record is None:
-        return {"success": False, "error": "Attendance record not found"}
+        return _refuse("NOT_FOUND", "Attendance record not found")
     if record.status == to_status:
-        return {"success": False, "error": f"This is already recorded as {to_status}"}
+        return _refuse(
+            "ALREADY_SO", f"This is already recorded as {to_status}"
+        )
 
     correction = AttendanceCorrection(
         tenant_id=tenant_id,
@@ -146,15 +161,18 @@ def approve_correction(
         id=correction_id, tenant_id=tenant_id
     ).first()
     if correction is None:
-        return {"success": False, "error": "Correction not found"}
+        return _refuse("NOT_FOUND", "Correction not found")
     if correction.status != CORRECTION_REQUESTED:
-        return {"success": False, "error": f"This correction is already {correction.status}"}
+        return _refuse(
+            "ALREADY_DECIDED",
+            f"This correction is already {correction.status}",
+        )
 
     record = AttendanceRecord.query.filter_by(
         id=correction.attendance_record_id, tenant_id=tenant_id
     ).first()
     if record is None:
-        return {"success": False, "error": "Attendance record not found"}
+        return _refuse("NOT_FOUND", "Attendance record not found")
 
     _apply(correction, record, decided_by_user_id=decided_by_user_id)
     correction.decision_note = note
@@ -170,9 +188,12 @@ def reject_correction(
         id=correction_id, tenant_id=tenant_id
     ).first()
     if correction is None:
-        return {"success": False, "error": "Correction not found"}
+        return _refuse("NOT_FOUND", "Correction not found")
     if correction.status != CORRECTION_REQUESTED:
-        return {"success": False, "error": f"This correction is already {correction.status}"}
+        return _refuse(
+            "ALREADY_DECIDED",
+            f"This correction is already {correction.status}",
+        )
 
     correction.status = CORRECTION_REJECTED
     correction.decided_by_user_id = decided_by_user_id
@@ -180,6 +201,13 @@ def reject_correction(
     correction.decision_note = note
     db.session.commit()
     return {"success": True, "correction": correction.to_dict()}
+
+
+def correction_by_id(tenant_id: str, correction_id: str) -> Optional[AttendanceCorrection]:
+    """One correction as it now stands."""
+    return AttendanceCorrection.query.filter_by(
+        id=correction_id, tenant_id=tenant_id
+    ).first()
 
 
 def corrections_for_record(tenant_id: str, record_id: str) -> List[AttendanceCorrection]:

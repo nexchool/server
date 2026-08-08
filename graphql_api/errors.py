@@ -67,6 +67,12 @@ class TenantRequiredError(BusinessError):
     code = "TENANT_REQUIRED"
 
 
+class FeatureDisabledError(BusinessError):
+    """The school has this module switched off."""
+
+    code = "FEATURE_DISABLED"
+
+
 class SetupIncompleteError(BusinessError):
     """The school is still being set up, so it cannot be written to yet."""
 

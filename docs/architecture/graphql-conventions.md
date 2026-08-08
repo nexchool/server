@@ -66,6 +66,18 @@ here: the transport refuses to resolve a tenant that is not active, so a
 suspended school never reaches a field at all. Adding a second check for a
 state that cannot arrive is machinery that will one day be believed.
 
+An **optional** module adds one more, on reads as well as writes:
+
+```python
+requires_feature("attendance")
+```
+
+A school may not have bought the bus, may still take the register on paper.
+It reads the same per-tenant switch REST does. Skip it for CORE features
+(students, teachers, classes) — those cannot be switched off, so the gate
+would never fire, and machinery that never fires is machinery that will one
+day be believed.
+
 Branch scope is **not** a transport concern. It belongs in the service, so it
 holds however the workflow is reached — REST, GraphQL, or another service
 calling it in a loop.

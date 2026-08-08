@@ -14,6 +14,7 @@ from strawberry.permission import BasePermission
 from .errors import (
     AuthenticationError,
     AuthorizationError,
+    FeatureDisabledError,
     SetupIncompleteError,
     TenantRequiredError,
 )
@@ -91,6 +92,34 @@ class SetupComplete(BasePermission):
         if not is_setup_complete(context.tenant_id):
             raise SetupIncompleteError(self.message)
         return True
+
+
+def requires_feature(feature_key: str) -> Type[BasePermission]:
+    """Require the school to have this module switched on.
+
+    Optional modules are things a school either does or does not do — buses, a
+    hostel, whether attendance is still on paper. A school that has turned one
+    off should not be reachable through it by either transport, and the switch
+    is the same one `@require_feature` reads in REST.
+
+    Not needed for CORE features (students, teachers, classes): those cannot be
+    switched off, so a gate on them is machinery that never fires. Reads are
+    gated as well as writes here, unlike setup — a module a school does not
+    have should not answer questions about itself.
+    """
+
+    class RequiresFeature(BasePermission):
+        message = "This feature is disabled for your school."
+
+        def has_permission(self, source: Any, info: Any, **kwargs: Any) -> bool:
+            from core.feature_flags import is_feature_enabled
+
+            if not is_feature_enabled(info.context.tenant_id, feature_key):
+                raise FeatureDisabledError(self.message)
+            return True
+
+    RequiresFeature.__name__ = f"RequiresFeature_{feature_key}"
+    return RequiresFeature
 
 
 def requires_any(*permission_keys: str) -> Type[BasePermission]:

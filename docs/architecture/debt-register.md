@@ -6,7 +6,7 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE** (Students queries + mutations + admin-web client; every replaced REST route deleted). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
+**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE**; **Phase 4 started** (Attendance: corrections surfaced, feature gate built). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
 
 **Sequencing (locked 2026-08-08):** Phase 0 canon cleanup → Phase 1
 architectural debt → Phase 2 finish existing domain workflows → Phase 3
@@ -20,12 +20,12 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
+| 24 | **The attendance correction surface has no client.** The workflow is reachable at last, but admin-web has no screen for the pending queue or for asking that a mark be changed, so in practice a settled register still cannot be corrected by the people who need to. | server built first, as with the merge screen (10b) | an attendance UI slice; the fields are ready |
+| 25 | **The rest of Attendance is still REST.** Marking, sessions, the class register, the student's own view — including a v1/v2 split on `/student/<id>` and `/me`. Corrections moved first because they had no surface at all; the rest is a migration with a live client on the other end. | migrating a module route by route | Phase 4: move the reads, then marking, then delete each replaced route |
 | 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
-| 20 | **Optional modules have no feature gate on GraphQL.** REST writes carry `@require_feature`; the GraphQL transport has no equivalent. Harmless for Students — `student_management` is a CORE feature, so the REST decorator is a no-op there — but the first optional-feature module to migrate (attendance, transport, fees, hostel) crosses a school's switch unless it is built. | not built for a gate that would have no effect | Phase 4: build the permission class with the first optional-feature module, not before |
 | 18 | **Section merge has no REST surface, and merged sections are still listed everywhere.** `merge_sections` is complete and guarded at the placement primitive, but unrouted; `get_all_classes` and the class pickers do not filter `merged_into_class_id`, so a retired section still appears as a choice even though placing into it is refused. | service built first | route it with the academics UI; filter pickers, keep merged sections visible in history views |
 | 16 | **Staff attendance is not built.** The canon marks it "a future capability", so nothing was invented for it — the student attendance session/record shape may or may not fit staff, and guessing now would be the wrong kind of head start. | deliberately deferred by the canon | when a school actually needs it; decide then whether it reuses AttendanceSession or is its own thing |
-| 17 | **Attendance corrections have no REST surface yet.** `correction_service` is complete and tested but unrouted; admin-web cannot request or approve a correction, so the sanctioned path is currently unreachable by the people who need it. | service built first | route it with the attendance UI work |
 | 15 | **Nested display names still read the login** — guarded `x.user.name` sites degrade to `null` / "A teacher" for account-less rows instead of reading `person.full_name`: serializers (`teachers/models.py` TeacherLeave, `attendance/models.py`, `student_leaves/models.py`, `timetable/models.py`, `schedule/models.py`), services (`attendance/services.py` marker names, `session_services.py`, `schedule/services.py`, `timetable_v2.py` teacher label, `transport/services.py` incl. two CSV exports, `finance/pdf_service.py` receipt, `student_fee_service.py`, notification fallbacks in `constraint_services.py` / `student_leaves/services.py`). Each swap must also swap its eager load (N+1). *(2026-08-08: the CTA/CST serializers and class/attendance class-teacher names now read Staff/Person.)* | display copies predate the Person read cutover | sweep with Phase 2 attendance workflows |
 | 2b | **Mobile client sends the login id when naming a class teacher** (`client CreateClassModal`), and seeds its edit form from `class.teacher_id` expecting one. The server maps legacy login ids, so assignment works — but the modal's preselect no longer matches since the cache re-key. Fix = send/compare `teacher.id`, like admin-web already does. | two frontends disagreed on the id long before the re-key | with the next Expo release |
 | 4b | **The Expo client is the only reader of `/api/timetable/*`** — two endpoints (`teachers/me/weekly`, `students/me/weekly`) kept alive for it after the timetable consolidation. They belong with the rest of the academics API; the prefix survives only because moving it breaks a shipped app. | client release cadence | fold into `/api/academics` with the next Expo release |
@@ -47,6 +47,19 @@ control.
 ---
 
 ## Closed
+
+**20 — optional modules are gated on GraphQL (2026-08-08).** `requires_feature`
+reads the same per-tenant switch `@require_feature` does. Built with
+Attendance, the first optional module to migrate, rather than speculatively
+with Students — `student_management` is CORE, so a gate there would never
+have fired. Reads are gated as well as writes: a module a school does not
+have should not answer questions about itself.
+
+**17 — attendance corrections have a surface (2026-08-08).** On GraphQL, not
+REST: it is a business operation, and the canon puts those on one transport.
+`requestAttendanceCorrection` / `approve` / `reject`, plus the pending queue
+and one record's history. Asking needs `attendance.mark`; deciding needs
+`attendance.manage` — no new permission key was invented for it.
 
 **21 — the students list is on one transport (2026-08-08).** The GraphQL
 list reached parity (five sort keys both ways, six search fields, campus /
