@@ -19,8 +19,13 @@ def _serialize(row: ClassTeacherAssignment) -> Dict[str, Any]:
         "id": row.id,
         "class_id": row.class_id,
         "teacher_id": row.teacher_id,
-        "teacher_name": t.user.name if t and t.user else None,
-        "employee_id": t.employee_id if t else None,
+        # Employment facts live on Staff, the name on the Person (ADR-001);
+        # the old reads (login name, dropped teachers.employee_id) crashed
+        # for every teacher since migration 090.
+        "teacher_name": (
+            t.staff.person.full_name if t and t.staff and t.staff.person else None
+        ),
+        "employee_id": t.staff.employee_number if t and t.staff else None,
         "role": row.role,
         "allow_attendance_marking": row.allow_attendance_marking,
         "effective_from": row.effective_from.isoformat() if row.effective_from else None,
@@ -66,6 +71,36 @@ def list_for_class(tenant_id: str, class_id: str) -> Dict[str, Any]:
         .all()
     )
     return {"success": True, "items": [_serialize(r) for r in rows]}
+
+
+def _refresh_class_teacher_cache(tenant_id: str, class_id: str) -> None:
+    """`classes.teacher_id` caches the active primary assignment (ADR-014).
+
+    Every write to the owner refreshes it — these APIs historically didn't,
+    which is exactly the drift the cache guard exists to forbid. The cache is
+    unique per (teacher, tenant), so the teacher's previous cached class is
+    stood down first; the owner rows keep the full truth either way.
+    """
+    from modules.classes.models import Class
+
+    holder = (
+        ClassTeacherAssignment.query.filter_by(
+            tenant_id=tenant_id, class_id=class_id, role="primary", is_active=True
+        )
+        .filter(ClassTeacherAssignment.deleted_at.is_(None))
+        .first()
+    )
+    cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
+    if cls is None:
+        return
+    if holder is not None and cls.teacher_id != holder.teacher_id:
+        Class.query.filter(
+            Class.tenant_id == tenant_id,
+            Class.teacher_id == holder.teacher_id,
+            Class.id != class_id,
+        ).update({Class.teacher_id: None}, synchronize_session=False)
+    cls.teacher_id = holder.teacher_id if holder else None
+    db.session.add(cls)
 
 
 def create_assignment(
@@ -117,6 +152,8 @@ def create_assignment(
         updated_by=user_id,
     )
     db.session.add(row)
+    db.session.flush()
+    _refresh_class_teacher_cache(tenant_id, class_id)
     db.session.commit()
     return {"success": True, "assignment": _serialize(row)}
 
@@ -172,6 +209,8 @@ def update_assignment(
 
     row.updated_by = user_id
     row.updated_at = datetime.now(timezone.utc)
+    db.session.flush()
+    _refresh_class_teacher_cache(tenant_id, class_id)
     db.session.commit()
     return {"success": True, "assignment": _serialize(row)}
 
@@ -191,5 +230,7 @@ def delete_assignment(tenant_id: str, class_id: str, assignment_id: str) -> Dict
     row.is_active = False
     row.deleted_at = datetime.now(timezone.utc)
     row.updated_at = datetime.now(timezone.utc)
+    db.session.flush()
+    _refresh_class_teacher_cache(tenant_id, class_id)
     db.session.commit()
     return {"success": True, "message": "Assignment removed"}

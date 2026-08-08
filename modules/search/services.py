@@ -66,12 +66,21 @@ def _search_students(user, q: str, limit: int) -> List[Dict[str, Any]]:
         )
     )
     if not can_all and can_class:
-        class_ids_subq = (
-            db.session.query(Class.id)
-            .filter(Class.tenant_id == tenant_id, Class.teacher_id == user.id)
-            .subquery()
+        # The classes this user's teacher is responsible for, asked of
+        # Teaching Assignment (ADR-014) — the cache names teachers, not
+        # logins, since migration 095.
+        from modules.academics.teaching_assignment import classes_taught_by
+        from modules.teachers.models import Teacher
+
+        teacher = Teacher.query.filter_by(
+            tenant_id=tenant_id, user_id=user.id
+        ).first()
+        own_class_ids = (
+            [a.class_id for a in classes_taught_by(teacher.id)] if teacher else []
         )
-        query = query.filter(Student.class_id.in_(class_ids_subq))
+        if not own_class_ids:
+            return []
+        query = query.filter(Student.class_id.in_(own_class_ids))
 
     rows = query.limit(limit).all()
     return [

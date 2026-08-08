@@ -20,42 +20,29 @@ logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
-def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> str | None:
+def _resolve_class_teacher_id(tenant_id: str, teacher_id: str | None) -> str | None:
     """
-    `classes.teacher_id` points to `users.id`, but many client screens deal in `teachers.id`.
-    Accept either:
-    - a `users.id` (teacher user's id)
-    - a `teachers.id` (teacher profile id)
+    `classes.teacher_id` caches the class teacher as a `teachers.id`
+    (migration 095). Clients historically sent either id, so both are accepted:
+    - a `teachers.id` — what every teacher picker returns
+    - a `users.id` — legacy mobile payloads, mapped to the teacher behind it
 
-    Returns the resolved `users.id` to store in `classes.teacher_id`, or None.
-    Raises ValueError if the provided id cannot be resolved for this tenant.
+    Returns the `teachers.id` to store, or None. Raises ValueError when the id
+    names nobody who teaches in this tenant — a class teacher must be a
+    teacher, not merely an account.
     """
     if not teacher_id:
         return None
 
-    # Try interpreting as Teacher.id first (most common client payload)
     from modules.teachers.models import Teacher
 
     teacher = Teacher.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
+    if teacher is None:
+        teacher = Teacher.query.filter_by(
+            user_id=teacher_id, tenant_id=tenant_id
+        ).first()
     if teacher:
-        if teacher.user_id is None:
-            # classes.teacher_id still keys on the login (debt #3). Returning
-            # None here would silently record "no class teacher" — refuse
-            # loudly instead until the pointer moves off accounts.
-            raise ValueError(
-                "This teacher has no login account, and the class-teacher "
-                "pointer still requires one. Assign them through the "
-                "class-teacher workflow instead."
-            )
-        return teacher.user_id
-
-    # Otherwise treat as User.id; validate that it's a teacher user in this tenant.
-    # (At minimum validate existence; role validation may vary by deployment.)
-    from modules.auth.models import User
-
-    user = User.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
-    if user:
-        return user.id
+        return teacher.id
 
     raise ValueError("Invalid teacher.")
 
@@ -140,7 +127,7 @@ def create_class(
         # Normalize: empty string -> None for optional fields
         teacher_id = teacher_id if teacher_id else None
         try:
-            teacher_id = _resolve_class_teacher_user_id(tenant_id, teacher_id)
+            teacher_id = _resolve_class_teacher_id(tenant_id, teacher_id)
         except ValueError:
             return {
                 'success': False,
@@ -197,6 +184,13 @@ def create_class(
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
+        if teacher_id:
+            # The cache was written by the constructor; the RESPONSIBILITY
+            # belongs to class_teacher_assignments (ADR-014). For years this
+            # path wrote only the cache, leaving class teachers the owner
+            # table knew nothing about.
+            _name_the_class_teacher(new_class, teacher_id)
+            new_class.save()
         logger.warning("[create_class] SUCCESS class_id=%r", new_class.id)
 
         return {
@@ -267,14 +261,14 @@ SEARCH_FIELDS = {"all", "name", "section", "grade", "programme", "branch"}
 MAX_PER_PAGE = 100
 
 
-def _name_the_class_teacher(cls, teacher_user_id):
+def _name_the_class_teacher(cls, teacher_id):
     """Record who is responsible for this class, and refresh the cache.
 
-    The class form identifies a teacher by their login, which is what
-    `classes.teacher_id` holds. The responsibility itself belongs to
-    `class_teacher_assignments` (ADR-014), so it is written there first and the
-    cache is set from it. A class form that wrote only the cache is how the
-    concept came to have two homes.
+    The responsibility belongs to `class_teacher_assignments` (ADR-014), so it
+    is written there first and the cache is set from it. A class form that
+    wrote only the cache is how the concept came to have two homes.
+
+    `teacher_id` is a `teachers.id` (resolve with _resolve_class_teacher_id).
     """
     from modules.academics.backbone.models import ClassTeacherAssignment
     from modules.teachers.models import Teacher
@@ -286,24 +280,25 @@ def _name_the_class_teacher(cls, teacher_user_id):
         db.session.add(held)
     db.session.flush()
 
-    if not teacher_user_id:
+    if not teacher_id:
         cls.teacher_id = None
         return
 
-    teacher = Teacher.query.filter_by(
-        tenant_id=cls.tenant_id, user_id=teacher_user_id
-    ).first()
-    if teacher is not None:
-        db.session.add(
-            ClassTeacherAssignment(
-                tenant_id=cls.tenant_id,
-                class_id=cls.id,
-                teacher_id=teacher.id,
-                role="primary",
-                is_active=True,
-            )
+    teacher = Teacher.query.filter_by(tenant_id=cls.tenant_id, id=teacher_id).first()
+    if teacher is None:
+        cls.teacher_id = None
+        return
+
+    db.session.add(
+        ClassTeacherAssignment(
+            tenant_id=cls.tenant_id,
+            class_id=cls.id,
+            teacher_id=teacher.id,
+            role="primary",
+            is_active=True,
         )
-    cls.teacher_id = teacher_user_id
+    )
+    cls.teacher_id = teacher.id
 
 
 def _teacher_links(tenant_id: str):
@@ -461,13 +456,17 @@ def get_all_classes(
 
     # Eager-load what to_dict() touches; otherwise each row lazy-loads seven
     # relationships and we're back to the N+1 this query exists to kill.
+    from modules.people.employment import Staff
+    from modules.teachers.models import Teacher
+
     query = query.options(
         joinedload(Class.school_unit),
         joinedload(Class.programme),
         joinedload(Class.grade),
         joinedload(Class.medium),
         joinedload(Class.academic_year_ref),
-        joinedload(Class.teacher),
+        # teacher_name reads Teacher -> Staff -> Person (ADR-001).
+        joinedload(Class.teacher).joinedload(Teacher.staff).joinedload(Staff.person),
         joinedload(Class.department_ref),
     )
 
@@ -677,7 +676,7 @@ def update_class(
         # Check teacher is not already class teacher of another class (one teacher = one class)
         if teacher_id is not None:
             try:
-                teacher_id = _resolve_class_teacher_user_id(tenant_id, teacher_id if teacher_id else None)
+                teacher_id = _resolve_class_teacher_id(tenant_id, teacher_id if teacher_id else None)
             except ValueError:
                 return {'success': False, 'error': 'Invalid academic year or teacher.'}
 
@@ -979,7 +978,7 @@ def assign_teacher_to_class(
             # One teacher can only be class teacher of one class
             existing_as_ct_via_class = Class.query.filter(
                 Class.tenant_id == cls.tenant_id,
-                Class.teacher_id == teacher.user_id,
+                Class.teacher_id == teacher.id,
                 Class.id != class_id,
             ).first()
             if existing_as_ct_via_class:
@@ -1020,7 +1019,7 @@ def assign_teacher_to_class(
                 )
             )
             # The cache follows the owner; nothing decides from it (ADR-014).
-            cls.teacher_id = teacher.user_id
+            cls.teacher_id = teacher.id
             db.session.add(cls)
 
         if subject_id_val:
@@ -1114,7 +1113,7 @@ def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
 
         cls = Class.query.filter_by(id=class_id, tenant_id=get_tenant_id()).first()
         teacher = Teacher.query.filter_by(id=teacher_id).first()
-        if cls and teacher and cls.teacher_id == teacher.user_id:
+        if cls and teacher and cls.teacher_id == teacher.id:
             cls.teacher_id = None
             db.session.add(cls)
 
@@ -1181,16 +1180,18 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
 
     from modules.teachers.models import Teacher
 
-    # User IDs already assigned as class teacher via Class.teacher_id (exclude class_id if editing)
+    # Teacher ids already cached as class teacher (exclude class_id if editing).
+    # The cache keys on teachers.id since migration 095, so this set and the
+    # owner-table set below live in the same id space.
     class_filter = Class.query.filter(
         Class.tenant_id == tenant_id,
         Class.teacher_id.isnot(None),
     )
     if class_id:
         class_filter = class_filter.filter(Class.id != class_id)
-    class_teacher_user_ids = {c.teacher_id for c in class_filter.all()}
+    cached_class_teacher_ids = {c.teacher_id for c in class_filter.all()}
 
-    # Teachers already responsible for another class.
+    # Teachers already responsible for another class, per the owner table.
     ct_filter = ClassTeacherAssignment.query.filter(
         ClassTeacherAssignment.tenant_id == tenant_id,
         ClassTeacherAssignment.role == "primary",
@@ -1202,17 +1203,8 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
     ct_class_teacher_ids = {held.teacher_id for held in ct_filter.all()}
 
     query = _currently_teaching()
-    if class_teacher_user_ids:
-        # NULL-safe: `NOT IN` filters out rows where user_id IS NULL, which
-        # would hide every account-less teacher (migration 094). Their
-        # class-teacher duty is tracked by the owner-table filter below.
-        query = query.filter(
-            or_(
-                Teacher.user_id.is_(None),
-                ~Teacher.user_id.in_(class_teacher_user_ids),
-            )
-        )
-    if ct_class_teacher_ids:
-        query = query.filter(~Teacher.id.in_(ct_class_teacher_ids))
+    already_holding = cached_class_teacher_ids | ct_class_teacher_ids
+    if already_holding:
+        query = query.filter(~Teacher.id.in_(already_holding))
 
     return [t.to_dict() for t in query.all()]

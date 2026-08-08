@@ -306,7 +306,7 @@ def test_an_account_less_teacher_is_offered_as_class_teacher(
         name="Grade 4",
         section="A",
         academic_year_id=academic_year.id,
-        teacher_id=holder.user_id,
+        teacher_id=holder.id,
     )
     db_session.add(cls)
     db_session.flush()

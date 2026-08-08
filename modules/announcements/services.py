@@ -209,13 +209,31 @@ def _resolve_audience(tenant_id: str, audience_json: Dict[str, Any]) -> Set[str]
                 Student.user_id.isnot(None),
             ).all()
         }
-        teacher_user_ids = {
-            r[0] for r in db.session.query(Class.teacher_id).filter(
-                Class.tenant_id == tenant_id,
-                Class.id.in_(class_ids),
-                Class.teacher_id.isnot(None),
-            ).all()
+        # The class teachers of these classes, asked of Teaching Assignment
+        # (ADR-014) — the cache names teachers, not logins, since migration
+        # 095. Delivery still needs accounts, so map to logins at the end;
+        # a teacher with no login simply cannot receive the announcement.
+        from modules.academics.teaching_assignment import class_teachers_for
+        from modules.teachers.models import Teacher
+
+        responsible_teacher_ids = {
+            a.teacher_id
+            for held in class_teachers_for(class_ids).values()
+            for a in held
         }
+        teacher_user_ids = (
+            {
+                r[0]
+                for r in db.session.query(Teacher.user_id)
+                .filter(
+                    Teacher.id.in_(responsible_teacher_ids),
+                    Teacher.user_id.isnot(None),
+                )
+                .all()
+            }
+            if responsible_teacher_ids
+            else set()
+        )
         return student_user_ids | teacher_user_ids
 
     if scope == "students":

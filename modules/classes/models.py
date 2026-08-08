@@ -80,8 +80,14 @@ class Class(TenantBaseModel):
     start_date = db.Column(db.Date, nullable=True)  # e.g. 2025-06-01
     end_date = db.Column(db.Date, nullable=True)     # e.g. 2026-03-31
 
-    # Class Teacher (User with Teacher role)
-    teacher_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
+    # Class-teacher CACHE (ADR-014): the owner is class_teacher_assignments;
+    # nothing decides from this column. Keys on the teacher since migration
+    # 095 — a class teacher is a teacher, not a login (they may have none).
+    teacher_id = db.Column(
+        db.String(36),
+        db.ForeignKey("teachers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # DEPRECATED: free-text standard number. Use grade_id instead.
     grade_level = db.Column(db.SmallInteger, nullable=True)
@@ -114,7 +120,7 @@ class Class(TenantBaseModel):
     )
 
     # Relationships
-    teacher = db.relationship('User', foreign_keys=[teacher_id], backref=db.backref('assigned_classes', lazy=True))
+    teacher = db.relationship('Teacher', foreign_keys=[teacher_id])
     academic_year_ref = db.relationship(
         "AcademicYear",
         foreign_keys=[academic_year_id],
@@ -171,8 +177,14 @@ class Class(TenantBaseModel):
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
+            # teacher_id is a teachers.id since migration 095 — the same id
+            # every teacher picker and assignment endpoint already speaks.
             "teacher_id": self.teacher_id,
-            "teacher_name": self.teacher.name if self.teacher else None,
+            "teacher_name": (
+                self.teacher.staff.person.full_name
+                if self.teacher and self.teacher.staff and self.teacher.staff.person
+                else None
+            ),
             "created_at": self.created_at.isoformat(),
         }
 

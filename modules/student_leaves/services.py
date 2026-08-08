@@ -409,50 +409,14 @@ def _resolve_primary_class_teacher_id(
 ) -> Optional[str]:
     """Return the (teachers.id) class teacher for a class on a given date.
 
-    Prefers ClassTeacherAssignment (role='primary', active, within effective dates).
-    Falls back to Class.teacher_id (which is a users.id) → resolve to the
-    corresponding teachers.id row.
+    Asked of Teaching Assignment (ADR-014). The old fallback that read the
+    `classes.teacher_id` cache is gone: migration 095 gave every cached class
+    teacher an owner row, so the service's answer is the whole answer.
     """
-    try:
-        from modules.academics.backbone.models import ClassTeacherAssignment
-        rows = (
-            db.session.query(ClassTeacherAssignment)
-            .filter(
-                ClassTeacherAssignment.tenant_id == tenant_id,
-                ClassTeacherAssignment.class_id == class_id,
-                ClassTeacherAssignment.role == "primary",
-                ClassTeacherAssignment.is_active.is_(True),
-                ClassTeacherAssignment.deleted_at.is_(None),
-            )
-            .all()
-        )
-        for r in rows:
-            ef, et = r.effective_from, r.effective_to
-            if ef and on_date < ef:
-                continue
-            if et and on_date > et:
-                continue
-            return r.teacher_id
-    except ImportError:
-        pass
+    from modules.academics.teaching_assignment import class_teacher_of
 
-    # Fallback to legacy classes.teacher_id (a users.id pointer).
-    cls = (
-        db.session.query(Class)
-        .filter(Class.id == class_id, Class.tenant_id == tenant_id)
-        .first()
-    )
-    if cls and getattr(cls, "teacher_id", None):
-        # classes.teacher_id stores a users.id; resolve to teachers.id.
-        from modules.teachers.models import Teacher
-        teacher = (
-            db.session.query(Teacher)
-            .filter(Teacher.tenant_id == tenant_id, Teacher.user_id == cls.teacher_id)
-            .first()
-        )
-        if teacher:
-            return teacher.id
-    return None
+    held = class_teacher_of(class_id, on=on_date)
+    return held.teacher_id if held else None
 
 
 def _assert_attachment_belongs_to(

@@ -73,6 +73,10 @@ class TeachingAssignment:
     subject_id: Optional[str] = None
     effective_from: Optional[date] = None
     effective_to: Optional[date] = None
+    # Whether this responsibility includes marking attendance. A fact only a
+    # class-teacher responsibility carries; None on subject assignments. Held
+    # here so attendance can honour it without querying the owner table.
+    allow_attendance_marking: Optional[bool] = None
 
     @property
     def is_primary(self) -> bool:
@@ -212,6 +216,7 @@ def class_teachers_for(
             role=assignment.role or ROLE_PRIMARY,
             effective_from=assignment.effective_from,
             effective_to=assignment.effective_to,
+            allow_attendance_marking=bool(assignment.allow_attendance_marking),
         )
         if not _counts_on(assignment, held, on):
             continue
@@ -252,6 +257,7 @@ def classes_taught_by(
             role=assignment.role or ROLE_PRIMARY,
             effective_from=assignment.effective_from,
             effective_to=assignment.effective_to,
+            allow_attendance_marking=bool(assignment.allow_attendance_marking),
         )
         if _counts_on(assignment, found, on):
             held.append(found)

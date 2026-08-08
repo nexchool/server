@@ -105,7 +105,7 @@ def test_delete_teacher_clears_homeroom_pointer_and_deletes_cleanly(
         name="Grade 5",
         section="A",
         academic_year_id=ay.id,
-        teacher_id=teacher.user_id,  # homeroom pointer -> this teacher's user
+        teacher_id=teacher.id,  # homeroom cache names the teacher (migration 095)
     )
     db_session.add(cls)
     db_session.flush()

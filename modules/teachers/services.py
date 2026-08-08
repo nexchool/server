@@ -693,10 +693,9 @@ def bulk_update_teacher_status(teacher_ids: List[str], status: str) -> Dict:
 def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
     """Delete many teachers in one tenant-scoped transaction.
 
-    Same teardown as `delete_teacher`, set-based: detach class-teacher rows and
-    the legacy homeroom pointer first (neither FK cascades, so SQLAlchemy would
-    otherwise null a NOT NULL column), then the teacher rows, then soft-
-    deactivate the backing logins.
+    Same teardown as `delete_teacher`, set-based: the teacher rows go (the
+    homeroom-pointer FK detaches itself, ON DELETE SET NULL since migration
+    095), then the backing logins are soft-deactivated.
 
     Returns {success, deleted, missing}.
     """
@@ -724,20 +723,14 @@ def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
             return {"success": True, "deleted": 0, "missing": ids}
 
         found_ids = [t.id for t in teachers]
-        user_ids = [t.user_id for t in teachers if t.user_id]
         # (user_id, person_id) pairs: an account-less teacher (ADR-003) still
         # holds authority on their employment, which must be withdrawn.
         teardowns = [
             (t.user_id, t.staff.person_id if t.staff else None) for t in teachers
         ]
 
-        from modules.classes.models import Class
-
-        if user_ids:
-            Class.query.filter(
-                Class.tenant_id == tenant_id, Class.teacher_id.in_(user_ids)
-            ).update({Class.teacher_id: None}, synchronize_session=False)
-
+        # classes.teacher_id references teachers.id ON DELETE SET NULL
+        # (migration 095) — the database detaches the homeroom pointers.
         for teacher in teachers:
             db.session.delete(teacher)
         db.session.flush()  # clear teachers.user_id before touching the users
@@ -779,16 +772,9 @@ def delete_teacher(teacher_id: str) -> Dict:
         user_id = teacher.user_id
         person_id = teacher.staff.person_id if teacher.staff else None
 
-        # Clear the legacy homeroom pointer (classes.teacher_id -> users.id) so no
-        # class still lists this departed teacher as its class teacher. Guarded:
-        # filter_by(teacher_id=None) would match every class with no teacher.
-        if user_id:
-            from modules.classes.models import Class
-
-            Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).update(
-                {Class.teacher_id: None}, synchronize_session=False
-            )
-
+        # classes.teacher_id (the class-teacher cache) references teachers.id
+        # with ON DELETE SET NULL since migration 095 — the database detaches
+        # the homeroom pointer itself; no hand-written cleanup needed.
         db.session.delete(teacher)
         db.session.flush()  # clear teachers.user_id before touching the user
 

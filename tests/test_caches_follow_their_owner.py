@@ -210,7 +210,7 @@ def test_naming_a_class_teacher_leaves_the_cache_agreeing(
     assert result["success"], result
 
     assert _responsible_for(first).teacher_id == teacher.id
-    assert first.teacher_id == teacher.user_id
+    assert first.teacher_id == teacher.id
 
 
 def test_replacing_a_class_teacher_moves_the_cache(ctx, tenant, db_session, classes):
@@ -224,7 +224,7 @@ def test_replacing_a_class_teacher_moves_the_cache(ctx, tenant, db_session, clas
     assign_teacher_to_class(first.id, now.id, is_class_teacher=True)
 
     assert _responsible_for(first).teacher_id == now.id
-    assert first.teacher_id == now.user_id
+    assert first.teacher_id == now.id
 
 
 def test_the_class_form_records_the_responsibility_too(ctx, tenant, db_session, classes):
@@ -237,12 +237,14 @@ def test_the_class_form_records_the_responsibility_too(ctx, tenant, db_session, 
     first, _ = classes
     teacher = _teacher(db_session, tenant)
 
+    # The form sends the teacher's login id here on purpose: legacy mobile
+    # payloads still do, and the resolver must map them to the teacher.
     result = update_class(first.id, teacher_id=teacher.user_id)
     assert result["success"], result
     db_session.flush()
 
     assert _responsible_for(first).teacher_id == teacher.id
-    assert first.teacher_id == teacher.user_id
+    assert first.teacher_id == teacher.id
 
 
 def test_removing_a_class_teacher_clears_the_cache(ctx, tenant, db_session, classes):

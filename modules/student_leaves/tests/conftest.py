@@ -59,9 +59,9 @@ def class_with_teacher(db_session, tenant, academic_year):
     Returns an object with attributes:
         .id, .class_teacher_id (teachers.id), .teacher_row (Teacher row)
 
-    NOTE: the convenience pointer is `.teacher_row`, NOT `.teacher` — `Class.teacher`
-    is a real ORM relationship to User (backref `assigned_classes`), so assigning a
-    Teacher to it breaks the backref cascade.
+    NOTE: the convenience pointer is `.teacher_row`, NOT `.teacher` —
+    `Class.teacher` is the real ORM relationship (to Teacher, since
+    migration 095).
     """
     from modules.auth.models import User
     from modules.teachers.models import Teacher
@@ -93,7 +93,7 @@ def class_with_teacher(db_session, tenant, academic_year):
         tenant_id=tenant.id,
         section="A",
         academic_year_id=academic_year.id,
-        teacher_id=teacher_user.id,  # legacy pointer; resolves via Teacher.user_id
+        teacher_id=teacher.id,  # the cache names the teacher (migration 095)
     )
     db_session.add(cls)
     db_session.flush()

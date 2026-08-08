@@ -988,12 +988,17 @@ def generate_draft(
         v.bell_schedule_id = bell_id
 
     # --- Run the scheduler ------------------------------------------------
+    # The class teacher is asked of Teaching Assignment (ADR-014), not read
+    # off the classes.teacher_id cache — nothing decides from a cache.
+    from modules.academics.teaching_assignment import class_teacher_of
+
+    responsible = class_teacher_of(class_id)
     gen = _run_generator(
         tenant_id,
         class_id,
         bell_schedule_id=bell_id,
         working_days=working_days,
-        class_teacher_user_id=str(cls.teacher_id) if cls.teacher_id else None,
+        class_teacher_id=responsible.teacher_id if responsible else None,
         exclude_class_id=class_id,
         seed=data.get("seed"),
         max_attempts=int(data.get("max_attempts") or 40),

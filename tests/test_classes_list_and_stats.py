@@ -329,7 +329,7 @@ def _make_class_teacher(db_session, tenant, cls, teacher, user):
             teacher_id=teacher.id, role="primary", is_active=True,
         )
     )
-    cls.teacher_id = user.id
+    cls.teacher_id = teacher.id  # the cache names the teacher (migration 095)
     db_session.add(cls)
     db_session.flush()
 

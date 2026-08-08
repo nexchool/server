@@ -21,7 +21,6 @@ from core.database import db
 from modules.academics.backbone.models import (
     AttendanceRecord,
     AttendanceSession,
-    ClassTeacherAssignment,
 )
 from modules.classes.models import Class
 from modules.academics.calendar.holiday_services import get_holiday_for_date
@@ -54,34 +53,23 @@ def _teacher_for_user(tenant_id: str, user_id: str) -> Optional[Teacher]:
     return Teacher.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
 
 
-def _primary_class_teacher_assignment(
-    tenant_id: str, class_id: str, on_date: date
-) -> Optional[ClassTeacherAssignment]:
-    rows = (
-        ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id, class_id=class_id)
-        .filter(
-            ClassTeacherAssignment.role == "primary",
-            ClassTeacherAssignment.is_active.is_(True),
-            ClassTeacherAssignment.deleted_at.is_(None),
-        )
-        .all()
-    )
-    for r in rows:
-        ef, et = r.effective_from, r.effective_to
-        if ef and on_date < ef:
-            continue
-        if et and on_date > et:
-            continue
-        return r
-    return None
-
-
 def can_user_mark_session(
     tenant_id: str,
     user_id: str,
     session: AttendanceSession,
     class_id: str,
 ) -> bool:
+    """May this user write to this session?
+
+    Resolved through Teaching Assignment (ADR-014): the class teacher in
+    effect on the session's day — time is part of the question — provided the
+    responsibility allows marking, or a teacher explicitly delegated as the
+    session's marker. The old fallback that matched `classes.teacher_id`
+    against the login is gone: that column is a cache, and it now names the
+    teacher, not their account (migration 095).
+    """
+    from modules.academics.teaching_assignment import class_teacher_of
+
     if has_permission(user_id, "attendance.manage"):
         return True
 
@@ -92,16 +80,8 @@ def can_user_mark_session(
     if session.assigned_marker_teacher_id and session.assigned_marker_teacher_id == t.id:
         return True
 
-    cta = _primary_class_teacher_assignment(tenant_id, class_id, session.session_date)
-    if cta and cta.teacher_id == t.id and cta.allow_attendance_marking:
-        return True
-
-    # Legacy: class.teacher_id (User) matches
-    cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
-    if cls and cls.teacher_id == user_id:
-        return True
-
-    return False
+    cta = class_teacher_of(class_id, on=session.session_date)
+    return bool(cta and cta.teacher_id == t.id and cta.allow_attendance_marking)
 
 
 def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: date) -> Dict[str, Any]:
@@ -131,24 +111,16 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
     if not teacher:
         return {"success": True, "items": []}
 
-    # Primary assignments with attendance authority
-    ctas = (
-        ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id, teacher_id=teacher.id)
-        .filter(
-            ClassTeacherAssignment.is_active.is_(True),
-            ClassTeacherAssignment.deleted_at.is_(None),
-            ClassTeacherAssignment.allow_attendance_marking.is_(True),
-        )
-        .all()
-    )
+    # Class-teacher responsibilities with attendance authority, in effect on
+    # the requested day — asked of Teaching Assignment (ADR-014), not the
+    # tables that happen to express it.
+    from modules.academics.teaching_assignment import classes_taught_by
+
     seen = set()
-    for cta in ctas:
-        ef, et = cta.effective_from, cta.effective_to
-        if ef and session_day < ef:
+    for held in classes_taught_by(teacher.id, on=session_day):
+        if not held.allow_attendance_marking:
             continue
-        if et and session_day > et:
-            continue
-        c = Class.query.get(cta.class_id)
+        c = Class.query.get(held.class_id)
         if not c:
             continue
         seen.add(c.id)
@@ -184,19 +156,6 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
         )
         seen.add(c.id)
 
-    # Legacy class teacher user pointer
-    legacy = Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).all()
-    for c in legacy:
-        if c.id in seen:
-            continue
-        items.append(
-            {
-                "class_id": c.id,
-                "class_name": f"{c.name}-{c.section}",
-                "reason": "legacy_class_teacher",
-                "can_mark": True,
-            }
-        )
 
     items.sort(key=lambda x: x["class_name"])
     return {"success": True, "items": items}
@@ -249,15 +208,24 @@ def get_or_create_session(
             "created": False,
         }
 
-    cta = _primary_class_teacher_assignment(tenant_id, class_id, session_date)
+    # A delegated marker must be a real teacher of this organization — the
+    # column would otherwise accept any teacher id from any tenant.
+    if assigned_marker_teacher_id:
+        marker = Teacher.query.filter_by(
+            id=assigned_marker_teacher_id, tenant_id=tenant_id
+        ).first()
+        if marker is None:
+            return {"success": False, "error": "Unknown teacher for assigned marker"}
 
+    # class_teacher_assignment_id is no longer written: nothing ever read it,
+    # and "who was the class teacher that day" is answered by the dated
+    # Teaching Assignment service (ADR-014), not a snapshot of a row id.
     s = AttendanceSession(
         tenant_id=tenant_id,
         class_id=class_id,
         session_date=session_date,
         status="draft",
         assigned_marker_teacher_id=assigned_marker_teacher_id,
-        class_teacher_assignment_id=cta.id if cta else None,
         notes=notes,
         attendance_source="manual",
         created_by=user_id,

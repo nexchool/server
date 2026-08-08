@@ -21,8 +21,13 @@ def _serialize(row: ClassSubjectTeacher) -> Dict[str, Any]:
         "id": row.id,
         "class_subject_id": row.class_subject_id,
         "teacher_id": row.teacher_id,
-        "teacher_name": t.user.name if t and t.user else None,
-        "employee_id": t.employee_id if t else None,
+        # Employment facts live on Staff, the name on the Person (ADR-001);
+        # the old reads (login name, dropped teachers.employee_id) crashed
+        # for every teacher since migration 090.
+        "teacher_name": (
+            t.staff.person.full_name if t and t.staff and t.staff.person else None
+        ),
+        "employee_id": t.staff.employee_number if t and t.staff else None,
         "role": row.role,
         "effective_from": row.effective_from.isoformat() if row.effective_from else None,
         "effective_to": row.effective_to.isoformat() if row.effective_to else None,
