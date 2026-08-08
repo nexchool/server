@@ -317,8 +317,19 @@ def upsert_records(
     if not s:
         return {"success": False, "error": "Session not found"}
 
-    if s.status == "finalized" and not has_permission(user_id, "attendance.manage"):
-        return {"success": False, "error": "Session is finalized"}
+    # A settled register is not marked again — it is corrected, which leaves
+    # a reason and a name. Two ways to be settled: somebody finalised it, or
+    # the school's own deadline passed (see correction_service.is_locked).
+    from .correction_service import is_locked
+
+    if is_locked(s) and not has_permission(user_id, "attendance.manage"):
+        return {
+            "success": False,
+            "error": (
+                "This attendance is settled. Request a correction so the "
+                "change carries a reason."
+            ),
+        }
 
     if not can_user_mark_session(tenant_id, user_id, s, s.class_id):
         return {"success": False, "error": "Not allowed to mark this session"}

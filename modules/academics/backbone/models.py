@@ -44,6 +44,16 @@ class AcademicSettings(TenantBaseModel):
         nullable=True,
     )
     allow_admin_attendance_override = db.Column(db.Boolean, nullable=False, default=True)
+    # Whether a correction to settled attendance waits for somebody to
+    # agree. Schools differ: a small primary trusts its teachers, a large
+    # secondary wants the head of year to see every change.
+    attendance_corrections_require_approval = db.Column(
+        db.Boolean, nullable=False, default=False
+    )
+    # Hours after the attendance day when the register stops accepting
+    # marks. NULL means only finalising closes it — the school closes its
+    # own registers rather than the clock doing it for them.
+    attendance_lock_after_hours = db.Column(db.Integer, nullable=True)
     student_leave_admin_approval_required = db.Column(
         db.Boolean, nullable=False, default=False, server_default=text("false")
     )

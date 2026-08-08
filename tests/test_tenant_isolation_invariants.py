@@ -50,6 +50,10 @@ SCOPED_MODELS = [
     ("modules.people.models", "Person"),
     ("modules.rbac.models", "Role"),
     ("modules.rbac.models", "AuthorityDelegation"),
+    ("modules.attendance.models", "AttendanceCorrection"),
+    ("modules.people.employment", "StaffLifecycleEvent"),
+    ("modules.students.models", "StudentLifecycleEvent"),
+    ("modules.students.models", "AdmissionApplication"),
 ]
 
 
