@@ -21,8 +21,8 @@ control.
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
 | 25 | **Most of Attendance is still REST, and the Expo client is why.** Migrated: corrections, and the student attendance read admin-web uses. Still REST: marking, sessions, `my-classes`, the class register, `/list`, `calendar-holidays`, and `/me` — the teacher's daily marking flow and the student's own view, all consumed by the shipped mobile app. Moving them means an Expo release, the same constraint as 4b. | mobile release cadence, not server work | migrate with the next Expo release, then delete each replaced route |
+| 28 | **Teachers are still found by `teachers.user_id`** — `schedule/services.py` and `attendance/services.py` both resolve the signed-in teacher through the account. The same defect 27 was, in the domain the roadmap named alongside it: a teacher whose login is added later is not recognised as teaching anything. | the student half was the one with a reported symptom | the same `_for_user` treatment, through Staff and its Person |
 | 26 | **The v1/v2 split on student attendance survives.** `/student/<id>` reads the legacy attendance table, `/student/<id>/v2` reads register sessions; `/me` and `/me/v2` likewise. GraphQL exposes only the session shape, so the two REST versions now exist purely for Expo. Two answers to "was this child here" is one too many. | both shipped before the sessions model settled | delete the v1 pair when Expo moves to GraphQL |
-| 27 | **Attendance still identifies a student by `students.user_id`.** `me_student_attendance_v2` looks a student up by their account, and both self-view checks compare `student.user_id`. The account is optional (ADR-003) and the Person is the identity (ADR-001), so a student without a login cannot see their own attendance and one whose account moves sees somebody else's. Not reached by the GraphQL read, which takes a student id. | predates the person-centric cutover | resolve the student through Person when `/me` migrates |
 | 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
 | 18 | **Section merge has no REST surface, and merged sections are still listed everywhere.** `merge_sections` is complete and guarded at the placement primitive, but unrouted; `get_all_classes` and the class pickers do not filter `merged_into_class_id`, so a retired section still appears as a choice even though placing into it is refused. | service built first | route it with the academics UI; filter pickers, keep merged sections visible in history views |
@@ -47,6 +47,13 @@ control.
 ---
 
 ## Closed
+
+**27 — the signed-in child is found through their Person (2026-08-08).**
+`students.services.student_for_user` / `is_own_studentship`, used by the
+attendance `/me` and self-view checks (both versions), the student profile
+`/me`, and the schedule's today view. `students.user_id` is no longer how
+the app answers "who is signed in" — it survives as a column the creation
+flow still writes and one uniqueness check still reads.
 
 **24 and 10b — both review surfaces have screens (2026-08-08).**
 `/attendance/corrections` and `/settings/duplicates`. Building them found

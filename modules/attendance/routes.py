@@ -152,8 +152,9 @@ def get_student_attendance(student_id):
     # If student reading self, verify it's their own record
     if has_permission(user_id, PERM_READ_SELF) and not has_permission(user_id, PERM_READ_ALL):
         from modules.students.models import Student
+        from modules.students.services import is_own_studentship
         student = Student.query.get(student_id)
-        if not student or student.user_id != user_id:
+        if not is_own_studentship(student, g.current_user):
             if not has_permission(user_id, PERM_READ_CLASS):
                 return error_response('Forbidden', 'You can only view your own attendance', 403)
 
@@ -215,9 +216,9 @@ def list_attendance_records():
 @require_permission(PERM_READ_SELF)
 def get_my_attendance():
     """Get current user's attendance (for students)."""
-    user_id = g.current_user.id
-    from modules.students.models import Student
-    student = Student.query.filter_by(user_id=user_id).first()
+    from modules.students.services import student_for_user
+
+    student = student_for_user(g.current_user.id, g.tenant_id)
     if not student:
         return not_found_response('Student profile')
 

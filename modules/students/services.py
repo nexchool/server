@@ -897,9 +897,47 @@ def attach_transport_to_student_dict(
     return student_dict
 
 
+def student_for_user(user_id: str, tenant_id: Optional[str] = None):
+    """The studentship of whoever is signed in, or None.
+
+    Reached through the Person, not through `students.user_id`. The account is
+    optional (ADR-003) and the Person is the identity (ADR-001), so a child
+    who has never been given a login is still a student and must still be able
+    to be recognised — reading the column found nobody and quietly answered
+    "you have no record here".
+
+    Unambiguous under either family-access mode: the Student relationship is
+    what carries the Account (ADR-011), so one account resolves to one child.
+    Siblings hold their own credentials rather than sharing one.
+    """
+    from modules.auth.models import User
+
+    account = User.query.filter_by(id=user_id).first()
+    if account is None or account.person_id is None:
+        return None
+
+    query = Student.query.filter_by(person_id=account.person_id)
+    if tenant_id:
+        query = query.filter_by(tenant_id=tenant_id)
+    return query.first()
+
+
+def is_own_studentship(student, user) -> bool:
+    """Whether this signed-in person is the child whose record this is.
+
+    Compares the Person rather than the account for the same reason
+    `student_for_user` looks one up that way.
+    """
+    if student is None or user is None:
+        return False
+    return (
+        student.person_id is not None and student.person_id == user.person_id
+    )
+
+
 def get_student_by_user_id(user_id: str) -> Optional[Dict]:
-    """Get student details by User ID"""
-    student = Student.query.filter_by(user_id=user_id).first()
+    """Get student details for whoever is signed in."""
+    student = student_for_user(user_id)
     return student.to_dict() if student else None
 
 

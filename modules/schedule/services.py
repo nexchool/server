@@ -228,7 +228,9 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
             ]
         return []
 
-    student = Student.query.filter_by(user_id=user_id, tenant_id=tenant_id).first()
+    from modules.students.services import student_for_user
+
+    student = student_for_user(user_id, tenant_id)
     if student and student.class_id:
         v2_rows = _student_entries_today_v2(tenant_id, student.class_id, dow_iso)
         if v2_rows:

@@ -496,7 +496,9 @@ def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = N
 
 
 def me_student_attendance_v2(tenant_id: str, user_id: str, month: Optional[str] = None) -> Dict[str, Any]:
-    st = Student.query.filter_by(user_id=user_id, tenant_id=tenant_id).first()
+    from modules.students.services import student_for_user
+
+    st = student_for_user(user_id, tenant_id)
     if not st:
         return {"success": False, "error": "Student not found"}
     return student_history_v2(tenant_id, st.id, month=month)

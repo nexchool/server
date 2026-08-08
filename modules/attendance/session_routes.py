@@ -144,9 +144,10 @@ def student_attendance_v2(student_id):
     user_id = g.current_user.id
     if has_permission(user_id, PERM_READ_SELF) and not has_permission(user_id, PERM_READ_ALL):
         from modules.students.models import Student
+        from modules.students.services import is_own_studentship
 
         st = Student.query.filter_by(id=student_id).first()
-        if not st or st.user_id != user_id:
+        if not is_own_studentship(st, g.current_user):
             if not has_permission(user_id, PERM_READ_CLASS):
                 return error_response("Forbidden", "You can only view your own attendance", 403)
 
