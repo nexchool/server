@@ -6,7 +6,7 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-08 — Phase 1 complete; **Phase 2 COMPLETE** (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15.
+**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 in progress** (Students read surface done). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15.
 
 **Sequencing (locked 2026-08-08):** Phase 0 canon cleanup → Phase 1
 architectural debt → Phase 2 finish existing domain workflows → Phase 3
@@ -20,6 +20,7 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
+| 19 | **The GraphQL Students surface is read-only and unconsumed.** Queries (`students`, `student`) exist with keyset paging and batched classes; there are no student mutations yet, and admin-web still calls the REST list. Until the client moves, both surfaces are live — which the v2 rule forbids as a permanent state. | pilot built server-first | Phase 3: student mutations → admin-web GraphQL client → delete the replaced REST routes |
 | 18 | **Section merge has no REST surface, and merged sections are still listed everywhere.** `merge_sections` is complete and guarded at the placement primitive, but unrouted; `get_all_classes` and the class pickers do not filter `merged_into_class_id`, so a retired section still appears as a choice even though placing into it is refused. | service built first | route it with the academics UI; filter pickers, keep merged sections visible in history views |
 | 16 | **Staff attendance is not built.** The canon marks it "a future capability", so nothing was invented for it — the student attendance session/record shape may or may not fit staff, and guessing now would be the wrong kind of head start. | deliberately deferred by the canon | when a school actually needs it; decide then whether it reuses AttendanceSession or is its own thing |
 | 17 | **Attendance corrections have no REST surface yet.** `correction_service` is complete and tested but unrouted; admin-web cannot request or approve a correction, so the sanctioned path is currently unreachable by the people who need it. | service built first | route it with the attendance UI work |
