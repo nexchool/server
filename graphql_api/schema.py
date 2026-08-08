@@ -53,12 +53,31 @@ def _build_query_type() -> type:
     the transport's errors and permissions.
     """
     from modules.auth.resolvers import IdentityQuery
+    from modules.people.resolvers import PeopleQuery
 
     @strawberry.type(description="Every read the platform exposes.")
-    class Query(TransportQuery, IdentityQuery):
+    class Query(TransportQuery, IdentityQuery, PeopleQuery):
         pass
 
     return Query
+
+
+def _build_mutation_type() -> type:
+    """Compose the root Mutation from each module's writes.
+
+    Add a module's mutation class here, the same way its queries are added
+    above. A field that changes something must carry `IsAuthenticated`,
+    `RequiresTenant` and the Business Action it performs — with no tenant
+    resolved the ORM scope is inert, so an unguarded write reaches every
+    school.
+    """
+    from modules.people.resolvers import PeopleMutation
+
+    @strawberry.type(description="Every change the platform accepts.")
+    class Mutation(PeopleMutation):
+        pass
+
+    return Mutation
 
 
 class NexchoolSchema(strawberry.Schema):
@@ -105,4 +124,8 @@ def build_schema(config: Mapping[str, Any]) -> NexchoolSchema:
     Built per application rather than at import time so the query limits and
     introspection setting come from that app's config.
     """
-    return NexchoolSchema(query=_build_query_type(), extensions=build_extensions(config))
+    return NexchoolSchema(
+        query=_build_query_type(),
+        mutation=_build_mutation_type(),
+        extensions=build_extensions(config),
+    )

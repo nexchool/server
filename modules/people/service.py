@@ -486,6 +486,16 @@ def db_session_add(instance) -> None:
     db.session.flush()
 
 
+def person_on_record(person_id: str) -> Optional[Person]:
+    """The person with this id, if this organization knows them.
+
+    Tenant scoping does the restricting, so a person belonging to another
+    school is simply not on record here — which is the honest answer to give
+    a caller holding an id they should not have.
+    """
+    return Person.query.filter_by(id=person_id).first()
+
+
 def record_person(
     tenant_id: str,
     full_name: str,

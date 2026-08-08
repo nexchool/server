@@ -7,11 +7,11 @@ services.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Type
 
 from strawberry.permission import BasePermission
 
-from .errors import AuthenticationError, TenantRequiredError
+from .errors import AuthenticationError, AuthorizationError, TenantRequiredError
 
 
 class IsAuthenticated(BasePermission):
@@ -56,3 +56,32 @@ class RequiresTenant(BasePermission):
                 getattr(context, "tenant_error", None) or self.message
             )
         return True
+
+
+def requires(permission_key: str) -> Type[BasePermission]:
+    """Field-level guard for one Business Action.
+
+    The same decision REST reaches through `require_permission`, asked in the
+    one place a GraphQL field can declare it. Both call `has_permission`, so a
+    person's authority does not depend on which transport asked — which is the
+    point of putting authorization in the Authorization Domain rather than in
+    a transport.
+
+    Combine with `IsAuthenticated` and `RequiresTenant`, in that order:
+    there is no authority to check before we know who is asking and which
+    school they are asking about.
+    """
+
+    class RequiresPermission(BasePermission):
+        message = "You do not have permission to perform this action."
+
+        def has_permission(self, source: Any, info: Any, **kwargs: Any) -> bool:
+            from modules.rbac.services import has_permission as holds
+
+            user = getattr(info.context, "current_user", None)
+            if user is None or not holds(user.id, permission_key):
+                raise AuthorizationError(self.message)
+            return True
+
+    RequiresPermission.__name__ = f"Requires_{permission_key.replace('.', '_')}"
+    return RequiresPermission

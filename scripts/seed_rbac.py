@@ -27,6 +27,10 @@ PERMISSIONS = [
     ('user.update', 'Update user information'),
     ('user.delete', 'Delete users'),
     ('user.manage', 'Full user management access'),
+    # Reconciling records: deciding two rows describe one human. Its own
+    # key because it rewrites who the school's records refer to, across
+    # every module at once — not the same trust as editing an account.
+    ('person.merge', 'Combine two records that describe the same person'),
     
     # Role permissions
     ('role.read', 'View roles'),
@@ -247,6 +251,7 @@ ROLES = {
         'description': 'System administrator with full access',
         'permissions': [
             'user.manage',
+            'person.merge',
             'role.manage',
             'permission.manage',
             'student.manage',

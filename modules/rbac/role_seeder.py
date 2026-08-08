@@ -26,6 +26,7 @@ DEFAULT_ROLES: Dict[str, dict] = {
         "description": "System administrator with full access",
         "permissions": [
             "user.manage",
+            "person.merge",
             "role.manage",
             "permission.manage",
             "audit_log.view",
