@@ -602,7 +602,15 @@ def _attach_transport_summary(rows: List[Dict], academic_year_id: Optional[str])
             r.update(extra)
 
 
-def list_students(
+# Sorts whose key can never be null, so a cursor over them cannot skip or
+# repeat a row. `class`, `programme` and `roll_number` are all nullable and
+# mutable — a cursor over those silently loses students, which is worse than
+# admitting the sort needs an offset.
+CURSORABLE_COLUMNS = {"admission_number", "name"}
+
+
+def _student_list_query(
+    *,
     class_id: str = None,
     class_ids: List[str] = None,
     academic_year_id: str = None,
@@ -615,24 +623,20 @@ def list_students(
     admission_date_to: str = None,
     sort_by: str = "admission_number",
     sort_dir: str = "asc",
-    page: Optional[int] = None,
-    per_page: Optional[int] = None,
-    include_transport_summary: bool = False,
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
-    _restrict_class_ids: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    List students with filtering, searching, sorting and pagination.
+    restrict_class_ids: Optional[List[str]] = None,
+):
+    """The filtered, sorted student query — the one both transports run.
 
-    Returns an envelope: {items, total, page, per_page, total_pages}.
-    When `page` and `per_page` are not provided all matching rows are returned
-    (total_pages = 1) so callers that don't paginate still work.
+    Extracted so REST and GraphQL cannot answer the same question
+    differently while both exist. A filter added here reaches both; a filter
+    added to only one of them is the drift this is here to prevent.
 
-    `_restrict_class_ids` is an internal hard-scope used by the teacher code path
-    to limit results to classes the teacher owns; it's AND-ed with any client
-    class filters.
+    Returns ``(query, sort_key, is_desc)``, or ``None`` when the caller is
+    scoped to no classes at all — a teacher who teaches nothing matches no
+    students, which is not the same as no filter.
     """
     from core.branch_scope import filter_students_by_branch
 
@@ -648,10 +652,10 @@ def list_students(
     query = filter_students_by_branch(query)
 
     # Teacher scope: hard ceiling on which classes are visible at all.
-    if _restrict_class_ids is not None:
-        if not _restrict_class_ids:
-            return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
-        query = query.filter(student_matches_any_class_filter(_restrict_class_ids))
+    if restrict_class_ids is not None:
+        if not restrict_class_ids:
+            return None
+        query = query.filter(student_matches_any_class_filter(restrict_class_ids))
 
     # Client-supplied class scoping (AND-ed with the teacher ceiling above).
     if class_ids:
@@ -771,7 +775,62 @@ def list_students(
     if sort_key != "admission_number":
         order_cols.append(Student.admission_number.asc())
 
-    query = query.order_by(*order_cols)
+    return query.order_by(*order_cols), sort_key, is_desc
+
+
+def list_students(
+    class_id: str = None,
+    class_ids: List[str] = None,
+    academic_year_id: str = None,
+    search: str = None,
+    search_field: str = "all",
+    gender: str = None,
+    student_status: str = None,
+    is_transport_opted: Optional[bool] = None,
+    admission_date_from: str = None,
+    admission_date_to: str = None,
+    sort_by: str = "admission_number",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+    include_transport_summary: bool = False,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
+    _restrict_class_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    List students with filtering, searching, sorting and pagination.
+
+    Returns an envelope: {items, total, page, per_page, total_pages}.
+    When `page` and `per_page` are not provided all matching rows are returned
+    (total_pages = 1) so callers that don't paginate still work.
+
+    `_restrict_class_ids` is an internal hard-scope used by the teacher code path
+    to limit results to classes the teacher owns; it's AND-ed with any client
+    class filters.
+    """
+    built = _student_list_query(
+        class_id=class_id,
+        class_ids=class_ids,
+        academic_year_id=academic_year_id,
+        search=search,
+        search_field=search_field,
+        gender=gender,
+        student_status=student_status,
+        is_transport_opted=is_transport_opted,
+        admission_date_from=admission_date_from,
+        admission_date_to=admission_date_to,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        school_unit_id=school_unit_id,
+        programme_id=programme_id,
+        grade_id=grade_id,
+        restrict_class_ids=_restrict_class_ids,
+    )
+    if built is None:
+        return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
+    query, _sort_key, _is_desc = built
 
     # Pagination. If the caller doesn't ask for a page, return everything
     # (keeps non-paginating callers like the mobile app working).
@@ -1660,97 +1719,122 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
 
+MAX_PAGE_SIZE = 100
+
+
+def cursor_values(row, sort_key: str) -> List[Any]:
+    """What identifies this row's position in the current order.
+
+    The transport makes these opaque; what they *are* is the sort key plus the
+    admission number that breaks its ties, which is the only thing that can
+    resume a walk exactly where it stopped.
+    """
+    if sort_key == "name":
+        return [row.person.full_name if row.person else "", row.admission_number]
+    return [row.admission_number]
+
+
 def students_page(
     *,
-    after: Optional[str] = None,
+    after: Optional[List[Any]] = None,
+    offset: Optional[int] = None,
     first: int = 25,
-    search: Optional[str] = None,
-    class_id: Optional[str] = None,
-    academic_year_id: Optional[str] = None,
-    student_status: Optional[str] = None,
+    sort_by: str = "admission_number",
+    sort_dir: str = "asc",
+    restrict_class_ids: Optional[List[str]] = None,
+    **filters,
 ):
-    """One page of students, walked by key rather than by offset.
+    """One page of students, walked by key or skipped to by offset.
 
-    OFFSET makes the database count past everything it skips, so page 300 of
-    a fifteen-thousand-student trust costs three hundred times page one — and
-    a student admitted while somebody pages can shift every later row, so a
-    child is seen twice or not at all. Walking from the last admission number
-    seen costs the same at any depth and cannot skip anyone.
+    **Prefer `after`.** OFFSET makes the database count past everything it
+    skips, so page 300 of a fifteen-thousand-student trust costs three hundred
+    times page one — and a student admitted while somebody pages shifts every
+    later row, so a child is seen twice or not at all. Walking from the last
+    row seen costs the same at any depth and cannot skip anyone.
 
-    Ordered by admission number because it is unique per school, immutable,
-    and the thing a school already sorts by.
+    `offset` exists because a page-number UI has to be able to jump, which a
+    cursor cannot express, and because it is exactly what the REST list this
+    replaces already did. It is the caller's choice of a known cost, not a
+    default.
+
+    A cursor is only offered for sorts whose key cannot be null
+    (`CURSORABLE_COLUMNS`); over a nullable, mutable key it would silently
+    lose students.
 
     Returns (rows, has_more). The caller asks for one more row than it needs;
     that extra row is the whole of `hasNextPage`, with no second query.
     """
-    from core.branch_scope import filter_students_by_branch
+    first = max(1, min(int(first), MAX_PAGE_SIZE))
 
-    first = max(1, min(int(first), 100))
-
-    query = (
-        Student.query.join(Person, Student.person_id == Person.id)
-        .options(joinedload(Student.person))
+    built = _student_list_query(
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        restrict_class_ids=restrict_class_ids,
+        **filters,
     )
-    query = filter_students_by_branch(query)
+    if built is None:
+        return [], False
+    query, sort_key, is_desc = built
+    query = query.options(joinedload(Student.person))
 
     if after:
-        query = query.filter(Student.admission_number > after)
-    if class_id:
-        query = query.filter(student_matches_class_filter(class_id))
-    if academic_year_id:
-        query = query.filter(student_matches_academic_year_filter(academic_year_id))
-    if student_status:
-        query = query.filter(
-            db.func.lower(Student.student_status) == student_status.strip().lower()
-        )
-    if search:
-        pattern = f"%{search.strip()}%"
-        query = query.filter(
-            db.or_(
-                Person.full_name.ilike(pattern),
-                Student.admission_number.ilike(pattern),
-            )
+        query = query.filter(_after_predicate(after, sort_key, is_desc))
+    elif offset:
+        query = query.offset(max(0, int(offset)))
+
+    rows = query.limit(first + 1).all()
+    return rows[:first], len(rows) > first
+
+
+def _after_predicate(after: List[Any], sort_key: str, is_desc: bool):
+    """Everything ordered strictly past the row this cursor names."""
+    from sqlalchemy import tuple_
+
+    if sort_key not in CURSORABLE_COLUMNS:
+        raise ValueError(
+            f"Sorting by {sort_key} cannot be paged with a cursor because the "
+            "value may be empty and may change. Use offset for this sort."
         )
 
-    rows = query.order_by(Student.admission_number.asc()).limit(first + 1).all()
-    has_more = len(rows) > first
-    return rows[:first], has_more
+    if sort_key == "name":
+        columns = tuple_(Person.full_name, Student.admission_number)
+        # The name sort's tie-breaker is always ascending, so a descending
+        # name sort is not a plain row-value comparison: it is "an earlier
+        # name, or the same name and a later admission number".
+        name, admission_number = after[0], after[1]
+        if is_desc:
+            return db.or_(
+                Person.full_name < name,
+                db.and_(
+                    Person.full_name == name,
+                    Student.admission_number > admission_number,
+                ),
+            )
+        return columns > (name, admission_number)
+
+    value = after[0]
+    return (
+        Student.admission_number < value
+        if is_desc
+        else Student.admission_number > value
+    )
 
 
 def students_matching_count(
     *,
-    search: Optional[str] = None,
-    class_id: Optional[str] = None,
-    academic_year_id: Optional[str] = None,
-    student_status: Optional[str] = None,
+    restrict_class_ids: Optional[List[str]] = None,
+    **filters,
 ) -> int:
     """How many students the same filters match.
 
     Separate from the page on purpose: counting fifteen thousand rows is real
     work, and a client that only renders a list should not pay for a total it
-    never shows.
+    never shows. Sorting is irrelevant to a count, so it is not passed on.
     """
-    from core.branch_scope import filter_students_by_branch
-
-    query = Student.query.join(Person, Student.person_id == Person.id)
-    query = filter_students_by_branch(query)
-
-    if class_id:
-        query = query.filter(student_matches_class_filter(class_id))
-    if academic_year_id:
-        query = query.filter(student_matches_academic_year_filter(academic_year_id))
-    if student_status:
-        query = query.filter(
-            db.func.lower(Student.student_status) == student_status.strip().lower()
-        )
-    if search:
-        pattern = f"%{search.strip()}%"
-        query = query.filter(
-            db.or_(
-                Person.full_name.ilike(pattern),
-                Student.admission_number.ilike(pattern),
-            )
-        )
+    built = _student_list_query(restrict_class_ids=restrict_class_ids, **filters)
+    if built is None:
+        return 0
+    query, _sort_key, _is_desc = built
     return query.count()
 
 

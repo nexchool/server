@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import base64
 import datetime
-from typing import Any, Dict, Optional
+import enum
+import json
+from typing import Any, Dict, List, Optional
 
 import strawberry
 
@@ -32,6 +34,7 @@ from graphql_api.permissions import (
     RequiresTenant,
     SetupComplete,
     requires,
+    requires_any,
 )
 
 from .graphql.types import (
@@ -43,7 +46,45 @@ from .graphql.types import (
 )
 
 PERM_READ = "student.read.all"
+# A class teacher reads the same field, but only the classes they teach.
+PERM_READ_CLASS = "student.read.class"
 PERM_UPDATE = "student.update"
+
+
+@strawberry.enum(description="What a list of students is ordered by.")
+class StudentOrder(enum.Enum):
+    ADMISSION_NUMBER = "admission_number"
+    NAME = "name"
+    CLASS = "class"
+    PROGRAMME = "programme"
+    ROLL_NUMBER = "roll_number"
+
+
+@strawberry.enum
+class OrderDirection(enum.Enum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+@strawberry.input(description="Which students to include.")
+class StudentFilter:
+    search: Optional[str] = None
+    search_field: Optional[str] = strawberry.field(
+        default=None,
+        description="Which field to search: name, admission_number, email, guardian_phone, programme. Omit to search all of them.",
+    )
+    class_id: Optional[strawberry.ID] = None
+    class_ids: Optional[List[strawberry.ID]] = None
+    academic_year_id: Optional[strawberry.ID] = None
+    school_unit_id: Optional[strawberry.ID] = None
+    programme_id: Optional[strawberry.ID] = None
+    grade_id: Optional[strawberry.ID] = None
+    grade: Optional[str] = None
+    status: Optional[str] = None
+    gender: Optional[str] = None
+    is_transport_opted: Optional[bool] = None
+    admitted_from: Optional[datetime.date] = None
+    admitted_to: Optional[datetime.date] = None
 
 # Changing where a student stands with the school is one authority, whichever
 # of the workflows does it — the REST routes these replace all ask for the
@@ -62,18 +103,71 @@ _REFUSALS = {
 }
 
 
-def _encode(admission_number: str) -> str:
-    """Cursors are opaque so clients cannot build one and page from nowhere."""
-    return base64.urlsafe_b64encode(admission_number.encode()).decode()
+def _encode(values: List[Any]) -> str:
+    """Cursors are opaque so clients cannot build one and page from nowhere.
+
+    What is inside is the sort key and its tie-breaker; what a client sees is
+    a string it got from us and hands back unchanged.
+    """
+    return base64.urlsafe_b64encode(json.dumps(values).encode()).decode()
 
 
-def _decode(cursor: Optional[str]) -> Optional[str]:
+def _decode(cursor: Optional[str]) -> Optional[List[Any]]:
     if not cursor:
         return None
     try:
-        return base64.urlsafe_b64decode(cursor.encode()).decode()
+        values = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
     except Exception:
+        raise ValidationError("That cursor is not one this server issued.")
+    if not isinstance(values, list) or not values:
+        raise ValidationError("That cursor is not one this server issued.")
+    return values
+
+
+def _filters_from(where: Optional["StudentFilter"]) -> Dict[str, Any]:
+    """The filter input as the service's keyword arguments."""
+    if where is None:
+        return {}
+    return {
+        "search": where.search,
+        "search_field": where.search_field or "all",
+        "class_id": str(where.class_id) if where.class_id else None,
+        "class_ids": [str(c) for c in where.class_ids] if where.class_ids else None,
+        "academic_year_id": (
+            str(where.academic_year_id) if where.academic_year_id else None
+        ),
+        "school_unit_id": str(where.school_unit_id) if where.school_unit_id else None,
+        "programme_id": str(where.programme_id) if where.programme_id else None,
+        "grade_id": str(where.grade_id) if where.grade_id else None,
+        "student_status": where.status,
+        "gender": where.gender,
+        "is_transport_opted": where.is_transport_opted,
+        "admission_date_from": (
+            where.admitted_from.isoformat() if where.admitted_from else None
+        ),
+        "admission_date_to": (
+            where.admitted_to.isoformat() if where.admitted_to else None
+        ),
+    }
+
+
+def _class_ceiling(info: strawberry.Info) -> Optional[List[str]]:
+    """The classes this caller may see at all, or None for the whole school.
+
+    A class teacher holds `student.read.class`, not `student.read.all`: the
+    same field, a smaller school. Returning an empty list is meaningful — a
+    teacher who teaches nothing sees nobody, which is not the same as no
+    filter at all.
+    """
+    from modules.rbac.services import has_permission
+
+    user = info.context.current_user
+    if has_permission(user.id, PERM_READ):
         return None
+
+    from modules.attendance.services import get_teacher_class_ids
+
+    return get_teacher_class_ids(user.id)
 
 
 def _completed(outcome: Dict[str, Any], student_id: str) -> Student:
@@ -99,10 +193,16 @@ def _completed(outcome: Dict[str, Any], student_id: str) -> Student:
 @strawberry.type
 class StudentQuery:
     @strawberry.field(
-        permission_classes=[IsAuthenticated, RequiresTenant, requires(PERM_READ)],
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_any(PERM_READ, PERM_READ_CLASS),
+        ],
         description=(
-            "Students of this school, in admission-number order. Page with "
-            "`first` and the previous page's `endCursor` as `after`."
+            "Students of this school. Page with `first` and the previous "
+            "page's `endCursor` as `after`; use `offset` only when a "
+            "page-number control has to jump, which a cursor cannot express. "
+            "A class teacher sees the classes they teach."
         ),
     )
     def students(
@@ -110,21 +210,40 @@ class StudentQuery:
         info: strawberry.Info,
         first: int = 25,
         after: Optional[str] = None,
-        search: Optional[str] = None,
-        class_id: Optional[strawberry.ID] = None,
-        academic_year_id: Optional[strawberry.ID] = None,
-        status: Optional[str] = None,
+        offset: Optional[int] = None,
+        order_by: StudentOrder = StudentOrder.ADMISSION_NUMBER,
+        direction: OrderDirection = OrderDirection.ASC,
+        where: Optional[StudentFilter] = None,
     ) -> StudentConnection:
-        from .services import students_page
+        from .services import CURSORABLE_COLUMNS, cursor_values, students_page
 
-        filters = {
-            "search": search,
-            "class_id": str(class_id) if class_id else None,
-            "academic_year_id": str(academic_year_id) if academic_year_id else None,
-            "student_status": status,
-        }
+        if after and offset:
+            # They answer the same question differently; honouring one would
+            # silently ignore the other.
+            raise ValidationError(
+                "Give either `after` or `offset`, not both."
+            )
+        if offset is not None and offset < 0:
+            raise ValidationError("`offset` cannot be negative.")
+
+        sort_key = order_by.value
+        if after and sort_key not in CURSORABLE_COLUMNS:
+            raise ValidationError(
+                f"Ordering by {sort_key} cannot be paged with a cursor, because "
+                "the value may be empty and may change while somebody reads. "
+                "Use `offset` with this order."
+            )
+
+        filters = _filters_from(where)
+        ceiling = _class_ceiling(info)
         rows, has_more = students_page(
-            after=_decode(after), first=first, **filters
+            after=_decode(after),
+            offset=offset,
+            first=first,
+            sort_by=sort_key,
+            sort_dir=direction.value,
+            restrict_class_ids=ceiling,
+            **filters,
         )
 
         # Fetch every class this page mentions before anything asks for
@@ -134,7 +253,8 @@ class StudentQuery:
 
         edges = [
             StudentEdge(
-                node=student_to_graphql(row), cursor=_encode(row.admission_number)
+                node=student_to_graphql(row),
+                cursor=_encode(cursor_values(row, sort_key)),
             )
             for row in rows
         ]
@@ -144,11 +264,15 @@ class StudentQuery:
                 has_next_page=has_more,
                 end_cursor=edges[-1].cursor if edges else None,
             ),
-            filters=filters,
+            filters={**filters, "restrict_class_ids": ceiling},
         )
 
     @strawberry.field(
-        permission_classes=[IsAuthenticated, RequiresTenant, requires(PERM_READ)],
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_any(PERM_READ, PERM_READ_CLASS),
+        ],
         description="One student of this school.",
     )
     def student(self, info: strawberry.Info, id: strawberry.ID) -> Optional[Student]:

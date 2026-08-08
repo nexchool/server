@@ -39,6 +39,13 @@ class Student:
     date_of_birth: Optional[datetime.date] = None
     gender: Optional[str] = None
     roll_number: Optional[int] = None
+    guardian_phone: Optional[str] = strawberry.field(
+        default=None,
+        description=(
+            "Contact for the student's guardian. Still a column on the student "
+            "row rather than a household read — see the debt register."
+        ),
+    )
 
     # Not exposed: the key the class field loads from.
     class_id: strawberry.Private[Optional[str]] = None
@@ -113,5 +120,6 @@ def student_to_graphql(row) -> Student:
         date_of_birth=person.date_of_birth if person else None,
         gender=person.gender if person else None,
         roll_number=row.roll_number,
+        guardian_phone=row.guardian_phone,
         class_id=row.class_id,
     )

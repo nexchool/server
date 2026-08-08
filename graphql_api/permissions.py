@@ -93,6 +93,32 @@ class SetupComplete(BasePermission):
         return True
 
 
+def requires_any(*permission_keys: str) -> Type[BasePermission]:
+    """Field-level guard satisfied by any one of several Business Actions.
+
+    Some reads are offered to more than one kind of person on different terms
+    — a head teacher may read the whole school, a class teacher only their own
+    classes. Both reach the same field; what differs is what it returns, which
+    is the resolver's job, not this guard's.
+    """
+
+    class RequiresAnyPermission(BasePermission):
+        message = "You do not have permission to perform this action."
+
+        def has_permission(self, source: Any, info: Any, **kwargs: Any) -> bool:
+            from modules.rbac.services import has_permission as holds
+
+            user = getattr(info.context, "current_user", None)
+            if user is None or not any(holds(user.id, key) for key in permission_keys):
+                raise AuthorizationError(self.message)
+            return True
+
+    RequiresAnyPermission.__name__ = "RequiresAny_" + "_".join(
+        key.replace(".", "_") for key in permission_keys
+    )
+    return RequiresAnyPermission
+
+
 def requires(permission_key: str) -> Type[BasePermission]:
     """Field-level guard for one Business Action.
 
