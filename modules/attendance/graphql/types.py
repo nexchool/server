@@ -25,11 +25,18 @@ class AttendanceCorrection:
     status: str = strawberry.field(
         description="requested, approved or rejected."
     )
-    requested_by_user_id: Optional[strawberry.ID] = None
     requested_at: Optional[datetime.datetime] = None
-    decided_by_user_id: Optional[strawberry.ID] = None
     decided_at: Optional[datetime.datetime] = None
     decision_note: Optional[str] = None
+
+    # Who and when this is about. A queue of ids is not something a person can
+    # decide on — the reviewer needs the child, the class and the day.
+    student_id: Optional[strawberry.ID] = None
+    student_name: Optional[str] = None
+    class_name: Optional[str] = None
+    session_date: Optional[datetime.date] = None
+    requested_by_name: Optional[str] = None
+    decided_by_name: Optional[str] = None
 
 
 @strawberry.type(description="A correction, and whether it took effect at once.")
@@ -44,7 +51,14 @@ class CorrectionOutcome:
     )
 
 
-def correction_to_graphql(row) -> AttendanceCorrection:
+def correction_to_graphql(row, context=None) -> AttendanceCorrection:
+    """One correction, with the people and the day it is about.
+
+    `context` comes from `correction_service.context_for`, which fetches it
+    for a whole batch. Passing nothing yields the correction alone — fine for
+    a single row, wrong for a queue.
+    """
+    about = (context or {}).get(row.id, {})
     return AttendanceCorrection(
         id=strawberry.ID(row.id),
         attendance_record_id=strawberry.ID(row.attendance_record_id),
@@ -52,15 +66,15 @@ def correction_to_graphql(row) -> AttendanceCorrection:
         to_status=row.to_status,
         reason=row.reason,
         status=row.status,
-        requested_by_user_id=(
-            strawberry.ID(row.requested_by_user_id)
-            if row.requested_by_user_id
-            else None
-        ),
         requested_at=row.requested_at,
-        decided_by_user_id=(
-            strawberry.ID(row.decided_by_user_id) if row.decided_by_user_id else None
-        ),
         decided_at=row.decided_at,
         decision_note=row.decision_note,
+        student_id=(
+            strawberry.ID(about["student_id"]) if about.get("student_id") else None
+        ),
+        student_name=about.get("student_name"),
+        class_name=about.get("class_name"),
+        session_date=about.get("session_date"),
+        requested_by_name=about.get("requested_by_name"),
+        decided_by_name=about.get("decided_by_name"),
     )

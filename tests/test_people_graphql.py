@@ -15,7 +15,16 @@ import pytest
 
 from graphql_api import GRAPHQL_PATH
 
-SUGGESTIONS = "{ duplicateSuggestions(limit: 10) { personId otherPersonId reason } }"
+SUGGESTIONS = """
+{
+  duplicateSuggestions(limit: 10) {
+    reason
+    blockedReason
+    person { id fullName phoneNumber hasAccount isEmployed isStudent }
+    other { id fullName phoneNumber }
+  }
+}
+"""
 
 MERGE = """
 mutation Merge($keep: ID!, $absorb: ID!) {
@@ -226,3 +235,9 @@ def test_suggestions_are_offered_to_someone_who_may_merge(
     assert "errors" not in body, body
     found = body["data"]["duplicateSuggestions"]
     assert found and found[0]["reason"] == "same phone and name"
+    # A pair of ids is not something a person can judge. The suggestion has to
+    # say who these two are, or the reviewer has to go and look them up.
+    assert found[0]["person"]["fullName"] == "Sunita Vyas"
+    assert found[0]["other"]["fullName"] == "Sunita Vyas"
+    assert found[0]["person"]["phoneNumber"] == "9800022222"
+    assert found[0]["blockedReason"] is None

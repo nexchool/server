@@ -595,3 +595,46 @@ def record_household(tenant_id: str, child_person_id: str, members) -> None:
         if is_contact:
             name_the_contact(member)
             break
+
+
+def people_summaries(person_ids):
+    """Several people, and what each of them holds, in a fixed number of queries.
+
+    "What they hold" is an account, an employment, a studentship — the three
+    things only one human may have, and therefore the three things that decide
+    whether two records can be combined at all.
+
+    Read through the backrefs those modules declare onto Person, not by
+    importing them: People is a foundation domain and must not know that
+    Identity or Academic exist (a Person is a person whether or not they ever
+    log in). `selectinload` batches each one into a single query, so this is
+    four queries whatever the batch size — asked per person it is the N+1 that
+    makes a reconciliation screen unusable on the tenant that most needs one.
+    """
+    from sqlalchemy.orm import selectinload
+
+    from .models import Person
+
+    wanted = [pid for pid in set(person_ids or ()) if pid]
+    if not wanted:
+        return {}, {}
+
+    rows = (
+        Person.query.options(
+            selectinload(Person.accounts),
+            selectinload(Person.employments),
+            selectinload(Person.student_relationships),
+        )
+        .filter(Person.id.in_(wanted))
+        .all()
+    )
+
+    by_id, holdings = {}, {}
+    for row in rows:
+        by_id[row.id] = row
+        holdings[row.id] = {
+            "has_account": bool(row.accounts),
+            "is_employed": bool(row.employments),
+            "is_student": bool(row.student_relationships),
+        }
+    return by_id, holdings

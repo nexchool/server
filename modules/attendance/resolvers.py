@@ -99,12 +99,11 @@ class AttendanceQuery:
     def pending_attendance_corrections(
         self, info: strawberry.Info
     ) -> List[AttendanceCorrection]:
-        from .correction_service import pending_corrections
+        from .correction_service import context_for, pending_corrections
 
-        return [
-            correction_to_graphql(row)
-            for row in pending_corrections(info.context.tenant_id)
-        ]
+        rows = pending_corrections(info.context.tenant_id)
+        about = context_for(rows)
+        return [correction_to_graphql(row, about) for row in rows]
 
     @strawberry.field(
         permission_classes=[
@@ -121,12 +120,11 @@ class AttendanceQuery:
     def attendance_record_corrections(
         self, info: strawberry.Info, record_id: strawberry.ID
     ) -> List[AttendanceCorrection]:
-        from .correction_service import corrections_for_record
+        from .correction_service import context_for, corrections_for_record
 
-        return [
-            correction_to_graphql(row)
-            for row in corrections_for_record(info.context.tenant_id, str(record_id))
-        ]
+        rows = corrections_for_record(info.context.tenant_id, str(record_id))
+        about = context_for(rows)
+        return [correction_to_graphql(row, about) for row in rows]
 
 
 @strawberry.type
@@ -218,9 +216,9 @@ def _reread(info: strawberry.Info, correction_id: str) -> AttendanceCorrection:
     second thing to keep in step. Asked of the service rather than the model
     so the read is not something only GraphQL can do.
     """
-    from .correction_service import correction_by_id
+    from .correction_service import context_for, correction_by_id
 
     row = correction_by_id(info.context.tenant_id, correction_id)
     if row is None:
         raise NotFoundError("Correction not found")
-    return correction_to_graphql(row)
+    return correction_to_graphql(row, context_for([row]))

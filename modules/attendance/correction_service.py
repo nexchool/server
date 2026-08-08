@@ -16,6 +16,8 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.orm import joinedload
+
 from core.database import db
 from core.school_time import school_today, utc_now
 from modules.academics.backbone.models import AttendanceRecord, AttendanceSession
@@ -201,6 +203,88 @@ def reject_correction(
     correction.decision_note = note
     db.session.commit()
     return {"success": True, "correction": correction.to_dict()}
+
+
+def context_for(corrections) -> Dict[str, Dict[str, Any]]:
+    """Who and when each correction is about, for a whole batch at once.
+
+    A queue of ids is not something a person can decide on: the reviewer needs
+    the child, the class, the day, and who asked. Fetched for the batch rather
+    than per row — a term's backlog asked one at a time is the N+1 that makes
+    the queue unusable exactly when it is long.
+    """
+    from modules.academics.backbone.models import AttendanceRecord, AttendanceSession
+    from modules.auth.models import User
+    from modules.classes.models import Class
+    from modules.people.models import Person
+    from modules.students.models import Student
+
+    rows = list(corrections or ())
+    if not rows:
+        return {}
+
+    record_ids = {row.attendance_record_id for row in rows}
+    records = {
+        record.id: record
+        for record in AttendanceRecord.query.filter(
+            AttendanceRecord.id.in_(record_ids)
+        ).all()
+    }
+    session_ids = {r.attendance_session_id for r in records.values()}
+    sessions = {
+        session.id: session
+        for session in AttendanceSession.query.filter(
+            AttendanceSession.id.in_(session_ids)
+        ).all()
+    } if session_ids else {}
+    class_ids = {s.class_id for s in sessions.values() if s.class_id}
+    classes = {
+        row.id: row for row in Class.query.filter(Class.id.in_(class_ids)).all()
+    } if class_ids else {}
+    student_ids = {r.student_id for r in records.values() if r.student_id}
+    students = {
+        student.id: student
+        for student in Student.query.options(joinedload(Student.person))
+        .filter(Student.id.in_(student_ids))
+        .all()
+    } if student_ids else {}
+
+    user_ids = {row.requested_by_user_id for row in rows if row.requested_by_user_id}
+    user_ids |= {row.decided_by_user_id for row in rows if row.decided_by_user_id}
+    # The name a person is known by lives on the Person (ADR-001); the account
+    # is only how they sign in.
+    people = {}
+    if user_ids:
+        for user in (
+            User.query.options(joinedload(User.person))
+            .filter(User.id.in_(user_ids))
+            .all()
+        ):
+            people[user.id] = (
+                user.person.full_name if user.person else user.name
+            )
+
+    built = {}
+    for row in rows:
+        record = records.get(row.attendance_record_id)
+        session = sessions.get(record.attendance_session_id) if record else None
+        klass = classes.get(session.class_id) if session else None
+        student = students.get(record.student_id) if record else None
+        label = None
+        if klass:
+            base = klass.name or (klass.grade.name if klass.grade else None)
+            label = "-".join(p for p in (base, klass.section) if p) or None
+        built[row.id] = {
+            "student_id": record.student_id if record else None,
+            "student_name": (
+                student.person.full_name if student and student.person else None
+            ),
+            "class_name": label,
+            "session_date": session.session_date if session else None,
+            "requested_by_name": people.get(row.requested_by_user_id),
+            "decided_by_name": people.get(row.decided_by_user_id),
+        }
+    return built
 
 
 def correction_by_id(tenant_id: str, correction_id: str) -> Optional[AttendanceCorrection]:

@@ -37,7 +37,14 @@ mutation A($id: ID!, $note: String) {
 
 REJECT = "mutation J($id: ID!) { rejectAttendanceCorrection(id: $id) { id status } }"
 
-PENDING = "query { pendingAttendanceCorrections { id toStatus reason } }"
+PENDING = """
+query {
+  pendingAttendanceCorrections {
+    id toStatus reason
+    studentName className sessionDate requestedByName
+  }
+}
+"""
 
 HISTORY = """
 query H($recordId: ID!) {
@@ -438,9 +445,14 @@ def test_the_pending_queue_shows_what_is_waiting_on_a_decision(
 
     body = _ask(client, tenant, head_token, PENDING)
 
-    assert [c["toStatus"] for c in body["data"]["pendingAttendanceCorrections"]] == [
-        "late"
-    ]
+    waiting = body["data"]["pendingAttendanceCorrections"]
+    assert [c["toStatus"] for c in waiting] == ["late"]
+    # A queue of ids is not something a head of year can decide on. The child,
+    # the class and the day have to be on the row.
+    assert waiting[0]["studentName"] == "Riya Shah"
+    assert waiting[0]["className"] == "Grade 4-A"
+    assert waiting[0]["sessionDate"] == "2026-09-01"
+    assert waiting[0]["requestedByName"]
 
 
 def test_a_decided_correction_leaves_the_queue(
