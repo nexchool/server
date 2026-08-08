@@ -467,3 +467,198 @@ def test_the_catalogue_needs_the_subject_authority(
     body = _ask(client, tenant, token, SUBJECTS)
 
     assert "FORBIDDEN" in _codes(body)
+
+
+# ---------------------------------------------------------------------------
+# The catalogue an administrator manages — subject + where it is taught
+# ---------------------------------------------------------------------------
+
+CATALOGUE = """
+query C(
+  $first: Int!, $offset: Int, $orderBy: SubjectOrder!,
+  $direction: SubjectOrderDirection!, $where: SubjectFilter
+) {
+  subjectCatalogue(
+    first: $first, offset: $offset, orderBy: $orderBy,
+    direction: $direction, where: $where
+  ) {
+    totalCount
+    hasNextPage
+    nodes {
+      id name code subjectType isActive
+      classes {
+        classSubjectId classId className gradeName
+        programmeId programmeName weeklyPeriods isMandatory
+      }
+      programmes { id name }
+    }
+  }
+}
+"""
+
+
+def _catalogue(client, tenant, token, **overrides):
+    variables = {
+        "first": 20, "offset": None, "orderBy": "NAME", "direction": "ASC",
+        "where": None,
+    }
+    variables.update(overrides)
+    return _ask(client, tenant, token, CATALOGUE, **variables)
+
+
+@pytest.fixture
+def taught_somewhere(db_session, tenant, structure, catalogue):
+    """Mathematics taught in one class; the rest assigned nowhere."""
+    from modules.academic_programmes.models import AcademicProgramme
+    from modules.classes.models import Class, ClassSubject
+    from modules.grades.models import Grade
+
+    _campuses, years = structure
+    programme = AcademicProgramme(
+        id=_new_id("ap-"), tenant_id=tenant.id, name="GSEB Gujarati",
+        board="GSEB", code=f"GG-{uuid.uuid4().hex[:6]}",
+    )
+    grade = Grade(id=_new_id("g-"), tenant_id=tenant.id, name="Grade 5", sequence=5)
+    db_session.add_all([programme, grade])
+    db_session.flush()
+
+    klass = Class(
+        id=_new_id("c-"), tenant_id=tenant.id, name="5", section="A",
+        academic_year_id=years[-1].id, programme_id=programme.id,
+        grade_id=grade.id,
+    )
+    db_session.add(klass)
+    db_session.flush()
+
+    maths = next(s for s in catalogue if s.name == "Mathematics")
+    class_subject = ClassSubject(
+        id=_new_id("cs-"), tenant_id=tenant.id, class_id=klass.id,
+        subject_id=maths.id, weekly_periods=6, is_mandatory=True,
+        status="active",
+    )
+    db_session.add(class_subject)
+    db_session.flush()
+    return {"class": klass, "programme": programme, "class_subject": class_subject}
+
+
+def test_the_catalogue_says_where_each_subject_is_taught(
+    client, db_session, tenant, taught_somewhere
+):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token)
+
+    assert "errors" not in body, body
+    by_name = {s["name"]: s for s in body["data"]["subjectCatalogue"]["nodes"]}
+    taught = by_name["Mathematics"]["classes"]
+    assert len(taught) == 1
+    assert taught[0]["classId"] == taught_somewhere["class"].id
+    assert taught[0]["gradeName"] == "Grade 5"
+    assert taught[0]["weeklyPeriods"] == 6
+    assert by_name["Mathematics"]["programmes"] == [
+        {"id": taught_somewhere["programme"].id, "name": "GSEB Gujarati"}
+    ]
+
+
+def test_a_subject_taught_nowhere_says_so_rather_than_being_hidden(
+    client, db_session, tenant, taught_somewhere
+):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token)
+
+    by_name = {s["name"]: s for s in body["data"]["subjectCatalogue"]["nodes"]}
+    assert by_name["English"]["classes"] == []
+    assert by_name["English"]["programmes"] == []
+
+
+def test_a_class_that_stopped_taking_a_subject_is_not_listed(
+    client, db_session, tenant, taught_somewhere
+):
+    taught_somewhere["class_subject"].status = "inactive"
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token)
+
+    by_name = {s["name"]: s for s in body["data"]["subjectCatalogue"]["nodes"]}
+    assert by_name["Mathematics"]["classes"] == []
+
+
+def test_the_catalogue_pages(client, db_session, tenant, catalogue):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    first = _catalogue(client, tenant, token, first=1)
+    assert first["data"]["subjectCatalogue"]["hasNextPage"] is True
+    assert first["data"]["subjectCatalogue"]["totalCount"] == 2
+
+    second = _catalogue(client, tenant, token, first=1, offset=1)
+    assert second["data"]["subjectCatalogue"]["hasNextPage"] is False
+    assert (
+        first["data"]["subjectCatalogue"]["nodes"][0]["id"]
+        != second["data"]["subjectCatalogue"]["nodes"][0]["id"]
+    )
+
+
+def test_the_total_describes_the_search_not_the_catalogue(
+    client, db_session, tenant, catalogue
+):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token, where={"search": "math"})
+
+    page = body["data"]["subjectCatalogue"]
+    assert page["totalCount"] == 1
+    assert [s["name"] for s in page["nodes"]] == ["Mathematics"]
+
+
+def test_the_catalogue_can_be_asked_for_what_is_no_longer_offered(
+    client, db_session, tenant, catalogue
+):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token, where={"includeInactive": True})
+
+    names = [s["name"] for s in body["data"]["subjectCatalogue"]["nodes"]]
+    assert "Sanskrit" in names
+
+
+def test_sorting_the_catalogue_by_code_backwards(
+    client, db_session, tenant, catalogue
+):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token, orderBy="CODE", direction="DESC")
+
+    assert [s["code"] for s in body["data"]["subjectCatalogue"]["nodes"]] == [
+        "MATH", "ENG",
+    ]
+
+
+def test_a_subject_type_the_schema_does_not_know_is_refused(
+    client, db_session, tenant, catalogue
+):
+    """The enum does what the REST route's hand-written check used to."""
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token, where={"subjectType": "WIZARDRY"})
+
+    assert "errors" in body, body
+
+
+def test_a_negative_offset_is_refused_rather_than_resolved(
+    client, db_session, tenant, catalogue
+):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _catalogue(client, tenant, token, offset=-1)
+
+    assert "VALIDATION_ERROR" in _codes(body)
+
+
+def test_reading_the_catalogue_needs_the_subject_authority(
+    client, db_session, tenant, catalogue
+):
+    _user, token = _staff_with(db_session, tenant, "class.read")
+
+    assert "FORBIDDEN" in _codes(_catalogue(client, tenant, token))

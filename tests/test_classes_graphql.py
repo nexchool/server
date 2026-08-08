@@ -738,3 +738,69 @@ def test_a_token_from_another_school_reads_nothing(
     body = _list(client, tenant, token)
 
     assert "errors" in body, body
+
+
+# ---------------------------------------------------------------------------
+# The two REST reads the Expo client still needs
+# ---------------------------------------------------------------------------
+
+def _rest(client, tenant, token, path):
+    return client.get(
+        path,
+        headers={
+            "X-Tenant-Subdomain": tenant.subdomain,
+            "Authorization": f"Bearer {token}",
+        },
+    )
+
+
+def test_the_mobile_class_list_still_answers(client, db_session, tenant, school):
+    """`GET /api/classes/` is read by two Expo services.
+
+    It was deleted once on the strength of a grep over `client/src`, which is
+    not where this repo's Expo code lives — `client/modules/` is. It goes when
+    the mobile app moves to GraphQL and not before, so this test exists to
+    make the next person look.
+    """
+    _user, token = _staff_with(db_session, tenant, "class.read")
+
+    response = _rest(client, tenant, token, "/api/classes/")
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()["data"]
+    assert payload["total"] == 3
+    assert {item["section"] for item in payload["items"]} == {"A", "B"}
+
+
+def test_the_mobile_class_detail_still_answers(client, db_session, tenant, school):
+    """`GET /api/classes/<id>` is `classService.getClassDetail` on mobile."""
+    nursery_a, _a, _b = school
+    _user, token = _staff_with(db_session, tenant, "class.read")
+
+    response = _rest(client, tenant, token, f"/api/classes/{nursery_a.id}")
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()["data"]
+    assert payload["section"] == "A"
+    assert payload["student_count"] == 3
+    assert len(payload["students"]) == 3
+    assert payload["status"] == "active"
+
+
+def test_both_transports_describe_the_same_class(
+    client, db_session, tenant, school
+):
+    """One reader, two shapes. The previous version of the REST payload was a
+    second *reader*, and the two drifted."""
+    nursery_a, _a, _b = school
+    _user, token = _staff_with(db_session, tenant, "class.read")
+
+    over_rest = _rest(client, tenant, token, f"/api/classes/{nursery_a.id}").get_json()[
+        "data"
+    ]
+    over_graphql = _ask(client, tenant, token, DETAIL, id=nursery_a.id)["data"]["class"]
+
+    assert over_rest["student_count"] == over_graphql["studentCount"]
+    assert over_rest["teacher_count"] == over_graphql["teacherCount"]
+    assert over_rest["status"] == over_graphql["status"]
+    assert len(over_rest["students"]) == len(over_graphql["students"])

@@ -13,10 +13,12 @@ without the server pretending they are one authority.
 
 from __future__ import annotations
 
-from typing import List, Optional
+import enum
+from typing import Any, Dict, List, Optional
 
 import strawberry
 
+from graphql_api.errors import ValidationError
 from graphql_api.permissions import (
     IsAuthenticated,
     RequiresTenant,
@@ -31,13 +33,52 @@ from .graphql.types import (
     Medium,
     Programme,
     Subject,
+    SubjectPage,
     academic_years_to_graphql,
     campuses_to_graphql,
+    catalogue_to_graphql,
     grades_to_graphql,
     mediums_to_graphql,
     programmes_to_graphql,
     subjects_to_graphql,
 )
+
+
+@strawberry.enum(description="What a page of the subject catalogue is ordered by.")
+class SubjectOrder(enum.Enum):
+    NAME = "name"
+    CODE = "code"
+    SUBJECT_TYPE = "subject_type"
+    CREATED_AT = "created_at"
+    UPDATED_AT = "updated_at"
+
+
+@strawberry.enum
+class SubjectOrderDirection(enum.Enum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+@strawberry.enum(description="What kind of thing a subject is.")
+class SubjectTypeFilter(enum.Enum):
+    CORE = "core"
+    ELECTIVE = "elective"
+    LANGUAGE = "language"
+    ACTIVITY = "activity"
+    CO_CURRICULAR = "co_curricular"
+    OTHER = "other"
+
+
+@strawberry.input(description="Which subjects to include.")
+class SubjectFilter:
+    search: Optional[str] = strawberry.field(
+        default=None, description="Matched against name, code and description."
+    )
+    subject_type: Optional[SubjectTypeFilter] = None
+    include_inactive: Optional[bool] = strawberry.field(
+        default=False,
+        description="Include subjects the school has stopped offering.",
+    )
 
 # A campus is a `school_unit` in the tables; the keys predate the word.
 PERM_CAMPUS_READ = "school_unit.read"
@@ -61,6 +102,23 @@ PERM_SUBJECT_READ = "subject.read"
 PERM_MEDIUM_READ = "school_setup.read"
 PERM_MEDIUM_MANAGE = "school_setup.manage"
 PERM_CLASS_SUBJECT_MANAGE = "class_subject.manage"
+
+
+def _subject_filters_from(where: Optional[SubjectFilter]) -> Dict[str, Any]:
+    """The filter input as the service's keyword arguments.
+
+    Always every key: the totals resolver reads them by name, and a missing
+    one there is a 500 rather than a total over everything.
+    """
+    if where is None:
+        where = SubjectFilter()
+    return {
+        "search": where.search,
+        "subject_type": (
+            where.subject_type.value if where.subject_type else None
+        ),
+        "include_inactive": bool(where.include_inactive),
+    }
 
 
 @strawberry.type
@@ -185,4 +243,46 @@ class AcademicsQuery:
             services.list_subjects_filtered(
                 info.context.tenant_id, include_inactive=include_inactive
             )
+        )
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires(PERM_SUBJECT_READ),
+        ],
+        description=(
+            "The subject catalogue with where each subject is taught — its "
+            "live class assignments and the programmes those imply. `subjects` "
+            "is the plain list a picker wants; this is the administrator's "
+            "view of the same catalogue, paged and searchable."
+        ),
+    )
+    def subject_catalogue(
+        self,
+        info: strawberry.Info,
+        first: int = 20,
+        offset: Optional[int] = None,
+        order_by: SubjectOrder = SubjectOrder.NAME,
+        direction: SubjectOrderDirection = SubjectOrderDirection.ASC,
+        where: Optional[SubjectFilter] = None,
+    ) -> SubjectPage:
+        from modules.subjects import services
+
+        if offset is not None and offset < 0:
+            raise ValidationError("`offset` cannot be negative.")
+
+        filters = _subject_filters_from(where)
+        rows, has_more = services.subjects_page(
+            info.context.tenant_id,
+            first=first,
+            offset=offset,
+            sort_by=order_by.value,
+            sort_dir=direction.value,
+            **filters,
+        )
+        return SubjectPage(
+            nodes=catalogue_to_graphql(rows),
+            has_next_page=has_more,
+            filters=filters,
         )

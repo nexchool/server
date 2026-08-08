@@ -27,77 +27,27 @@ PERM_READ = "subject.read"
 PERM_MANAGE = "subject.manage"
 
 
-# Presence of any of these params switches the list response from the legacy
-# flat array to the paginated envelope {items, total, page, per_page,
-# total_pages} — existing consumers (mobile, class modals) keep the array.
-_ENVELOPE_PARAMS = ("page", "per_page", "search", "subject_type", "sort_by", "sort_dir")
-
-
-def _parse_positive_int(name: str, raw):
-    """Return (value, error). None raw → (None, None)."""
-    if raw is None:
-        return None, None
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return None, f"{name} must be an integer"
-    if value < 1:
-        return None, f"{name} must be >= 1"
-    return value, None
-
-
 @subjects_bp.route("/", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
 @require_feature("class_management")
 @require_any_permission(PERM_READ, PERM_MANAGE)
 def list_subjects():
-    """List subjects for the current tenant.
+    """The subjects a school teaches, as a flat array.
 
-    Legacy shape (no list params): flat array of subjects.
-    With any of page/per_page/search/subject_type/sort_by/sort_dir: paginated
-    envelope with classes[]/programmes[] enrichment per item.
+    ⚠️ **Kept for the Expo client only** (`client/modules/subjects/services/
+    subjectService.ts`). admin-web reads `subjects` and `subjectCatalogue` on
+    GraphQL; the administrator's paginated catalogue that used to live behind
+    this URL's query params is gone. Both transports call
+    `list_subjects_filtered`, so there is one reader.
+
+    Delete with the Expo release that moves the mobile app.
     """
-    tenant_id = g.tenant_id
     include_inactive = request.args.get("include_inactive", "false").lower() == "true"
-
-    if not any(request.args.get(p) is not None for p in _ENVELOPE_PARAMS):
-        subjects = services.get_subjects(tenant_id, include_inactive=include_inactive)
-        return success_response(data=subjects)
-
-    page, err = _parse_positive_int("page", request.args.get("page"))
-    if err:
-        return validation_error_response(err)
-    per_page, err = _parse_positive_int("per_page", request.args.get("per_page"))
-    if err:
-        return validation_error_response(err)
-
-    sort_by = request.args.get("sort_by", "name")
-    if sort_by not in services.LIST_SORT_FIELDS:
-        return validation_error_response(
-            f"sort_by must be one of: {', '.join(sorted(services.LIST_SORT_FIELDS))}"
-        )
-    sort_dir = request.args.get("sort_dir", "asc").lower()
-    if sort_dir not in ("asc", "desc"):
-        return validation_error_response("sort_dir must be 'asc' or 'desc'")
-
-    subject_type = request.args.get("subject_type") or None
-    if subject_type is not None and subject_type not in services.SUBJECT_TYPES:
-        return validation_error_response(
-            f"subject_type must be one of: {', '.join(services.SUBJECT_TYPES)}"
-        )
-
-    result = services.list_subjects_paginated(
-        tenant_id,
-        search=request.args.get("search"),
-        subject_type=subject_type,
-        include_inactive=include_inactive,
-        page=page,
-        per_page=per_page,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
+    subjects = services.list_subjects_filtered(
+        g.tenant_id, include_inactive=include_inactive
     )
-    return success_response(data=result)
+    return success_response(data=subjects)
 
 
 @subjects_bp.route("/mine", methods=["GET"], strict_slashes=False)

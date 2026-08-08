@@ -708,6 +708,34 @@ def class_detail(class_id: str) -> Optional[Dict]:
     }
 
 
+def legacy_detail_payload(detail: Dict) -> Dict:
+    """`class_detail` in the keys the Expo client already reads.
+
+    ⚠️ Exists for `GET /api/classes/<id>` only; admin-web reads the GraphQL
+    `class` field. Deliberately a second *shape*, never a second *reader* —
+    the previous version of this was a second reader, and the two drifted.
+    Delete with the Expo release that moves the mobile app.
+    """
+    cls = detail["class"]
+    students = detail["students"]
+    data = cls.to_dict()
+    data["status"] = detail["status"]
+    data["students"] = [student.to_dict() for student in students]
+    data["teachers"] = [
+        {
+            "teacher_id": held["teacher_id"],
+            "teacher_name": held["teacher_name"],
+            "subject_id": held["subject_id"],
+            "role": held["role"],
+            "is_class_teacher": held["is_class_teacher"],
+        }
+        for held in detail["teachers"]
+    ]
+    data["student_count"] = len(students)
+    data["teacher_count"] = len(data["teachers"])
+    return data
+
+
 def _teaching_this_class(class_id: str) -> List[Dict]:
     """Everyone teaching a class, whatever their responsibility.
 

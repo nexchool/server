@@ -105,6 +105,27 @@ class Class(TenantBaseModel):
         """True when this section's future was moved elsewhere."""
         return self.merged_into_class_id is not None
 
+    @property
+    def display_name(self) -> str | None:
+        """What a school calls this class — "5 A", "Nursery B".
+
+        The grade first, because that is what names it; `name` only where
+        there is no grade, and the legacy standard number only where there is
+        neither. The section follows when there is one.
+
+        One rule, on the thing itself, because every screen needs it and
+        `name` is nullable: it is empty for every class the structured form
+        creates, and each caller that composed its own label got it wrong —
+        pages titled "— A", pickers offering a dozen options all reading "-A",
+        a subject catalogue naming every class "A".
+        """
+        label = (
+            (self.grade.name if self.grade else None)
+            or self.name
+            or (f"Grade {self.grade_level}" if self.grade_level is not None else None)
+        )
+        return " ".join(part for part in (label, self.section) if part) or None
+
     # DEPRECATED: free-text standard number. Use grade_id instead.
     grade_level = db.Column(db.SmallInteger, nullable=True)
 

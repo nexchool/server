@@ -14,6 +14,7 @@ from core.decorators import (
 from shared.helpers import (
     success_response,
     error_response,
+    not_found_response,
     validation_error_response,
 )
 from core.branch_scope import (
@@ -37,8 +38,76 @@ PERM_DELETE = 'class.delete'
 PERM_CS_MANAGE = 'class_subject.manage'
 
 
+def _parse_int_param(raw, default=None, minimum=None, maximum=None):
+    if raw is None or raw == '':
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and val < minimum:
+        val = minimum
+    if maximum is not None and val > maximum:
+        val = maximum
+    return val
+
+
+@classes_bp.route('/', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('class_management')
+@require_permission(PERM_READ)
+def get_classes():
+    """Filterable, searchable, sortable, paginated list of classes.
+
+    ⚠️ **Kept for the Expo client only** — admin-web reads the `classes` field
+    on GraphQL, and the two must not drift, which is why both go through
+    `services.get_all_classes` and its one query builder.
+
+    `client/modules/classes/services/classService.ts` and
+    `client/modules/finance/services/classService.ts` both call this. Delete
+    it with the Expo release that moves them, not before: it was deleted once
+    on the strength of a grep that searched `client/src`, a directory this
+    repo does not have.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
+    """
+    filters, err = _list_filters_from_request()
+    if err:
+        return err
+
+    result = services.get_all_classes(
+        page=_parse_int_param(request.args.get('page'), default=None, minimum=1),
+        per_page=_parse_int_param(
+            request.args.get('per_page'), default=None, minimum=1,
+            maximum=services.MAX_PER_PAGE,
+        ),
+        **filters,
+    )
+    return success_response(data=result)
+
+
+@classes_bp.route('/<class_id>', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('class_management')
+@require_permission(PERM_READ)
+def get_class(class_id):
+    """One class with its students and teachers.
+
+    ⚠️ **Kept for the Expo client only** (`classService.getClassDetail`) —
+    admin-web reads the `class` field on GraphQL. Both read
+    `services.class_detail`, so there is one reader; only the shape differs,
+    and this one exists to keep a shipped app's keys.
+    """
+    detail = services.class_detail(class_id)
+    if detail is None:
+        return not_found_response('Class')
+    return success_response(data=services.legacy_detail_payload(detail))
+
+
 def _list_filters_from_request():
-    """Filter/search/sort parsing for the CSV export.
+    """Filter/search/sort parsing for the class list and the CSV export.
 
     Returns (kwargs, error_response). `error_response` is non-None when a param
     failed validation and the caller should return it as-is.

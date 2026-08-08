@@ -239,7 +239,10 @@ def test_teacher_sees_only_taught_subjects(db_session, tenant):
     classes = result[0]["classes"]
     assert len(classes) == 1
     assert classes[0]["class_id"] == klass.id
-    assert classes[0]["class_name"] == "Grade 9"
+    # The section is part of the name now: a teacher taking a subject in both
+    # 9-A and 9-B saw two rows that both said "Grade 9". One rule for what a
+    # class is called lives on `Class.display_name`.
+    assert classes[0]["class_name"] == "Grade 9 A"
     teachers = classes[0]["teachers"]
     assert any(t["teacher_id"] == teacher.id for t in teachers)
     assert teachers[0]["teacher_name"] == "Tina Teacher"

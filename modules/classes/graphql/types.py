@@ -244,7 +244,7 @@ def _class_fields(node_type, cls, *, student_count, teacher_count, status):
         section=cls.section,
         stream=cls.stream,
         grade_level=cls.grade_level,
-        display_name=_display_name(cls),
+        display_name=cls.display_name,
         academic_year_id=_id(cls.academic_year_id),
         academic_year=(
             cls.academic_year_ref.name if cls.academic_year_ref else None
@@ -270,22 +270,6 @@ def _class_fields(node_type, cls, *, student_count, teacher_count, status):
         teacher_count=teacher_count,
         status=status,
     )
-
-
-def _display_name(cls) -> Optional[str]:
-    """What a school calls this class.
-
-    The grade first, because that is what names it; the free-text label only
-    where there is no grade, and the legacy standard number only where there
-    is neither. The section follows when there is one.
-    """
-    label = (
-        (cls.grade.name if cls.grade else None)
-        or cls.name
-        or (f"Grade {cls.grade_level}" if cls.grade_level is not None else None)
-    )
-    parts = [part for part in (label, cls.section) if part]
-    return " ".join(parts) or None
 
 
 def _id(value) -> Optional[strawberry.ID]:

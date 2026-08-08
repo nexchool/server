@@ -23,6 +23,7 @@ control.
 | 25 | **Most of Attendance is still REST, and the Expo client is why.** Migrated: corrections, and the student attendance read admin-web uses. Still REST: marking, sessions, `my-classes`, the class register, `/list`, `calendar-holidays`, and `/me` — the teacher's daily marking flow and the student's own view, all consumed by the shipped mobile app. Moving them means an Expo release, the same constraint as 4b. | mobile release cadence, not server work | migrate with the next Expo release, then delete each replaced route |
 | 26 | **The v1/v2 split on student attendance survives.** `/student/<id>` reads the legacy attendance table, `/student/<id>/v2` reads register sessions; `/me` and `/me/v2` likewise. GraphQL exposes only the session shape, so the two REST versions now exist purely for Expo. Two answers to "was this child here" is one too many. | both shipped before the sessions model settled | delete the v1 pair when Expo moves to GraphQL |
 | 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
+| 31 | **The class and subject reads are on two transports at once, which the strategy forbids.** `GET /api/classes/`, `GET /api/classes/<id>` and the flat `GET /api/subjects/` answer the Expo client while admin-web reads `classes` / `class` / `subjects` on GraphQL. Each REST route shares the GraphQL reader (`get_all_classes`, `class_detail`, `list_subjects_filtered`) and only reshapes it, so they cannot drift — but there are two shapes for one operation, and `legacy_detail_payload` exists solely to keep the mobile keys. | a shipped app calls them; deleting them broke it once already | delete all three with the Expo release that moves the mobile app to GraphQL — the same gate as 25, 2b and 4b |
 | 29 | **`GET /api/classes/export` is the last REST reader of the class query**, the same shape as 23. It keeps `_list_filters_from_request` alive to parse a query string by hand, and it is the only caller left of `get_all_classes` — every screen reads `classes_page`. | downloads stay REST by the canon | leave until exports are revisited as a whole; retire `get_all_classes` with it |
 | 30 | **The class list offers no cursor at all** — every order it has is nullable (a class may have no grade), mutable (grade order, a label) or a count. Offset is honest here and cheap at a school's real size (hundreds of sections, not fifteen thousand children), but the structured pickers now make one request per hundred classes to read the whole structure. | no key is both unique and unchanging | if a trust ever makes this hurt, give the pickers a field shaped like what they actually want — the school's structure — rather than a cursor over a list |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
@@ -49,12 +50,23 @@ control.
 
 ## Closed
 
-**Classes read on GraphQL; three REST routes deleted (2026-08-08).** The list,
-its totals and one class's detail are `classes` / `classStats` / `class`, all
-guarded on `class.read` read from the routes rather than inferred. `GET
-/api/classes/`, `/stats` and `/<id>` are gone; the export, the writes and the
-assignment endpoints stay. Both remaining readers run one builder,
-`_class_list_query`, and a test compares the screen against the export.
+**Classes and the subject catalogue read on GraphQL (2026-08-08).** admin-web
+reads `classes` / `classStats` / `class` and `subjectCatalogue`, each guarded
+on the key its route decorator carried rather than an inferred one. Deleted
+because nothing else called them: `GET /api/classes/stats`, and the paginated
+branch of `GET /api/subjects/`. Every reader goes through one builder —
+`_class_list_query`, `_subject_catalogue_query` — and a test compares the
+screen against the export.
+
+⚠️ **Corrected within the day: `GET /api/classes/`, `GET /api/classes/<id>`
+and the flat `GET /api/subjects/` were deleted and had to be restored.** The
+Expo client calls all three (`client/modules/{classes,finance,subjects}/
+services/`). The check that cleared the deletion grepped `client/src` — a
+directory this repo does not have, since the Expo app keeps its code in
+`client/modules/` — and an empty result was read as "no consumer" instead of
+"wrong path". **A grep that finds nothing is a result to verify, not a
+result.** The routes are back, each carrying a comment saying whose they are,
+and three tests now fail if they go again. See open item 31.
 
 Three things the migration turned up, none of them the migration's own:
 

@@ -125,15 +125,6 @@ def create_subject(data: Dict, tenant_id: str) -> Dict:
         return {"success": False, "error": safe_error(e)}
 
 
-def get_subjects(tenant_id: str, include_inactive: bool = False) -> List[Dict]:
-    """Get subjects for a tenant (excludes soft-deleted)."""
-    q = Subject.query.filter_by(tenant_id=tenant_id).filter(Subject.deleted_at.is_(None))
-    if not include_inactive:
-        q = q.filter(Subject.is_active.is_(True))
-    subjects = q.order_by(Subject.name).all()
-    return [s.to_dict() for s in subjects]
-
-
 def list_subjects_filtered(tenant_id: str, include_inactive: bool = False) -> List[Dict]:
     """List subjects without Flask request; optional inactive rows."""
     q = Subject.query.filter_by(tenant_id=tenant_id).filter(Subject.deleted_at.is_(None))
@@ -155,25 +146,17 @@ MAX_PER_PAGE = 100
 DEFAULT_PER_PAGE = 20
 
 
-def list_subjects_paginated(
+def _subject_catalogue_query(
     tenant_id: str,
     *,
     search: Optional[str] = None,
     subject_type: Optional[str] = None,
     include_inactive: bool = False,
-    page: Optional[int] = None,
-    per_page: Optional[int] = None,
-    sort_by: str = "name",
-    sort_dir: str = "asc",
-) -> Dict:
-    """Paginated + searchable subject catalogue for the admin listing.
+):
+    """The one query the subject catalogue is read through.
 
     Search is a case-insensitive contains-match on name / code / description.
-    Each item carries its active class assignments (classes[]) and the distinct
-    programmes derived from them (programmes[]).
-
-    Returns the standard list envelope:
-        {items, total, page, per_page, total_pages}
+    Carries no ordering and no paging — a count should pay for neither.
     """
     q = Subject.query.filter(
         Subject.tenant_id == tenant_id, Subject.deleted_at.is_(None)
@@ -193,23 +176,57 @@ def list_subjects_paginated(
                 Subject.description.ilike(like),
             )
         )
+    return q
+
+
+def subjects_page(
+    tenant_id: str,
+    *,
+    first: int = DEFAULT_PER_PAGE,
+    offset: Optional[int] = None,
+    sort_by: str = "name",
+    sort_dir: str = "asc",
+    **filters,
+):
+    """One page of the subject catalogue, and whether another follows.
+
+    Each item carries its active class assignments (`classes`) and the distinct
+    programmes derived from them (`programmes`) — the catalogue answers "where
+    is this taught", which is the question the screen exists for.
+
+    Paged by offset rather than by cursor, for the reason the class list is
+    (see `graphql-conventions.md` §3): no order this offers has a key that is
+    both unique and unchanging — a code may be empty, a name may be corrected —
+    and a cursor over such a key does not fail, it skips rows. A school's
+    catalogue is dozens of subjects, so offset costs nothing here.
+
+    Returns (items, has_more). One row more than asked for is fetched, and that
+    extra row *is* `hasNextPage` — no second query.
+    """
+    first = min(max(int(first), 1), MAX_PER_PAGE)
 
     sort_col = LIST_SORT_FIELDS.get(sort_by, Subject.name)
     ordered = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
-    q = q.order_by(ordered, Subject.name.asc(), Subject.id.asc())
+    # Name then id break the tie: neither the sort key nor the name is unique,
+    # and without a final unique key a page boundary can repeat or skip a row.
+    query = _subject_catalogue_query(tenant_id, **filters).order_by(
+        ordered, Subject.name.asc(), Subject.id.asc()
+    )
 
-    total = q.count()
-    page = max(page or 1, 1)
-    per_page = min(max(per_page or DEFAULT_PER_PAGE, 1), MAX_PER_PAGE)
-    rows = q.limit(per_page).offset((page - 1) * per_page).all()
+    if offset:
+        query = query.offset(max(0, int(offset)))
 
-    return {
-        "items": _serialize_catalogue(tenant_id, rows),
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": (total + per_page - 1) // per_page,
-    }
+    rows = query.limit(first + 1).all()
+    return _serialize_catalogue(tenant_id, rows[:first]), len(rows) > first
+
+
+def subjects_matching_count(tenant_id: str, **filters) -> int:
+    """How many subjects the same filters match, ignoring paging.
+
+    Separate from the page so a caller that shows no total does not pay for
+    one; sorting cannot change a count, so it is not accepted here.
+    """
+    return _subject_catalogue_query(tenant_id, **filters).count()
 
 
 def _serialize_catalogue(tenant_id: str, subjects: List) -> List[Dict]:
@@ -420,10 +437,13 @@ def _teacher_display_name(teacher) -> Optional[str]:
 
 
 def _class_label(klass) -> Optional[str]:
-    """Class.name is nullable; section is not. Use name or section as label."""
-    if klass is None:
-        return None
-    return klass.name or klass.section
+    """What the school calls the class, from the class itself.
+
+    Composing it here is what named every class "A": `Class.name` is empty for
+    every class the structured form creates, and the section alone repeats
+    across grades, programmes and campuses.
+    """
+    return klass.display_name if klass is not None else None
 
 
 def _active_class_subjects_query(tenant_id: str):

@@ -237,7 +237,27 @@ same guess.
 1. Build the GraphQL field beside the REST route. Both exist only while the
    client moves — the debt register carries that as an open item, because a
    business operation on two transports is exactly what the strategy forbids.
-2. Move the client.
+2. Move the client. **All of them.** There are four: `admin-web/src`,
+   `panel/app`, `client/modules` (Expo — *not* `client/src`, which does not
+   exist) and the server itself. Anything the Expo app calls is gated on a
+   mobile release, so it stays and gets registered as debt; it does not get
+   deleted because the web client stopped calling it.
 3. **Delete the REST route.** Not deprecate. The canon's rule is that dead
    code does not remain in the product, and a route nobody calls is the one
    nobody re-checks when the rules change.
+
+**Before step 3, prove the route is unused — and treat an empty grep as
+unproven.** Three routes were deleted on a search of `client/src`, a path this
+repo does not have; the empty result read as "no consumer" rather than "wrong
+directory", and a shipped app lost its class list, its class detail and its
+subject list. A search that finds nothing has two explanations and only one of
+them is the one you want. Confirm the path exists first, and confirm the search
+finds the *other* calls you know are there:
+
+```bash
+ls -d admin-web/src panel/app client/modules      # the paths must exist
+grep -rn "api/classes" admin-web panel client --include="*.ts" --include="*.tsx"
+```
+
+Then leave a test behind that fails if the route goes again, saying whose it
+is. A comment explains; a test refuses.
