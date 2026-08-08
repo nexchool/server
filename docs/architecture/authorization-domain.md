@@ -66,6 +66,32 @@ Separating these responsibilities allows authentication, business relationships,
 
 ---
 
+# How these concepts are implemented
+
+> **Read this before concluding anything here is unbuilt.** This document
+> names the concepts; **ADR-013 records which existing table expresses each
+> one**, exactly as ADR-012 does for Section and Class. Building new tables to
+> match these names was considered and **rejected** — it would duplicate four
+> working tables on the request-critical path. So would renaming the live
+> ones.
+>
+> | This document says | The schema calls it |
+> |---|---|
+> | Authority Profile | `roles` (+ `role_permissions`) |
+> | Permission Key | `permissions.name` |
+> | Capability | a module in the sub-admin catalog (`modules/sub_admins/catalog.py`) |
+> | Business Action | that catalog's levels and toggles — **code, deliberately not data** |
+> | Business Authority (the holding) | `staff_authorities` — held by the employment, not the account (ADR-013) |
+> | Temporary Delegation | `authority_delegations` |
+> | Scope | `core/branch_scope.py` |
+> | Authorization Decision | `require_permission` → `has_permission` |
+>
+> The domain is therefore **implemented**, not pending. What remains open is
+> tracked in `../debt-register.md`, not inferred from the absence of a table
+> named after a paragraph here.
+
+---
+
 # Responsibilities
 
 The Authorization Domain is responsible for:

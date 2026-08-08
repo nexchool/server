@@ -14,6 +14,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session as OrmSession
+
 from core.database import db
 
 from .models import AuthorityDelegation, Role, StaffAuthority
@@ -372,3 +375,33 @@ def _forget_cached_permissions_for(employment) -> None:
 
     for account in User.query.filter_by(person_id=employment.person_id).all():
         invalidate_user_permissions(account.id)
+
+
+@event.listens_for(OrmSession, "after_flush")
+def _a_change_of_standing_forgets_cached_authority(session, flush_context) -> None:
+    """Suspending or ending an employment takes effect on the next request.
+
+    What a person may do is resolved from their employment (ADR-013), so
+    `employment_status` decides authority just as surely as a granted profile
+    does — `may_act` withholds it from anyone suspended. The cache was only
+    ever dropped when the *grant* changed, which meant a suspension took
+    effect whenever the entry happened to expire. Two minutes of a suspended
+    employee still being able to act is the whole reason suspension exists.
+
+    A listener rather than a call in each writer: status is set from
+    `employ()`, from the v1 flag translation, from bulk teacher updates, and
+    from the resignation and retirement workflows still to come. That is the
+    same argument that put the account-person rule in a listener.
+
+    Dropping a cache entry is safe if the transaction later rolls back — the
+    next read simply reloads it.
+    """
+    from modules.people.employment import Staff
+
+    with session.no_autoflush:
+        for instance in session.dirty:
+            if not isinstance(instance, Staff):
+                continue
+            standing = db.inspect(instance).attrs.employment_status.history
+            if standing.has_changes():
+                _forget_cached_permissions_for(instance)

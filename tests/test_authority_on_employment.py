@@ -568,3 +568,56 @@ def test_the_database_refuses_a_cross_tenant_grant(db_session, tenant):
                 )
             )
             db_session.flush()
+
+
+# ---------------------------------------------------------------------------
+# A change of standing is felt on the next request, not at cache expiry
+# ---------------------------------------------------------------------------
+
+def test_suspending_an_employee_drops_their_cached_permissions(
+    db_session, tenant, monkeypatch
+):
+    """ADR-013's stated trade-off, closed.
+
+    Permission resolution depends on employment status, but the cache was
+    only dropped when a *grant* changed — so a suspension took effect
+    whenever the entry happened to expire. Two minutes of a suspended
+    employee still acting is the thing suspension exists to prevent.
+    """
+    from modules.rbac import services as rbac_services
+
+    user = _account(db_session, tenant)
+    staff = employ(tenant.id, user.person_id)
+    role = _authority_profile(db_session, tenant)
+    grant_authority(staff.id, role.id)
+
+    forgotten = []
+    monkeypatch.setattr(
+        rbac_services, "invalidate_user_permissions", forgotten.append
+    )
+
+    staff.employment_status = EMPLOYMENT_STATUS_SUSPENDED
+    db_session.flush()
+
+    assert user.id in forgotten
+
+
+def test_an_unrelated_edit_does_not_drop_cached_permissions(
+    db_session, tenant, monkeypatch
+):
+    """Only a change of standing invalidates — not every touch of the row."""
+    from modules.rbac import services as rbac_services
+
+    user = _account(db_session, tenant)
+    staff = employ(tenant.id, user.person_id)
+    db_session.flush()
+
+    forgotten = []
+    monkeypatch.setattr(
+        rbac_services, "invalidate_user_permissions", forgotten.append
+    )
+
+    staff.designation = "Senior Coordinator"
+    db_session.flush()
+
+    assert forgotten == []

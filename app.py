@@ -73,6 +73,11 @@ def create_app(config_name=None):
     # structural guarantee that depends on import order is not a guarantee.
     import modules.auth.person_link  # noqa: F401
 
+    # Registers the rule that a change of employment standing drops the
+    # holder's cached permissions. Same reason as above: a guarantee that
+    # depends on import order is not a guarantee.
+    import modules.rbac.authority_service  # noqa: F401
+
     # Mount the GraphQL endpoint (/api/graphql)
     from graphql_api import register_graphql
     register_graphql(app)

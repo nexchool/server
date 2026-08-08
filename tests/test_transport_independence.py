@@ -116,6 +116,15 @@ def test_the_only_orm_hooks_enforce_consistency():
         # Every tenant-scoped read is scoped. The guarantee the whole product
         # rests on; it cannot be left to each query to remember.
         ("core/database.py", "do_orm_execute"),
+        # A cached permission set stops agreeing with the employment it was
+        # derived from the moment that employment's standing changes. Keeping
+        # a derived value in step with its source is consistency, not
+        # workflow: nothing is decided here and no business event happens —
+        # suspending someone is still `record_employment_standing`, which a
+        # reader can find. Employment status is written from several paths,
+        # and the one that forgets is the one that leaves a suspended
+        # employee able to act.
+        ("modules/rbac/authority_service.py", "after_flush"),
     }
 
     found = set()
