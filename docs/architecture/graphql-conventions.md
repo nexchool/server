@@ -25,6 +25,11 @@ modules/<module>/
 `graphql_api/schema.py` adds the module's `Query` / `Mutation` class to the
 root. Nothing about a module's business lives in `graphql_api/`.
 
+While a module has operations on both transports, they must run **one query
+builder**. Students extracted `_student_list_query` for exactly this: a filter
+added to one and not the other is drift nobody sees until a school asks why a
+spreadsheet and a screen disagree.
+
 Resolvers stay thin: they turn arguments into a service call and the answer
 into a type. A resolver that queries the database directly is a service that
 was not written — and it can then only ever be reached by GraphQL.
@@ -39,6 +44,11 @@ permission_classes=[IsAuthenticated, RequiresTenant, requires("student.read.all"
 
 In that order: there is no authority to check before we know who is asking
 and which school they are asking about.
+
+Where a read is offered to more than one kind of person on different terms —
+a head teacher reads the whole school, a class teacher only their classes —
+use `requires_any(...)` and let the **resolver** decide what each one gets.
+The guard answers "may this field run", never "how much of it".
 
 `RequiresTenant` is not ceremony. This endpoint serves tenant-less operations
 too — signing in happens before a tenant is known — so the transport resolves
@@ -81,6 +91,16 @@ is seen twice or missed. Walking from the last key costs the same at any depth.
   with no second query.
 - Cap the page size in the **service**, not the resolver. A cap a caller can
   route around is not a cap.
+- Offer `offset` **only** where a page-number control has to jump, which a
+  cursor cannot express. It is a known cost the caller chooses, not a default,
+  and asking for both `after` and `offset` is refused rather than resolved.
+- A cursor is only sound over a key that cannot be null and does not change.
+  Offer one for those orders and refuse it for the rest — over a nullable,
+  mutable key a cursor does not error, it loses students.
+- When a sort has a tie-breaker, the cursor carries **both** values, and a
+  descending sort with an ascending tie-breaker is not a row comparison: it is
+  "an earlier key, OR the same key and a later tie-breaker". Test it with two
+  rows that share a key, or nothing will notice.
 
 `totalCount` is a resolver on the connection, not a field computed with the
 page: a list that shows no total should not pay for one.

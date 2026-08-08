@@ -1455,9 +1455,11 @@ def list_enrollments(
             # person's would let the two disagree.
             d["student_name"] = st.person.full_name if st.person else None
             d["admission_number"] = st.admission_number
-            # The class the row displays. Sent with the row so the screen does
-            # not have to fetch every student in the school to label twenty.
+            # The class and the contact the row displays. Sent with the row so
+            # the screen does not have to fetch every student in the school to
+            # label twenty.
             d["class_name"] = st._class_display_name()
+            d["guardian_phone"] = st.guardian_phone
         result.append(d)
 
     if envelope is None:

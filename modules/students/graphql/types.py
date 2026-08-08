@@ -22,6 +22,14 @@ class StudentClass:
     section: Optional[str]
     grade_name: Optional[str] = None
     programme_name: Optional[str] = None
+    display_name: Optional[str] = strawberry.field(
+        default=None,
+        description=(
+            "What this class is called on screen. `name` is a legacy nullable "
+            "label — a grade-based class carries its label on the grade — so "
+            "the rule for composing it lives here rather than in each client."
+        ),
+    )
 
 
 @strawberry.type(description="A child the school is teaching, or has taught.")
@@ -39,6 +47,7 @@ class Student:
     date_of_birth: Optional[datetime.date] = None
     gender: Optional[str] = None
     roll_number: Optional[int] = None
+    academic_year_id: Optional[strawberry.ID] = None
     guardian_phone: Optional[str] = strawberry.field(
         default=None,
         description=(
@@ -101,12 +110,15 @@ class StudentConnection:
 def _class_of(row) -> Optional[StudentClass]:
     if row is None:
         return None
+    grade_name = row.grade.name if row.grade else None
+    label = row.name or grade_name
     return StudentClass(
         id=strawberry.ID(row.id),
         name=row.name,
         section=row.section,
-        grade_name=row.grade.name if row.grade else None,
+        grade_name=grade_name,
         programme_name=row.programme.name if row.programme else None,
+        display_name="-".join(p for p in (label, row.section) if p) or None,
     )
 
 
@@ -120,6 +132,7 @@ def student_to_graphql(row) -> Student:
         date_of_birth=person.date_of_birth if person else None,
         gender=person.gender if person else None,
         roll_number=row.roll_number,
+        academic_year_id=row.academic_year_id,
         guardian_phone=row.guardian_phone,
         class_id=row.class_id,
     )

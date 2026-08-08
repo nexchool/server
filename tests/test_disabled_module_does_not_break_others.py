@@ -215,17 +215,16 @@ def a_small_school(db_session, tenant):
 def _populated_routes(ids: dict) -> list[str]:
     """The pages an admin actually opens, on a school that has data in it.
 
-    Detail routes and the query variants that pull another module in — the
-    student list only asks transport for stop names when the caller opts in,
-    so sweeping the bare URL would never exercise it.
+    Detail routes and the query variants that pull another module in. The
+    student list is not here: it moved to GraphQL, which is swept by
+    `test_the_student_list_survives_a_feature_being_off` below because a
+    single POST endpoint cannot be swept by URL.
     """
     return [
         "/api/dashboard/",
         "/api/academics/dashboard",
         "/api/academics/health",
         "/api/academics/overview",
-        "/api/students/",
-        "/api/students/?include_transport_summary=true",
         "/api/students/export",
         "/api/classes/",
         "/api/classes/stats",
@@ -290,3 +289,31 @@ def test_a_disabled_feature_actually_refuses(
         "Disabled features must refuse with 403; these answered anyway:\n  "
         + "\n  ".join(still_answering)
     )
+
+
+STUDENT_LIST = """
+query { students(first: 5) { totalCount edges { node { admissionNumber
+         currentClass { displayName } } } } }
+"""
+
+
+@pytest.mark.parametrize("feature", OPTIONAL_FEATURES)
+def test_the_student_list_survives_a_feature_being_off(
+    feature, client, admin_headers, db_session, tenant, a_small_school
+):
+    """The student list is GraphQL now, so it is swept here rather than by URL.
+
+    Same contract as the sweep above: turning an optional module off must not
+    break a page belonging to another module.
+    """
+    from graphql_api import GRAPHQL_PATH
+
+    _set_flags(db_session, tenant, **{feature: False})
+    response = client.post(
+        GRAPHQL_PATH, json={"query": STUDENT_LIST}, headers=admin_headers
+    )
+    body = response.get_json()
+
+    assert response.status_code < 500, response.status_code
+    codes = [e["extensions"].get("code") for e in body.get("errors", [])]
+    assert "INTERNAL_ERROR" not in codes, body.get("errors")

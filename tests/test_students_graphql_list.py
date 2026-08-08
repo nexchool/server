@@ -570,14 +570,14 @@ def test_reading_students_still_needs_one_of_the_two_authorities(
 # One query builder, so the two transports cannot disagree
 # ---------------------------------------------------------------------------
 
-def test_both_transports_answer_the_same_question_the_same_way(
+def test_the_csv_export_and_the_list_agree_on_who_matches(
     client, tenant, school, office
 ):
-    """While REST and GraphQL both exist, a filter must mean one thing.
+    """The export is REST and the list is GraphQL, over one query builder.
 
-    Asked through both real entry points, not through the shared function —
-    the point is that the two front doors agree, which is only interesting if
-    each is reached the way a client reaches it.
+    They are the last two readers of `_student_list_query`, and the export is
+    the one nobody looks at until a school asks why a row is missing from a
+    spreadsheet. Same filters, same students, same order.
     """
     _user, token = office
     headers = {
@@ -585,15 +585,38 @@ def test_both_transports_answer_the_same_question_the_same_way(
         "Authorization": f"Bearer {token}",
     }
 
-    over_rest = client.get(
-        "/api/students/?gender=female&search=a&sort_by=name&page=1&per_page=50",
+    exported = client.get(
+        "/api/students/export?gender=female&search=a&sort_by=name",
         headers=headers,
-    ).get_json()["data"]
-    over_graphql = _ask(
+    )
+    listed = _ask(
         client, tenant, token, first=50, orderBy="NAME",
         where={"gender": "female", "search": "a"},
     )
 
-    assert [row["name"] for row in over_rest["items"]] == _names(over_graphql)
-    assert over_rest["total"] == over_graphql["data"]["students"]["totalCount"]
-    assert over_rest["total"] == 2
+    assert exported.status_code == 200
+    rows = exported.get_data(as_text=True).splitlines()
+    names_in_csv = [line for line in rows[1:] if line.strip()]
+    assert len(names_in_csv) == 2
+    assert _names(listed) == ["Isha Desai", "Zara Mehta"]
+    for name in _names(listed):
+        assert any(name in line for line in names_in_csv), name
+
+
+def test_the_students_list_is_only_on_graphql_now(client, tenant, school, office):
+    """The REST list is gone. One operation, one transport.
+
+    405 rather than 404: admission still POSTs to this path, so the path
+    exists — reading a list through it does not.
+    """
+    _user, token = office
+
+    response = client.get(
+        "/api/students/",
+        headers={
+            "X-Tenant-Subdomain": tenant.subdomain,
+            "Authorization": f"Bearer {token}",
+        },
+    )
+
+    assert response.status_code == 405

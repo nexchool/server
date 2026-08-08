@@ -6,7 +6,7 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 in progress** (Students queries + mutations + admin-web client done; lifecycle REST deleted; REST list not yet replaceable — see 21). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
+**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE** (Students queries + mutations + admin-web client; every replaced REST route deleted). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
 
 **Sequencing (locked 2026-08-08):** Phase 0 canon cleanup → Phase 1
 architectural debt → Phase 2 finish existing domain workflows → Phase 3
@@ -20,8 +20,9 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
+| 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
+| 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
 | 20 | **Optional modules have no feature gate on GraphQL.** REST writes carry `@require_feature`; the GraphQL transport has no equivalent. Harmless for Students — `student_management` is a CORE feature, so the REST decorator is a no-op there — but the first optional-feature module to migrate (attendance, transport, fees, hostel) crosses a school's switch unless it is built. | not built for a gate that would have no effect | Phase 4: build the permission class with the first optional-feature module, not before |
-| 21 | **The GraphQL student list cannot replace the REST one yet.** `students(first, after)` pages by key and filters on search / class / year / status. The screen needs more: page numbers (keyset gives next/previous, not "jump to 300"), sorting by name, class, programme and roll number, and the filters REST has — programme, gender, transport, admission-date range — plus `include_transport_summary`. Swapping now would be a visible regression. | the pilot proved the pattern on the smallest useful surface | add sorting and the missing filters to `students_page`, decide what replaces page numbers in the UI, then migrate the list and delete `GET /api/students/` |
 | 18 | **Section merge has no REST surface, and merged sections are still listed everywhere.** `merge_sections` is complete and guarded at the placement primitive, but unrouted; `get_all_classes` and the class pickers do not filter `merged_into_class_id`, so a retired section still appears as a choice even though placing into it is refused. | service built first | route it with the academics UI; filter pickers, keep merged sections visible in history views |
 | 16 | **Staff attendance is not built.** The canon marks it "a future capability", so nothing was invented for it — the student attendance session/record shape may or may not fit staff, and guessing now would be the wrong kind of head start. | deliberately deferred by the canon | when a school actually needs it; decide then whether it reuses AttendanceSession or is its own thing |
 | 17 | **Attendance corrections have no REST surface yet.** `correction_service` is complete and tested but unrouted; admin-web cannot request or approve a correction, so the sanctioned path is currently unreachable by the people who need it. | service built first | route it with the attendance UI work |
@@ -46,6 +47,15 @@ control.
 ---
 
 ## Closed
+
+**21 — the students list is on one transport (2026-08-08).** The GraphQL
+list reached parity (five sort keys both ways, six search fields, campus /
+programme / grade / gender / transport / admission-date filters, several
+classes at once, page numbers via `offset`, the class-teacher scope) and
+`GET /api/students/` is deleted. Both transports run one builder,
+`_student_list_query`, so the CSV export and the list cannot drift; a test
+compares them. `include_transport_summary` went with the route — no client
+ever set it.
 
 **19 — the lifecycle acts are on one transport (2026-08-08).** admin-web
 performs all five over GraphQL; the REST routes `/withdraw`, `/graduate`,
