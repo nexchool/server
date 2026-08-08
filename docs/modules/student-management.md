@@ -911,7 +911,8 @@ operations take there is the pattern the rest follow — see
 named on that surface as the school names the act (`withdrawStudent`,
 `graduateStudent`, `reEnrollStudent`, `transferStudentToSection`,
 `transferStudentOut`), never as a status being set. Their REST equivalents
-remain only until the clients move, and are then deleted.
+were deleted once the clients moved — each of these acts now exists in
+exactly one place.
 
 ---
 

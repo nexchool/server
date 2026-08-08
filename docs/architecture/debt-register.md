@@ -6,7 +6,7 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 in progress** (Students queries + mutations + admin-web client done; REST list not yet replaceable — see 21). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
+**Last updated:** 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 in progress** (Students queries + mutations + admin-web client done; lifecycle REST deleted; REST list not yet replaceable — see 21). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
 
 **Sequencing (locked 2026-08-08):** Phase 0 canon cleanup → Phase 1
 architectural debt → Phase 2 finish existing domain workflows → Phase 3
@@ -20,7 +20,6 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
-| 19 | **The lifecycle REST routes are now unused but still routed.** admin-web performs all five acts over GraphQL (`services/graphql.ts` + `useStudentLifecycle`), so `/withdraw`, `/graduate`, `/re-enroll`, `/transfer-section`, `/transfer-out` have no caller — the Expo client never had one. One operation on two transports is what the strategy forbids. | kept a release while the client moved | delete the five routes and their tests; keep `/timeline` until a screen reads history over GraphQL |
 | 20 | **Optional modules have no feature gate on GraphQL.** REST writes carry `@require_feature`; the GraphQL transport has no equivalent. Harmless for Students — `student_management` is a CORE feature, so the REST decorator is a no-op there — but the first optional-feature module to migrate (attendance, transport, fees, hostel) crosses a school's switch unless it is built. | not built for a gate that would have no effect | Phase 4: build the permission class with the first optional-feature module, not before |
 | 21 | **The GraphQL student list cannot replace the REST one yet.** `students(first, after)` pages by key and filters on search / class / year / status. The screen needs more: page numbers (keyset gives next/previous, not "jump to 300"), sorting by name, class, programme and roll number, and the filters REST has — programme, gender, transport, admission-date range — plus `include_transport_summary`. Swapping now would be a visible regression. | the pilot proved the pattern on the smallest useful surface | add sorting and the missing filters to `students_page`, decide what replaces page numbers in the UI, then migrate the list and delete `GET /api/students/` |
 | 18 | **Section merge has no REST surface, and merged sections are still listed everywhere.** `merge_sections` is complete and guarded at the placement primitive, but unrouted; `get_all_classes` and the class pickers do not filter `merged_into_class_id`, so a retired section still appears as a choice even though placing into it is refused. | service built first | route it with the academics UI; filter pickers, keep merged sections visible in history views |
@@ -46,7 +45,14 @@ control.
 
 ---
 
-## Closed (recent)
+## Closed
+
+**19 — the lifecycle acts are on one transport (2026-08-08).** admin-web
+performs all five over GraphQL; the REST routes `/withdraw`, `/graduate`,
+`/re-enroll`, `/transfer-section` and `/transfer-out` are deleted (154 lines).
+No test hit them — the workflow tests call the services. `GET /timeline`
+stays until a screen reads a student's history over GraphQL. The student
+**list** is a separate problem, registered as 21. (recent)
 
 | Debt | Closed by |
 |------|-----------|
