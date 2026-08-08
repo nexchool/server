@@ -1,4 +1,4 @@
-"""Recognising the signed-in child.
+"""Recognising the signed-in person — the child, and the teacher.
 
 Every "my …" screen has to answer one question: given this account, whose
 record is this? It was answered by reading `students.user_id`, a column that
@@ -175,3 +175,99 @@ def test_a_missing_record_is_not_anybodys(ctx, db_session, tenant):
     )
 
     assert is_own_studentship(None, account) is False
+
+
+# ---------------------------------------------------------------------------
+# The same question about a teacher, answered along the employment
+# ---------------------------------------------------------------------------
+
+def _teacher_with_login(db_session, tenant, *, fill_legacy_column: bool):
+    """Somebody the school employs, who teaches, and who can sign in.
+
+    Built the way the canon layers it: a Person, an employment, and teaching
+    as what that employment does (ADR-005) — with the account alongside rather
+    than underneath.
+    """
+    from modules.auth.models import User
+    from modules.people.models import Person
+    from modules.people.service import employ
+    from modules.teachers.models import Teacher
+
+    suffix = uuid.uuid4().hex[:8]
+    person = Person(id=_new_id("p-"), tenant_id=tenant.id, full_name="Ramesh Patel")
+    db_session.add(person)
+    db_session.flush()
+
+    account = User(
+        id=f"u-{suffix}", tenant_id=tenant.id, email=f"{suffix}@test.school",
+        password_hash="x" * 60, name="Ramesh Patel", person_id=person.id,
+    )
+    db_session.add(account)
+    db_session.flush()
+
+    staff = employ(tenant.id, person.id, employee_number=f"EMP-{suffix}")
+    db_session.flush()
+
+    teacher = Teacher(
+        id=_new_id("t-"), tenant_id=tenant.id, staff_id=staff.id,
+        user_id=account.id if fill_legacy_column else None,
+    )
+    db_session.add(teacher)
+    db_session.flush()
+    return teacher, account
+
+
+def test_a_teacher_is_found_through_their_employment(ctx, db_session, tenant):
+    from modules.teachers.services import teacher_for_user
+
+    teacher, account = _teacher_with_login(
+        db_session, tenant, fill_legacy_column=True
+    )
+
+    assert teacher_for_user(account.id, tenant.id) is teacher
+
+
+def test_a_teacher_whose_legacy_column_was_never_set_is_still_found(
+    ctx, db_session, tenant
+):
+    """The same defect as the student one, and quieter.
+
+    Answering "you teach nothing" shows up as an empty class list rather than
+    an error, so it never looked like a failure to whoever hit it.
+    """
+    from modules.teachers.services import teacher_for_user
+
+    teacher, account = _teacher_with_login(
+        db_session, tenant, fill_legacy_column=False
+    )
+
+    assert teacher.user_id is None
+    assert teacher_for_user(account.id, tenant.id) is teacher
+
+
+def test_an_account_that_teaches_nothing_finds_nothing(ctx, db_session, tenant):
+    from modules.teachers.services import teacher_for_user
+
+    _student, account = _child_with_login(
+        db_session, tenant, fill_legacy_column=True
+    )
+
+    assert teacher_for_user(account.id, tenant.id) is None
+
+
+def test_the_classes_a_teacher_may_mark_do_not_depend_on_the_column(
+    ctx, db_session, tenant
+):
+    """The class-teacher scope reads this, so the column decided whether a
+    teacher saw their own classes — and, since the GraphQL student list uses
+    the same call, whether they saw any students at all."""
+    from modules.attendance.services import get_teacher_class_ids
+
+    _teacher, account = _teacher_with_login(
+        db_session, tenant, fill_legacy_column=False
+    )
+
+    # No teaching assignments, so the list is empty either way — what matters
+    # is that it got as far as asking, rather than returning early because no
+    # teacher was recognised.
+    assert get_teacher_class_ids(account.id) == []

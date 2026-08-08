@@ -47,9 +47,9 @@ def get_teacher_class_ids(user_id: str) -> List[str]:
     Users with attendance.manage bypass this entirely (admin override).
     """
     from modules.academics.teaching_assignment import classes_taught_by
-    from modules.teachers.models import Teacher
+    from modules.teachers.services import teacher_for_user
 
-    teacher = Teacher.query.filter_by(user_id=user_id).first()
+    teacher = teacher_for_user(user_id)
     if not teacher:
         return []
     return list(

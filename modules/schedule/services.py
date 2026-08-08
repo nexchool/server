@@ -207,7 +207,9 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
 
     on_leave_ids, unavail_set = _get_today_constraints(tenant_id, today, day_of_week)
 
-    teacher = Teacher.query.filter_by(user_id=user_id, tenant_id=tenant_id).first()
+    from modules.teachers.services import teacher_for_user
+
+    teacher = teacher_for_user(user_id, tenant_id)
     if teacher:
         v2_rows = _teacher_entries_today_v2(tenant_id, teacher.id, dow_iso)
         if v2_rows:

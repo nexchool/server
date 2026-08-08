@@ -50,7 +50,9 @@ def serialize_session(s: AttendanceSession, class_name: Optional[str] = None) ->
 
 
 def _teacher_for_user(tenant_id: str, user_id: str) -> Optional[Teacher]:
-    return Teacher.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
+    from modules.teachers.services import teacher_for_user
+
+    return teacher_for_user(user_id, tenant_id)
 
 
 def can_user_mark_session(

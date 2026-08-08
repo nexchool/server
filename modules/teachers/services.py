@@ -522,9 +522,38 @@ def get_teacher_by_id(teacher_id: str) -> Optional[Dict]:
     return teacher.to_dict(include_subjects=True) if teacher else None
 
 
+def teacher_for_user(user_id: str, tenant_id: Optional[str] = None):
+    """The teaching record of whoever is signed in, or None.
+
+    Reached along the chain the canon defines rather than through
+    `teachers.user_id`: an account belongs to a Person (ADR-001, ADR-003), a
+    Person the school employs is Staff, and teaching is what that employment
+    does (ADR-005).
+
+    The column it replaces is a leftover from before any of that, and reading
+    it answered "you teach nothing" to a teacher whose login was added after
+    they were hired — which showed up as an empty class list rather than an
+    error, so nobody reported it as one.
+    """
+    from modules.auth.models import User
+    from modules.people.employment import Staff
+
+    account = User.query.filter_by(id=user_id).first()
+    if account is None or account.person_id is None:
+        return None
+
+    query = (
+        Teacher.query.join(Staff, Teacher.staff_id == Staff.id)
+        .filter(Staff.person_id == account.person_id)
+    )
+    if tenant_id:
+        query = query.filter(Teacher.tenant_id == tenant_id)
+    return query.first()
+
+
 def get_teacher_by_user_id(user_id: str) -> Optional[Dict]:
-    """Get teacher details by User ID."""
-    teacher = Teacher.query.filter_by(user_id=user_id).first()
+    """Get teacher details for whoever is signed in."""
+    teacher = teacher_for_user(user_id)
     return teacher.to_dict() if teacher else None
 
 

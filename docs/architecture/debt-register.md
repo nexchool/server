@@ -21,7 +21,6 @@ control.
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
 | 25 | **Most of Attendance is still REST, and the Expo client is why.** Migrated: corrections, and the student attendance read admin-web uses. Still REST: marking, sessions, `my-classes`, the class register, `/list`, `calendar-holidays`, and `/me` — the teacher's daily marking flow and the student's own view, all consumed by the shipped mobile app. Moving them means an Expo release, the same constraint as 4b. | mobile release cadence, not server work | migrate with the next Expo release, then delete each replaced route |
-| 28 | **Teachers are still found by `teachers.user_id`** — `schedule/services.py` and `attendance/services.py` both resolve the signed-in teacher through the account. The same defect 27 was, in the domain the roadmap named alongside it: a teacher whose login is added later is not recognised as teaching anything. | the student half was the one with a reported symptom | the same `_for_user` treatment, through Staff and its Person |
 | 26 | **The v1/v2 split on student attendance survives.** `/student/<id>` reads the legacy attendance table, `/student/<id>/v2` reads register sessions; `/me` and `/me/v2` likewise. GraphQL exposes only the session shape, so the two REST versions now exist purely for Expo. Two answers to "was this child here" is one too many. | both shipped before the sessions model settled | delete the v1 pair when Expo moves to GraphQL |
 | 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
@@ -47,6 +46,16 @@ control.
 ---
 
 ## Closed
+
+**28 — the signed-in teacher is found through their employment (2026-08-08).**
+`teachers.services.teacher_for_user` resolves account → Person → Staff →
+Teacher (ADR-005). Used by `get_teacher_class_ids` (which the GraphQL
+class-teacher scope reads), the attendance session helper, the schedule's
+today view and the teacher profile. The sweep also found `subjects/
+services.py` resolving BOTH a teacher and a student by account — the same
+defect, missed by 27's narrower search. Neither `user_id` column is how the
+app identifies anybody now; both survive as columns the creation flow
+writes and a uniqueness check reads.
 
 **27 — the signed-in child is found through their Person (2026-08-08).**
 `students.services.student_for_user` / `is_own_studentship`, used by the

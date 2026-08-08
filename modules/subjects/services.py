@@ -613,15 +613,15 @@ def get_subjects_for_user(tenant_id: str, user) -> List[Dict]:
     if has_permission(user.id, ROLE_ADMIN_PERMISSION):
         return _subjects_for_admin(tenant_id)
 
-    from modules.teachers.models import Teacher
+    from modules.teachers.services import teacher_for_user
 
-    teacher = Teacher.query.filter_by(user_id=user.id, tenant_id=tenant_id).first()
+    teacher = teacher_for_user(user.id, tenant_id)
     if teacher is not None:
         return _subjects_for_teacher(tenant_id, teacher.id)
 
-    from modules.students.models import Student
+    from modules.students.services import student_for_user
 
-    student = Student.query.filter_by(user_id=user.id, tenant_id=tenant_id).first()
+    student = student_for_user(user.id, tenant_id)
     if student is not None:
         return _subjects_for_student(tenant_id, student.class_id)
 
