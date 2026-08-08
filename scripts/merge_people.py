@@ -74,7 +74,6 @@ def _merge(args) -> int:
         logger.error("Refused: %s", refusal)
         return 1
 
-    db.session.commit()
     logger.info(
         "Merged %s into %s. Recorded as %s, so it can be reviewed later.",
         args.absorb,

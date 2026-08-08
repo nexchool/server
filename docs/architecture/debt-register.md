@@ -20,7 +20,6 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
-| 24 | **The attendance correction surface has no client.** The workflow is reachable at last, but admin-web has no screen for the pending queue or for asking that a mark be changed, so in practice a settled register still cannot be corrected by the people who need to. | server built first, as with the merge screen (10b) | an attendance UI slice; the fields are ready |
 | 25 | **The rest of Attendance is still REST.** Marking, sessions, the class register, the student's own view — including a v1/v2 split on `/student/<id>` and `/me`. Corrections moved first because they had no surface at all; the rest is a migration with a live client on the other end. | migrating a module route by route | Phase 4: move the reads, then marking, then delete each replaced route |
 | 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
@@ -36,7 +35,6 @@ control.
 | 7b | **Bulk `UPDATE`/`DELETE` are outside the ORM tenant scope entirely** (`core/database.py` returns before adding criteria for non-SELECT). Most call sites filter `tenant_id` explicitly; five key only on a parent id and are one refactor from a leak: `devices/device_service.py`, `people/service.py` (primary-contact stand-down), `sub_admins/services.py` (role permissions), `announcements/services.py` (revision prune), `academics/services/timetable_v2.py` (entry delete by version). | the scope only covers reads | add explicit `tenant_id` to each; consider a lint |
 | 7c | **187 FK pairs can still legally cross tenants** — only `roles` and (since 097) `staff` carry `UNIQUE (tenant_id, id)`, so no composite guard can be declared against the other 40 parent tables. Verified 0 actual violations in live data. | needs a unique per parent table | opportunistic: add the unique + composite FK when touching a domain |
 | 7d | **The identity map defeats `.get()` scoping after an unscoped load.** `core/authentication.py::load_without_tenant_scope` nulls the tenant to load `User`/`Session`; once cached, a later scoped `.get()` returns the row with no SQL. Guarded today by `_acts_outside_own_tenant`, and only those two models use it — a real bypass the moment a third does. | sign-in must find the account before the tenant is known | keep the helper limited to User/Session; assert it in review |
-| 10b | **admin-web has no merge screen and no GraphQL client.** The merge surface exists (`duplicateSuggestions`, `mergePeople`) but nothing consumes it — the CLI is still the only way an operator reconciles records. | server built ahead of the UI | Phase 3, with the admin-web GraphQL client |
 | 9 | **`_bus_operational_warning`** issues ~1 query per bus (84 on the test trust) | bounded by fleet size | M5 leftover |
 | 11 | **Transport list pagination is opt-in**; clients still read whole arrays | a truncated array is indistinguishable from a complete one | M5: admin-web + Expo adopt the page, then the array goes |
 | 12 | **`trial_ends_at` is never enforced**; no tenant invoice / receipt / dunning (`plans`, `tenant_usage` are scaffolding only) | commercial layer not built | Commercial module (Phase 5) — do not build billing on the current tenant lifecycle |
@@ -47,6 +45,12 @@ control.
 ---
 
 ## Closed
+
+**24 and 10b — both review surfaces have screens (2026-08-08).**
+`/attendance/corrections` and `/settings/duplicates`. Building them found
+two things no test had: the types carried ids where a reviewer needs people,
+and `mergePeople` reported success without committing — every merge through
+the API had been a no-op since Phase 1.
 
 **20 — optional modules are gated on GraphQL (2026-08-08).** `requires_feature`
 reads the same per-tenant switch `@require_feature` does. Built with

@@ -137,7 +137,11 @@ def merge_people(
     _move_family_memberships(kept, absorbed)
 
     absorbed.deleted_at = datetime.now(timezone.utc)
-    db.session.flush()
+    # Committed here, not left to the caller. A merge rewrites which human a
+    # school's records refer to across every module at once; half of that
+    # sitting in a caller's open transaction is not a state worth supporting,
+    # and a caller that forgot answered with a survivor and changed nothing.
+    db.session.commit()
 
     return record
 

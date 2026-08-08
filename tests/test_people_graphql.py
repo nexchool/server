@@ -241,3 +241,42 @@ def test_suggestions_are_offered_to_someone_who_may_merge(
     assert found[0]["other"]["fullName"] == "Sunita Vyas"
     assert found[0]["person"]["phoneNumber"] == "9800022222"
     assert found[0]["blockedReason"] is None
+
+
+def test_a_merge_is_committed_and_not_merely_flushed(
+    client, tenant, db_session, monkeypatch
+):
+    """The bug this pins reported success and changed nothing.
+
+    `merge_people` flushes and leaves the transaction to its caller, the way
+    the CLI's caller commits. The GraphQL resolver did not, so every merge
+    through the API answered with a survivor and a merge record, and the work
+    went out with the request.
+
+    Asserted as a call rather than an outcome because this suite runs inside a
+    transaction that is rolled back: a missing commit is invisible to it, which
+    is exactly why the bug survived until somebody used the screen.
+    """
+    from core.database import db
+
+    keep = _person(db_session, tenant, name="Meera Joshi", phone="9800033333")
+    absorb = _person(db_session, tenant, name="Meera Joshi", phone="9800033333")
+    _user, token = _signed_in(db_session, tenant, permissions=["person.merge"])
+
+    commits = []
+    real_commit = db.session.commit
+    monkeypatch.setattr(
+        db.session, "commit", lambda: (commits.append(True), real_commit())[1]
+    )
+
+    response = client.post(
+        GRAPHQL_PATH,
+        json={
+            "query": MERGE,
+            "variables": {"keep": keep.id, "absorb": absorb.id, "reason": "same person"},
+        },
+        headers=_headers(tenant, token),
+    )
+
+    assert "errors" not in response.get_json(), response.get_json()
+    assert commits, "the merge was flushed but never committed"
