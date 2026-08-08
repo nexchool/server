@@ -163,62 +163,96 @@ def _move_family_memberships(kept: Person, absorbed: Person) -> None:
             families_already_in.add(membership.family_id)
 
 
+# A phone number shared by more people than a household could hold is not
+# identifying: it is the school's own office number, or the placeholder a bulk
+# import wrote when the column was blank. Pairing such a group produces
+# thousands of suggestions that are all wrong, and costs the square of the
+# group to produce them — one placeholder shared by six thousand people is
+# eighteen million pairs, which is where this scan used to spend its minute.
+#
+# Names are not capped. That path already requires an exact date of birth
+# match, which is what makes it precise, and a common name in a large trust is
+# ordinary rather than suspicious.
+CROWD = 12
+
+
 def suggest_duplicates(tenant_id: str, limit: int = 100) -> List[DuplicateSuggestion]:
     """People who look like the same human, for someone to judge.
 
     Computed when asked rather than stored, so the list reflects the records as
     they are now and cannot go stale behind a merge.
+
+    Reads columns rather than people: at fifteen thousand students this is a
+    scan of every person in the organization, and building an ORM instance —
+    with its identity-map bookkeeping and every column it never reads — for
+    each one costs far more than the comparison does.
+
+    `limit` is honoured while pairing rather than by slicing the finished
+    list, so asking for ten no longer costs the same as asking for every
+    duplicate in the school.
     """
-    people = Person.query.filter(
-        Person.tenant_id == tenant_id, Person.deleted_at.is_(None)
-    ).all()
+    rows = (
+        db.session.query(
+            Person.id, Person.full_name, Person.phone_number, Person.date_of_birth
+        )
+        .filter(Person.tenant_id == tenant_id, Person.deleted_at.is_(None))
+        .all()
+    )
+
+    by_phone: Dict[str, List[tuple]] = {}
+    by_name: Dict[str, List[tuple]] = {}
+
+    for row in rows:
+        phone = normalize_phone(row.phone_number)
+        if phone:
+            by_phone.setdefault(phone, []).append(row)
+        name = normalize_name(row.full_name)
+        if name:
+            by_name.setdefault(name, []).append(row)
 
     suggestions: List[DuplicateSuggestion] = []
-    by_phone: Dict[str, List[Person]] = {}
-    by_name: Dict[str, List[Person]] = {}
+    seen = set()
 
-    for person in people:
-        phone = normalize_phone(person.phone_number)
-        if phone:
-            by_phone.setdefault(phone, []).append(person)
-        name = normalize_name(person.full_name)
-        if name:
-            by_name.setdefault(name, []).append(person)
+    def offer(first, second, reason: str) -> bool:
+        """Record a suggestion. Returns False once enough have been found."""
+        if (first.id, second.id) in seen:
+            return True
+        seen.add((first.id, second.id))
+        suggestions.append(
+            DuplicateSuggestion(
+                person_id=first.id, other_person_id=second.id, reason=reason
+            )
+        )
+        return len(suggestions) < limit
 
-    for phone, sharing in by_phone.items():
+    # A shared phone is the stronger signal, so it is offered first — the
+    # limit should spend itself on the likeliest duplicates.
+    for sharing in by_phone.values():
+        if len(sharing) > CROWD:
+            continue
         for first, second in _pairs(sharing):
             same_name = normalize_name(first.full_name) == normalize_name(
                 second.full_name
             )
-            suggestions.append(
-                DuplicateSuggestion(
-                    person_id=first.id,
-                    other_person_id=second.id,
-                    reason=(
-                        "same phone and name"
-                        if same_name
-                        # Very often a household phone shared by two people, which
-                        # is exactly why this is a question and not a merge.
-                        else "same phone, different name"
-                    ),
-                )
-            )
+            if not offer(
+                first,
+                second,
+                "same phone and name"
+                if same_name
+                # Very often a household phone shared by two people, which
+                # is exactly why this is a question and not a merge.
+                else "same phone, different name",
+            ):
+                return suggestions
 
-    seen = {(s.person_id, s.other_person_id) for s in suggestions}
-    for name, sharing in by_name.items():
+    for sharing in by_name.values():
         for first, second in _pairs(sharing):
-            if (first.id, second.id) in seen:
+            if not first.date_of_birth or first.date_of_birth != second.date_of_birth:
                 continue
-            if first.date_of_birth and first.date_of_birth == second.date_of_birth:
-                suggestions.append(
-                    DuplicateSuggestion(
-                        person_id=first.id,
-                        other_person_id=second.id,
-                        reason="same name and date of birth",
-                    )
-                )
+            if not offer(first, second, "same name and date of birth"):
+                return suggestions
 
-    return suggestions[:limit]
+    return suggestions
 
 
 def _pairs(people: List[Person]):

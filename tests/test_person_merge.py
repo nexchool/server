@@ -253,3 +253,70 @@ def test_a_merged_person_stops_being_suggested(db_session, tenant):
     merge_people(kept.id, absorbed.id)
 
     assert suggest_duplicates(tenant.id) == []
+
+
+# ---------------------------------------------------------------------------
+# A value many people share is not evidence
+# ---------------------------------------------------------------------------
+
+def test_a_placeholder_phone_does_not_suggest_anyone(db_session, tenant):
+    """A number on dozens of records is the school's, or a blank import wrote it.
+
+    Before this rule, one placeholder shared by six thousand people produced
+    eighteen million pairs — every one of them wrong, and a minute of waiting
+    to be told so.
+    """
+    from modules.people.merge import CROWD, suggest_duplicates
+    from modules.people.models import Person
+
+    for index in range(CROWD + 2):
+        db_session.add(
+            Person(
+                id=f"p-crowd-{index}-{uuid.uuid4().hex[:6]}",
+                tenant_id=tenant.id,
+                full_name=f"Distinct Person {index}",
+                phone_number="0000000000",
+            )
+        )
+    db_session.flush()
+
+    assert suggest_duplicates(tenant.id) == []
+
+
+def test_two_people_on_one_household_phone_are_still_suggested(db_session, tenant):
+    """The cap must not swallow the ordinary case it exists to protect."""
+    from modules.people.merge import suggest_duplicates
+    from modules.people.models import Person
+
+    for name in ("Rajesh Patel", "Rajesh Patel"):
+        db_session.add(
+            Person(
+                id=f"p-{uuid.uuid4().hex[:10]}",
+                tenant_id=tenant.id,
+                full_name=name,
+                phone_number="9800011111",
+            )
+        )
+    db_session.flush()
+
+    assert suggest_duplicates(tenant.id)
+
+
+def test_asking_for_fewer_suggestions_stops_early(db_session, tenant):
+    """`limit` bounds the work, not just the answer."""
+    from modules.people.merge import suggest_duplicates
+    from modules.people.models import Person
+
+    for index in range(8):
+        db_session.add(
+            Person(
+                id=f"p-{uuid.uuid4().hex[:10]}",
+                tenant_id=tenant.id,
+                full_name="Shared Name",
+                phone_number=f"98000{index:05d}",
+                date_of_birth=date(2015, 4, 12),
+            )
+        )
+    db_session.flush()
+
+    assert len(suggest_duplicates(tenant.id, limit=3)) == 3
