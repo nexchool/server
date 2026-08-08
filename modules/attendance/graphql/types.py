@@ -8,7 +8,7 @@ workflow is that a changed mark can be accounted for afterwards.
 from __future__ import annotations
 
 import datetime
-from typing import Optional
+from typing import List, Optional
 
 import strawberry
 
@@ -77,4 +77,52 @@ def correction_to_graphql(row, context=None) -> AttendanceCorrection:
         session_date=about.get("session_date"),
         requested_by_name=about.get("requested_by_name"),
         decided_by_name=about.get("decided_by_name"),
+    )
+
+
+@strawberry.type(description="One day of a student's attendance.")
+class AttendanceDay:
+    date: datetime.date
+    status: str
+    remarks: Optional[str] = None
+    session_id: Optional[strawberry.ID] = None
+
+
+@strawberry.type(
+    description=(
+        "A student's attendance over a month, or over their whole time at the "
+        "school when no month is named."
+    )
+)
+class StudentAttendance:
+    student_id: strawberry.ID
+    total_days: int = strawberry.field(description="Days the register was taken.")
+    present: int
+    absent: int
+    late: int
+    percentage: float
+    days: List[AttendanceDay]
+
+
+def student_attendance_to_graphql(data) -> StudentAttendance:
+    return StudentAttendance(
+        student_id=strawberry.ID(data["student_id"]),
+        total_days=data["total_days"],
+        present=data["present"],
+        absent=data["absent"],
+        late=data["late"],
+        percentage=data["percentage"],
+        days=[
+            AttendanceDay(
+                date=datetime.date.fromisoformat(record["date"]),
+                status=record["status"],
+                remarks=record.get("remarks"),
+                session_id=(
+                    strawberry.ID(record["session_id"])
+                    if record.get("session_id")
+                    else None
+                ),
+            )
+            for record in data["records"]
+        ],
     )

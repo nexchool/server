@@ -436,7 +436,7 @@ def class_history(
 def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = None) -> Dict[str, Any]:
     st = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
     if not st:
-        return {"success": False, "error": "Student not found"}
+        return {"success": False, "code": "NOT_FOUND", "error": "Student not found"}
 
     # Branch scope: restricted sub-admins may only read students in their units.
     assert_student_allowed(student_id)
@@ -484,6 +484,11 @@ def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = N
             "source": "sessions_v2",
             "total_days": total,
             "present": present,
+            # Counted here rather than by each screen. A parent asking "how
+            # many days has she missed" is asking one question, and two
+            # clients counting it themselves is two chances to differ.
+            "absent": sum(1 for r in recs if r["status"] == "absent"),
+            "late": sum(1 for r in recs if r["status"] == "late"),
             "percentage": pct,
             "records": recs,
         },

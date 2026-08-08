@@ -30,7 +30,9 @@ from graphql_api.permissions import (
 from .graphql.types import (
     AttendanceCorrection,
     CorrectionOutcome,
+    StudentAttendance,
     correction_to_graphql,
+    student_attendance_to_graphql,
 )
 
 FEATURE = "attendance"
@@ -40,6 +42,8 @@ FEATURE = "attendance"
 # school has made answerable for the register as a whole.
 PERM_MARK = "attendance.mark"
 PERM_MANAGE = "attendance.manage"
+PERM_READ_ALL = "attendance.read.all"
+PERM_READ_CLASS = "attendance.read.class"
 
 _ASKS = [
     IsAuthenticated,
@@ -104,6 +108,36 @@ class AttendanceQuery:
         rows = pending_corrections(info.context.tenant_id)
         about = context_for(rows)
         return [correction_to_graphql(row, about) for row in rows]
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_feature(FEATURE),
+            requires_any(PERM_READ_ALL, PERM_READ_CLASS, PERM_MANAGE),
+        ],
+        description=(
+            "One student's attendance. Give `month` as YYYY-MM for a month, or "
+            "omit it for their whole time at the school. Reads the register "
+            "sessions rather than the legacy table, so a day the register was "
+            "never taken is absent from the history rather than counted."
+        ),
+    )
+    def student_attendance(
+        self,
+        info: strawberry.Info,
+        student_id: strawberry.ID,
+        month: Optional[str] = None,
+    ) -> StudentAttendance:
+        from .session_services import student_history_v2
+
+        outcome = student_history_v2(
+            info.context.tenant_id, str(student_id), month=month
+        )
+        if not outcome.get("success"):
+            refusal = _REFUSALS.get(outcome.get("code"), ConflictError)
+            raise refusal(outcome.get("error") or "Attendance could not be read")
+        return student_attendance_to_graphql(outcome["data"])
 
     @strawberry.field(
         permission_classes=[

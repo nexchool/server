@@ -480,3 +480,123 @@ def test_the_queue_is_not_a_teachers_to_read(
     body = _ask(client, tenant, token, PENDING)
 
     assert "FORBIDDEN" in _codes(body)
+
+
+# ---------------------------------------------------------------------------
+# One student's attendance
+# ---------------------------------------------------------------------------
+
+HISTORY_FOR = """
+query S($studentId: ID!, $month: String) {
+  studentAttendance(studentId: $studentId, month: $month) {
+    totalDays present percentage
+    absent late
+    days { date status remarks }
+  }
+}
+"""
+
+
+@pytest.fixture
+def a_term(db_session, tenant, academic_year, marked):
+    """Three more days for the same child: present, present, absent."""
+    from modules.academics.backbone.models import AttendanceRecord, AttendanceSession
+
+    record = marked
+    session = AttendanceSession.query.filter_by(
+        id=record.attendance_session_id
+    ).first()
+    for day, status in (
+        (date(2026, 9, 2), "present"),
+        (date(2026, 9, 3), "present"),
+        (date(2026, 10, 1), "present"),
+    ):
+        another = AttendanceSession(
+            id=_new_id("as-"), tenant_id=tenant.id, class_id=session.class_id,
+            session_date=day, status="finalized",
+        )
+        db_session.add(another)
+        db_session.flush()
+        db_session.add(
+            AttendanceRecord(
+                id=_new_id("ar-"), tenant_id=tenant.id,
+                attendance_session_id=another.id,
+                student_id=record.student_id, status=status,
+            )
+        )
+    db_session.flush()
+    return record
+
+
+def test_a_students_attendance_is_summarised_over_their_whole_time(
+    client, tenant, ready_school, a_term, head
+):
+    _user, token = head
+
+    body = _ask(client, tenant, token, HISTORY_FOR, studentId=a_term.student_id)
+
+    assert "errors" not in body, body
+    history = body["data"]["studentAttendance"]
+    assert history["totalDays"] == 4
+    assert history["present"] == 3
+    assert history["absent"] == 1
+    assert history["late"] == 0
+    assert history["percentage"] == 75.0
+
+
+def test_a_month_narrows_it(client, tenant, ready_school, a_term, head):
+    """The child was present once in October and three times in September."""
+    _user, token = head
+
+    body = _ask(
+        client, tenant, token, HISTORY_FOR,
+        studentId=a_term.student_id, month="2026-10",
+    )
+
+    history = body["data"]["studentAttendance"]
+    assert history["totalDays"] == 1
+    assert history["percentage"] == 100.0
+    assert [day["date"] for day in history["days"]] == ["2026-10-01"]
+
+
+def test_the_history_reads_newest_first(client, tenant, ready_school, a_term, head):
+    _user, token = head
+
+    body = _ask(client, tenant, token, HISTORY_FOR, studentId=a_term.student_id)
+
+    dates = [day["date"] for day in body["data"]["studentAttendance"]["days"]]
+    assert dates == sorted(dates, reverse=True)
+
+
+def test_reading_a_students_attendance_needs_more_than_marking_it(
+    client, tenant, ready_school, a_term, teacher
+):
+    """A marker records their own class; reading a child's record across the
+    school is the office's."""
+    _user, token = teacher
+
+    body = _ask(client, tenant, token, HISTORY_FOR, studentId=a_term.student_id)
+
+    assert "FORBIDDEN" in _codes(body)
+
+
+def test_a_student_who_does_not_exist_is_not_found(
+    client, tenant, ready_school, head
+):
+    _user, token = head
+
+    body = _ask(client, tenant, token, HISTORY_FOR, studentId="s-nobody")
+
+    assert "NOT_FOUND" in _codes(body)
+
+
+def test_attendance_is_not_readable_with_the_module_switched_off(
+    client, db_session, tenant, ready_school, a_term, head
+):
+    _user, token = head
+    tenant.feature_flags = {"attendance": False}
+    db_session.flush()
+
+    body = _ask(client, tenant, token, HISTORY_FOR, studentId=a_term.student_id)
+
+    assert "FEATURE_DISABLED" in _codes(body)
