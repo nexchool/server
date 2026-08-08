@@ -376,7 +376,8 @@ def _build_sort_order(sort_by: str, sort_dir: str, student_col, teacher_col):
     return [primary, Class.section.asc(), Class.id.asc()]
 
 
-def get_all_classes(
+def _class_list_query(
+    *,
     academic_year_id: Optional[str] = None,
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
@@ -384,27 +385,29 @@ def get_all_classes(
     department_id: Optional[str] = None,
     search: Optional[str] = None,
     search_field: str = "all",
-    sort_by: str = "grade",
-    sort_dir: str = "asc",
-    page: Optional[int] = None,
-    per_page: Optional[int] = None,
-) -> Dict:
-    """List classes for the current tenant with filters, search, sort, paging.
+):
+    """The one query every class list is built from.
 
-    Returns an envelope: {items, total, page, per_page, total_pages}. When
-    `page`/`per_page` are omitted every matching row is returned with
-    total_pages = 1, so callers that just want the full list (the structured
-    class pickers) keep working.
+    Both transports go through here. A filter added to one list and not the
+    other is drift nobody sees until a school asks why the spreadsheet and the
+    screen disagree.
 
-    Each item carries `student_count`, `teacher_count` and a derived `status`
-    ("active" when the class sits in the tenant's active academic year, else
-    "archived" — `classes` has no status column of its own).
+    Returns (query, student_col, teacher_col). The query selects
+    (Class, student_count, teacher_count, academic_year.is_active) and carries
+    no ordering, no paging and no eager loads — a count should pay for none of
+    those.
     """
-    from core.branch_scope import filter_classes_by_branch
+    from core.branch_scope import assert_unit_allowed, filter_classes_by_branch
     from modules.academic_programmes.models import AcademicProgramme
     from modules.academics.academic_year.models import AcademicYear
     from modules.grades.models import Grade
     from modules.school_units.models import SchoolUnit
+
+    # Branch scope: naming a branch outside this person's scope is a refusal,
+    # not an empty list. Here rather than in a route so it holds however the
+    # list is reached. No-op for unrestricted users.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
 
     tenant_id = get_tenant_id()
     student_counts, teacher_counts = _count_subqueries(tenant_id)
@@ -454,25 +457,71 @@ def get_all_classes(
         ]
         query = query.filter(or_(*clauses))
 
-    # Eager-load what to_dict() touches; otherwise each row lazy-loads seven
-    # relationships and we're back to the N+1 this query exists to kill.
+    return query, student_col, teacher_col
+
+
+def _with_list_relationships(query):
+    """Eager-load what a rendered class row reads.
+
+    Without this each row lazy-loads seven relationships and we are back to the
+    N+1 the grouped counts exist to kill.
+    """
     from modules.people.employment import Staff
     from modules.teachers.models import Teacher
 
-    query = query.options(
+    return query.options(
         joinedload(Class.school_unit),
         joinedload(Class.programme),
         joinedload(Class.grade),
         joinedload(Class.medium),
         joinedload(Class.academic_year_ref),
-        # teacher_name reads Teacher -> Staff -> Person (ADR-001).
+        # The class teacher's name reads Teacher -> Staff -> Person (ADR-001).
         joinedload(Class.teacher).joinedload(Teacher.staff).joinedload(Staff.person),
         joinedload(Class.department_ref),
     )
 
-    total = query.order_by(None).count()
 
-    query = query.order_by(*_build_sort_order(sort_by, sort_dir, student_col, teacher_col))
+def get_all_classes(
+    academic_year_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
+    department_id: Optional[str] = None,
+    search: Optional[str] = None,
+    search_field: str = "all",
+    sort_by: str = "grade",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+) -> Dict:
+    """List classes for the current tenant with filters, search, sort, paging.
+
+    Returns an envelope: {items, total, page, per_page, total_pages}. When
+    `page`/`per_page` are omitted every matching row is returned with
+    total_pages = 1.
+
+    Each item carries `student_count`, `teacher_count` and a derived `status`
+    ("active" when the class sits in the tenant's active academic year, else
+    "archived" — `classes` has no status column of its own).
+
+    This is what the CSV export renders. Screens read `classes_page`, which
+    walks the same query without building every row it skips.
+    """
+    query, student_col, teacher_col = _class_list_query(
+        academic_year_id=academic_year_id,
+        school_unit_id=school_unit_id,
+        programme_id=programme_id,
+        grade_id=grade_id,
+        department_id=department_id,
+        search=search,
+        search_field=search_field,
+    )
+
+    total = query.count()
+
+    query = _with_list_relationships(query).order_by(
+        *_build_sort_order(sort_by, sort_dir, student_col, teacher_col)
+    )
 
     if page and per_page:
         query = query.limit(per_page).offset((page - 1) * per_page)
@@ -480,13 +529,7 @@ def get_all_classes(
     else:
         total_pages = 1
 
-    items = []
-    for cls, student_count, teacher_count, year_is_active in query.all():
-        data = cls.to_dict()
-        data["student_count"] = student_count or 0
-        data["teacher_count"] = teacher_count or 0
-        data["status"] = "active" if year_is_active else "archived"
-        items.append(data)
+    items = [row_to_dict(row) for row in query.all()]
 
     return {
         "items": items,
@@ -495,6 +538,64 @@ def get_all_classes(
         "per_page": per_page or total,
         "total_pages": total_pages,
     }
+
+
+def row_to_dict(row) -> Dict:
+    """One list row as the REST export renders it."""
+    cls, student_count, teacher_count, year_is_active = row
+    data = cls.to_dict()
+    data["student_count"] = student_count or 0
+    data["teacher_count"] = teacher_count or 0
+    data["status"] = "active" if year_is_active else "archived"
+    return data
+
+
+def classes_page(
+    *,
+    first: int = 25,
+    offset: Optional[int] = None,
+    sort_by: str = "grade",
+    sort_dir: str = "asc",
+    **filters,
+):
+    """One page of classes, and whether another follows.
+
+    Paged by offset rather than by cursor, deliberately. A cursor is only sound
+    over a key that cannot be null and does not change, and a class list has
+    none: every order it offers is either nullable (a class may have no grade),
+    mutable (grade order, a name), or a count that changes as children are
+    admitted. Offering a cursor over those would not error — it would quietly
+    skip classes.
+
+    The cost is one a class list can carry. Unlike students, a school's classes
+    are bounded by its own structure: twenty campuses of forty sections is
+    eight hundred rows, not fifteen thousand.
+
+    Returns (rows, has_more). One row more than asked for is fetched, and that
+    extra row *is* `hasNextPage` — no second query.
+    """
+    first = max(1, min(int(first), MAX_PER_PAGE))
+
+    query, student_col, teacher_col = _class_list_query(**filters)
+    query = _with_list_relationships(query).order_by(
+        *_build_sort_order(sort_by, sort_dir, student_col, teacher_col)
+    )
+
+    if offset:
+        query = query.offset(max(0, int(offset)))
+
+    rows = query.limit(first + 1).all()
+    return rows[:first], len(rows) > first
+
+
+def classes_matching_count(**filters) -> int:
+    """How many classes the same filters match, ignoring paging.
+
+    Separate from the page so a caller that shows no total does not pay for
+    one. Sorting cannot change a count, so it is not accepted here.
+    """
+    query, _student_col, _teacher_col = _class_list_query(**filters)
+    return query.count()
 
 
 def get_classes_stats(
@@ -513,8 +614,13 @@ def get_classes_stats(
     `total_teachers` counts *distinct* teachers across the matching classes —
     one teacher taking four classes is one teacher, not four.
     """
-    from core.branch_scope import filter_classes_by_branch
+    from core.branch_scope import assert_unit_allowed, filter_classes_by_branch
     from modules.students.models import Student
+
+    # Same refusal the list makes: a branch outside this person's scope is a
+    # "no", not a zero. No-op for unrestricted users.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
 
     tenant_id = get_tenant_id()
 
@@ -563,63 +669,107 @@ def get_classes_stats(
     }
 
 
-def get_class_by_id(class_id: str) -> Optional[Dict]:
-    """Get class details by ID"""
-    cls = Class.query.get(class_id)
-    return cls.to_dict() if cls else None
+def class_detail(class_id: str) -> Optional[Dict]:
+    """One class, the children placed in it and everyone teaching it.
 
+    Returns rows rather than serialized dicts: the transport builds the shape
+    a client renders, and a serializer that carries every column is what the
+    REST payload already was.
 
-def get_class_detail(class_id: str) -> Optional[Dict]:
-    """Get class details with students and assigned teachers."""
-    cls = Class.query.get(class_id)
+    Branch scope is asserted here rather than by a caller, so it holds however
+    this is reached — a class in a branch outside the reader's scope is a
+    refusal, not an empty page.
+    """
+    from core.branch_scope import assert_class_allowed
+
+    assert_class_allowed(class_id)  # no-op for unrestricted users
+
+    cls = _with_list_relationships(Class.query).filter(Class.id == class_id).first()
     if not cls:
         return None
 
     from modules.students.models import Student
 
-    # Get students in this class
-    students = Student.query.filter_by(class_id=class_id).all()
-    students_data = [s.to_dict() for s in students]
+    students = (
+        Student.query.options(joinedload(Student.person))
+        .filter(Student.class_id == class_id)
+        .all()
+    )
 
-    # Everyone currently teaching this class, whatever their responsibility.
+    return {
+        "class": cls,
+        "status": (
+            "active"
+            if cls.academic_year_ref and cls.academic_year_ref.is_active
+            else "archived"
+        ),
+        "students": students,
+        "teachers": _teaching_this_class(class_id),
+    }
+
+
+def _teaching_this_class(class_id: str) -> List[Dict]:
+    """Everyone teaching a class, whatever their responsibility.
+
+    Asks Teaching Assignment for the responsibilities (ADR-014), then names
+    them once: the teacher through Staff -> Person (ADR-001), their employee
+    number from the employment that holds it, and the subject from the
+    catalogue. Naming them here rather than per row is what keeps the detail
+    page at three queries instead of one per teacher.
+    """
     from modules.academics.teaching_assignment import (
         class_teachers_for,
         subject_teachers_for,
     )
+    from modules.people.employment import Staff
+    from modules.subjects.models import Subject
     from modules.teachers.models import Teacher
 
     holding = list(class_teachers_for([class_id]).get(class_id, []))
     for subject_held in subject_teachers_for([class_id]).values():
         holding.extend(subject_held)
+    if not holding:
+        return []
 
-    by_id = {
+    teachers = {
         teacher.id: teacher
-        for teacher in Teacher.query.filter(
-            Teacher.id.in_({held.teacher_id for held in holding} or {""})
-        ).all()
+        for teacher in Teacher.query.options(
+            joinedload(Teacher.staff).joinedload(Staff.person)
+        )
+        .filter(Teacher.id.in_({held.teacher_id for held in holding}))
+        .all()
     }
-    teachers_data = [
+    wanted_subjects = {held.subject_id for held in holding if held.subject_id}
+    subjects = (
         {
-            "teacher_id": held.teacher_id,
-            "teacher_name": (
-                by_id[held.teacher_id].to_dict()["name"]
-                if held.teacher_id in by_id
-                else None
-            ),
-            "subject_id": held.subject_id,
-            "role": held.role,
-            "is_class_teacher": held.subject_id is None,
+            subject.id: subject
+            for subject in Subject.query.filter(Subject.id.in_(wanted_subjects)).all()
         }
-        for held in holding
-    ]
+        if wanted_subjects
+        else {}
+    )
 
-    data = cls.to_dict()
-    data['students'] = students_data
-    data['teachers'] = teachers_data
-    data['student_count'] = len(students_data)
-    data['teacher_count'] = len(teachers_data)
-
-    return data
+    named = []
+    for held in holding:
+        teacher = teachers.get(held.teacher_id)
+        employment = teacher.staff if teacher else None
+        subject = subjects.get(held.subject_id) if held.subject_id else None
+        named.append(
+            {
+                "teacher_id": held.teacher_id,
+                "teacher_name": (
+                    employment.person.full_name
+                    if employment and employment.person
+                    else None
+                ),
+                "employee_number": employment.employee_number if employment else None,
+                "subject_id": held.subject_id,
+                "subject_name": subject.name if subject else None,
+                "role": held.role,
+                "is_class_teacher": held.subject_id is None,
+            }
+        )
+    return named
 
 
 def update_class(

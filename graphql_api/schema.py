@@ -55,6 +55,7 @@ def _build_query_type() -> type:
     from modules.academics.resolvers import AcademicsQuery
     from modules.attendance.resolvers import AttendanceQuery
     from modules.auth.resolvers import IdentityQuery
+    from modules.classes.resolvers import ClassesQuery
     from modules.people.resolvers import PeopleQuery
     from modules.students.resolvers import StudentQuery
 
@@ -66,6 +67,7 @@ def _build_query_type() -> type:
         StudentQuery,
         AttendanceQuery,
         AcademicsQuery,
+        ClassesQuery,
     ):
         pass
 

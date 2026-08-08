@@ -59,7 +59,16 @@ def admin_headers(db_session, tenant):
 
 
 def _stamp_of(client, headers) -> str | None:
-    return client.get("/api/classes/", headers=headers).headers.get("X-Feature-Stamp")
+    """The stamp on a response that actually answered.
+
+    Read from a live endpoint, and the status asserted, because every `/api/*`
+    response carries the header — including a 404. Pointed at a route that has
+    since moved to GraphQL, these tests would go on passing while proving
+    nothing.
+    """
+    response = client.get("/api/teachers/", headers=headers)
+    assert response.status_code == 200, response.status_code
+    return response.headers.get("X-Feature-Stamp")
 
 
 # ---------------------------------------------------------------------------

@@ -117,6 +117,19 @@ is seen twice or missed. Walking from the last key costs the same at any depth.
 `totalCount` is a resolver on the connection, not a field computed with the
 page: a list that shows no total should not pay for one.
 
+**Where no key qualifies, offer offset and no cursor.** Classes have no such
+key — every order the list offers is nullable (a class may have no grade),
+mutable (grade order, a label) or a count that changes as children are
+admitted. So `classes` returns a `ClassPage` of `nodes`, with `hasNextPage`
+and `totalCount` and no cursor anywhere. Shipping an `endCursor` that is
+always null would be machinery that never fires, and machinery that never
+fires is machinery somebody will one day believe.
+
+That is affordable because the *thing* is bounded, not because paging is
+cheap: a school's classes are its own structure — twenty campuses of forty
+sections is eight hundred rows — while its children are fifteen thousand.
+Check which of those a list is before copying either shape.
+
 ---
 
 ## 4. Batching is synchronous here
@@ -171,6 +184,22 @@ and gains fields when something actually renders them.
 
 Use real scalars — a date is `datetime.date`, not an ISO string — so the
 schema states the contract instead of describing it in a comment.
+
+**A label a screen has to compose is a field the schema should have.**
+`Class.displayName` and `StudentClass.displayName` exist because `classes.name`
+is a nullable legacy label, empty for every class the structured form creates.
+Five screens composed their own from it and five screens were wrong — a page
+titled "— A", a filter offering twelve options all reading "-A", a picker of
+blank checkboxes. Where a client must combine columns to get a name, put the
+combining here; there is one of it, and it can be tested.
+
+**Say the word the rest of the schema says.** The canon calls a class a
+Section, and `Campus` was named after the canon rather than after the
+`school_units` table it reads. `Class` is not, because the schema was already
+full of the word — `Student.currentClass`, the student filter's `classId`,
+attendance — and one concept under two names *on one transport* is worse than
+one concept under the older name. Rename when the whole surface can move
+(ADR-012 is the bridge), not one type at a time.
 
 Name mutations as the school names the act: `withdrawStudent`,
 `graduateStudent`, `transferStudentOut`. Not `updateStudentStatus`. A mutation

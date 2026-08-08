@@ -216,9 +216,9 @@ def _populated_routes(ids: dict) -> list[str]:
     """The pages an admin actually opens, on a school that has data in it.
 
     Detail routes and the query variants that pull another module in. The
-    student list is not here: it moved to GraphQL, which is swept by
-    `test_the_student_list_survives_a_feature_being_off` below because a
-    single POST endpoint cannot be swept by URL.
+    student list and the class pages are not here: they moved to GraphQL, and
+    are swept by `test_the_graphql_reads_survive_a_feature_being_off` below
+    because a single POST endpoint cannot be swept by URL.
     """
     return [
         "/api/dashboard/",
@@ -226,12 +226,9 @@ def _populated_routes(ids: dict) -> list[str]:
         "/api/academics/health",
         "/api/academics/overview",
         "/api/students/export",
-        "/api/classes/",
-        "/api/classes/stats",
         "/api/classes/export",
         "/api/teachers/",
         f"/api/students/{ids['student_id']}",
-        f"/api/classes/{ids['class_id']}",
         f"/api/teachers/{ids['teacher_id']}",
     ]
 
@@ -296,22 +293,41 @@ query { students(first: 5) { totalCount edges { node { admissionNumber
          currentClass { displayName } } } } }
 """
 
+CLASS_PAGES = """
+query C($id: ID!) {
+  classes(first: 5) { totalCount nodes { section gradeName studentCount } }
+  classStats { totalClasses totalStudents totalTeachers }
+  class(id: $id) { section students { fullName } teachers { teacherName } }
+}
+"""
+
 
 @pytest.mark.parametrize("feature", OPTIONAL_FEATURES)
-def test_the_student_list_survives_a_feature_being_off(
-    feature, client, admin_headers, db_session, tenant, a_small_school
+@pytest.mark.parametrize("read", ["students", "classes"])
+def test_the_graphql_reads_survive_a_feature_being_off(
+    read, feature, client, admin_headers, db_session, tenant, a_small_school
 ):
-    """The student list is GraphQL now, so it is swept here rather than by URL.
+    """The student and class lists are GraphQL now, so they are swept here.
 
     Same contract as the sweep above: turning an optional module off must not
-    break a page belonging to another module.
+    break a page belonging to another module. Swept by asking rather than by
+    URL, because one POST endpoint serves all of them — and a page that has
+    moved off REST is a page the URL sweep silently stops covering, since a
+    404 is not a 500.
     """
     from graphql_api import GRAPHQL_PATH
 
-    _set_flags(db_session, tenant, **{feature: False})
-    response = client.post(
-        GRAPHQL_PATH, json={"query": STUDENT_LIST}, headers=admin_headers
+    asked = (
+        {"query": STUDENT_LIST}
+        if read == "students"
+        else {
+            "query": CLASS_PAGES,
+            "variables": {"id": a_small_school["class_id"]},
+        }
     )
+
+    _set_flags(db_session, tenant, **{feature: False})
+    response = client.post(GRAPHQL_PATH, json=asked, headers=admin_headers)
     body = response.get_json()
 
     assert response.status_code < 500, response.status_code
