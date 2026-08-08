@@ -721,35 +721,25 @@ def student_timeline_route(student_id):
     return success_response(data=[event.to_dict() for event in events])
 
 
-@students_bp.route('/export', methods=['GET'], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature('student_management')
-@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
-def export_students():
-    """
-    Export the filtered student list as CSV. Accepts the same filter/search
-    query params as the list endpoint (pagination is ignored — all matching
-    rows are returned).
-    """
-    import csv
-    from io import StringIO
-    from datetime import datetime
-    from modules.rbac.services import has_permission
+def _list_arguments_from_request(*, paginate):
+    """Filter/search/sort parsing shared by the student list and its export.
 
-    user_id = g.current_user.id
-
-    # Reuse the list filters (no pagination -> all rows).
-    class_id = request.args.get('class_id')
+    Returns (kwargs, error_response); `error_response` is non-None when a
+    param failed validation. Branch scope is asserted here — naming a class or
+    a campus outside a restricted sub-admin's branches is a refusal, not an
+    empty page.
+    """
     class_ids_param = request.args.get('class_ids')
     class_ids = (
         [c.strip() for c in class_ids_param.split(',') if c.strip()]
         if class_ids_param
         else None
     )
+    class_id = request.args.get('class_id')
+
     search_field = request.args.get('search_field', 'all')
     if search_field not in services.SEARCH_FIELDS:
-        return validation_error_response({
+        return None, validation_error_response({
             'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
         })
     sort_by = request.args.get('sort_by', 'admission_number')
@@ -768,7 +758,9 @@ def export_students():
         for cid in class_ids:
             assert_class_allowed(cid)
 
-    common_kwargs = dict(
+    return dict(
+        class_id=class_id if not class_ids else None,
+        class_ids=class_ids,
         academic_year_id=request.args.get('academic_year_id'),
         search=request.args.get('search'),
         search_field=search_field,
@@ -779,29 +771,106 @@ def export_students():
         admission_date_to=request.args.get('admission_date_to'),
         sort_by=sort_by,
         sort_dir=sort_dir,
-        page=None,
-        per_page=None,
+        page=(
+            _parse_int_param(request.args.get('page'), default=None, minimum=1)
+            if paginate else None
+        ),
+        per_page=(
+            _parse_int_param(
+                request.args.get('per_page'), default=None, minimum=1, maximum=100
+            )
+            if paginate else None
+        ),
         school_unit_id=school_unit_id,
         programme_id=request.args.get('programme_id') or None,
         grade_id=request.args.get('grade_id') or None,
-    )
+    ), None
 
+
+def _listed_students(*, paginate):
+    """The students this caller may see, with the filters they asked for.
+
+    A head teacher holds `student.read.all` and reads the school; a class
+    teacher holds `student.read.class` and reads their own classes. Both reach
+    the same list — what differs is how much of it, which is this function's
+    job rather than the guard's.
+
+    Returns (envelope, error_response).
+    """
+    from modules.rbac.services import has_permission
+
+    kwargs, err = _list_arguments_from_request(paginate=paginate)
+    if err:
+        return None, err
+
+    user_id = g.current_user.id
     if has_permission(user_id, PERM_READ_ALL):
-        result = services.list_students(
-            class_id=class_id if not class_ids else None,
-            class_ids=class_ids,
-            **common_kwargs,
-        )
-    elif has_permission(user_id, PERM_READ_CLASS):
+        return services.list_students(**kwargs), None
+    if has_permission(user_id, PERM_READ_CLASS):
         from modules.attendance.services import get_teacher_class_ids
-        result = services.list_students(
-            class_id=class_id if not class_ids else None,
-            class_ids=class_ids,
-            _restrict_class_ids=get_teacher_class_ids(user_id),
-            **common_kwargs,
-        )
-    else:
-        return unauthorized_response()
+
+        return services.list_students(
+            _restrict_class_ids=get_teacher_class_ids(user_id), **kwargs
+        ), None
+    return None, unauthorized_response()
+
+
+def _parse_int_param(raw, default=None, minimum=None, maximum=None):
+    if raw is None or raw == '':
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and val < minimum:
+        val = minimum
+    if maximum is not None and val > maximum:
+        val = maximum
+    return val
+
+
+@students_bp.route('/', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
+def list_students():
+    """Paginated, filterable, sortable list of students.
+
+    ⚠️ **Kept for the Expo client only** (`client/modules/students/services/
+    studentService.ts`). admin-web reads the `students` field on GraphQL, and
+    both go through `_student_list_query`, so the two cannot drift.
+
+    This route was deleted in 92ed1cf on the claim that "nothing calls
+    `GET /api/students/` any more" — the mobile app did, and had done all
+    along. Delete it with the Expo release that moves the app, not before.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
+    """
+    listed, err = _listed_students(paginate=True)
+    if err:
+        return err
+    return success_response(data=listed)
+
+
+@students_bp.route('/export', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
+def export_students():
+    """
+    Export the filtered student list as CSV. Accepts the same filter/search
+    query params as the list endpoint (pagination is ignored — all matching
+    rows are returned).
+    """
+    import csv
+    from io import StringIO
+
+    listed, err = _listed_students(paginate=False)
+    if err:
+        return err
+    result = listed
 
     columns = [
         ('admission_number', 'Admission Number'),

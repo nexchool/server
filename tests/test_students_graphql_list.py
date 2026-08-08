@@ -603,11 +603,15 @@ def test_the_csv_export_and_the_list_agree_on_who_matches(
         assert any(name in line for line in names_in_csv), name
 
 
-def test_the_students_list_is_only_on_graphql_now(client, tenant, school, office):
-    """The REST list is gone. One operation, one transport.
+def test_the_mobile_student_list_still_answers(client, tenant, school, office):
+    """`GET /api/students/` is `studentService.getStudents` on mobile.
 
-    405 rather than 404: admission still POSTs to this path, so the path
-    exists — reading a list through it does not.
+    It was deleted in 92ed1cf on the claim that nothing called it any more,
+    and this test asserted the 405 that followed — the Expo client had been
+    calling it all along, from `client/modules/`, which the check that cleared
+    the deletion never looked at. admin-web reads the `students` field; both
+    go through `_student_list_query`, so they cannot drift. The route goes
+    with the Expo release that moves the app, and not before.
     """
     _user, token = office
 
@@ -619,4 +623,27 @@ def test_the_students_list_is_only_on_graphql_now(client, tenant, school, office
         },
     )
 
-    assert response.status_code == 405
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()["data"]
+    assert payload["total"] == 4
+    assert len(payload["items"]) == 4
+    assert [item["admission_number"] for item in payload["items"]] == [
+        "ADM-0001", "ADM-0002", "ADM-0003", "ADM-0004",
+    ]
+
+
+def test_the_mobile_list_and_graphql_agree(client, tenant, school, office):
+    """One reader, two shapes."""
+    _user, token = office
+    headers = {
+        "X-Tenant-Subdomain": tenant.subdomain,
+        "Authorization": f"Bearer {token}",
+    }
+
+    over_rest = client.get("/api/students/", headers=headers).get_json()["data"]
+    over_graphql = _ask(client, tenant, token, first=50)["data"]["students"]
+
+    assert over_rest["total"] == over_graphql["totalCount"]
+    assert [item["admission_number"] for item in over_rest["items"]] == [
+        edge["node"]["admissionNumber"] for edge in over_graphql["edges"]
+    ]

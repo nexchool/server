@@ -23,7 +23,7 @@ control.
 | 25 | **Most of Attendance is still REST, and the Expo client is why.** Migrated: corrections, and the student attendance read admin-web uses. Still REST: marking, sessions, `my-classes`, the class register, `/list`, `calendar-holidays`, and `/me` — the teacher's daily marking flow and the student's own view, all consumed by the shipped mobile app. Moving them means an Expo release, the same constraint as 4b. | mobile release cadence, not server work | migrate with the next Expo release, then delete each replaced route |
 | 26 | **The v1/v2 split on student attendance survives.** `/student/<id>` reads the legacy attendance table, `/student/<id>/v2` reads register sessions; `/me` and `/me/v2` likewise. GraphQL exposes only the session shape, so the two REST versions now exist purely for Expo. Two answers to "was this child here" is one too many. | both shipped before the sessions model settled | delete the v1 pair when Expo moves to GraphQL |
 | 22 | **A cursor is refused for orders whose key can be empty** — class, programme, roll number. Over a nullable, mutable key a cursor silently skips or repeats students, so the field raises instead and the client uses `offset`. Fine for a page-number UI; a future infinite-scroll client sorting by class would have no constant-cost path. | correctness beats a uniform API | if a client needs it: page those orders by `(key, admission_number)` with an explicit NULLS-LAST predicate |
-| 31 | **The class and subject reads are on two transports at once, which the strategy forbids.** `GET /api/classes/`, `GET /api/classes/<id>` and the flat `GET /api/subjects/` answer the Expo client while admin-web reads `classes` / `class` / `subjects` on GraphQL. Each REST route shares the GraphQL reader (`get_all_classes`, `class_detail`, `list_subjects_filtered`) and only reshapes it, so they cannot drift — but there are two shapes for one operation, and `legacy_detail_payload` exists solely to keep the mobile keys. | a shipped app calls them; deleting them broke it once already | delete all three with the Expo release that moves the mobile app to GraphQL — the same gate as 25, 2b and 4b |
+| 31 | **The class, subject and student list reads are on two transports at once, which the strategy forbids.** `GET /api/classes/`, `GET /api/classes/<id>`, the flat `GET /api/subjects/` and `GET /api/students/` answer the Expo client while admin-web reads `classes` / `class` / `subjects` on GraphQL. Each REST route shares the GraphQL reader (`get_all_classes`, `class_detail`, `list_subjects_filtered`) and only reshapes it, so they cannot drift — but there are two shapes for one operation, and `legacy_detail_payload` exists solely to keep the mobile keys. | a shipped app calls them; deleting them broke it twice already | delete all four with the Expo release that moves the mobile app to GraphQL — the same gate as 25, 2b and 4b |
 | 29 | **`GET /api/classes/export` is the last REST reader of the class query**, the same shape as 23. It keeps `_list_filters_from_request` alive to parse a query string by hand, and it is the only caller left of `get_all_classes` — every screen reads `classes_page`. | downloads stay REST by the canon | leave until exports are revisited as a whole; retire `get_all_classes` with it |
 | 30 | **The class list offers no cursor at all** — every order it has is nullable (a class may have no grade), mutable (grade order, a label) or a count. Offset is honest here and cheap at a school's real size (hundreds of sections, not fifteen thousand children), but the structured pickers now make one request per hundred classes to read the whole structure. | no key is both unique and unchanging | if a trust ever makes this hurt, give the pickers a field shaped like what they actually want — the school's structure — rather than a cursor over a list |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
@@ -66,7 +66,21 @@ directory this repo does not have, since the Expo app keeps its code in
 `client/modules/` — and an empty result was read as "no consumer" instead of
 "wrong path". **A grep that finds nothing is a result to verify, not a
 result.** The routes are back, each carrying a comment saying whose they are,
-and three tests now fail if they go again. See open item 31.
+and tests now fail if they go again. See open item 31.
+
+**An audit of all 205 Expo and panel API calls against the route table then
+found a fifth break, older than mine: `GET /api/students/`,** deleted in
+92ed1cf under the same false claim ("nothing calls it any more") and asserted
+by a test that pinned the resulting 405. The mobile student list had been
+broken since. Restored on `list_students`, which the export already reads, and
+the filter parsing plus the read.all/read.class ceiling are now extracted so
+the list and the export share one of each.
+
+The audit script itself needed two rounds before it could be trusted: its
+first version missed two of three *known* breaks, because a URL assigned to a
+variable never appears inside `apiGet(...)`, and because truncating a path at
+an interpolation invented a shorter path that matched a real route. **Run a
+coverage check against known-broken input before believing a clean audit.**
 
 Three things the migration turned up, none of them the migration's own:
 
