@@ -3,13 +3,13 @@ from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from datetime import datetime
-import secrets
 
 from core.database import db
 from core.branch_scope import filter_teachers_by_branch
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
+from modules.rbac.models import Role
 from modules.rbac.services import (
     assign_role_to_user_by_email,
     remove_login_for_deleted_profile,
@@ -221,32 +221,40 @@ def create_teacher(
         except (RuntimeError, ValueError) as e:
             return {"success": False, "error": str(e)}
 
-        # Generate email if not provided (use employee_id based)
-        actual_email = email if email else f"{employee_id.lower()}@teacher.school"
-        temp_password = generate_teacher_password(name)
-
         # Plan enforcement: do not allow creating teachers beyond plan limit
         allowed, limit_msg = _check_teacher_plan_limit(tenant_id)
         if not allowed:
             return {'success': False, 'error': limit_msg}
 
-        # Check email uniqueness (tenant-scoped). Include soft-deleted rows: the
-        # (email, tenant_id) unique constraint is not scoped to deleted_at, so a
-        # soft-deleted email must be caught here to avoid an IntegrityError on insert.
-        existing_user = User.get_user_by_email(actual_email, tenant_id=tenant_id, include_deleted=True)
-        if existing_user:
-            if Teacher.query.filter_by(user_id=existing_user.id).first():
-                return {'success': False, 'error': 'Email already linked to another teacher'}
-            user = existing_user
-        else:
-            user = User()
-            user.tenant_id = tenant_id
-            user.email = actual_email
-            user.name = name
-            user.set_password(temp_password)
-            user.email_verified = True
-            user.force_password_reset = True
-            user.save()
+        # No email means no login (ADR-003): the old synthesized
+        # @teacher.school placeholder accounts — whose passwords were
+        # derivable from the teacher's name — are no longer minted.
+        user = None
+        existing_user = None
+        temp_password = None
+        if email:
+            temp_password = generate_teacher_password(name)
+
+            # Check email uniqueness (tenant-scoped). Include soft-deleted rows:
+            # the (email, tenant_id) unique constraint is not scoped to
+            # deleted_at, so a soft-deleted email must be caught here to avoid
+            # an IntegrityError on insert.
+            existing_user = User.get_user_by_email(
+                email, tenant_id=tenant_id, include_deleted=True
+            )
+            if existing_user:
+                if Teacher.query.filter_by(user_id=existing_user.id).first():
+                    return {'success': False, 'error': 'Email already linked to another teacher'}
+                user = existing_user
+            else:
+                user = User()
+                user.tenant_id = tenant_id
+                user.email = email
+                user.name = name
+                user.set_password(temp_password)
+                user.email_verified = True
+                user.force_password_reset = True
+                user.save()
 
         # Ensure Teacher role exists and has all its permissions for this tenant.
         # This is a no-op if everything is already correct (idempotent).
@@ -256,8 +264,19 @@ def create_teacher(
         # is the Staff relationship, and teaching hangs off it. It is created
         # before the profile is granted, because authority is held by the
         # employment and there is nothing to grant it to otherwise. Someone
-        # already employed here keeps the employment they have.
-        from modules.people.service import employ
+        # already employed here keeps the employment they have. With an
+        # account, the account carries the person; without one, the hire
+        # itself records the person.
+        from modules.people.service import employ, record_person
+
+        if user is not None:
+            person = user.person
+        else:
+            # record_person constructs without persisting (People takes what
+            # it is told); the caller owns attaching it to the session.
+            person = record_person(tenant_id, name)
+            db.session.add(person)
+            db.session.flush()
 
         joined_on = (
             datetime.strptime(date_of_joining, '%Y-%m-%d').date()
@@ -266,22 +285,33 @@ def create_teacher(
         )
         staff = employ(
             tenant_id,
-            user.person_id,
+            person.id,
             employee_number=employee_id,
             designation=designation,
             department_id=resolved_department_id,
             joined_on=joined_on,
         )
 
-        # Grant the teaching profile to that employment.
-        role_result = assign_role_to_user_by_email(actual_email, 'Teacher', tenant_id=tenant_id)
-        if not role_result['success']:
-            db.session.rollback()
-            return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
+        # Grant the teaching profile to that employment. Authority is held by
+        # the employment either way (ADR-013); the email-keyed helper is just
+        # the historical path for accounts.
+        if user is not None:
+            role_result = assign_role_to_user_by_email(email, 'Teacher', tenant_id=tenant_id)
+            if not role_result['success']:
+                db.session.rollback()
+                return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
+        else:
+            from modules.rbac.authority_service import grant_authority
+
+            teacher_role = Role.query.filter_by(tenant_id=tenant_id, name='Teacher').first()
+            if teacher_role is None:
+                db.session.rollback()
+                return {'success': False, 'error': 'Teacher role is not seeded for this tenant'}
+            grant_authority(staff.id, teacher_role.id)
 
         teacher = Teacher(
             tenant_id=tenant_id,
-            user_id=user.id,
+            user_id=user.id if user is not None else None,
             staff_id=staff.id,
             qualification=qualification,
             specialization=specialization,
@@ -296,7 +326,7 @@ def create_teacher(
 
         if email and not existing_user:
             result['credentials'] = {
-                'email': actual_email,
+                'email': email,
                 'employee_id': employee_id,
                 'password': temp_password,
                 'must_reset': True,
@@ -348,10 +378,12 @@ def list_teachers(
     # Filtering, sorting and searching read the same facts the payload shows:
     # the person and the employment. Reading one and filtering the other lets a
     # teacher be displayed as inactive while still turning up under "active".
-    # Both joins are inner: every teacher has an employment, and every
-    # employment has a person.
+    # Staff and Person are inner: every teacher has an employment, and every
+    # employment has a person. The account is OUTER: a teacher may have no
+    # login (ADR-003, migration 094), and an inner join would silently drop
+    # them from the list.
     query = (
-        Teacher.query.join(User)
+        Teacher.query.outerjoin(User)
         .join(Staff, Teacher.staff_id == Staff.id)
         .join(Person, Staff.person_id == Person.id)
         .outerjoin(Department, Staff.department_id == Department.id)
@@ -693,6 +725,11 @@ def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
 
         found_ids = [t.id for t in teachers]
         user_ids = [t.user_id for t in teachers if t.user_id]
+        # (user_id, person_id) pairs: an account-less teacher (ADR-003) still
+        # holds authority on their employment, which must be withdrawn.
+        teardowns = [
+            (t.user_id, t.staff.person_id if t.staff else None) for t in teachers
+        ]
 
         from modules.classes.models import Class
 
@@ -705,10 +742,12 @@ def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
             db.session.delete(teacher)
         db.session.flush()  # clear teachers.user_id before touching the users
 
-        for user_id in user_ids:
+        for user_id, person_id in teardowns:
             # hard=False: a teacher's user is referenced by NOT NULL / NO ACTION
             # FKs (attendance.marked_by, classes.teacher_id) — see delete_teacher.
-            remove_login_for_deleted_profile(user_id, tenant_id, "Teacher", hard=False)
+            remove_login_for_deleted_profile(
+                user_id, tenant_id, "Teacher", hard=False, person_id=person_id
+            )
 
         db.session.commit()
         return {
@@ -738,22 +777,28 @@ def delete_teacher(teacher_id: str) -> Dict:
 
         tenant_id = teacher.tenant_id
         user_id = teacher.user_id
+        person_id = teacher.staff.person_id if teacher.staff else None
 
-        # class_teachers has no ON DELETE CASCADE on its FK, so SQLAlchemy would
-        # try to SET teacher_id = NULL (NOT NULL column) and raise a violation.
-        # Explicitly remove those rows before deleting the teacher.
-        from modules.classes.models import Class
         # Clear the legacy homeroom pointer (classes.teacher_id -> users.id) so no
-        # class still lists this departed teacher as its class teacher.
-        Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).update(
-            {Class.teacher_id: None}, synchronize_session=False
-        )
+        # class still lists this departed teacher as its class teacher. Guarded:
+        # filter_by(teacher_id=None) would match every class with no teacher.
+        if user_id:
+            from modules.classes.models import Class
+
+            Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).update(
+                {Class.teacher_id: None}, synchronize_session=False
+            )
 
         db.session.delete(teacher)
         db.session.flush()  # clear teachers.user_id before touching the user
 
         # Soft-deactivate the backing login (hard=False) — see docstring.
-        remove_login_for_deleted_profile(user_id, tenant_id, "Teacher", hard=False)
+        # person_id is passed explicitly: an account-less teacher (ADR-003)
+        # still holds authority on their employment, and it must be withdrawn
+        # even with no user row to resolve the person through.
+        remove_login_for_deleted_profile(
+            user_id, tenant_id, "Teacher", hard=False, person_id=person_id
+        )
 
         db.session.commit()
         return {'success': True, 'message': 'Teacher deleted successfully'}

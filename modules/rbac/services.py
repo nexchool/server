@@ -798,7 +798,12 @@ def get_user_roles(user_id: str) -> List[Dict]:
 
 
 def remove_login_for_deleted_profile(
-    user_id: str, tenant_id: str, profile_role: str, *, hard: bool = True
+    user_id: Optional[str],
+    tenant_id: str,
+    profile_role: str,
+    *,
+    hard: bool = True,
+    person_id: Optional[str] = None,
 ) -> None:
     """Tear down the auth account behind a just-deleted student/teacher profile.
 
@@ -831,11 +836,18 @@ def remove_login_for_deleted_profile(
         withdraw_authority,
     )
 
-    person_id = db.session.query(User.person_id).filter(User.id == user_id).scalar()
+    # Callers that hold the profile row pass person_id directly — an
+    # account-less profile (ADR-003) has no user row to resolve it through,
+    # yet its employment may still hold the authority being withdrawn.
+    if person_id is None and user_id:
+        person_id = (
+            db.session.query(User.person_id).filter(User.id == user_id).scalar()
+        )
     if not person_id:
-        # No person behind the account: nothing holds authority, so the only
+        # No person to be found: nothing holds authority, so the only
         # question left is whether to remove the row or deactivate it.
-        _close_login(user_id, tenant_id, hard=hard)
+        if user_id:
+            _close_login(user_id, tenant_id, hard=hard)
         return
 
     staff = Staff.query.filter_by(tenant_id=tenant_id, person_id=person_id).first()
@@ -848,10 +860,12 @@ def remove_login_for_deleted_profile(
         # User row is kept and stays active, so auth_required won't cut them off —
         # drop their cached permissions so the removed profile's perms don't
         # linger. (Caller commits the surrounding txn; TTL backstops any race.)
-        invalidate_user_permissions(user_id)
+        if user_id:
+            invalidate_user_permissions(user_id)
         return
 
-    _close_login(user_id, tenant_id, hard=hard)
+    if user_id:
+        _close_login(user_id, tenant_id, hard=hard)
 
 
 def _close_login(user_id: str, tenant_id: str, *, hard: bool) -> None:

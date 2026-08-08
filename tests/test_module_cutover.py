@@ -110,8 +110,12 @@ def test_a_new_student_belongs_to_a_person(ctx, tenant, academic_year):
     )
     assert result["success"], result
 
+    # No email was given, so no login exists (migration 094) — the person is
+    # recorded by the admission itself, not borrowed from an account.
     student = Student.query.get(result["student"]["id"])
-    assert student.person_id == student.user.person_id
+    assert student.user_id is None
+    assert student.person_id is not None
+    assert student.person.full_name == "Aarav Patel"
 
 
 def test_the_admission_form_records_identity_on_the_person(ctx, tenant, academic_year):
@@ -131,7 +135,7 @@ def test_the_admission_form_records_identity_on_the_person(ctx, tenant, academic
     )
     assert result["success"], result
 
-    person = Student.query.get(result["student"]["id"]).user.person
+    person = Student.query.get(result["student"]["id"]).person
     assert str(person.date_of_birth) == "2014-05-02"
     assert person.gender == "male"
     assert person.phone_number == "9800000000"

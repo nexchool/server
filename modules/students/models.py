@@ -118,9 +118,9 @@ class Student(TenantBaseModel):
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # Link to Auth User (One-to-One)
-    # The User record handles email, password, name, profile pic
-    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    # The account behind this student, when the school has issued one.
+    # Optional (ADR-003): a student exists without a login; migration 094.
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
 
     # The human this student relationship belongs to (ADR-001). Nullable until
     # the People backfill has run; the identity columns below move to Person and

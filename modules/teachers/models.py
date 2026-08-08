@@ -66,8 +66,9 @@ class Teacher(TenantBaseModel):
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # Link to Auth User (One-to-One)
-    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    # The account behind this teacher, when the school has issued one.
+    # Optional (ADR-003): a teacher exists without a login; migration 094.
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
 
     # Teaching is an academic participation of an employed person (ADR-005).
     # Employment itself lives on Staff; the employment columns below are read

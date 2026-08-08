@@ -4,7 +4,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, contains_eager, joinedload
 from datetime import datetime
 import logging
-import secrets
 import string
 import uuid
 from decimal import Decimal
@@ -13,10 +12,7 @@ from core.database import db
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
-from modules.rbac.services import (
-    assign_role_to_user_by_email,
-    remove_login_for_deleted_profile,
-)
+from modules.rbac.services import remove_login_for_deleted_profile
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.academic_programmes.models import AcademicProgramme
 from modules.classes.models import Class
@@ -358,40 +354,40 @@ def create_student(
                 user.force_password_reset = True  # Force password change on first login
                 user.save()
 
-            # Ensure Student role exists and has all its permissions for this tenant.
-            # This is a no-op if everything is already correct (idempotent).
+            # Ensure the Student profile exists with its permissions for this
+            # tenant (idempotent). It is NOT granted: a student's access is
+            # implied by the Student relationship itself (migration 087), and
+            # granting would require an employment to hold it (ADR-013) —
+            # which is why the old grant call here failed for every
+            # admin-created student login after migration 089.
             seed_roles_for_tenant(tenant_id)
 
-            # Assign Student role (for both new and existing users)
-            role_result = assign_role_to_user_by_email(email, 'Student', tenant_id=tenant_id)
-            if not role_result['success']:
-                db.session.rollback()
-                return {'success': False, 'error': f"Could not assign Student role: {role_result.get('error')}"}
-        
-        # Student without email/login credentials - create minimal user placeholder
-        if not user:
-            # Use admission number as email identifier
-            user = User()
-            user.tenant_id = tenant_id
-            user.email = f"{admission_number.lower()}@student.placeholder"
-            user.name = name
-            user.set_password(secrets.token_urlsafe(32))  # Random unusable password
-            user.email_verified = False
-            user.force_password_reset = False
-            user.save()
+        # The student relationship belongs to a human (ADR-001). With an
+        # account, that account already carries the Person; without one, the
+        # admission itself records the person. No email means no login
+        # (ADR-003) — the old placeholder accounts (@student.placeholder,
+        # unusable random password) are no longer minted.
+        from modules.people.service import (
+            fill_blank_identity,
+            record_family_member,
+            record_person,
+        )
 
-        # The student relationship belongs to a human (ADR-001). The account
-        # already carries a Person; the identity collected on the admission form
-        # is recorded there, which is where it will be read from once the
-        # columns below are dropped.
-        from modules.people.service import fill_blank_identity, record_family_member
+        if user is not None:
+            person = user.person
+        else:
+            # record_person constructs without persisting (People takes what
+            # it is told); the caller owns attaching it to the session.
+            person = record_person(tenant_id, name)
+            db.session.add(person)
+            db.session.flush()
 
         parsed_date_of_birth = (
             datetime.strptime(date_of_birth, '%Y-%m-%d').date() if date_of_birth else None
         )
-        if user.person is not None:
+        if person is not None:
             fill_blank_identity(
-                user.person,
+                person,
                 {
                     "date_of_birth": parsed_date_of_birth,
                     "gender": gender,
@@ -414,7 +410,7 @@ def create_student(
             ):
                 record_family_member(
                     tenant_id,
-                    user.person_id,
+                    person.id,
                     name=member_name,
                     relationship=member_relationship,
                     phone=member_phone,
@@ -426,8 +422,8 @@ def create_student(
         # Create Student Profile (tenant-scoped)
         student = Student(
             tenant_id=tenant_id,
-            user_id=user.id,
-            person_id=user.person_id,
+            user_id=user.id if user is not None else None,
+            person_id=person.id if person is not None else None,
             admission_number=admission_number,
             academic_year_id=ay_id,
             roll_number=roll_number,
@@ -639,7 +635,9 @@ def list_students(
     # Person is inner-joined: every student relationship belongs to a human
     # (ADR-001), and filtering, searching and sorting must read the same facts
     # the payload shows rather than the columns left over beside them.
-    query = Student.query.join(User).join(Person, Student.person_id == Person.id)
+    # The account is OUTER-joined: a student may have no login (ADR-003,
+    # migration 094), and an inner join would silently drop them from the list.
+    query = Student.query.outerjoin(User).join(Person, Student.person_id == Person.id)
 
     # Branch scope backstop: restrict to students in allowed-branch classes
     # (classless excluded) regardless of client filters. No-op if unrestricted.
@@ -776,7 +774,8 @@ def list_students(
     total = query.count()
     # Eager-load the relationships to_dict touches (user, class, programme,
     # grade) so serialization stays at a constant number of queries per page.
-    # User is already inner-joined above — contains_eager reuses that join.
+    # The account is already outer-joined above — contains_eager reuses that
+    # join and leaves user None for account-less students.
     query = query.options(
         contains_eager(Student.user),
         joinedload(Student.person),
@@ -965,8 +964,10 @@ def update_student(
         if not student:
             return {'success': False, 'error': 'Student not found'}
             
-        # Update User fields
-        if name is not None:
+        # Update the login's display name too — when there is a login
+        # (ADR-003: a student may have none). The person's name is revised
+        # below either way.
+        if name is not None and student.user is not None:
             student.user.name = name
             student.user.save()
             
@@ -1328,7 +1329,9 @@ def bulk_delete_students(student_ids: List[str]) -> Dict:
             return {"success": True, "deleted": 0, "missing": ids}
 
         found_ids = [s.id for s in students]
-        user_ids = [s.user_id for s in students if s.user_id]
+        # (user_id, person_id) pairs: an account-less student (ADR-003) still
+        # needs its person passed so any held authority can be checked.
+        teardowns = [(s.user_id, s.person_id) for s in students]
 
         from modules.finance.models import StudentFee
 
@@ -1344,8 +1347,10 @@ def bulk_delete_students(student_ids: List[str]) -> Dict:
             db.session.delete(student)
         db.session.flush()  # clear students.user_id before the users go
 
-        for user_id in user_ids:
-            remove_login_for_deleted_profile(user_id, tenant_id, "Student")
+        for user_id, person_id in teardowns:
+            remove_login_for_deleted_profile(
+                user_id, tenant_id, "Student", person_id=person_id
+            )
 
         db.session.commit()
 
@@ -1393,6 +1398,7 @@ def delete_student(student_id: str) -> Dict:
             return {'success': False, 'error': 'Student not found'}
 
         user_id = student.user_id
+        person_id = student.person_id
 
         from modules.finance.models import StudentFee
 
@@ -1408,7 +1414,11 @@ def delete_student(student_id: str) -> Dict:
         # student must also remove its backing account. Otherwise an active,
         # login-capable user with the Student role but no Student row is left
         # behind (its dashboard 404s) and the email stays reserved. Same txn.
-        remove_login_for_deleted_profile(user_id, tenant_id, "Student")
+        # person_id is passed explicitly because an account-less student
+        # (ADR-003) has no user row to resolve it through.
+        remove_login_for_deleted_profile(
+            user_id, tenant_id, "Student", person_id=person_id
+        )
 
         db.session.commit()
 

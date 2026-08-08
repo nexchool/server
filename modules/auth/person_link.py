@@ -96,4 +96,10 @@ def _accounts_and_their_relationships_belong_to_people(
 
         for instance in session.new:
             if isinstance(instance, Student) and not instance.person_id:
-                instance.person = _person_behind(session, instance)
+                person = _person_behind(session, instance)
+                if person is not None:
+                    instance.person = person
+                # An account-less studentship (user_id None, ADR-003) has no
+                # account to borrow a person from: its creator must say who
+                # the student is, and the NOT NULL on person_id holds them
+                # to it.
