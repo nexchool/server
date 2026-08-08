@@ -188,7 +188,10 @@ def _load_subject_specs(
             t = Teacher.query.filter_by(
                 id=primary.teacher_id, tenant_id=tenant_id
             ).first()
-            if t and str(t.user_id) == str(class_teacher_user_id):
+            # t.user_id may be None (migration 094): without the guard,
+            # str(None) == str(None) made every account-less teacher's
+            # subject look like the class teacher's.
+            if t and t.user_id and str(t.user_id) == str(class_teacher_user_id):
                 is_ct_subject = True
 
         specs.append(

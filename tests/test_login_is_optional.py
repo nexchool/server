@@ -246,6 +246,75 @@ def test_an_account_less_teacher_appears_in_the_list(ctx, tenant):
     assert row["email"] is None
 
 
+def test_search_finds_an_account_less_student(ctx, tenant, academic_year, db_session):
+    """Global search reads the Person, not the login (ADR-001)."""
+    from modules.auth.models import User
+    from modules.search.services import _search_students
+
+    created = _admit_without_email(academic_year)
+    assert created["success"], created
+
+    searcher = User(
+        tenant_id=tenant.id,
+        email=f"{_unique('admin')}@test.school",
+        name="Search Admin",
+    )
+    searcher.set_password("x")
+    db_session.add(searcher)
+    db_session.flush()
+
+    import modules.search.services as search_services
+
+    original = search_services.has_permission
+    search_services.has_permission = lambda *_args, **_kw: True
+    try:
+        hits = _search_students(searcher, "Kavya", 10)
+    finally:
+        search_services.has_permission = original
+
+    assert created["student"]["id"] in [h["id"] for h in hits]
+    assert any(h["name"] == "Kavya Trivedi" for h in hits)
+
+
+def test_an_account_less_teacher_is_offered_as_class_teacher(
+    ctx, tenant, academic_year, db_session
+):
+    """The NOT-IN-with-NULL trap must not hide account-less teachers."""
+    from modules.classes.models import Class
+    from modules.classes.services import get_available_class_teachers
+    from modules.teachers.services import create_teacher
+
+    accountless = _hire_without_email()
+    assert accountless["success"], accountless
+
+    # A second teacher WITH an account who already holds a class, so the
+    # picker's user_id exclusion list is non-empty and NOT IN actually runs —
+    # SQL's `NULL NOT IN (...)` is what used to hide the account-less teacher.
+    with_account = create_teacher(
+        name="Ravi Shah",
+        email=f"{_unique('ravi')}@test.school",
+        designation="Teacher",
+    )
+    assert with_account["success"], with_account
+
+    from modules.teachers.models import Teacher
+
+    holder = Teacher.query.get(with_account["teacher"]["id"])
+    cls = Class(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        name="Grade 4",
+        section="A",
+        academic_year_id=academic_year.id,
+        teacher_id=holder.user_id,
+    )
+    db_session.add(cls)
+    db_session.flush()
+
+    offered_ids = {t["id"] for t in get_available_class_teachers()}
+    assert accountless["teacher"]["id"] in offered_ids
+
+
 def test_deleting_an_account_less_teacher_withdraws_authority(ctx, tenant):
     from modules.rbac.authority_service import authority_profiles_for_person
     from modules.teachers.models import Teacher

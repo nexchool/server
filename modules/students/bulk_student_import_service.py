@@ -81,10 +81,13 @@ def _existing_student_index(tenant_id: str) -> Dict[str, Dict[str, Any]]:
             Student.class_id,
             User.email,
         )
-        .join(User, User.id == Student.user_id)
+        .outerjoin(User, User.id == Student.user_id)
         .filter(Student.tenant_id == tenant_id)
         .all()
     )
+    # Outer join: an account-less student (migration 094) has no email, but
+    # must still be in the admission-number index — an inner join here made
+    # them invisible to dedupe, so re-importing created duplicates.
 
     by_admission: Dict[str, Dict[str, Any]] = {}
     by_email: Dict[str, Dict[str, Any]] = {}

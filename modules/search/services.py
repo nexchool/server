@@ -44,7 +44,6 @@ def global_search(user, q: str, limit: int = DEFAULT_LIMIT) -> Dict[str, List[Di
 def _search_students(user, q: str, limit: int) -> List[Dict[str, Any]]:
     tenant_id = get_tenant_id()
     from modules.students.models import Student
-    from modules.auth.models import User
     from modules.classes.models import Class
 
     can_all = has_permission(user.id, "student.read.all")
@@ -52,13 +51,18 @@ def _search_students(user, q: str, limit: int) -> List[Dict[str, Any]]:
     if not (can_all or can_class):
         return []
 
+    # Person-keyed (ADR-001), like the teacher search below: the account is
+    # optional (migration 094) and its name is only a display copy anyway.
     query = (
-        db.session.query(Student, User, Class)
-        .join(User, User.id == Student.user_id)
+        db.session.query(Student, Person, Class)
+        .join(Person, Person.id == Student.person_id)
         .outerjoin(Class, Class.id == Student.class_id)
         .filter(
             Student.tenant_id == tenant_id,
-            or_(User.name.ilike(_like(q)), Student.admission_number.ilike(_like(q))),
+            or_(
+                Person.full_name.ilike(_like(q)),
+                Student.admission_number.ilike(_like(q)),
+            ),
         )
     )
     if not can_all and can_class:
@@ -73,11 +77,11 @@ def _search_students(user, q: str, limit: int) -> List[Dict[str, Any]]:
     return [
         {
             "id": student.id,
-            "name": u.name if u else None,
+            "name": person.full_name if person else None,
             "admission_number": student.admission_number,
             "class_name": cls.name if cls else None,
         }
-        for student, u, cls in rows
+        for student, person, cls in rows
     ]
 
 
@@ -86,7 +90,6 @@ def _search_teachers(user, q: str, limit: int) -> List[Dict[str, Any]]:
     if not has_permission(user.id, "teacher.read"):
         return []
     from modules.teachers.models import Teacher
-    from modules.auth.models import User
 
     rows = (
         db.session.query(Teacher, Person)
@@ -136,15 +139,17 @@ def _search_fees(user, q: str, limit: int) -> List[Dict[str, Any]]:
         return []
     from modules.fees.models import FeeInvoice
     from modules.students.models import Student
-    from modules.auth.models import User
 
     rows = (
-        db.session.query(FeeInvoice, User)
+        db.session.query(FeeInvoice, Person)
         .join(Student, Student.id == FeeInvoice.student_id)
-        .join(User, User.id == Student.user_id)
+        .join(Person, Person.id == Student.person_id)
         .filter(
             FeeInvoice.tenant_id == tenant_id,
-            or_(FeeInvoice.invoice_number.ilike(_like(q)), User.name.ilike(_like(q))),
+            or_(
+                FeeInvoice.invoice_number.ilike(_like(q)),
+                Person.full_name.ilike(_like(q)),
+            ),
         )
         .limit(limit)
         .all()
@@ -153,7 +158,7 @@ def _search_fees(user, q: str, limit: int) -> List[Dict[str, Any]]:
         {
             "id": inv.id,
             "invoice_number": inv.invoice_number,
-            "student_name": u.name if u else None,
+            "student_name": person.full_name if person else None,
             "total_amount": float(inv.total_amount) if inv.total_amount is not None else None,
             "status": inv.status,
         }

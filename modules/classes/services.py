@@ -38,6 +38,15 @@ def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> st
 
     teacher = Teacher.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
     if teacher:
+        if teacher.user_id is None:
+            # classes.teacher_id still keys on the login (debt #3). Returning
+            # None here would silently record "no class teacher" — refuse
+            # loudly instead until the pointer moves off accounts.
+            raise ValueError(
+                "This teacher has no login account, and the class-teacher "
+                "pointer still requires one. Assign them through the "
+                "class-teacher workflow instead."
+            )
         return teacher.user_id
 
     # Otherwise treat as User.id; validate that it's a teacher user in this tenant.
@@ -1194,7 +1203,15 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
 
     query = _currently_teaching()
     if class_teacher_user_ids:
-        query = query.filter(~Teacher.user_id.in_(class_teacher_user_ids))
+        # NULL-safe: `NOT IN` filters out rows where user_id IS NULL, which
+        # would hide every account-less teacher (migration 094). Their
+        # class-teacher duty is tracked by the owner-table filter below.
+        query = query.filter(
+            or_(
+                Teacher.user_id.is_(None),
+                ~Teacher.user_id.in_(class_teacher_user_ids),
+            )
+        )
     if ct_class_teacher_ids:
         query = query.filter(~Teacher.id.in_(ct_class_teacher_ids))
 
