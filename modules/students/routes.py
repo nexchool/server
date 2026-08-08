@@ -653,6 +653,164 @@ def bulk_update_student_status():
 
 
 # ---------------------------------------------------------------------------
+# Admission — asking to join, and the school's answer
+# ---------------------------------------------------------------------------
+
+@students_bp.route('/admissions', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_CREATE)
+def submit_admission_application():
+    """Record an application. Creates no student — approval does that."""
+    from . import admission_service
+
+    try:
+        result = admission_service.submit_application(request.get_json() or {})
+    except ValueError:
+        return validation_error_response({'date_of_birth': 'must be an ISO date (YYYY-MM-DD)'})
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application submitted', status_code=201)
+
+
+@students_bp.route('/admissions', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_MANAGE, PERM_CREATE)
+def list_admission_applications():
+    """Applications, decided ones included — the history the canon asks for."""
+    from . import admission_service
+
+    result = admission_service.list_applications(
+        status=request.args.get('status'),
+        academic_year_id=request.args.get('academic_year_id'),
+        search=request.args.get('search'),
+        page=request.args.get('page', 1, type=int),
+        per_page=request.args.get('per_page', 20, type=int),
+    )
+    return success_response(data=result)
+
+
+@students_bp.route('/admissions/<application_id>', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_MANAGE, PERM_CREATE)
+def get_admission_application(application_id):
+    from . import admission_service
+
+    result = admission_service.get_application(application_id)
+    if not result.get('success'):
+        return not_found_response('Application')
+    return success_response(data=result['application'])
+
+
+@students_bp.route('/admissions/<application_id>/review', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_UPDATE)
+def review_admission_application(application_id):
+    """The school has started checking this application."""
+    from . import admission_service
+
+    result = admission_service.start_review(application_id)
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application under review')
+
+
+@students_bp.route('/admissions/<application_id>/approve', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_CREATE)
+def approve_admission_application(application_id):
+    """Say yes: the applicant becomes a student. Body: { class_id?, reason? }"""
+    from . import admission_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('decided_on'))
+    if err:
+        return err
+
+    result = admission_service.approve(
+        application_id,
+        class_id=(data.get('class_id') or None),
+        reason=(data.get('reason') or None),
+        decided_on=occurred_on,
+        decided_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(
+        data={
+            'application': result['application'],
+            'student': result['student'],
+            'credentials': result.get('credentials'),
+        },
+        message='Applicant admitted',
+        status_code=201,
+    )
+
+
+@students_bp.route('/admissions/<application_id>/reject', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_UPDATE)
+def reject_admission_application(application_id):
+    """The school declines. Body: { reason?, decided_on? }"""
+    from . import admission_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('decided_on'))
+    if err:
+        return err
+
+    result = admission_service.reject(
+        application_id,
+        reason=(data.get('reason') or None),
+        decided_on=occurred_on,
+        decided_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application rejected')
+
+
+@students_bp.route('/admissions/<application_id>/withdraw', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_UPDATE)
+def withdraw_admission_application(application_id):
+    """The family withdraws. Body: { reason?, decided_on? }"""
+    from . import admission_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('decided_on'))
+    if err:
+        return err
+
+    result = admission_service.withdraw(
+        application_id,
+        reason=(data.get('reason') or None),
+        decided_on=occurred_on,
+        decided_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application withdrawn')
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle — the things that happen to a student, as workflows
 # ---------------------------------------------------------------------------
 

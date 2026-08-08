@@ -533,3 +533,136 @@ class StudentLifecycleEvent(TenantBaseModel):
 
     def __repr__(self):
         return f"<StudentLifecycleEvent {self.event} student={self.student_id}>"
+
+
+# Where an application can be in a school's process. `submitted` and
+# `under_review` precede any decision; the last three are decisions, and
+# `rejected` / `withdrawn` differ by who made it — the school declines, a
+# family changes its mind. Both keep the record.
+ADMISSION_SUBMITTED = "submitted"
+ADMISSION_UNDER_REVIEW = "under_review"
+ADMISSION_APPROVED = "approved"
+ADMISSION_REJECTED = "rejected"
+ADMISSION_WITHDRAWN = "withdrawn"
+
+ADMISSION_STATUSES = (
+    ADMISSION_SUBMITTED,
+    ADMISSION_UNDER_REVIEW,
+    ADMISSION_APPROVED,
+    ADMISSION_REJECTED,
+    ADMISSION_WITHDRAWN,
+)
+ADMISSION_OPEN_STATUSES = frozenset({ADMISSION_SUBMITTED, ADMISSION_UNDER_REVIEW})
+
+
+class AdmissionApplication(TenantBaseModel):
+    """Someone asking to join the school, before they are a student of it.
+
+    A school turns away more applicants than it admits, and it has to be able
+    to say later who applied, what was decided and why — including for the
+    child who never arrived. That is the whole reason this is not a Student
+    row with a `prospective` status: an application that is rejected must
+    leave a record, and a Student relationship that never existed must not.
+
+    Approval is what creates the student (`admission_service.approve`). Until
+    then no Person, no admission number, no place in a class — an applicant
+    is not half a student.
+    """
+
+    __tablename__ = "admission_applications"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Who is applying. Held as plain values, not a Person: creating one for
+    # every enquiry would fill the school's records with people who never
+    # joined, and ADR-010 is clear that a duplicate person costs more to
+    # undo than it saves.
+    applicant_name = db.Column(db.String(120), nullable=False)
+    date_of_birth = db.Column(db.Date, nullable=True)
+    gender = db.Column(db.String(20), nullable=True)
+    phone = db.Column(db.String(20), nullable=True)
+    email = db.Column(db.String(120), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+
+    # The adult the school will deal with. Required because admission cannot
+    # complete without them, and an application that could never be approved
+    # is not worth accepting.
+    guardian_name = db.Column(db.String(120), nullable=False)
+    guardian_relationship = db.Column(db.String(50), nullable=False)
+    guardian_phone = db.Column(db.String(20), nullable=False)
+    guardian_email = db.Column(db.String(120), nullable=True)
+
+    # What they are applying for. The class is a wish at this stage; where the
+    # student actually sits is Academic Enrollment's decision, after approval.
+    academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    desired_class_id = db.Column(
+        db.String(36),
+        db.ForeignKey("classes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    status = db.Column(
+        db.String(20), nullable=False, default=ADMISSION_SUBMITTED, index=True
+    )
+    submitted_on = db.Column(db.Date, nullable=False)
+    decided_on = db.Column(db.Date, nullable=True)
+    # Why it ended the way it did — the sentence a school would give a family.
+    decision_reason = db.Column(db.Text, nullable=True)
+    decided_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    notes = db.Column(db.Text, nullable=True)
+
+    # Set only on approval: the student this application became.
+    student_id = db.Column(
+        db.String(36),
+        db.ForeignKey("students.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    @property
+    def is_open(self) -> bool:
+        """Still awaiting a decision."""
+        return self.status in ADMISSION_OPEN_STATUSES
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "applicant_name": self.applicant_name,
+            "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
+            "gender": self.gender,
+            "phone": self.phone,
+            "email": self.email,
+            "address": self.address,
+            "guardian_name": self.guardian_name,
+            "guardian_relationship": self.guardian_relationship,
+            "guardian_phone": self.guardian_phone,
+            "guardian_email": self.guardian_email,
+            "academic_year_id": self.academic_year_id,
+            "desired_class_id": self.desired_class_id,
+            "status": self.status,
+            "is_open": self.is_open,
+            "submitted_on": self.submitted_on.isoformat() if self.submitted_on else None,
+            "decided_on": self.decided_on.isoformat() if self.decided_on else None,
+            "decision_reason": self.decision_reason,
+            "decided_by_user_id": self.decided_by_user_id,
+            "notes": self.notes,
+            "student_id": self.student_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<AdmissionApplication {self.applicant_name} {self.status}>"
