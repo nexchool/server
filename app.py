@@ -73,6 +73,12 @@ def create_app(config_name=None):
     # structural guarantee that depends on import order is not a guarantee.
     import modules.auth.person_link  # noqa: F401
 
+    # Teaching cannot outlive the employment it hangs off (ADR-005). The
+    # rule lives in Academic because it is a fact about teaching; People
+    # only announces that somebody has left.
+    from modules.academics.teaching_participation import register as _register_teaching_ends
+    _register_teaching_ends()
+
     # Registers the rule that a change of employment standing drops the
     # holder's cached permissions. Same reason as above: a guarantee that
     # depends on import order is not a guarantee.

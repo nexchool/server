@@ -240,3 +240,70 @@ class StaffEmploymentPeriod(TenantBaseModel):
 
     def __repr__(self) -> str:
         return f"<StaffEmploymentPeriod {self.id} staff={self.staff_id}>"
+
+
+# Employment events, in the canon's vocabulary (staff-management.md
+# § Employment Timeline). Periods say when someone worked here; these say
+# what happened — which of resignation, retirement or dismissal ended a
+# period, and when somebody came back.
+STAFF_EVENT_JOINED = "StaffJoined"
+STAFF_EVENT_RESIGNED = "StaffResigned"
+STAFF_EVENT_RETIRED = "StaffRetired"
+STAFF_EVENT_TERMINATED = "StaffTerminated"
+STAFF_EVENT_REJOINED = "StaffRejoined"
+STAFF_EVENT_DESIGNATION_CHANGED = "StaffDesignationChanged"
+
+
+class StaffLifecycleEvent(TenantBaseModel):
+    """A milestone in one person's employment with the school.
+
+    The periods already say when somebody worked here. What they cannot say
+    is which of resignation, retirement or dismissal ended one — `end_reason`
+    holds a word, not a date, a notice period or who decided — and a school
+    asked for a service record needs all of it.
+
+    Never edited. A correction is a new event; what the school recorded at
+    the time is part of the record.
+    """
+
+    __tablename__ = "staff_lifecycle_events"
+
+    id = db.Column(db.String(36), primary_key=True, default=_new_id)
+    staff_id = db.Column(
+        db.String(36),
+        db.ForeignKey("staff.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # The period this happened to, when it happened to one.
+    employment_period_id = db.Column(
+        db.String(36),
+        db.ForeignKey("staff_employment_periods.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event = db.Column(db.String(40), nullable=False)
+    occurred_on = db.Column(db.Date, nullable=False)
+    reason = db.Column(db.Text, nullable=True)
+    details = db.Column(db.JSON, nullable=True)
+    recorded_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "staff_id": self.staff_id,
+            "employment_period_id": self.employment_period_id,
+            "event": self.event,
+            "occurred_on": self.occurred_on.isoformat() if self.occurred_on else None,
+            "reason": self.reason,
+            "details": self.details,
+            "recorded_by_user_id": self.recorded_by_user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self) -> str:
+        return f"<StaffLifecycleEvent {self.event} staff={self.staff_id}>"
