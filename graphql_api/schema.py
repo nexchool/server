@@ -54,9 +54,10 @@ def _build_query_type() -> type:
     """
     from modules.auth.resolvers import IdentityQuery
     from modules.people.resolvers import PeopleQuery
+    from modules.students.resolvers import StudentQuery
 
     @strawberry.type(description="Every read the platform exposes.")
-    class Query(TransportQuery, IdentityQuery, PeopleQuery):
+    class Query(TransportQuery, IdentityQuery, PeopleQuery, StudentQuery):
         pass
 
     return Query

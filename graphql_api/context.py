@@ -36,6 +36,10 @@ class GraphQLContext:
     current_user: Optional[Any] = None
     authentication_error: Optional[str] = None
     new_access_token: Optional[str] = None
+    # Batched reads for this request only. A loader caches what it has
+    # already fetched, so sharing one across requests would serve one
+    # tenant's rows to another.
+    loaders: Optional[Any] = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -71,6 +75,8 @@ def _resolve_tenant() -> Tuple[Optional[Any], Optional[str]]:
 
 def build_context() -> GraphQLContext:
     """Build the context for one GraphQL request."""
+    from modules.students.graphql.loaders import build_loaders
+
     tenant, tenant_error = _resolve_tenant()
     authentication = authenticate_request()
 
@@ -81,4 +87,5 @@ def build_context() -> GraphQLContext:
         current_user=authentication.user,
         authentication_error=authentication.error,
         new_access_token=authentication.new_access_token,
+        loaders=build_loaders(),
     )

@@ -1659,3 +1659,122 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
     except Exception as e:
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
+
+def students_page(
+    *,
+    after: Optional[str] = None,
+    first: int = 25,
+    search: Optional[str] = None,
+    class_id: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    student_status: Optional[str] = None,
+):
+    """One page of students, walked by key rather than by offset.
+
+    OFFSET makes the database count past everything it skips, so page 300 of
+    a fifteen-thousand-student trust costs three hundred times page one — and
+    a student admitted while somebody pages can shift every later row, so a
+    child is seen twice or not at all. Walking from the last admission number
+    seen costs the same at any depth and cannot skip anyone.
+
+    Ordered by admission number because it is unique per school, immutable,
+    and the thing a school already sorts by.
+
+    Returns (rows, has_more). The caller asks for one more row than it needs;
+    that extra row is the whole of `hasNextPage`, with no second query.
+    """
+    from core.branch_scope import filter_students_by_branch
+
+    first = max(1, min(int(first), 100))
+
+    query = (
+        Student.query.join(Person, Student.person_id == Person.id)
+        .options(joinedload(Student.person))
+    )
+    query = filter_students_by_branch(query)
+
+    if after:
+        query = query.filter(Student.admission_number > after)
+    if class_id:
+        query = query.filter(student_matches_class_filter(class_id))
+    if academic_year_id:
+        query = query.filter(student_matches_academic_year_filter(academic_year_id))
+    if student_status:
+        query = query.filter(
+            db.func.lower(Student.student_status) == student_status.strip().lower()
+        )
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.filter(
+            db.or_(
+                Person.full_name.ilike(pattern),
+                Student.admission_number.ilike(pattern),
+            )
+        )
+
+    rows = query.order_by(Student.admission_number.asc()).limit(first + 1).all()
+    has_more = len(rows) > first
+    return rows[:first], has_more
+
+
+def students_matching_count(
+    *,
+    search: Optional[str] = None,
+    class_id: Optional[str] = None,
+    academic_year_id: Optional[str] = None,
+    student_status: Optional[str] = None,
+) -> int:
+    """How many students the same filters match.
+
+    Separate from the page on purpose: counting fifteen thousand rows is real
+    work, and a client that only renders a list should not pay for a total it
+    never shows.
+    """
+    from core.branch_scope import filter_students_by_branch
+
+    query = Student.query.join(Person, Student.person_id == Person.id)
+    query = filter_students_by_branch(query)
+
+    if class_id:
+        query = query.filter(student_matches_class_filter(class_id))
+    if academic_year_id:
+        query = query.filter(student_matches_academic_year_filter(academic_year_id))
+    if student_status:
+        query = query.filter(
+            db.func.lower(Student.student_status) == student_status.strip().lower()
+        )
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.filter(
+            db.or_(
+                Person.full_name.ilike(pattern),
+                Student.admission_number.ilike(pattern),
+            )
+        )
+    return query.count()
+
+
+def classes_by_id(class_ids):
+    """Several classes in one query — for the GraphQL class loader."""
+    wanted = [cid for cid in set(class_ids) if cid]
+    if not wanted:
+        return {}
+    rows = (
+        Class.query.options(joinedload(Class.grade), joinedload(Class.programme))
+        .filter(Class.id.in_(wanted))
+        .all()
+    )
+    return {row.id: row for row in rows}
+
+
+def get_student_row(student_id: str):
+    """One student, with the person their name lives on.
+
+    Returns the row rather than a dict: GraphQL builds its own shape, and a
+    serializer that carries every column is what the REST payload already is.
+    """
+    return (
+        Student.query.options(joinedload(Student.person))
+        .filter_by(id=student_id)
+        .first()
+    )
