@@ -9,6 +9,7 @@ added when something actually needs it.
 
 from __future__ import annotations
 
+import datetime
 from typing import List, Optional
 
 import strawberry
@@ -35,7 +36,7 @@ class Student:
             "by editing this value."
         )
     )
-    date_of_birth: Optional[str] = None
+    date_of_birth: Optional[datetime.date] = None
     gender: Optional[str] = None
     roll_number: Optional[int] = None
 
@@ -109,9 +110,7 @@ def student_to_graphql(row) -> Student:
         admission_number=row.admission_number,
         full_name=person.full_name if person else "",
         status=row.student_status,
-        date_of_birth=(
-            person.date_of_birth.isoformat() if person and person.date_of_birth else None
-        ),
+        date_of_birth=person.date_of_birth if person else None,
         gender=person.gender if person else None,
         roll_number=row.roll_number,
         class_id=row.class_id,

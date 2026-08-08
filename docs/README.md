@@ -189,6 +189,10 @@ docs/
 │
 │   Point-in-time reviews of the implementation against this canon.
 │
+├── architecture/graphql-conventions.md
+│
+│   What a module follows when its operations move to GraphQL.
+│
 ├── architecture/debt-register.md
 │
 │   The living register of open migration debt and its exits.

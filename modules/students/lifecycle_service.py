@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, Optional
 
-from core.branch_scope import assert_student_allowed
+from core.branch_scope import assert_class_allowed, assert_student_allowed
 from core.database import db
 from core.school_time import school_today
 from core.tenant import get_tenant_id
@@ -42,6 +42,18 @@ STATUS_TRANSFERRED = "transferred"
 # A student who has already gone cannot go again, and one who has graduated
 # has finished — none of these is a state to leave from.
 _ALREADY_GONE = frozenset({STATUS_WITHDRAWN, STATUS_GRADUATED, STATUS_TRANSFERRED})
+
+
+def _refuse(code: str, message: str) -> Dict[str, Any]:
+    """Say no in a way both transports can read.
+
+    The message is for a person; the code is for a caller that has to decide
+    what kind of failure this is. REST reports the message and ignores the
+    code; GraphQL maps the code to its error contract, so neither transport
+    has to recognise a refusal by matching on English — the thing that breaks
+    silently the first time somebody rewords a sentence.
+    """
+    return {"success": False, "code": code, "error": message}
 
 
 def record_event(
@@ -88,10 +100,10 @@ def timeline_for(student_id: str) -> list:
 def _student_for_workflow(student_id: str):
     tenant_id = get_tenant_id()
     if not tenant_id:
-        return None, {"success": False, "error": "Tenant context is required"}
+        return None, _refuse("TENANT_REQUIRED", "Tenant context is required")
     student = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
     if not student:
-        return None, {"success": False, "error": "Student not found"}
+        return None, _refuse("NOT_FOUND", "Student not found")
     # A branch-restricted admin may only act on students in their own campus.
     assert_student_allowed(student_id)
     return student, None
@@ -130,10 +142,10 @@ def withdraw_student(
         return refusal
 
     if student.student_status in _ALREADY_GONE:
-        return {
-            "success": False,
-            "error": f"This student is already recorded as {student.student_status}",
-        }
+        return _refuse(
+            "ALREADY_GONE",
+            f"This student is already recorded as {student.student_status}",
+        )
 
     left_class_id = student.class_id
     # Closes the current enrollment and clears students.class_id together, so
@@ -143,10 +155,10 @@ def withdraw_student(
     )
     if not placement.get("success"):
         db.session.rollback()
-        return {
-            "success": False,
-            "error": placement.get("error", "Could not end the student's placement"),
-        }
+        return _refuse(
+            "PLACEMENT_FAILED",
+            placement.get("error", "Could not end the student's placement"),
+        )
 
     student.student_status = STATUS_WITHDRAWN
     record_event(
@@ -182,7 +194,7 @@ def graduate_student(
         return refusal
 
     if student.student_status == STATUS_GRADUATED:
-        return {"success": False, "error": "This student has already graduated"}
+        return _refuse("ALREADY_GONE", "This student has already graduated")
 
     completed_class_id = student.class_id
     placement = assign_student_to_class(
@@ -190,10 +202,10 @@ def graduate_student(
     )
     if not placement.get("success"):
         db.session.rollback()
-        return {
-            "success": False,
-            "error": placement.get("error", "Could not close the student's placement"),
-        }
+        return _refuse(
+            "PLACEMENT_FAILED",
+            placement.get("error", "Could not close the student's placement"),
+        )
 
     student.student_status = STATUS_GRADUATED
     record_event(
@@ -231,21 +243,25 @@ def reenroll_student(
     if refusal:
         return refusal
 
+    # Where they are going is as branch-restricted as where they are: a campus
+    # admin may not place a child into another campus's class. Asked here, so
+    # it holds however the workflow was reached.
+    assert_class_allowed(class_id)
+
     if student.student_status not in _ALREADY_GONE:
-        return {
-            "success": False,
-            "error": "Only a student who has left can be re-enrolled",
-        }
+        return _refuse(
+            "NOT_GONE", "Only a student who has left can be re-enrolled"
+        )
 
     placement = assign_student_to_class(
         student_id, class_id, academic_year_id, commit=False
     )
     if not placement.get("success"):
         db.session.rollback()
-        return {
-            "success": False,
-            "error": placement.get("error", "Could not place the returning student"),
-        }
+        return _refuse(
+            "PLACEMENT_FAILED",
+            placement.get("error", "Could not place the returning student"),
+        )
 
     student.student_status = STATUS_ACTIVE
     record_event(
@@ -286,26 +302,26 @@ def transfer_section(
     if refusal:
         return refusal
 
+    assert_class_allowed(to_class_id)
+
     destination = Class.query.filter_by(
         id=to_class_id, tenant_id=student.tenant_id
     ).first()
     if destination is None:
-        return {"success": False, "error": "Class not found"}
+        return _refuse("CLASS_NOT_FOUND", "Class not found")
     if student.class_id == to_class_id:
-        return {"success": False, "error": "The student is already in this class"}
+        return _refuse("SAME_CLASS", "The student is already in this class")
     if (
         student.academic_year_id
         and destination.academic_year_id != student.academic_year_id
     ):
         # Moving a student across years is promotion (or a re-enrollment),
         # both of which do more than this and are asked for by name.
-        return {
-            "success": False,
-            "error": (
-                "That class belongs to another academic year. Use promotion or "
-                "re-enrollment to move a student between years."
-            ),
-        }
+        return _refuse(
+            "WRONG_YEAR",
+            "That class belongs to another academic year. Use promotion or "
+            "re-enrollment to move a student between years.",
+        )
 
     from_class_id = student.class_id
     placement = assign_student_to_class(
@@ -313,10 +329,9 @@ def transfer_section(
     )
     if not placement.get("success"):
         db.session.rollback()
-        return {
-            "success": False,
-            "error": placement.get("error", "Could not move the student"),
-        }
+        return _refuse(
+            "PLACEMENT_FAILED", placement.get("error", "Could not move the student")
+        )
 
     record_event(
         student,
@@ -354,10 +369,10 @@ def transfer_out(
         return refusal
 
     if student.student_status in _ALREADY_GONE:
-        return {
-            "success": False,
-            "error": f"This student is already recorded as {student.student_status}",
-        }
+        return _refuse(
+            "ALREADY_GONE",
+            f"This student is already recorded as {student.student_status}",
+        )
 
     left_class_id = student.class_id
     placement = assign_student_to_class(
@@ -365,10 +380,10 @@ def transfer_out(
     )
     if not placement.get("success"):
         db.session.rollback()
-        return {
-            "success": False,
-            "error": placement.get("error", "Could not end the student's placement"),
-        }
+        return _refuse(
+            "PLACEMENT_FAILED",
+            placement.get("error", "Could not end the student's placement"),
+        )
 
     student.student_status = STATUS_TRANSFERRED
     details = {"class_id": left_class_id} if left_class_id else {}

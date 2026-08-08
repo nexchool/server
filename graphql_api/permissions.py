@@ -11,7 +11,12 @@ from typing import Any, Type
 
 from strawberry.permission import BasePermission
 
-from .errors import AuthenticationError, AuthorizationError, TenantRequiredError
+from .errors import (
+    AuthenticationError,
+    AuthorizationError,
+    SetupIncompleteError,
+    TenantRequiredError,
+)
 
 
 class IsAuthenticated(BasePermission):
@@ -55,6 +60,36 @@ class RequiresTenant(BasePermission):
             raise TenantRequiredError(
                 getattr(context, "tenant_error", None) or self.message
             )
+        return True
+
+
+class SetupComplete(BasePermission):
+    """Require the school to have finished setting itself up.
+
+    A school still in the wizard has not decided what its classes are, so a
+    write that lands first writes into a structure that is still being made
+    up. Reads stay open — an admin has to be able to look at the dashboard
+    while working through the wizard — so this belongs on mutations only.
+
+    Platform admins pass regardless, exactly as they do in REST: somebody has
+    to be able to unstick a school that is stuck in its own setup.
+
+    The tenant is not re-checked here; `RequiresTenant` comes first and this
+    permission is meaningless without it.
+    """
+
+    message = "Complete school setup before using this feature."
+
+    def has_permission(self, source: Any, info: Any, **kwargs: Any) -> bool:
+        from core.decorators.setup import is_setup_complete
+
+        context = info.context
+        user = getattr(context, "current_user", None)
+        if user is not None and getattr(user, "is_platform_admin", False):
+            return True
+
+        if not is_setup_complete(context.tenant_id):
+            raise SetupIncompleteError(self.message)
         return True
 
 

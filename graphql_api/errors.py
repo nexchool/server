@@ -67,6 +67,12 @@ class TenantRequiredError(BusinessError):
     code = "TENANT_REQUIRED"
 
 
+class SetupIncompleteError(BusinessError):
+    """The school is still being set up, so it cannot be written to yet."""
+
+    code = "SETUP_INCOMPLETE"
+
+
 def is_business_error(error: GraphQLError) -> bool:
     """True when the error was raised deliberately and is safe to expose.
 

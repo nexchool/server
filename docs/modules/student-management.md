@@ -905,6 +905,14 @@ These operations represent business actions rather than CRUD endpoints.
 
 Implementation details remain independent of this document.
 
+Student Management is the first module to move onto GraphQL, so the shape its
+operations take there is the pattern the rest follow — see
+`architecture/graphql-conventions.md`. The lifecycle operations above are
+named on that surface as the school names the act (`withdrawStudent`,
+`graduateStudent`, `reEnrollStudent`, `transferStudentToSection`,
+`transferStudentOut`), never as a status being set. Their REST equivalents
+remain only until the clients move, and are then deleted.
+
 ---
 
 # Authorization

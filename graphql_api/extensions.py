@@ -21,11 +21,35 @@ from strawberry.extensions import (
     SchemaExtension,
 )
 
-from .errors import is_client_error
+from .errors import AuthorizationError, is_client_error
 
 logger = logging.getLogger(__name__)
 
 MASKED_ERROR_MESSAGE = "An unexpected error occurred"
+
+
+class TranslateDomainRefusals(SchemaExtension):
+    """Give refusals raised inside services the transport's vocabulary.
+
+    A service says no by raising its own exception, and is right to — it must
+    not know which transport asked. REST turns those into status codes with a
+    Flask error handler, which never runs here: graphql-core catches whatever
+    a resolver raises, so an untranslated refusal reaches the client as
+    "An unexpected error occurred" and is logged as our bug.
+
+    Translating in one place rather than per resolver is the point. A module
+    that migrates to GraphQL should not have to remember this, and a refusal
+    that surfaces as a 500 is the kind of thing nobody notices until someone
+    branch-restricted files a support ticket.
+    """
+
+    def resolve(self, _next, root, info, *args, **kwargs):
+        from core.branch_scope import BranchForbidden
+
+        try:
+            return _next(root, info, *args, **kwargs)
+        except BranchForbidden as refusal:
+            raise AuthorizationError(str(refusal)) from refusal
 
 
 class OperationLogger(SchemaExtension):
@@ -62,6 +86,9 @@ def build_extensions(config: Mapping[str, Any]) -> list:
         QueryDepthLimiter(max_depth=config.get("GRAPHQL_MAX_DEPTH", 12)),
         MaxTokensLimiter(max_token_count=config.get("GRAPHQL_MAX_TOKENS", 2000)),
         MaxAliasesLimiter(max_alias_count=config.get("GRAPHQL_MAX_ALIASES", 25)),
+        # Before masking: a refusal must become a business error while it can
+        # still be recognised as one.
+        TranslateDomainRefusals,
         MaskErrors(should_mask_error=_should_mask, error_message=MASKED_ERROR_MESSAGE),
         OperationLogger,
     ]
