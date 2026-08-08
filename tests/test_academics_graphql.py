@@ -159,7 +159,7 @@ def test_asking_for_only_the_year_in_progress(client, db_session, tenant, struct
 
 def test_both_are_answered_in_one_request(client, db_session, tenant, structure):
     """The round-trip saving, which is the part GraphQL is actually for."""
-    _user, token = _staff_with(db_session, tenant, "school_unit.read", "class.read")
+    _user, token = _staff_with(db_session, tenant, "school_unit.read")
 
     body = _ask(client, tenant, token, BOTH)
 
@@ -182,33 +182,44 @@ def test_reading_campuses_needs_the_campus_authority(
     assert "FORBIDDEN" in _codes(body)
 
 
-def test_reading_years_needs_the_class_authority(
+def test_anyone_signed_in_may_ask_which_year_it_is(
     client, db_session, tenant, structure
 ):
-    _user, token = _staff_with(db_session, tenant, "school_unit.read")
+    """Deliberately unguarded, matching the REST route.
 
-    body = _ask(client, tenant, token, YEARS)
-
-    assert "FORBIDDEN" in _codes(body)
-
-
-def test_holding_one_authority_still_answers_that_half(
-    client, db_session, tenant, structure
-):
-    """Why these are two fields rather than one `academicScope`.
-
-    Five structure reads answer to five different permissions. Bundled behind
-    one guard, a person holding four of them would get a blank screen instead
-    of the four they may see; bundled behind one field, one refusal would fail
-    the whole response. Kept apart, a client asks for what it is allowed to
-    and still pays for one round-trip.
+    A student looking at their own attendance and a teacher opening a register
+    both need to know the year, and neither holds a class permission. Guarding
+    this emptied the year picker for everyone but administrators — which is
+    what happened when the field was first written by guessing the permission
+    from the module rather than reading the route.
     """
-    _user, token = _staff_with(db_session, tenant, "class.read")
+    _user, token = _staff_with(db_session, tenant, "attendance.read.self")
 
     body = _ask(client, tenant, token, YEARS)
 
     assert "errors" not in body, body
     assert len(body["data"]["academicYears"]) == 3
+
+
+def test_holding_one_authority_still_answers_that_half(
+    client, db_session, tenant, structure, offerings
+):
+    """Why these are separate fields rather than one `academicScope`.
+
+    The structure reads answer to different permissions. Bundled behind one
+    guard, a person holding four of them would get a blank screen instead of
+    the four they may see; bundled behind one field, one refusal would fail
+    the whole response. Kept apart, a client asks for what it is allowed to
+    and still pays for one round-trip.
+    """
+    _user, token = _staff_with(db_session, tenant, "grade.read")
+
+    refused = _ask(client, tenant, token, CAMPUSES)
+    answered = _ask(client, tenant, token, GRADES)
+
+    assert "FORBIDDEN" in _codes(refused)
+    assert "errors" not in answered, answered
+    assert len(answered["data"]["grades"]) == 3
 
 
 def test_another_schools_structure_is_not_visible(
@@ -236,3 +247,145 @@ def test_another_schools_structure_is_not_visible(
 
     names = {campus["name"] for campus in body["data"]["campuses"]}
     assert "Their Campus" not in names
+
+
+# ---------------------------------------------------------------------------
+# Programmes, grades and mediums — three more lists, three more authorities
+# ---------------------------------------------------------------------------
+
+PROGRAMMES = "query { programmes { id name board code status medium } }"
+GRADES = "query { grades { id name sequence } }"
+MEDIUMS = """
+query M($includeInactive: Boolean) {
+  mediums(includeInactive: $includeInactive) { name code isActive }
+}
+"""
+
+
+@pytest.fixture
+def offerings(db_session, tenant):
+    """Two boards, year-groups that sort wrong as text, and two mediums."""
+    from modules.academic_programmes.models import AcademicProgramme
+    from modules.grades.models import Grade
+    from modules.mediums.models import Medium
+
+    mediums = [
+        Medium(
+            id=_new_id("med-"), tenant_id=tenant.id, name=name,
+            code=code, is_active=active,
+        )
+        for name, code, active in (
+            ("English", "EN", True),
+            ("Gujarati", "GU", True),
+            ("Hindi", "HI", False),
+        )
+    ]
+    db_session.add_all(mediums)
+
+    programmes = [
+        AcademicProgramme(
+            id=_new_id("prog-"), tenant_id=tenant.id, name=name, board=board,
+            code=f"{board}-{uuid.uuid4().hex[:6]}",
+        )
+        for name, board in (("CBSE English", "cbse"), ("GSEB Gujarati", "gseb"))
+    ]
+    db_session.add_all(programmes)
+
+    # Named so a text sort would put Std 10 before Std 2.
+    grades = [
+        Grade(id=_new_id("g-"), tenant_id=tenant.id, name=name, sequence=seq)
+        for name, seq in (("Std 2", 2), ("Std 10", 10), ("Std 1", 1))
+    ]
+    db_session.add_all(grades)
+    db_session.flush()
+    return programmes, grades, mediums
+
+
+def test_the_programmes_a_school_offers(client, db_session, tenant, offerings):
+    _user, token = _staff_with(db_session, tenant, "programme.read")
+
+    body = _ask(client, tenant, token, PROGRAMMES)
+
+    assert "errors" not in body, body
+    boards = {p["board"] for p in body["data"]["programmes"]}
+    assert boards == {"cbse", "gseb"}
+
+
+def test_grades_come_back_in_teaching_order_not_alphabetical(
+    client, db_session, tenant, offerings
+):
+    """Std 10 after Std 2. Sorted as text it comes first, which is the whole
+    reason `sequence` exists."""
+    _user, token = _staff_with(db_session, tenant, "grade.read")
+
+    body = _ask(client, tenant, token, GRADES)
+
+    assert [g["name"] for g in body["data"]["grades"]] == [
+        "Std 1", "Std 2", "Std 10",
+    ]
+
+
+def test_the_mediums_a_school_currently_teaches_in(
+    client, db_session, tenant, offerings
+):
+    _user, token = _staff_with(db_session, tenant, "school_setup.read")
+
+    body = _ask(client, tenant, token, MEDIUMS)
+
+    assert [m["name"] for m in body["data"]["mediums"]] == ["English", "Gujarati"]
+
+
+def test_a_medium_the_school_has_stopped_offering_can_still_be_asked_for(
+    client, db_session, tenant, offerings
+):
+    """Old records still name it, so it has to remain readable."""
+    _user, token = _staff_with(db_session, tenant, "school_setup.read")
+
+    body = _ask(client, tenant, token, MEDIUMS, includeInactive=True)
+
+    names = [m["name"] for m in body["data"]["mediums"]]
+    assert "Hindi" in names
+
+
+@pytest.mark.parametrize(
+    "query,key",
+    [(PROGRAMMES, "programme.read"), (GRADES, "grade.read"), (MEDIUMS, "school_setup.read")],
+)
+def test_each_list_answers_to_its_own_authority(
+    client, db_session, tenant, offerings, query, key
+):
+    """Holding every *other* structure permission is not enough for this one.
+
+    This is the property that decided against one bundled `academicScope`
+    field: five reads, five authorities.
+    """
+    others = {
+        "school_unit.read", "class.read", "programme.read", "grade.read",
+        "school_setup.read",
+    } - {key}
+    # `class_subject.manage` also opens mediums, so it is deliberately not in
+    # the set of "every other structure permission".
+    _user, token = _staff_with(db_session, tenant, *others)
+
+    body = _ask(client, tenant, token, query)
+
+    assert "FORBIDDEN" in _codes(body)
+
+
+def test_whoever_assigns_subjects_to_a_class_may_read_the_mediums(
+    client, db_session, tenant, offerings
+):
+    """The REST route accepts three keys, not two.
+
+    A class-subject is taught in a medium, so the person assigning subjects
+    needs the list — and gating the field on the school-setup keys alone took
+    it away from them. Caught by an admin being refused on the live stack, not
+    by any test here, which is the argument for reading the route's decorator
+    rather than guessing from the module name.
+    """
+    _user, token = _staff_with(db_session, tenant, "class_subject.manage")
+
+    body = _ask(client, tenant, token, MEDIUMS)
+
+    assert "errors" not in body, body
+    assert [m["name"] for m in body["data"]["mediums"]] == ["English", "Gujarati"]

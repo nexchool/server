@@ -193,6 +193,14 @@ because they *are* separate.
 
 Bundle only where the data genuinely shares one authority and one lifetime.
 
+**Read the route's decorator; do not infer the key from the module name.** Two
+of the first five academic fields were guarded wrongly by guessing: mediums
+also answer to `class_subject.manage` (a class-subject is taught in a medium),
+and academic years answer to *nothing* — which year it is is ambient context a
+student needs as much as an administrator. Both would have taken a working
+screen away from somebody, and neither showed up in a test written from the
+same guess.
+
 ---
 
 ## 8. Migrating a route

@@ -22,17 +22,33 @@ from graphql_api.permissions import IsAuthenticated, RequiresTenant, requires_an
 from .graphql.types import (
     AcademicYear,
     Campus,
+    Grade,
+    Medium,
+    Programme,
     academic_years_to_graphql,
     campuses_to_graphql,
+    grades_to_graphql,
+    mediums_to_graphql,
+    programmes_to_graphql,
 )
 
 # A campus is a `school_unit` in the tables; the keys predate the word.
 PERM_CAMPUS_READ = "school_unit.read"
 PERM_CAMPUS_MANAGE = "school_unit.manage"
 
-# Academic years answer to the class keys: a year exists to hold classes.
-PERM_YEAR_READ = "class.read"
-PERM_YEAR_MANAGE = "class.manage"
+PERM_PROGRAMME_READ = "programme.read"
+PERM_PROGRAMME_MANAGE = "programme.manage"
+
+PERM_GRADE_READ = "grade.read"
+PERM_GRADE_MANAGE = "grade.manage"
+
+# Mediums are part of how a school is set up rather than a domain of their own.
+# Whoever assigns subjects to a class reads them too — a class-subject is
+# taught in a medium — so that authority is on the list as well, exactly as
+# the REST route has it.
+PERM_MEDIUM_READ = "school_setup.read"
+PERM_MEDIUM_MANAGE = "school_setup.manage"
+PERM_CLASS_SUBJECT_MANAGE = "class_subject.manage"
 
 
 @strawberry.type
@@ -58,14 +74,16 @@ class AcademicsQuery:
         )
 
     @strawberry.field(
-        permission_classes=[
-            IsAuthenticated,
-            RequiresTenant,
-            requires_any(PERM_YEAR_READ, PERM_YEAR_MANAGE),
-        ],
+        # Deliberately no business authority, matching the REST route. Which
+        # year the school is in is ambient — a student looking at their own
+        # attendance and a teacher opening a register both need it, and
+        # neither holds a class permission. Gating it would empty the year
+        # picker for everyone but administrators.
+        permission_classes=[IsAuthenticated, RequiresTenant],
         description=(
-            "The years this school teaches through, newest first. Pass "
-            "`activeOnly` for the one it is working in."
+            "The years this school teaches through. Pass `activeOnly` for the "
+            "one it is working in. Readable by anyone signed in: which year it "
+            "is is context, not a privilege."
         ),
     )
     def academic_years(
@@ -75,4 +93,61 @@ class AcademicsQuery:
 
         return academic_years_to_graphql(
             services.list_academic_years(active_only=active_only)
+        )
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_any(PERM_PROGRAMME_READ, PERM_PROGRAMME_MANAGE),
+        ],
+        description=(
+            "The courses of education this school offers. A trust running two "
+            "boards on one campus has two."
+        ),
+    )
+    def programmes(
+        self, info: strawberry.Info, status: Optional[str] = None
+    ) -> List[Programme]:
+        from modules.academic_programmes import services
+
+        return programmes_to_graphql(
+            services.list_programmes(info.context.tenant_id, status=status)
+        )
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_any(PERM_GRADE_READ, PERM_GRADE_MANAGE),
+        ],
+        description="The year-groups this school teaches, in teaching order.",
+    )
+    def grades(self, info: strawberry.Info) -> List[Grade]:
+        from modules.grades import services
+
+        return grades_to_graphql(services.list_grades(info.context.tenant_id))
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_any(
+                PERM_MEDIUM_READ, PERM_MEDIUM_MANAGE, PERM_CLASS_SUBJECT_MANAGE
+            ),
+        ],
+        description=(
+            "The languages this school teaches in. Pass `includeInactive` to "
+            "see ones it has stopped offering."
+        ),
+    )
+    def mediums(
+        self, info: strawberry.Info, include_inactive: bool = False
+    ) -> List[Medium]:
+        from modules.mediums import services
+
+        return mediums_to_graphql(
+            services.list_mediums(
+                info.context.tenant_id, include_inactive=include_inactive
+            )
         )
