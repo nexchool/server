@@ -468,6 +468,7 @@ EVENT_SECTION_TRANSFERRED = "SectionTransferred"
 EVENT_PROMOTED = "PromotionCompleted"
 EVENT_WITHDRAWN = "StudentWithdrawn"
 EVENT_RE_ENROLLED = "StudentReEnrolled"
+EVENT_TRANSFERRED_OUT = "StudentTransferredOut"
 EVENT_GRADUATED = "StudentGraduated"
 
 

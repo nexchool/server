@@ -85,6 +85,7 @@ Update C
 | SectionTransferred | A student moved within the same academic year | Academic |
 | PromotionCompleted | A student advanced to the next academic year | Academic |
 | StudentWithdrawn | A student discontinued before completing | Student Management |
+| StudentTransferredOut | A student left for another school | Student Management |
 | StudentReEnrolled | A withdrawn student resumed | Student Management |
 | StudentGraduated | A student completed their education | Academic |
 | TeacherParticipationStarted | A staff member began teaching | Academic |

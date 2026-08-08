@@ -155,6 +155,20 @@ def _assign_student_to_class_impl(
         db.session.flush()
         return None
 
+    # A move inside one academic year is a section transfer, and the canon is
+    # exact about it: "Section Transfer modifies the current Academic
+    # Enrollment." Closing and reopening would read as the student leaving 8A
+    # and joining 8B — two placements for one year — and would stamp
+    # `promoted_from_enrollment_id`, which is a promotion's word for a thing
+    # that is not a promotion. Where they moved *from* is kept by the
+    # SectionTransferred event, which is where transfer history belongs.
+    if len(current_rows) == 1 and current_rows[0].academic_year_id == academic_year_id:
+        current_rows[0].class_id = class_id
+        student.class_id = class_id
+        student.academic_year_id = academic_year_id
+        db.session.flush()
+        return None
+
     prev_id: Optional[str] = None
     if current_rows:
         prev_id = max(current_rows, key=lambda r: r.created_at).id

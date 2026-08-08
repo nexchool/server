@@ -919,6 +919,67 @@ def reenroll_student_route(student_id):
     return success_response(data=result['student'], message='Student re-enrolled')
 
 
+@students_bp.route('/<student_id>/transfer-section', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def transfer_student_section_route(student_id):
+    """Move a student to another section of the same year. Body: { to_class_id }"""
+    from . import lifecycle_service
+
+    data = request.get_json() or {}
+    to_class_id = (data.get('to_class_id') or '').strip()
+    if not to_class_id:
+        return validation_error_response({'to_class_id': 'is required'})
+    occurred_on, err = _parse_occurred_on(data.get('occurred_on'))
+    if err:
+        return err
+
+    assert_class_allowed(to_class_id)
+
+    result = lifecycle_service.transfer_section(
+        student_id,
+        to_class_id=to_class_id,
+        reason=(data.get('reason') or None),
+        occurred_on=occurred_on,
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('TransferError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['student'], message='Student moved')
+
+
+@students_bp.route('/<student_id>/transfer-out', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def transfer_student_out_route(student_id):
+    """A student leaves for another school. Body: { destination_school?, reason? }"""
+    from . import lifecycle_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('occurred_on'))
+    if err:
+        return err
+
+    result = lifecycle_service.transfer_out(
+        student_id,
+        destination_school=(data.get('destination_school') or None),
+        reason=(data.get('reason') or None),
+        occurred_on=occurred_on,
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('TransferError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['student'], message='Student transferred out')
+
+
 @students_bp.route('/<student_id>/timeline', methods=['GET'], strict_slashes=False)
 @tenant_required
 @auth_required

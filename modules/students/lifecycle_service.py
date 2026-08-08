@@ -27,6 +27,8 @@ from .class_enrollment_service import assign_student_to_class
 from .models import (
     EVENT_GRADUATED,
     EVENT_RE_ENROLLED,
+    EVENT_SECTION_TRANSFERRED,
+    EVENT_TRANSFERRED_OUT,
     EVENT_WITHDRAWN,
     Student,
     StudentLifecycleEvent,
@@ -35,10 +37,11 @@ from .models import (
 STATUS_ACTIVE = "active"
 STATUS_WITHDRAWN = "withdrawn"
 STATUS_GRADUATED = "graduated"
+STATUS_TRANSFERRED = "transferred"
 
-# A student who has already left cannot leave again, and one who has
-# graduated has finished — neither is a state to withdraw from.
-_CANNOT_LEAVE_AGAIN = frozenset({STATUS_WITHDRAWN, STATUS_GRADUATED})
+# A student who has already gone cannot go again, and one who has graduated
+# has finished — none of these is a state to leave from.
+_ALREADY_GONE = frozenset({STATUS_WITHDRAWN, STATUS_GRADUATED, STATUS_TRANSFERRED})
 
 
 def record_event(
@@ -126,7 +129,7 @@ def withdraw_student(
     if refusal:
         return refusal
 
-    if student.student_status in _CANNOT_LEAVE_AGAIN:
+    if student.student_status in _ALREADY_GONE:
         return {
             "success": False,
             "error": f"This student is already recorded as {student.student_status}",
@@ -228,7 +231,7 @@ def reenroll_student(
     if refusal:
         return refusal
 
-    if student.student_status not in (STATUS_WITHDRAWN, STATUS_GRADUATED):
+    if student.student_status not in _ALREADY_GONE:
         return {
             "success": False,
             "error": "Only a student who has left can be re-enrolled",
@@ -251,6 +254,132 @@ def reenroll_student(
         occurred_on=occurred_on,
         reason=reason,
         details={"class_id": class_id},
+        recorded_by_user_id=recorded_by_user_id,
+    )
+    db.session.commit()
+    _refresh_billable_count(student.tenant_id)
+
+    return {"success": True, "student": student.to_dict()}
+
+
+
+def transfer_section(
+    student_id: str,
+    *,
+    to_class_id: str,
+    occurred_on: Optional[datetime.date] = None,
+    reason: Optional[str] = None,
+    recorded_by_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A student moves to another section of the same year — 8A to 8B.
+
+    Their enrollment is updated, not restarted: one year, one placement. The
+    section they came from is kept by the event, because the enrollment now
+    only says where they are.
+
+    Not a status change. A student who moves rooms is still an active student
+    of the school; `transferred` means they left it (see `transfer_out`).
+    """
+    from modules.classes.models import Class
+
+    student, refusal = _student_for_workflow(student_id)
+    if refusal:
+        return refusal
+
+    destination = Class.query.filter_by(
+        id=to_class_id, tenant_id=student.tenant_id
+    ).first()
+    if destination is None:
+        return {"success": False, "error": "Class not found"}
+    if student.class_id == to_class_id:
+        return {"success": False, "error": "The student is already in this class"}
+    if (
+        student.academic_year_id
+        and destination.academic_year_id != student.academic_year_id
+    ):
+        # Moving a student across years is promotion (or a re-enrollment),
+        # both of which do more than this and are asked for by name.
+        return {
+            "success": False,
+            "error": (
+                "That class belongs to another academic year. Use promotion or "
+                "re-enrollment to move a student between years."
+            ),
+        }
+
+    from_class_id = student.class_id
+    placement = assign_student_to_class(
+        student_id, to_class_id, destination.academic_year_id, commit=False
+    )
+    if not placement.get("success"):
+        db.session.rollback()
+        return {
+            "success": False,
+            "error": placement.get("error", "Could not move the student"),
+        }
+
+    record_event(
+        student,
+        EVENT_SECTION_TRANSFERRED,
+        occurred_on=occurred_on,
+        reason=reason,
+        details={"from_class_id": from_class_id, "to_class_id": to_class_id},
+        recorded_by_user_id=recorded_by_user_id,
+    )
+    db.session.commit()
+
+    return {"success": True, "student": student.to_dict()}
+
+
+def transfer_out(
+    student_id: str,
+    *,
+    destination_school: Optional[str] = None,
+    occurred_on: Optional[datetime.date] = None,
+    reason: Optional[str] = None,
+    recorded_by_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """A student leaves this school for another one.
+
+    Kept apart from withdrawal because the two are different facts about a
+    child: one has gone somewhere, the other has stopped. Schools issue a
+    transfer certificate for the first and want to be able to find it again.
+
+    Like withdrawal, nothing is deleted — the student relationship and every
+    past enrollment remain, so the record still answers who taught this
+    child and when.
+    """
+    student, refusal = _student_for_workflow(student_id)
+    if refusal:
+        return refusal
+
+    if student.student_status in _ALREADY_GONE:
+        return {
+            "success": False,
+            "error": f"This student is already recorded as {student.student_status}",
+        }
+
+    left_class_id = student.class_id
+    placement = assign_student_to_class(
+        student_id, None, student.academic_year_id, commit=False
+    )
+    if not placement.get("success"):
+        db.session.rollback()
+        return {
+            "success": False,
+            "error": placement.get("error", "Could not end the student's placement"),
+        }
+
+    student.student_status = STATUS_TRANSFERRED
+    details = {"class_id": left_class_id} if left_class_id else {}
+    if destination_school:
+        details["destination_school"] = destination_school
+    record_event(
+        student,
+        EVENT_TRANSFERRED_OUT,
+        occurred_on=occurred_on,
+        reason=reason,
+        details=details or None,
         recorded_by_user_id=recorded_by_user_id,
     )
     db.session.commit()

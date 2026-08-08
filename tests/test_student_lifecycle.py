@@ -17,6 +17,8 @@ from flask import g
 from modules.students.models import (
     EVENT_GRADUATED,
     EVENT_RE_ENROLLED,
+    EVENT_SECTION_TRANSFERRED,
+    EVENT_TRANSFERRED_OUT,
     EVENT_WITHDRAWN,
     Student,
 )
@@ -283,3 +285,165 @@ def test_a_cohort_can_still_be_marked_as_leaving(
     result = bulk_update_status([first.id, second.id], "leaving")
     assert result["success"], result
     assert result["updated"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Transfer — moving rooms, and leaving the school
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def sibling_class(db_session, tenant, academic_year):
+    """Another section of the same year — 8A and 8B."""
+    from modules.classes.models import Class
+
+    cls = Class(
+        id=_new_id("c-"), tenant_id=tenant.id, name="Grade 5", section="B",
+        academic_year_id=academic_year.id,
+    )
+    db_session.add(cls)
+    db_session.flush()
+    return cls
+
+
+def _enrollments(student_id):
+    from modules.academics.backbone.models import StudentClassEnrollment
+
+    return StudentClassEnrollment.query.filter_by(student_id=student_id).all()
+
+
+def test_a_section_move_updates_the_enrollment_rather_than_restarting_it(
+    ctx, tenant, db_session, academic_year, klass, sibling_class
+):
+    """The canon: "Section Transfer modifies the current Academic Enrollment."
+
+    Closing and reopening would read as leaving 8A and joining 8B — two
+    placements for one year — and would stamp promoted_from_enrollment_id,
+    which is a promotion's word.
+    """
+    from modules.students.lifecycle_service import transfer_section
+
+    student = _admit(db_session, tenant, academic_year, klass)
+    assert len(_enrollments(student.id)) == 1
+
+    result = transfer_section(student.id, to_class_id=sibling_class.id)
+    assert result["success"], result
+
+    rows = _enrollments(student.id)
+    assert len(rows) == 1, "a move within one year must not create a second placement"
+    assert rows[0].class_id == sibling_class.id
+    assert rows[0].is_current is True
+    assert rows[0].promoted_from_enrollment_id is None
+
+    db_session.refresh(student)
+    assert student.class_id == sibling_class.id
+    # Still an active student — moving rooms is not leaving.
+    assert student.student_status == "active"
+
+
+def test_the_section_they_came_from_is_remembered(
+    ctx, tenant, db_session, academic_year, klass, sibling_class
+):
+    """The enrollment says where they are; the timeline says how they got there."""
+    from modules.students.lifecycle_service import timeline_for, transfer_section
+
+    student = _admit(db_session, tenant, academic_year, klass)
+    transfer_section(student.id, to_class_id=sibling_class.id, reason="Balancing sections")
+
+    moved = timeline_for(student.id)[-1]
+    assert moved.event == EVENT_SECTION_TRANSFERRED
+    assert moved.details["from_class_id"] == klass.id
+    assert moved.details["to_class_id"] == sibling_class.id
+    assert moved.reason == "Balancing sections"
+
+
+def test_a_section_move_cannot_cross_academic_years(
+    ctx, tenant, db_session, academic_year, klass
+):
+    """Moving between years is promotion or re-enrollment, which do more."""
+    from datetime import date as _d
+
+    from modules.academics.academic_year.models import AcademicYear
+    from modules.classes.models import Class
+    from modules.students.lifecycle_service import transfer_section
+
+    student = _admit(db_session, tenant, academic_year, klass)
+
+    next_year = AcademicYear(
+        id=_new_id("ay-"), tenant_id=tenant.id, name=f"AY-{uuid.uuid4().hex[:6]}",
+        start_date=_d(2027, 6, 1), end_date=_d(2028, 3, 31),
+    )
+    db_session.add(next_year)
+    db_session.flush()
+    next_class = Class(
+        id=_new_id("c-"), tenant_id=tenant.id, name="Grade 6", section="A",
+        academic_year_id=next_year.id,
+    )
+    db_session.add(next_class)
+    db_session.flush()
+
+    result = transfer_section(student.id, to_class_id=next_class.id)
+    assert result["success"] is False
+    assert "academic year" in result["error"].lower()
+
+
+def test_leaving_for_another_school_is_not_withdrawal(
+    ctx, tenant, db_session, academic_year, klass
+):
+    """Different facts about a child: one has gone somewhere, one has stopped."""
+    from modules.students.lifecycle_service import timeline_for, transfer_out
+
+    student = _admit(db_session, tenant, academic_year, klass)
+
+    result = transfer_out(
+        student.id, destination_school="St Xavier's", reason="Family relocated"
+    )
+    assert result["success"], result
+
+    db_session.refresh(student)
+    assert student.student_status == "transferred"
+    assert student.class_id is None
+    assert _current_enrollment(student.id) is None
+
+    recorded = timeline_for(student.id)[-1]
+    assert recorded.event == EVENT_TRANSFERRED_OUT
+    assert recorded.details["destination_school"] == "St Xavier's"
+
+
+def test_a_transferred_student_stops_being_billed(
+    ctx, tenant, db_session, academic_year, klass
+):
+    from modules.students.lifecycle_service import transfer_out
+    from modules.subscription.usage import INACTIVE_STUDENT_STATUSES
+
+    student = _admit(db_session, tenant, academic_year, klass)
+    transfer_out(student.id)
+
+    db_session.refresh(student)
+    assert student.student_status in INACTIVE_STUDENT_STATUSES
+
+
+def test_a_student_who_transferred_out_can_come_back(
+    ctx, tenant, db_session, academic_year, klass
+):
+    from modules.students.lifecycle_service import reenroll_student, transfer_out
+
+    student = _admit(db_session, tenant, academic_year, klass)
+    transfer_out(student.id)
+
+    returned = reenroll_student(student.id, class_id=klass.id)
+    assert returned["success"], returned
+
+    db_session.refresh(student)
+    assert student.student_status == "active"
+
+
+def test_a_student_who_has_gone_cannot_go_again(
+    ctx, tenant, db_session, academic_year, klass
+):
+    from modules.students.lifecycle_service import transfer_out, withdraw_student
+
+    student = _admit(db_session, tenant, academic_year, klass)
+    assert transfer_out(student.id)["success"]
+
+    assert withdraw_student(student.id)["success"] is False
+    assert transfer_out(student.id)["success"] is False
