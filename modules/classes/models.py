@@ -89,6 +89,22 @@ class Class(TenantBaseModel):
         nullable=True,
     )
 
+    # Where this section went when it was merged into another, and when.
+    # A merged section is never deleted: its attendance, its marks and its
+    # reports stay attached to it, because they happened there. What changes
+    # is that nothing new is placed into it (see section_merge.py).
+    merged_into_class_id = db.Column(
+        db.String(36),
+        db.ForeignKey("classes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    merged_on = db.Column(db.Date, nullable=True)
+
+    @property
+    def is_merged_away(self) -> bool:
+        """True when this section's future was moved elsewhere."""
+        return self.merged_into_class_id is not None
+
     # DEPRECATED: free-text standard number. Use grade_id instead.
     grade_level = db.Column(db.SmallInteger, nullable=True)
 

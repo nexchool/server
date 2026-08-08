@@ -114,6 +114,11 @@ def _assign_student_to_class_impl(
     cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
     if not cls:
         return "Class not found"
+    if cls.merged_into_class_id is not None:
+        # "Only future activities use the merged Section." Guarded here
+        # rather than at each caller, so admission, transfer, bulk import
+        # and promotion targets are all covered by one rule.
+        return "That section has been merged; place the student in the section it merged into"
 
     resolved_ay = cls.academic_year_id
     if academic_year_id and academic_year_id != resolved_ay:
