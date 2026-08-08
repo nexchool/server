@@ -6,7 +6,7 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-08
+**Last updated:** 2026-08-08 (item 1 closed by migration 094; item 15 added)
 
 **Sequencing (locked 2026-08-08):** Phase 0 canon cleanup → Phase 1
 architectural debt → Phase 2 finish existing domain workflows → Phase 3
@@ -20,7 +20,7 @@ control.
 
 | # | Debt | Why it exists | Exit |
 |---|------|---------------|------|
-| 1 | **`students.user_id` and `teachers.user_id` are `NOT NULL`** — a student or teacher cannot exist without a login. ADR-003 forbids exactly this, and ADR-010 names it as the v1 defect the migration exists to fix. *Registered 2026-08-08; previously tracked nowhere.* | v1 schema, never relaxed | Phase 1: make nullable; make create paths account-optional |
+| 15 | **Nested display names still read the login** — ~20 guarded `x.user.name` sites degrade to `null` / "A teacher" for account-less rows instead of reading `person.full_name`: serializers (`teachers/models.py` TeacherLeave, `attendance/models.py`, `student_leaves/models.py`, `timetable/models.py`, `schedule/models.py`), services (`attendance/services.py` ×5, `session_services.py`, `schedule/services.py`, `timetable_v2.py`, `class_teacher_assignments.py`, `class_subject_teachers.py`, `transport/services.py` incl. two CSV exports, `finance/pdf_service.py` receipt, `student_fee_service.py`, notification fallbacks in `constraint_services.py` / `student_leaves/services.py`). Each swap must also swap its eager load (N+1). | display copies predate the Person read cutover | with the attendance/timetable ADR-014 refactor (debt 2), which rewrites most of these sites anyway |
 | 2 | **Attendance resolves teaching outside the ADR-014 service**: keys on `class_id` + `marked_by → users.id`; sessions carry `class_teacher_assignment_id` (class-teacher responsibility, not subject teaching) | attendance predates ADR-014 | Phase 1 attendance refactor — **before Examination exists**, or exams copy the wrong shape |
 | 3 | **`classes.teacher_id` is an FK to `users.id`** — the class-teacher cache keys on a login, not the teacher (against ADR-001/ADR-013) | v1 column retained as cache | Phase 1, together with the attendance / teaching-assignment cleanup |
 | 4 | **Two live timetable implementations**: `modules/timetable/` (mounted at `/api/timetable`) and `modules/academics/services/timetable_v2.py` | parallel build never reconciled | Phase 1: pick the canonical one, migrate consumers, delete the other |
@@ -41,6 +41,7 @@ control.
 
 | Debt | Closed by |
 |------|-----------|
+| `students.user_id` / `teachers.user_id` NOT NULL — a student or teacher could not exist without a login (ADR-003/ADR-010's named v1 defect). Placeholder accounts (@student.placeholder, @teacher.school) no longer minted; create paths record the Person directly; lists/search/import/deletion handle the missing login. Also found and fixed in passing: create_student with an email had been broken since migration 089 (Student role granted instead of relationship-implied). | migration 094 + commits 9237928, 08a51b0 (2026-08-08) |
 | Dual-written identity + employment columns | migration 090 |
 | Authority held on the account (`user_roles`) | migration 089 |
 | `class_teachers` triple ownership / `is_class_teacher` | migration 092 (ADR-014) |
