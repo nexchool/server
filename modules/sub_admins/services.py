@@ -585,6 +585,9 @@ def update_sub_admin(
             desired = expand_selection(modules)
         except ValueError as exc:
             return _err("ValidationError", str(exc), 422)
+        from modules.rbac.authority_service import withdraw_authority
+        from modules.rbac.services import invalidate_user_permissions
+
         role = _get_private_role(tenant_id, user_id)
         if not role:
             return _err("NotFound", "Sub-admin role not found", 404)
@@ -657,6 +660,12 @@ def suspend_sub_admin(tenant_id: str, user_id: str, actor_id: str) -> Dict:
         user.is_suspended = True
         revoke_all_user_sessions(user_id)
         db.session.commit()
+        from modules.rbac.services import invalidate_user_permissions
+
+        # Sessions are revoked, so a browser is stopped at authentication.
+        # The cached permission set is what a caller with no request user
+        # context (a job) would still read — drop it too.
+        invalidate_user_permissions(user_id)
     except Exception as exc:
         db.session.rollback()
         logger.error("Failed to suspend sub-admin %s: %s", user_id, exc, exc_info=True)
@@ -674,6 +683,10 @@ def restore_sub_admin(tenant_id: str, user_id: str) -> Dict:
     try:
         user.is_suspended = False
         db.session.commit()
+        from modules.rbac.services import invalidate_user_permissions
+
+        # Restoring widens access; a stale empty set would keep denying.
+        invalidate_user_permissions(user_id)
     except Exception as exc:
         db.session.rollback()
         logger.error("Failed to restore sub-admin %s: %s", user_id, exc, exc_info=True)
@@ -742,7 +755,25 @@ def delete_sub_admin(tenant_id: str, user_id: str, actor_id: str) -> Dict:
     try:
         user.deleted_at = datetime.now(timezone.utc)
         revoke_all_user_sessions(user_id)
+
+        # Authority is held by the employment (ADR-013), so soft-deleting the
+        # account left the grant standing: the private role, its permissions
+        # and the StaffAuthority all survived the person they described.
+        # Withdraw it here so the authority ends with the sub-admin, the same
+        # way ending an employment ends it.
+        from modules.rbac.authority_service import withdraw_authority
+        from modules.rbac.services import invalidate_user_permissions
+
+        role = _get_private_role(tenant_id, user_id)
+        if role is not None:
+            employment = Staff.query.filter_by(
+                tenant_id=tenant_id, person_id=user.person_id
+            ).first()
+            if employment is not None:
+                withdraw_authority(employment.id, role.id)
+
         db.session.commit()
+        invalidate_user_permissions(user_id)
     except Exception as exc:
         db.session.rollback()
         logger.error("Failed to delete sub-admin %s: %s", user_id, exc, exc_info=True)

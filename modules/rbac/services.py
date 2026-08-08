@@ -362,7 +362,12 @@ def delete_permission(permission_id: str) -> Dict:
         
         db.session.delete(permission)
         db.session.commit()
-        
+        # The delete cascades to every role that granted this permission, so
+        # it shrinks more people's access than removing it from one role does
+        # — which already invalidates. Without this, the permission is gone
+        # while cached sets still contain it.
+        invalidate_all_permissions()
+
         return {
             'success': True,
             'message': 'Permission deleted successfully'
