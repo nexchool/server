@@ -179,7 +179,23 @@ remembers to write the rest of it.
 
 ---
 
-## 7. Migrating a route
+## 7. One field, one authority
+
+Do not bundle several reads behind one field to save a round-trip. The
+academic structure — campuses, years, programmes, grades, mediums — answers to
+five different permissions, and today a person holding four of them sees four
+lists rather than a blank screen. Behind one guard that becomes all-or-nothing;
+behind one field, a single refusal fails the whole response.
+
+A client still asks for several fields in one request and still pays for one
+round-trip. The saving belongs to the transport; the authorities stay separate
+because they *are* separate.
+
+Bundle only where the data genuinely shares one authority and one lifetime.
+
+---
+
+## 8. Migrating a route
 
 1. Build the GraphQL field beside the REST route. Both exist only while the
    client moves — the debt register carries that as an open item, because a
