@@ -17,7 +17,12 @@ from typing import List, Optional
 
 import strawberry
 
-from graphql_api.permissions import IsAuthenticated, RequiresTenant, requires_any
+from graphql_api.permissions import (
+    IsAuthenticated,
+    RequiresTenant,
+    requires,
+    requires_any,
+)
 
 from .graphql.types import (
     AcademicYear,
@@ -25,11 +30,13 @@ from .graphql.types import (
     Grade,
     Medium,
     Programme,
+    Subject,
     academic_years_to_graphql,
     campuses_to_graphql,
     grades_to_graphql,
     mediums_to_graphql,
     programmes_to_graphql,
+    subjects_to_graphql,
 )
 
 # A campus is a `school_unit` in the tables; the keys predate the word.
@@ -41,6 +48,11 @@ PERM_PROGRAMME_MANAGE = "programme.manage"
 
 PERM_GRADE_READ = "grade.read"
 PERM_GRADE_MANAGE = "grade.manage"
+
+# `subject.manage` implies `subject.read` in the Authorization Domain — a
+# `<resource>.manage` grant covers every action on that resource — so naming
+# the read alone is the whole rule, not half of it.
+PERM_SUBJECT_READ = "subject.read"
 
 # Mediums are part of how a school is set up rather than a domain of their own.
 # Whoever assigns subjects to a class reads them too — a class-subject is
@@ -148,6 +160,29 @@ class AcademicsQuery:
 
         return mediums_to_graphql(
             services.list_mediums(
+                info.context.tenant_id, include_inactive=include_inactive
+            )
+        )
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires(PERM_SUBJECT_READ),
+        ],
+        description=(
+            "The subjects this school teaches, by name. The catalogue rather "
+            "than any class's timetable. Pass `includeInactive` to see ones it "
+            "has stopped offering — old records still name them."
+        ),
+    )
+    def subjects(
+        self, info: strawberry.Info, include_inactive: bool = False
+    ) -> List[Subject]:
+        from modules.subjects import services
+
+        return subjects_to_graphql(
+            services.list_subjects_filtered(
                 info.context.tenant_id, include_inactive=include_inactive
             )
         )

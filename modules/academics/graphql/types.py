@@ -180,3 +180,33 @@ def grades_to_graphql(rows) -> List[Grade]:
 
 def mediums_to_graphql(rows) -> List[Medium]:
     return [medium_to_graphql(row) for row in rows]
+
+
+@strawberry.type(
+    description=(
+        "Something a school teaches. The catalogue, not a class's timetable — "
+        "which subjects a particular class takes is a class-subject."
+    )
+)
+class Subject:
+    id: strawberry.ID
+    name: str
+    code: Optional[str] = None
+    description: Optional[str] = None
+    subject_type: Optional[str] = None
+    is_active: bool = True
+
+
+def subject_to_graphql(row: dict) -> Subject:
+    return Subject(
+        id=strawberry.ID(row["id"]),
+        name=row["name"],
+        code=row.get("code"),
+        description=row.get("description"),
+        subject_type=row.get("subject_type"),
+        is_active=bool(row.get("is_active", True)),
+    )
+
+
+def subjects_to_graphql(rows) -> List[Subject]:
+    return [subject_to_graphql(row) for row in rows]

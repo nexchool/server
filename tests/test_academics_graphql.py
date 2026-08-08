@@ -389,3 +389,81 @@ def test_whoever_assigns_subjects_to_a_class_may_read_the_mediums(
 
     assert "errors" not in body, body
     assert [m["name"] for m in body["data"]["mediums"]] == ["English", "Gujarati"]
+
+
+# ---------------------------------------------------------------------------
+# The subject catalogue
+# ---------------------------------------------------------------------------
+
+SUBJECTS = """
+query S($includeInactive: Boolean) {
+  subjects(includeInactive: $includeInactive) {
+    id name code subjectType isActive
+  }
+}
+"""
+
+
+@pytest.fixture
+def catalogue(db_session, tenant):
+    from modules.subjects.models import Subject
+
+    rows = [
+        Subject(
+            id=_new_id("sub-"), tenant_id=tenant.id, name=name,
+            code=code, is_active=active,
+        )
+        for name, code, active in (
+            ("Mathematics", "MATH", True),
+            ("English", "ENG", True),
+            ("Sanskrit", "SAN", False),
+        )
+    ]
+    db_session.add_all(rows)
+    db_session.flush()
+    return rows
+
+
+def test_the_subjects_a_school_teaches(client, db_session, tenant, catalogue):
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _ask(client, tenant, token, SUBJECTS)
+
+    assert "errors" not in body, body
+    assert [s["name"] for s in body["data"]["subjects"]] == [
+        "English", "Mathematics",
+    ]
+
+
+def test_a_subject_no_longer_offered_can_still_be_asked_for(
+    client, db_session, tenant, catalogue
+):
+    """Old timetables and results still name it."""
+    _user, token = _staff_with(db_session, tenant, "subject.read")
+
+    body = _ask(client, tenant, token, SUBJECTS, includeInactive=True)
+
+    assert "Sanskrit" in [s["name"] for s in body["data"]["subjects"]]
+
+
+def test_managing_subjects_carries_reading_them(
+    client, db_session, tenant, catalogue
+):
+    """`<resource>.manage` covers every action on that resource, so the field
+    names the read alone and the whole rule is stated once."""
+    _user, token = _staff_with(db_session, tenant, "subject.manage")
+
+    body = _ask(client, tenant, token, SUBJECTS)
+
+    assert "errors" not in body, body
+    assert len(body["data"]["subjects"]) == 2
+
+
+def test_the_catalogue_needs_the_subject_authority(
+    client, db_session, tenant, catalogue
+):
+    _user, token = _staff_with(db_session, tenant, "class.read", "grade.read")
+
+    body = _ask(client, tenant, token, SUBJECTS)
+
+    assert "FORBIDDEN" in _codes(body)
