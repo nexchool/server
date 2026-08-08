@@ -590,7 +590,13 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
         return {"success": False, "error": "Tenant not found"}
 
     on_date = on_date or school_today()
-    inactive_statuses = ("inactive", "withdrawn", "graduated", "transferred")
+    # One definition of who the school is billed for. This list used to be
+    # written out here as well, with a comment on the other copy asking that
+    # they be kept in step by hand — which is how `dropped_out` came to be
+    # billable in both.
+    from modules.subscription.usage import INACTIVE_STUDENT_STATUSES
+
+    inactive_statuses = INACTIVE_STUDENT_STATUSES
     active_students = (
         db.session.query(Student)
         .filter(Student.tenant_id == tenant_id)

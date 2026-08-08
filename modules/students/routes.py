@@ -1,3 +1,5 @@
+from datetime import date as _date
+
 from flask import request, g, Response
 from werkzeug.utils import secure_filename
 from modules.students import students_bp
@@ -648,6 +650,129 @@ def bulk_update_student_status():
         data={'updated': result['updated'], 'missing': result.get('missing', [])},
         message=f"Updated {result['updated']} student(s)",
     )
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle — the things that happen to a student, as workflows
+# ---------------------------------------------------------------------------
+
+def _parse_occurred_on(raw):
+    """A school often records a departure after the family has already gone."""
+    if not raw:
+        return None, None
+    try:
+        return _date.fromisoformat(str(raw)), None
+    except ValueError:
+        return None, validation_error_response(
+            {'occurred_on': 'must be an ISO date (YYYY-MM-DD)'}
+        )
+
+
+@students_bp.route('/<student_id>/withdraw', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def withdraw_student_route(student_id):
+    """A student leaves before completing. Body: { reason?, occurred_on? }"""
+    from . import lifecycle_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('occurred_on'))
+    if err:
+        return err
+
+    result = lifecycle_service.withdraw_student(
+        student_id,
+        reason=(data.get('reason') or None),
+        occurred_on=occurred_on,
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('WithdrawError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['student'], message='Student withdrawn')
+
+
+@students_bp.route('/<student_id>/graduate', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def graduate_student_route(student_id):
+    """A student completes their education. Body: { reason?, occurred_on? }"""
+    from . import lifecycle_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('occurred_on'))
+    if err:
+        return err
+
+    result = lifecycle_service.graduate_student(
+        student_id,
+        reason=(data.get('reason') or None),
+        occurred_on=occurred_on,
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('GraduateError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['student'], message='Student graduated')
+
+
+@students_bp.route('/<student_id>/re-enroll', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_UPDATE)
+def reenroll_student_route(student_id):
+    """A student who left returns. Body: { class_id, academic_year_id?, ... }
+
+    Not a re-admission: the same person, the same studentship, the same
+    admission number — only a new Academic Enrollment.
+    """
+    from . import lifecycle_service
+
+    data = request.get_json() or {}
+    class_id = (data.get('class_id') or '').strip()
+    if not class_id:
+        return validation_error_response({'class_id': 'is required'})
+    occurred_on, err = _parse_occurred_on(data.get('occurred_on'))
+    if err:
+        return err
+
+    # The class must be one this admin may place a student into.
+    assert_class_allowed(class_id)
+
+    result = lifecycle_service.reenroll_student(
+        student_id,
+        class_id=class_id,
+        academic_year_id=(data.get('academic_year_id') or None),
+        reason=(data.get('reason') or None),
+        occurred_on=occurred_on,
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('ReEnrollError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['student'], message='Student re-enrolled')
+
+
+@students_bp.route('/<student_id>/timeline', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS, PERM_MANAGE)
+def student_timeline_route(student_id):
+    """The student's history, oldest first."""
+    from . import lifecycle_service
+
+    assert_student_allowed(student_id)
+    events = lifecycle_service.timeline_for(student_id)
+    return success_response(data=[event.to_dict() for event in events])
 
 
 @students_bp.route('/export', methods=['GET'], strict_slashes=False)

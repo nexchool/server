@@ -455,3 +455,81 @@ class StudentPromotionBatch(TenantBaseModel):
             "created_by_user_id": self.created_by_user_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# Business events in a student's life, in the canon's vocabulary
+# (docs/architecture/business-events.md). Two domains write these: Student
+# Management owns admission, withdrawal and return; Academic owns placement,
+# transfer, promotion and graduation. The timeline is one list because a
+# school reads a student's history as one story.
+EVENT_ADMITTED = "StudentAdmitted"
+EVENT_ENROLLED = "AcademicEnrollmentCreated"
+EVENT_SECTION_TRANSFERRED = "SectionTransferred"
+EVENT_PROMOTED = "PromotionCompleted"
+EVENT_WITHDRAWN = "StudentWithdrawn"
+EVENT_RE_ENROLLED = "StudentReEnrolled"
+EVENT_GRADUATED = "StudentGraduated"
+
+
+class StudentLifecycleEvent(TenantBaseModel):
+    """A milestone in one student's time at the school.
+
+    Written because the records cannot answer these questions on their own.
+    Enrollments say where a student sat and when it ended; they do not say
+    whether the year ended in a graduation, a withdrawal or a family moving
+    town — and until now the only trace of a status change was that
+    `students.updated_at` moved.
+
+    The alternative was a column per outcome on `students` — withdrawn_on,
+    withdrawal_reason, graduated_on — which is how a table stops describing
+    a student and starts describing a workflow.
+
+    Rows are never edited. A correction is a new event; the school's history
+    is what happened, including what was recorded and later reconsidered.
+    """
+
+    __tablename__ = "student_lifecycle_events"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    student_id = db.Column(
+        db.String(36),
+        db.ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event = db.Column(db.String(40), nullable=False)
+    # The date the school would put on it, which is not always today: a
+    # withdrawal is often recorded after the family has already gone.
+    occurred_on = db.Column(db.Date, nullable=False)
+    academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    reason = db.Column(db.Text, nullable=True)
+    # Whatever the workflow knows that a later reader would want: the class
+    # left, the grade completed, the batch a promotion belonged to.
+    details = db.Column(db.JSON, nullable=True)
+    recorded_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "event": self.event,
+            "occurred_on": self.occurred_on.isoformat() if self.occurred_on else None,
+            "academic_year_id": self.academic_year_id,
+            "reason": self.reason,
+            "details": self.details,
+            "recorded_by_user_id": self.recorded_by_user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<StudentLifecycleEvent {self.event} student={self.student_id}>"

@@ -18,7 +18,8 @@ from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import StudentClassEnrollment
 from modules.classes.models import Class
-from modules.students.models import Student, StudentPromotionBatch
+from modules.students.models import EVENT_GRADUATED, Student, StudentPromotionBatch
+from modules.students.lifecycle_service import STATUS_GRADUATED, record_event
 from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
@@ -490,6 +491,19 @@ def execute_promotion(
                 graduated_count += 1
                 student.class_id = None
                 student.academic_year_id = to_year_id
+                # Until this line a graduate kept the status "active", so the
+                # school went on being billed for every student it had ever
+                # taught. No terminal enrollment row is created on purpose —
+                # transport's year rollover reads the absence of a current
+                # enrollment as "this student has graduated".
+                student.student_status = STATUS_GRADUATED
+                record_event(
+                    student,
+                    EVENT_GRADUATED,
+                    occurred_on=today,
+                    details={"promotion_batch": True, "class_id": key},
+                    recorded_by_user_id=user_id,
+                )
             elif kind == "class" and next_class_id:
                 from_cls = get_class(key)
                 to_cls = get_class(next_class_id)

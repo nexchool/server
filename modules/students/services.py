@@ -21,7 +21,11 @@ from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
-from .student_schemas import DEFAULT_STUDENT_STATUS, STUDENT_STATUS_VALUES
+from .student_schemas import (
+    DEFAULT_STUDENT_STATUS,
+    STUDENT_STATUS_VALUES,
+    WORKFLOW_ONLY_STATUSES,
+)
 from .class_enrollment_service import (
     assign_student_to_class,
     student_matches_academic_year_filter,
@@ -1108,7 +1112,21 @@ def update_student(
         if house_name is not None:
             student.house_name = _clean_str(house_name)
         if student_status is not None:
-            student.student_status = _clean_str(student_status)
+            # Leaving, finishing and moving school are workflows, not fields:
+            # each closes a placement, carries a date and a reason, and is
+            # recorded. Setting the word here would leave the rest undone —
+            # which is how graduated students went on being billed.
+            cleaned_status = _clean_str(student_status)
+            if cleaned_status in WORKFLOW_ONLY_STATUSES:
+                return {
+                    "success": False,
+                    "error": (
+                        f"'{cleaned_status}' is the outcome of a workflow, not an "
+                        "edit. Use the withdraw, graduate or transfer action so "
+                        "the placement is closed and the reason recorded."
+                    ),
+                }
+            student.student_status = cleaned_status
         if academic_result is not None:
             student.academic_result = _clean_str(academic_result)
 
@@ -1269,6 +1287,19 @@ def bulk_update_status(student_ids: List[str], student_status: str) -> Dict:
         return {
             "success": False,
             "error": f"Invalid status. Allowed: {', '.join(STUDENT_STATUS_VALUES)}",
+        }
+    # Marking a cohort as `leaving` at year end is an ordinary thing to do in
+    # bulk. Withdrawing, graduating or transferring them is not: each ends a
+    # placement and carries a date and a reason per student, so it goes
+    # through its workflow one child at a time.
+    if student_status in WORKFLOW_ONLY_STATUSES:
+        return {
+            "success": False,
+            "error": (
+                f"'{student_status}' is the outcome of a workflow, not a bulk "
+                "edit. Withdraw, graduate or transfer each student so the "
+                "placement is closed and the reason recorded."
+            ),
         }
 
     try:

@@ -19,11 +19,23 @@ STUDENT_STATUS_VALUES = (
     "inactive",
     "transferred",
     "graduated",
+    # Flagged to leave at the end of the year — still here, still taught,
+    # excluded from promotion. Distinct from `withdrawn`, which is past tense.
     "leaving",
     "suspended",
     "dropped_out",
+    # A student who has left before completing. The billing code has excluded
+    # this value since it was written, but nothing could ever set it — see
+    # modules/students/lifecycle_service.py.
+    "withdrawn",
 )
 DEFAULT_STUDENT_STATUS = "active"
+
+# Statuses a student cannot be moved to by editing a record. Each is the
+# outcome of a business workflow that has other work to do — closing an
+# enrollment, recording when and why — so setting the word alone would leave
+# the student half-moved (ADR: status is workflow-driven).
+WORKFLOW_ONLY_STATUSES = frozenset({"withdrawn", "graduated", "transferred"})
 
 
 def _trim_or_none(value: Any) -> str | None:
