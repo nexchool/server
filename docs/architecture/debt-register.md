@@ -6,8 +6,8 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-09 — items 34, 37–40 added from the Phase A stabilization audit
-(`reviews/2026-08-09-stabilization-audit.md`); 33 and 18 closed; 36 withdrawn as
+**Last updated:** 2026-08-09 — items 34, 38–40 added from the Phase A stabilization audit
+(`reviews/2026-08-09-stabilization-audit.md`); 33, 18 and 37 closed; 36 withdrawn as
 mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
 it is reachable now (see Closed).
 
@@ -48,9 +48,8 @@ control.
 | 11 | **Transport list pagination is opt-in**; clients still read whole arrays | a truncated array is indistinguishable from a complete one | M5: admin-web + Expo adopt the page, then the array goes |
 | 34 | **A navigation link 404s.** `admin-web/src/components/academics/year-transition/TransitionComplete.tsx:212` links to `/dashboard/transport/enrollments`; no such page exists. The link sits on the year-transition completion screen — the moment transport enrolment matters most. | the transport students screen was named `students`, the link was written against `enrollments` | point the link at `/dashboard/transport/students`, or build the enrolments screen if they are different things |
 | 40 | **admin-web cannot create a class.** The only affordance was `canCreate && isSchoolSetupEnabled()` on the classes page, linking to the School Setup wizard that was removed when onboarding moved to the panel. The flag was hard-coded `false`, so the button had already stopped rendering — `class.create` was read and never used, and the zero-class empty state pointed at the same dead route. The dead markup is gone; the gap is not. A school that opens a new section mid-year has no way to add it from the tenant app. | the wizard was removed before its replacement existed | decide whether creating a section is operator work (panel) or school work (admin-web); if the latter, build the form against the existing `POST /api/classes` |
-| 37 | **A second, dead login implementation.** `modules/auth/services.py:366` defines `login_user()`; nothing calls it. `modules/auth/routes.py:196` implements login directly against `authenticate_user` / `authenticate_platform_admin`. Two authentication paths, one unused and free to drift, in the module where drift matters most. | the service predates the route's inlined flow | delete `login_user` once confirmed unreferenced across all four clients |
 | 38 | **A tenant's authorization state depends on which one-off backfills were run against it.** Besides `seed_rbac.py` there are seven grant/backfill/fix scripts (`backfill_academic_calendar_permissions`, `backfill_admin_finance_permissions`, `backfill_teacher_leave_permissions`, `backfill_timetable_subject_permissions`, `fix_teacher_permissions`, `grant_hostel_permissions`, `seed_holiday_permissions`). This is the mechanism that produced debt 33, and it will produce the next one. | each module added its keys with its own script | one declarative seed that is the whole truth; backfills become migrations that replay it |
-| 39 | **80 public service functions have no caller outside their own file.** Seven were verified by hand and all seven were genuinely uncalled, so the list is real rather than a matcher artifact — but it is untriaged. It mixes dead code with unreachable *capabilities* (`students.analyze_promotion`, `students.import_students_from_rows`, `rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`, `attendance.lock_after_hours`). Concentrated in transport (17), notifications (11), rbac (8), school_setup (7), auth (7), students (7). | features built ahead of their transport, plus genuine rot | triage per item during Phase B/C — never in bulk; "delete" and "this is a feature with no door" look identical from here |
+| 39 | **80 public service functions look uncalled — but the list is not trustworthy as it stands.** It was built by counting call sites (`name(` outside the defining file), and that method reports a function imported under an alias as dead: `logout_user` scores zero callers and is very much alive, because `auth/routes.py` imports it as `logout_user as logout_user_service`. Closing debt 37 is what surfaced this. The list also mixes genuine rot with unreachable *capabilities* — `students.analyze_promotion`, `students.import_students_from_rows`, `rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`, `attendance.lock_after_hours`. Concentrated in transport (17), notifications (11), rbac (8), school_setup (7), auth (7), students (7). | features built ahead of their transport, plus genuine rot, plus a counting method that cannot see aliases | re-derive the list by searching each raw identifier across all four repos, then triage per item during Phase B/C — never in bulk. "Delete this" and "this is a feature with no door" and "this is aliased and live" all look identical from a call count. |
 | 12 | **`trial_ends_at` is never enforced**; no tenant invoice / receipt / dunning (`plans`, `tenant_usage` are scaffolding only) | commercial layer not built | Commercial module (Phase 5) — do not build billing on the current tenant lifecycle |
 | 13b | **Delegation expiry is felt within the cache TTL, not on the day.** Expiry is a property of the query (nothing reads a delegation outside its window), but the cached key list is a snapshot taken before it lapsed — so a delegate keeps the lent keys for up to ~120 s past the rollover. | the cache materializes a date-dependent answer | acceptable at 120 s; revisit if the TTL grows |
 | 14e | **`POST /api/students` still admits directly, bypassing the application.** Both paths are legitimate — a school that walks a child in on day one should not have to file an application first — but nothing records which route a student arrived by, and admin-web only knows the direct one. | the direct path predates applications | decide whether direct admission stays a supported route or becomes "auto-approved application"; wire admin-web to applications either way |
@@ -59,6 +58,33 @@ control.
 ---
 
 ## Closed
+
+**The second login implementation is gone (2026-08-09).** Debt 37.
+`modules/auth/services.py` defined `login_user()` — authenticate, stamp
+`last_login_at`, mint a token, open a session — while `modules/auth/routes.py`
+does all of that inline against `authenticate_user` and
+`authenticate_platform_admin`. Two authentication paths, one unused and free to
+drift, in the module where drift matters most.
+
+Confirmed dead by searching the raw string across all four repos plus infra:
+three occurrences, being the definition and two mentions in these docs. No
+`__all__`, no wildcard re-export, no dynamic lookup. Deleting it orphaned
+nothing — `authenticate_user` and `create_session` keep the callers the routes
+import directly.
+
+**Method note, because the obvious check was wrong.** Counting call sites for
+`logout_user` returned zero, and it is very much alive: `routes.py` imports it as
+`logout_user as logout_user_service`, so every call reads under a different name.
+Searching for the raw identifier finds aliased imports; counting `name(` does
+not. The same wrong method would have deleted a live function.
+
+Verified against the running API afterwards: login returns tokens, logout
+answers 200, and the refresh token is refused once revoked.
+
+Pre-existing and deliberately left: `from datetime import datetime, timedelta`
+in the same file imports `datetime` unused. It was unused before this change,
+and sweeping unrelated imports inside a deletion commit hides what the commit
+did.
 
 **Debt 36 was not a defect — withdrawn (2026-08-09).** It claimed two live
 finance screen trees reached by different paths, with Invoices unreachable from

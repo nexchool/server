@@ -363,46 +363,6 @@ def find_users_by_email_password(
     return matches
 
 
-def login_user(
-    email: str,
-    password: str,
-    request: Request = None,
-    tenant_id: Optional[str] = None,
-) -> Optional[Tuple[User, Dict[str, str]]]:
-    """
-    Complete login flow: authenticate user and create session.
-    
-    Args:
-        email: User email
-        password: Plain text password
-        request: Flask request object
-        tenant_id: Tenant ID (from g.tenant_id in multi-tenant)
-        
-    Returns:
-        Tuple of (User, tokens_dict) if successful, None otherwise
-        tokens_dict contains 'access_token' and 'refresh_token'
-    """
-    # Authenticate user (tenant-scoped)
-    user = authenticate_user(email, password, tenant_id=tenant_id)
-    if not user:
-        return None
-
-    # Update last login
-    user.last_login_at = utc_now()
-    user.save()
-
-    # Create session and generate tokens
-    access_token = generate_access_token(user)
-    session = create_session(user, request)
-    
-    tokens = {
-        'access_token': access_token,
-        'refresh_token': session.refresh_token
-    }
-    
-    return user, tokens
-
-
 def logout_user(refresh_token: str) -> bool:
     """
     Logout user by revoking the session.

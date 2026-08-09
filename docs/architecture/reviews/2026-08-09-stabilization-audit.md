@@ -163,12 +163,25 @@ deletions (`/api/academics/calendar`, `/calendar/*`, `/api/academics/terms`,
 > checker built a dict keyed by rule and a later same-path rule overwrote the GET
 > entry with an empty method list. The routes were always there.
 
-### [ARCHITECTURE DEBT] A second, dead login implementation
+### [ARCHITECTURE DEBT] A second, dead login implementation — deleted
 
-`modules/auth/services.py:366` defines `login_user()`. It has no callers.
-`modules/auth/routes.py:196` implements login directly against `authenticate_user`
+`modules/auth/services.py` defined `login_user()` with no callers, while
+`modules/auth/routes.py:196` implements login inline against `authenticate_user`
 and `authenticate_platform_admin`. Two authentication code paths, one unused and
-free to drift, in the module where drift matters most.
+free to drift, in the module where drift matters most. Deleted; login and logout
+verified against the running API afterwards.
+
+**This is the one finding here whose method held up, and it is worth knowing
+why.** It was found by searching the raw identifier across all four repos, not by
+counting call sites. Counting call sites reports `logout_user` — sitting directly
+below it, and very much alive — as having zero callers, because `routes.py`
+imports it as `logout_user as logout_user_service` and every call reads under a
+different name. Searching the string finds aliased imports; counting `name(` does
+not, and here it would have deleted a live function in the auth module.
+
+The same caveat applies to the 80 uncalled service functions below: **that list
+was built by counting call sites, so some entries will be aliased imports rather
+than dead code.** Triage each by searching the identifier, never by the count.
 
 ### [ARCHITECTURE DEBT] Permission seeding is spread across eight scripts
 
