@@ -1,7 +1,6 @@
 """
 School Setup Routes
 
-  GET  /api/school-setup/status              — per-module readiness
   POST /api/school-setup/complete            — mark tenant.is_setup_complete
   POST /api/school-setup/duplicate-structure — clone unit→unit / programme→programme
   POST /api/school-setup/promote-year        — clone classes into target year
@@ -17,7 +16,6 @@ from core.decorators import (
     auth_required,
     tenant_required,
     require_feature,
-    require_any_permission,
     require_permission,
 )
 from shared.helpers import error_response, success_response
@@ -27,27 +25,13 @@ from .bulk_generator_service import bulk_generate_classes
 from .duplicate_service import duplicate_structure
 from . import import_service
 from .promote_service import promote_year
-from .services import (
-    get_status_payload,
-    run_complete_setup,
-)
+from .services import run_complete_setup
 from .template_models import SubjectTemplateGroup, SubjectTemplateItem
 from . import apply_subjects_service
 from . import seed_service
 
 
-PERM_READ = "school_setup.read"
 PERM_MANAGE = "school_setup.manage"
-
-
-@school_setup_bp.route("/status", methods=["GET"], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature("class_management")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def get_setup_status():
-    """Per-module readiness payload for the dashboard."""
-    return success_response(data=get_status_payload(g.tenant_id))
 
 
 @school_setup_bp.route("/complete", methods=["POST"], strict_slashes=False)

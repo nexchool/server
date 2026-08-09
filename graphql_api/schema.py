@@ -52,11 +52,13 @@ def _build_query_type() -> type:
     Imported here rather than at module scope because module resolvers import
     the transport's errors and permissions.
     """
+    from modules.academics.calendar.resolvers import CalendarQuery
     from modules.academics.resolvers import AcademicsQuery
     from modules.attendance.resolvers import AttendanceQuery
     from modules.auth.resolvers import IdentityQuery
     from modules.classes.resolvers import ClassesQuery
     from modules.people.resolvers import PeopleQuery
+    from modules.school_setup.resolvers import SchoolSetupQuery
     from modules.students.resolvers import StudentQuery
 
     @strawberry.type(description="Every read the platform exposes.")
@@ -68,6 +70,8 @@ def _build_query_type() -> type:
         AttendanceQuery,
         AcademicsQuery,
         ClassesQuery,
+        CalendarQuery,
+        SchoolSetupQuery,
     ):
         pass
 

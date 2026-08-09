@@ -57,7 +57,7 @@ def body_of(text, brace_pos):
 def declared_types():
     """{TypeName: {field: (declared_ts_type, is_optional)}} across both clients."""
     found = {}
-    for base in (ROOT / "client", ROOT / "panel"):
+    for base in (ROOT / "client", ROOT / "panel", ROOT / "admin-web" / "src"):
         for f in base.rglob("*.ts*"):
             if {"node_modules", ".next", ".expo"} & set(f.parts):
                 continue

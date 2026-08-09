@@ -94,7 +94,8 @@ def normalise(raw):
 def typed_calls():
     """Every api* call with the response type the caller declared."""
     rows = {}
-    for label, base in (("expo", ROOT / "client"), ("panel", ROOT / "panel")):
+    for label, base in (("expo", ROOT / "client"), ("panel", ROOT / "panel"),
+                          ("admin-web", ROOT / "admin-web" / "src")):
         if not base.exists():
             sys.exit(f"client path missing: {base}")
         for f in sorted(base.rglob("*.ts*")):

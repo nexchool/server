@@ -92,19 +92,50 @@ def variants(path):
     out |= {path.rstrip("/"), path.rstrip("/") + "/"} if "*" not in path else set()
     return {v for v in out if v.startswith("/api/")}
 
+def _literal_segments(client_path, rule):
+    """Segments where the client wrote a word and the rule wants an id.
+
+    `/api/holidays/<holiday_id>` matches the literal `/api/holidays/upcoming`,
+    because `<holiday_id>` accepts any segment. So deleting `/upcoming` while
+    keeping the id route left the audit reporting "served" — the request would
+    reach a route, look up a holiday called "upcoming" and 404. A rule only
+    really serves a client path if, wherever the client wrote a literal, the
+    rule has that same literal.
+    """
+    client_parts = client_path.split("/")
+    rule_parts = rule.split("/")
+    if len(client_parts) != len(rule_parts):
+        return False
+    for got, wanted in zip(client_parts, rule_parts):
+        if got == "*":
+            continue                      # client hole: an id is right here
+        if wanted.startswith("<") and wanted.endswith(">"):
+            return True                   # client literal vs rule parameter
+    return False
+
+
 def served(paths, method=None):
-    wrong = []
+    wrong, only_by_parameter = [], []
     for path in paths:
         probe = path.replace("*", "x")
         for rx, rule, methods in COMPILED:
-            if rx.match(probe):
-                if method is None or method in methods:
-                    return True, []
+            if not rx.match(probe):
+                continue
+            if method is not None and method not in methods:
                 wrong.append((rule, sorted(methods)))
+                continue
+            if _literal_segments(path, rule):
+                only_by_parameter.append((rule, sorted(methods)))
+                continue
+            return True, []
+    if only_by_parameter:
+        return False, [(f"{rule} (only matches as a path parameter)", methods)
+                       for rule, methods in only_by_parameter[:2]]
     return False, wrong[:2]
 
 findings, seen = [], set()
-for label, base in (("expo", ROOT / "client"), ("panel", ROOT / "panel")):
+for label, base in (("expo", ROOT / "client"), ("panel", ROOT / "panel"),
+                          ("admin-web", ROOT / "admin-web" / "src")):
     if not base.exists():
         sys.exit(f"path missing: {base}")
     for f in sorted(base.rglob("*.ts*")):
