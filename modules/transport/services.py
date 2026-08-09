@@ -2010,28 +2010,6 @@ def create_stop(route_id: str, payload: Dict) -> Tuple[Optional[Dict], Optional[
     return s.to_dict(), None
 
 
-def update_stop(stop_id: str, payload: Dict) -> Tuple[Optional[Dict], Optional[str]]:
-    tenant_id = get_tenant_id()
-    s = TransportStop.query.filter_by(id=stop_id, tenant_id=tenant_id).first()
-    if not s:
-        return None, "Stop not found"
-    for k in (
-        "name",
-        "pickup_time",
-        "drop_time",
-        "is_active",
-        "sequence_order",
-        "area",
-        "landmark",
-        "latitude",
-        "longitude",
-    ):
-        if k in payload:
-            setattr(s, k, payload[k])
-    db.session.commit()
-    return s.to_dict(), None
-
-
 def reorder_stops(route_id: str, stop_ids_in_order: List[str]) -> Tuple[bool, Optional[str]]:
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -3645,16 +3623,6 @@ def export_contact_sheet_csv(academic_year_id: Optional[str] = None) -> Tuple[Op
             )
         )
     return "".join(lines), None
-
-
-def get_route_with_stops(route_id: str) -> Tuple[Optional[Dict], Optional[str]]:
-    tenant_id = get_tenant_id()
-    r = TransportRoute.query.filter_by(id=route_id, tenant_id=tenant_id).first()
-    if not r:
-        return None, "Route not found"
-    d = r.to_dict()
-    d["stops"] = list_stops_for_route(route_id, include_inactive=True)
-    return d, None
 
 
 # ---------------------------------------------------------------------------

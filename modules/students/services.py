@@ -1680,17 +1680,6 @@ def list_student_documents(student_id: str) -> Dict:
         return {"success": False, "error": safe_error(e)}
 
 
-def get_student_document_by_id(document_id: str, student_id: str) -> Optional[Dict]:
-    """Get a single document by id, verifying it belongs to student and tenant."""
-    tenant_id = get_tenant_id()
-    if not tenant_id:
-        return None
-    doc = StudentDocument.query.filter_by(
-        id=document_id, student_id=student_id, tenant_id=tenant_id
-    ).first()
-    return doc.to_dict() if doc else None
-
-
 def get_student_document_file_content(document_id: str, student_id: str) -> Dict:
     """
     Load file bytes from S3 for authenticated download proxy.

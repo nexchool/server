@@ -61,6 +61,38 @@ def purge_notification_logs():
         logger.exception("retention.purge_notification_logs.failed")
 
 
+@shared_task(name="retention.purge_expired_sessions")
+def purge_expired_sessions():
+    """Delete login sessions whose refresh token has expired. Runs nightly.
+
+    Nothing pruned these. A row is written per login and kept forever, so the
+    table grows with every sign-in a school ever makes — the one table
+    guaranteed to grow fastest, and the only one with no retention job.
+
+    `auth/services.py` had a `cleanup_expired_sessions` for this, written with a
+    docstring saying it "should be run periodically (e.g., via cron job)", and
+    nothing ever ran it. Its body is here now, as a bulk delete rather than
+    loading every expired row into memory to delete them one at a time.
+
+    Not tenant-scoped and no DataPurgeLog row: a session is infrastructure, not
+    a school's data, and the purge log records what was removed from a tenant.
+    """
+    from modules.auth.models import Session
+
+    try:
+        deleted = (
+            db.session.query(Session)
+            .filter(Session.refresh_token_expires_at < _utcnow())
+            .delete(synchronize_session=False)
+        )
+        if deleted:
+            logger.info("retention.purge_expired_sessions", extra={"deleted": deleted})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception("retention.purge_expired_sessions.failed")
+
+
 @shared_task(name="retention.purge_audit_logs")
 def purge_audit_logs():
     """

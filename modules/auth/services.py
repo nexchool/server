@@ -76,22 +76,6 @@ def generate_refresh_token(user: User) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def generate_token_pair(user: User) -> Dict[str, str]:
-    """
-    Generate both access and refresh tokens for a user.
-    
-    Args:
-        user: User object
-        
-    Returns:
-        Dictionary with 'access_token' and 'refresh_token'
-    """
-    return {
-        'access_token': generate_access_token(user),
-        'refresh_token': generate_refresh_token(user)
-    }
-
-
 # ==================== JWT Token Validation ====================
 
 def validate_jwt_token(token: str, token_type: str = "access") -> Optional[Dict]:
@@ -209,24 +193,6 @@ def create_session(user: User, request: Request = None) -> Session:
     return session
 
 
-def revoke_session(session_id: str) -> bool:
-    """
-    Revoke a specific session.
-    
-    Args:
-        session_id: Session ID to revoke
-        
-    Returns:
-        True if session was revoked, False if not found
-    """
-    session = Session.query.get(session_id)
-    if not session:
-        return False
-    
-    session.revoke()
-    return True
-
-
 def revoke_all_user_sessions(user_id: str) -> int:
     """
     Revoke all sessions for a user (logout from all devices).
@@ -244,27 +210,6 @@ def revoke_all_user_sessions(user_id: str) -> int:
         session.revoke()
         count += 1
     
-    return count
-
-
-def cleanup_expired_sessions():
-    """
-    Clean up expired sessions from the database.
-    Should be run periodically (e.g., via cron job).
-    
-    Returns:
-        Number of sessions deleted
-    """
-    expired_sessions = Session.query.filter(
-        Session.refresh_token_expires_at < utc_now()
-    ).all()
-    
-    count = len(expired_sessions)
-    
-    for session in expired_sessions:
-        db.session.delete(session)
-    
-    db.session.commit()
     return count
 
 

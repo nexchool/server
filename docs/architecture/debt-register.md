@@ -6,9 +6,9 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-09 — items 34 and 39 added from the Phase A stabilization
-audit (`reviews/2026-08-09-stabilization-audit.md`); 33, 18, 37, 38, 6d and 40 closed; 36
-withdrawn as mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
+**Last updated:** 2026-08-09 — the Phase A stabilization audit
+(`reviews/2026-08-09-stabilization-audit.md`) is worked through: 18, 33, 34, 37, 38,
+39, 40 and 6d closed; 36 withdrawn as mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
 it is reachable now (see Closed).
 
 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE**; **Phase 4 started** (Attendance: corrections surfaced, feature gate built). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
@@ -45,8 +45,6 @@ control.
 | 7d | **The identity map defeats `.get()` scoping after an unscoped load.** `core/authentication.py::load_without_tenant_scope` nulls the tenant to load `User`/`Session`; once cached, a later scoped `.get()` returns the row with no SQL. Guarded today by `_acts_outside_own_tenant`, and only those two models use it — a real bypass the moment a third does. | sign-in must find the account before the tenant is known | keep the helper limited to User/Session; assert it in review |
 | 9 | **`_bus_operational_warning`** issues ~1 query per bus (84 on the test trust) | bounded by fleet size | M5 leftover |
 | 11 | **Transport list pagination is opt-in**; clients still read whole arrays | a truncated array is indistinguishable from a complete one | M5: admin-web + Expo adopt the page, then the array goes |
-| 34 | **A navigation link 404s.** `admin-web/src/components/academics/year-transition/TransitionComplete.tsx:212` links to `/dashboard/transport/enrollments`; no such page exists. The link sits on the year-transition completion screen — the moment transport enrolment matters most. | the transport students screen was named `students`, the link was written against `enrollments` | point the link at `/dashboard/transport/students`, or build the enrolments screen if they are different things |
-| 39 | **80 public service functions look uncalled — but the list is not trustworthy as it stands.** It was built by counting call sites (`name(` outside the defining file), and that method reports a function imported under an alias as dead: `logout_user` scores zero callers and is very much alive, because `auth/routes.py` imports it as `logout_user as logout_user_service`. Closing debt 37 is what surfaced this. The list also mixes genuine rot with unreachable *capabilities* — `students.analyze_promotion`, `students.import_students_from_rows`, `rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`, `attendance.lock_after_hours`. Concentrated in transport (17), notifications (11), rbac (8), school_setup (7), auth (7), students (7). | features built ahead of their transport, plus genuine rot, plus a counting method that cannot see aliases | re-derive the list by searching each raw identifier across all four repos, then triage per item during Phase B/C — never in bulk. "Delete this" and "this is a feature with no door" and "this is aliased and live" all look identical from a call count. |
 | 12 | **`trial_ends_at` is never enforced**; no tenant invoice / receipt / dunning (`plans`, `tenant_usage` are scaffolding only) | commercial layer not built | Commercial module (Phase 5) — do not build billing on the current tenant lifecycle |
 | 13b | **Delegation expiry is felt within the cache TTL, not on the day.** Expiry is a property of the query (nothing reads a delegation outside its window), but the cached key list is a snapshot taken before it lapsed — so a delegate keeps the lent keys for up to ~120 s past the rollover. | the cache materializes a date-dependent answer | acceptable at 120 s; revisit if the TTL grows |
 | 14e | **`POST /api/students` still admits directly, bypassing the application.** Both paths are legitimate — a school that walks a child in on day one should not have to file an application first — but nothing records which route a student arrived by, and admin-web only knows the direct one. | the direct path predates applications | decide whether direct admission stays a supported route or becomes "auto-approved application"; wire admin-web to applications either way |
@@ -55,6 +53,52 @@ control.
 ---
 
 ## Closed
+
+**Links that pointed at pages which no longer exist (2026-08-09).** Debt 34, and
+four more it did not know about. `TransitionComplete.tsx` linked to
+`/dashboard/transport/enrollments`, where the screen is called `students`; four
+"Back to academics" breadcrumbs pointed at `/academics`, the standalone hub
+replaced by a collapsible sidebar group. Next reports none of this — a link to a
+deleted page is not a build error, not a type error and not a lint error — so
+`admin-web/src/lib/internalLinks.test.ts` now resolves every literal internal
+href against the filesystem route tree, and fails any that points at a retired
+redirect stub.
+
+**The "80 uncalled service functions" were 10 (2026-08-09).** Debt 39, re-derived
+before anything was touched, because closing 37 showed the original method was
+wrong: it counted call sites (`name(` outside the defining file), which reports a
+function imported under an alias as dead. `logout_user` scores zero that way and
+is very much alive.
+
+Re-derived by searching the raw identifier across 1,596 files in all four repos
+plus infra. Of 541 public functions defined in module service files:
+
+- **529** are referenced outside their own file — alive.
+- **12** are referenced only by tests: built, tested, never routed. Left alone,
+  and they are the honest form of debt 18's shape — a capability with no door.
+  `delegate_authority`, `end_delegation`, `duplicate_unit_to_unit`,
+  `apply_subject_contexts_to_classes`, `can_user_mark_session`, `parse_workbook`
+  and six others.
+- **47** are used only inside their own file. Not dead — module-private helpers
+  that happen to lack a leading underscore. Renaming 47 functions across nine
+  modules is churn with no behaviour change, so they stay; they are recorded here
+  so the next audit does not count them as rot again.
+- **10** were referenced nowhere at all, including their own file. Deleted.
+
+Two of the ten announced themselves — `render_email_template` and
+`send_email_old_signature` both open with "DEPRECATED". The rest:
+`generate_token_pair`, `revoke_session`, `get_route_with_stops`, `update_stop`,
+`get_student_document_by_id`, `list_active_tokens_for_user`,
+`send_expo_push_batch` (the single-send sibling is what is wired).
+
+**The eleventh was worth more than the other ten.** `cleanup_expired_sessions`
+was dead, and its docstring said it "should be run periodically (e.g., via cron
+job)". Nothing ever ran it, and nothing else pruned the table: notification logs
+and audit logs each have a retention job, while `sessions` — a row per sign-in
+per device, the table guaranteed to grow fastest — had none. Rather than delete
+it, its body moved to `retention.purge_expired_sessions` on the nightly beat
+schedule, as a bulk delete instead of loading every expired row into memory to
+delete them one at a time.
 
 **A school can open a section again (2026-08-09).** Debt 40. Adding a section
 mid-year is school work, not operator work (user decision), so it lives in

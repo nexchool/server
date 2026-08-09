@@ -203,24 +203,39 @@ seven scripts deleted, and `scripts/reseed_rbac.py` adding the `--dry-run` and
 `--reconcile` that seeding never had. `fix_teacher_permissions` is kept — it
 repairs a `StaffAuthority` link, a user→role problem, not a permission backfill.
 
-### [ARCHITECTURE DEBT] 80 public service functions with no caller
+### ~~[ARCHITECTURE DEBT] 80 public service functions with no caller~~ — it was 10
 
-Public functions in `modules/**/*service*.py` that nothing outside their own file
-calls. Seven were spot-checked by hand and all seven were genuinely uncalled, so the
-list is not a matcher artifact — but it has not been triaged item by item.
+The number was wrong, and so was the method that produced it. It counted call
+sites (`name(` outside the defining file), which reports a function imported
+under an alias as dead — `logout_user` scores zero that way and is very much
+alive. Re-derived by searching the raw identifier across 1,596 files in all four
+repos plus infra, of 541 public functions in module service files:
 
-| module | count | module | count |
-|---|---|---|---|
-| transport | 17 | auth | 7 |
-| notifications | 11 | students | 7 |
-| rbac | 8 | attendance | 4 |
-| school_setup | 7 | mailer | 4 |
+| | |
+|---|---|
+| referenced outside their own file — alive | **529** |
+| referenced only by tests — built, never routed | **12** |
+| used only inside their own file — private, just not underscored | **47** |
+| referenced nowhere at all — deleted | **10** |
 
-Some are genuinely dead; others are unreachable *capabilities* like `merge_sections`
-— e.g. `students.analyze_promotion`, `students.import_students_from_rows`,
-`rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`,
-`attendance.lock_after_hours`. Distinguishing "delete this" from "this is a feature
-with no door" is Phase B/C work and must be done per item, not in bulk.
+The 47 were the bulk of the original 80 and were never rot: module-private
+helpers that happen to lack a leading underscore. Renaming them across nine
+modules is churn with no behaviour change, so they stay — recorded so the next
+audit does not count them again.
+
+The 12 test-only ones are the honest form of debt 18's shape: a capability with
+no door. Left alone deliberately, not deleted — `delegate_authority`,
+`duplicate_unit_to_unit`, `can_user_mark_session` and nine others are features
+awaiting a transport, not mistakes.
+
+**The eleventh deletion turned into the real finding.**
+`cleanup_expired_sessions` was dead, with a docstring saying it "should be run
+periodically (e.g., via cron job)". Nothing ever ran it — and nothing else
+pruned the table. Notification logs and audit logs each have a retention job;
+`sessions`, a row per sign-in per device and the table guaranteed to grow
+fastest, had none. Its body is now `retention.purge_expired_sessions` on the
+nightly schedule, as a bulk delete rather than loading every expired row into
+memory to delete one at a time.
 
 ---
 

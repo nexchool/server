@@ -46,6 +46,10 @@ def make_celery(app):
             "task": "retention.purge_notification_logs",
             "schedule": 86400,
         },
+        "retention-purge-expired-sessions": {
+            "task": "retention.purge_expired_sessions",
+            "schedule": 86400,
+        },
         "retention-purge-audit-logs": {
             "task": "retention.purge_audit_logs",
             "schedule": 604800,
