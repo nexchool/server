@@ -150,11 +150,20 @@ def create_class(
         if department_error:
             return {'success': False, 'error': department_error}
 
-        # Explicit duplicate check (name, section, academic_year_id) - gives clear error
+        # A class is identified by where it sits, not by what it is called:
+        # (tenant, campus, programme, grade, section, academic year). `name` is
+        # a nullable legacy label and is empty for every class created through
+        # the structured form, so checking it instead — as this did — collapsed
+        # the test to (section, year) and refused a second Grade 1 A on another
+        # programme or campus. A trust running two mediums on one campus has
+        # exactly that, and so does the demo school: Grade 1 A exists twice,
+        # once GSEB Gujarati and once GSEB English.
         logger.warning("[create_class] checking for duplicate")
         existing = Class.query.filter_by(
             tenant_id=tenant_id,
-            name=name.strip(),
+            school_unit_id=school_unit_id,
+            programme_id=programme_id,
+            grade_id=grade_id,
             section=section.strip(),
             academic_year_id=academic_year_id,
         ).first()
@@ -162,7 +171,10 @@ def create_class(
             logger.warning("create_class: FAILED - duplicate found, existing id=%r", existing.id if existing else None)
             return {
                 'success': False,
-                'error': 'Class with this name, section and academic year already exists'
+                'error': (
+                    'That section already exists for this grade, programme and '
+                    'campus in this academic year.'
+                ),
             }
 
         logger.warning("[create_class] no duplicate, creating Class object")

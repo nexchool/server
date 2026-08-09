@@ -6,8 +6,8 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-09 — items 34, 39 and 40 added from the Phase A stabilization
-audit (`reviews/2026-08-09-stabilization-audit.md`); 33, 18, 37, 38 and 6d closed; 36
+**Last updated:** 2026-08-09 — items 34 and 39 added from the Phase A stabilization
+audit (`reviews/2026-08-09-stabilization-audit.md`); 33, 18, 37, 38, 6d and 40 closed; 36
 withdrawn as mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
 it is reachable now (see Closed).
 
@@ -46,7 +46,6 @@ control.
 | 9 | **`_bus_operational_warning`** issues ~1 query per bus (84 on the test trust) | bounded by fleet size | M5 leftover |
 | 11 | **Transport list pagination is opt-in**; clients still read whole arrays | a truncated array is indistinguishable from a complete one | M5: admin-web + Expo adopt the page, then the array goes |
 | 34 | **A navigation link 404s.** `admin-web/src/components/academics/year-transition/TransitionComplete.tsx:212` links to `/dashboard/transport/enrollments`; no such page exists. The link sits on the year-transition completion screen — the moment transport enrolment matters most. | the transport students screen was named `students`, the link was written against `enrollments` | point the link at `/dashboard/transport/students`, or build the enrolments screen if they are different things |
-| 40 | **admin-web cannot create a class.** The only affordance was `canCreate && isSchoolSetupEnabled()` on the classes page, linking to the School Setup wizard that was removed when onboarding moved to the panel. The flag was hard-coded `false`, so the button had already stopped rendering — `class.create` was read and never used, and the zero-class empty state pointed at the same dead route. The dead markup is gone; the gap is not. A school that opens a new section mid-year has no way to add it from the tenant app. | the wizard was removed before its replacement existed | decide whether creating a section is operator work (panel) or school work (admin-web); if the latter, build the form against the existing `POST /api/classes` |
 | 39 | **80 public service functions look uncalled — but the list is not trustworthy as it stands.** It was built by counting call sites (`name(` outside the defining file), and that method reports a function imported under an alias as dead: `logout_user` scores zero callers and is very much alive, because `auth/routes.py` imports it as `logout_user as logout_user_service`. Closing debt 37 is what surfaced this. The list also mixes genuine rot with unreachable *capabilities* — `students.analyze_promotion`, `students.import_students_from_rows`, `rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`, `attendance.lock_after_hours`. Concentrated in transport (17), notifications (11), rbac (8), school_setup (7), auth (7), students (7). | features built ahead of their transport, plus genuine rot, plus a counting method that cannot see aliases | re-derive the list by searching each raw identifier across all four repos, then triage per item during Phase B/C — never in bulk. "Delete this" and "this is a feature with no door" and "this is aliased and live" all look identical from a call count. |
 | 12 | **`trial_ends_at` is never enforced**; no tenant invoice / receipt / dunning (`plans`, `tenant_usage` are scaffolding only) | commercial layer not built | Commercial module (Phase 5) — do not build billing on the current tenant lifecycle |
 | 13b | **Delegation expiry is felt within the cache TTL, not on the day.** Expiry is a property of the query (nothing reads a delegation outside its window), but the cached key list is a snapshot taken before it lapsed — so a delegate keeps the lent keys for up to ~120 s past the rollover. | the cache materializes a date-dependent answer | acceptable at 120 s; revisit if the TTL grows |
@@ -56,6 +55,34 @@ control.
 ---
 
 ## Closed
+
+**A school can open a section again (2026-08-09).** Debt 40. Adding a section
+mid-year is school work, not operator work (user decision), so it lives in
+admin-web.
+
+The audit found the affordance was the smaller half. Two server rules stopped a
+structured section being created at all:
+
+- **The duplicate check read `name`.** Identity is
+  `(tenant, campus, programme, grade, section, academic year)`, but the check was
+  `(name, section, academic year)` — and `name` is empty for everything the
+  structured builder makes, so it collapsed to `(section, year)` and refused the
+  second Grade 1 A a school opens on another programme or campus. The demo school
+  already has three such rows; the seeder made them, because `create_class` would
+  have refused them.
+- **The route demanded a name unless `grade_level` was set.** That is the older
+  integer form; the structured form sends `grade_id`, so every section it tried
+  to create came back "name is required". The rule is narrowed, not removed —
+  with no grade at all there is nothing to compose a label from, so a name is
+  still required.
+
+`CreateSectionModal` asks for the identity a section actually has — campus,
+programme, grade, section letter, medium, year — with campus and year defaulted
+from the header, a preview of the label it will be listed under, and no `name`
+field, since writing one is what produced the rows titled "— A".
+
+Verified in the browser end to end: opening Grade 1 B on GSEB English, the exact
+case the old check refused, created a section listed as "1 B".
 
 **One permission catalogue, and seeding that works (2026-08-09).** Debts 38 and
 6d, which turned out to be the same defect seen from two sides.

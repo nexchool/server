@@ -220,18 +220,38 @@ def create_class():
     if school_unit_id:
         assert_unit_allowed(school_unit_id)
 
+    # What this section is called, when anything calls it anything.
+    #
+    # `name` is a nullable legacy label; a section is named by its grade and
+    # letter, which `Class.display_name` composes. Three ways in, in order of
+    # how much they know:
+    #
+    #   grade_id     — the structured form. The grade record holds the name, so
+    #                  leave `name` empty and let the label be composed.
+    #   grade_level  — the older integer form, which can only say "Grade 7".
+    #   name         — no grade at all, so the caller has to say something.
+    #
+    # Only the last requires a name. Demanding one whenever `grade_level` was
+    # absent — as this did — refused every section the structured form creates,
+    # which is why admin-web could not open one.
     grade_raw = data.get('grade_level')
+    grade_id = data.get('grade_id') or None
     if grade_raw is not None and grade_raw != '':
         try:
             gl = int(grade_raw)
         except (TypeError, ValueError):
             return validation_error_response({'message': 'grade_level must be an integer'})
         display_name = f'Grade {gl}'
+    elif grade_id:
+        gl = None
+        display_name = data.get('name') or ''
     else:
         gl = None
         display_name = data.get('name')
         if not display_name or not str(display_name).strip():
-            return validation_error_response({'message': 'name is required unless grade_level is set'})
+            return validation_error_response(
+                {'message': 'name is required unless the section has a grade'}
+            )
 
     result = services.create_class(
         name=str(display_name).strip(),
