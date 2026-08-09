@@ -11,18 +11,20 @@ so a gate on them is machinery that never fires.
 
 from __future__ import annotations
 
+import datetime
 import enum
 from typing import Any, Dict, List, Optional
 
 import strawberry
 
-from graphql_api.errors import ValidationError
+from graphql_api.errors import ConflictError, NotFoundError, ValidationError
 from graphql_api.permissions import IsAuthenticated, RequiresTenant, requires
 
 from .graphql.types import (
     ClassDetail,
     ClassPage,
     ClassStats,
+    MergeSectionsResult,
     class_detail_to_graphql,
     classes_to_graphql,
 )
@@ -67,6 +69,15 @@ class ClassFilter:
     programme_id: Optional[strawberry.ID] = None
     grade_id: Optional[strawberry.ID] = None
     department_id: Optional[strawberry.ID] = None
+    include_merged: Optional[bool] = strawberry.field(
+        default=False,
+        description=(
+            "Include sections that were merged into another. Off by default: "
+            "a merged section takes no more students, so a picker offering "
+            "one is offering a choice the placement will refuse. Ask for them "
+            "when the screen is explaining the past rather than choosing."
+        ),
+    )
 
 
 def _filters_from(where: Optional[ClassFilter]) -> Dict[str, Any]:
@@ -88,6 +99,7 @@ def _filters_from(where: Optional[ClassFilter]) -> Dict[str, Any]:
         "programme_id": _text(where.programme_id),
         "grade_id": _text(where.grade_id),
         "department_id": _text(where.department_id),
+        "include_merged": bool(where.include_merged),
     }
 
 
@@ -176,3 +188,82 @@ class ClassesQuery:
 
         detail = class_detail(str(id))
         return class_detail_to_graphql(detail) if detail else None
+
+
+# A merge does two things at once, so it answers to both authorities rather
+# than to whichever one sounds closer. It retires a section (`class.manage`)
+# and it moves every child in it into another (`student.update`, the same key
+# `transferStudentToSection` asks for one child at a time). Listing both in
+# `permission_classes` is an AND: Strawberry runs every class and refuses on
+# the first that fails. Someone who may reorganise rooms but not move children
+# should not be able to move a whole section of them by merging.
+MERGE_AUTHORITY = [
+    IsAuthenticated,
+    RequiresTenant,
+    requires("class.manage"),
+    requires("student.update"),
+]
+
+# The service answers with `{"success": False, "error": "..."}`. These map each
+# refusal onto the error the transport should raise, so a client can tell "you
+# asked for something that does not exist" from "what you asked for conflicts
+# with the state it is in" without parsing prose. Matched on a stable fragment
+# rather than the whole sentence, so rewording the message for a human does not
+# silently reclassify it.
+_REFUSALS = {
+    "not found": NotFoundError,
+    "merged into itself": ConflictError,
+    "already been merged": ConflictError,
+    "itself been merged": ConflictError,
+    "one academic year": ValidationError,
+}
+
+
+@strawberry.type
+class ClassesMutation:
+    @strawberry.mutation(
+        permission_classes=MERGE_AUTHORITY,
+        description=(
+            "Two sections become one. Every child currently in `sourceId` is "
+            "moved into `intoId`, and `sourceId` is retired — never deleted. "
+            "The attendance taken in it, the marks awarded there and the "
+            "reports issued from it happened there and stay there; what "
+            "changes is that nothing new is placed into it. Refused across "
+            "academic years: moving children between years is promotion, "
+            "which decides different things."
+        ),
+    )
+    def merge_sections(
+        self,
+        info: strawberry.Info,
+        source_id: strawberry.ID,
+        into_id: strawberry.ID,
+        reason: Optional[str] = None,
+        occurred_on: Optional[datetime.date] = None,
+    ) -> MergeSectionsResult:
+        from .section_merge import merge_sections as combine
+
+        outcome = combine(
+            str(source_id),
+            str(into_id),
+            occurred_on=occurred_on,
+            reason=reason,
+            recorded_by_user_id=info.context.current_user.id,
+        )
+
+        if not outcome.get("success"):
+            message = outcome.get("error") or "The merge was refused."
+            for fragment, error in _REFUSALS.items():
+                if fragment in message:
+                    raise error(message)
+            # A refusal the map does not know is still a refusal, not a 500.
+            # It reaches here when a student transfer failed mid-merge, which
+            # the service has already rolled back.
+            raise ConflictError(message)
+
+        return MergeSectionsResult(
+            merged_section_id=strawberry.ID(outcome["merged_section_id"]),
+            into_section_id=strawberry.ID(outcome["into_section_id"]),
+            students_moved=outcome["students_moved"],
+            merged_on=outcome["merged_on"],
+        )

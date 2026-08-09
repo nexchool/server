@@ -100,6 +100,30 @@ class Class(TenantBaseModel):
     )
     merged_on = db.Column(db.Date, nullable=True)
 
+    # Who decided, and why. A merge moves every child in the section and
+    # retires a room a school has been teaching in — the kind of thing someone
+    # asks about a term later. `merged_on` alone answers "when" and leaves the
+    # two questions that actually get asked. Nullable because sections merged
+    # before migration 104 have no answer, and inventing one would be worse
+    # than admitting it is not recorded.
+    merged_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    merge_reason = db.Column(db.Text, nullable=True)
+
+    # `remote_side` because this points at another row of this same table:
+    # without it SQLAlchemy cannot tell which end of the self-reference is the
+    # parent, and treats the merge as one-to-many the wrong way round.
+    merged_into = db.relationship(
+        "Class",
+        remote_side="Class.id",
+        foreign_keys=[merged_into_class_id],
+        lazy="joined",
+    )
+    merged_by = db.relationship("User", foreign_keys=[merged_by_user_id])
+
     @property
     def is_merged_away(self) -> bool:
         """True when this section's future was moved elsewhere."""

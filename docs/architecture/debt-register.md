@@ -6,9 +6,9 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-09 — items 34–39 added from the Phase A stabilization audit
-(`reviews/2026-08-09-stabilization-audit.md`). Note that "Phase 2 covered … section
-merge" below means *built*, not *reachable*: see debt 35.
+**Last updated:** 2026-08-09 — items 34, 36–40 added from the Phase A stabilization audit
+(`reviews/2026-08-09-stabilization-audit.md`); 33 and 18 closed. "Phase 2 covered …
+section merge" below meant *built*, not *reachable* — it is reachable now (see Closed).
 
 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE**; **Phase 4 started** (Attendance: corrections surfaced, feature gate built). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
 
@@ -32,7 +32,6 @@ control.
 | 29 | **`GET /api/classes/export` is the last REST reader of the class query**, the same shape as 23. It keeps `_list_filters_from_request` alive to parse a query string by hand, and it is the only caller left of `get_all_classes` — every screen reads `classes_page`. | downloads stay REST by the canon | leave until exports are revisited as a whole; retire `get_all_classes` with it |
 | 30 | **The class list offers no cursor at all** — every order it has is nullable (a class may have no grade), mutable (grade order, a label) or a count. Offset is honest here and cheap at a school's real size (hundreds of sections, not fifteen thousand children), but the structured pickers now make one request per hundred classes to read the whole structure. | no key is both unique and unchanging | if a trust ever makes this hurt, give the pickers a field shaped like what they actually want — the school's structure — rather than a cursor over a list |
 | 23 | **`GET /api/students/export` is the last REST reader of the student query.** It stays because a file download is infrastructure, not a business operation — but it means `_student_list_query` still has two callers with different shapes, and the export's filters are parsed from a query string by hand. | downloads stay REST by the canon | leave until the export itself is revisited |
-| 18 | **Section merge has no REST surface, and merged sections are still listed everywhere.** `merge_sections` is complete and guarded at the placement primitive, but unrouted; `get_all_classes` and the class pickers do not filter `merged_into_class_id`, so a retired section still appears as a choice even though placing into it is refused. | service built first | route it with the academics UI; filter pickers, keep merged sections visible in history views |
 | 16 | **Staff attendance is not built.** The canon marks it "a future capability", so nothing was invented for it — the student attendance session/record shape may or may not fit staff, and guessing now would be the wrong kind of head start. | deliberately deferred by the canon | when a school actually needs it; decide then whether it reuses AttendanceSession or is its own thing |
 | 15 | **Nested display names still read the login** — guarded `x.user.name` sites degrade to `null` / "A teacher" for account-less rows instead of reading `person.full_name`: serializers (`teachers/models.py` TeacherLeave, `attendance/models.py`, `student_leaves/models.py`, `timetable/models.py`, `schedule/models.py`), services (`attendance/services.py` marker names, `session_services.py`, `schedule/services.py`, `timetable_v2.py` teacher label, `transport/services.py` incl. two CSV exports, `finance/pdf_service.py` receipt, `student_fee_service.py`, notification fallbacks in `constraint_services.py` / `student_leaves/services.py`). Each swap must also swap its eager load (N+1). *(2026-08-08: the CTA/CST serializers and class/attendance class-teacher names now read Staff/Person. 2026-08-09: `teachers/models.py` TeacherLeave now reads Staff → Person, with the eager loads swapped to match — an account-less teacher was showing nameless in the leave queue, which migration 094 made possible.)* | display copies predate the Person read cutover | sweep with Phase 2 attendance workflows |
 | 2b | **Mobile client sends the login id when naming a class teacher** (`client CreateClassModal`), and seeds its edit form from `class.teacher_id` expecting one. The server maps legacy login ids, so assignment works — but the modal's preselect no longer matches since the cache re-key. Fix = send/compare `teacher.id`, like admin-web already does. | two frontends disagreed on the id long before the re-key | with the next Expo release |
@@ -60,6 +59,33 @@ control.
 ---
 
 ## Closed
+
+**Section merge is reachable, and merged sections have left the pickers
+(2026-08-09).** Debt 18. `merge_sections` was complete, tested and unrouted;
+nothing filtered `merged_into_class_id`, so a retired section stayed on every
+list offering a choice the placement primitive refuses.
+
+Now `mergeSections` on GraphQL, guarded by `class.manage` **and**
+`student.update` — two keys, because a merge retires a section *and* moves every
+child in it, and someone who may reorganise rooms should not move a section of
+children by naming the operation after the room. The service's refusals map to
+`NOT_FOUND` / `CONFLICT` / `VALIDATION_ERROR` on a stable fragment of the
+message, so rewording it for a human cannot silently reclassify it.
+
+`_class_list_query` drops merged sections unless `includeMerged` asks for them,
+which covers both transports and every picker built on them; the attendance
+class picker got the same filter directly. Migration 104 adds
+`merged_by_user_id` and `merge_reason`, so the section records who decided and
+why rather than only when — `person_merges` has done both since it was built.
+The class detail page carries the action, a confirmation naming the number of
+children and both sections, and a banner on a retired section explaining where
+its future went.
+
+Verified against the running stack: 14 sections became 13 after a merge, the
+retired one reporting its survivor, date, reason and actor (read from the
+Person, not the login copy); `includeMerged` brought it back to 14; a second
+merge was refused as `CONFLICT`; and the merge picker listed all 12 live
+sections while excluding both the merged one and itself.
 
 **A teacher stops holding the school's onboarding permission (2026-08-09).**
 Debt 33, resolved the other way round from how it was written. The School Admin

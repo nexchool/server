@@ -385,12 +385,20 @@ def _class_list_query(
     department_id: Optional[str] = None,
     search: Optional[str] = None,
     search_field: str = "all",
+    include_merged: bool = False,
 ):
     """The one query every class list is built from.
 
     Both transports go through here. A filter added to one list and not the
     other is drift nobody sees until a school asks why the spreadsheet and the
     screen disagree.
+
+    Merged-away sections are left out unless asked for. A section that was
+    merged into another takes no more students — placing one there is refused
+    at the primitive — so offering it in a picker is offering a choice the
+    system will reject. `include_merged=True` is for the views that exist to
+    explain the past: a class list someone is auditing, and the record of the
+    merge itself.
 
     Returns (query, student_col, teacher_col). The query selects
     (Class, student_count, teacher_count, academic_year.is_active) and carries
@@ -441,6 +449,8 @@ def _class_list_query(
         query = query.filter(Class.grade_id == grade_id)
     if department_id:
         query = query.filter(Class.department_id == department_id)
+    if not include_merged:
+        query = query.filter(Class.merged_into_class_id.is_(None))
 
     term = (search or "").strip()
     if term:
@@ -493,6 +503,7 @@ def get_all_classes(
     sort_dir: str = "asc",
     page: Optional[int] = None,
     per_page: Optional[int] = None,
+    include_merged: bool = False,
 ) -> Dict:
     """List classes for the current tenant with filters, search, sort, paging.
 
@@ -515,6 +526,7 @@ def get_all_classes(
         department_id=department_id,
         search=search,
         search_field=search_field,
+        include_merged=include_merged,
     )
 
     total = query.count()

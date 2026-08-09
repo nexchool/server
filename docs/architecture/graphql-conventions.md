@@ -230,6 +230,27 @@ student needs as much as an administrator. Both would have taken a working
 screen away from somebody, and neither showed up in a test written from the
 same guess.
 
+**A write that does two things declares both keys.** `permission_classes` is a
+list and Strawberry runs every entry, so stacking `requires(...)` twice is an
+AND. `mergeSections` retires a section *and* moves every child in it, so it
+asks for `class.manage` **and** `student.update` — the same key
+`transferStudentToSection` asks for one child at a time. Naming only the
+closest-sounding key would let someone who may reorganise rooms move a whole
+section of children, because the operation is named after the room. When a
+mutation's description needs "and" to say what it does, it probably needs two
+keys.
+
+The clients apply the same `<resource>.manage` implication the server does, so
+gate the UI on the keys the mutation names, not on what a role literally holds
+— an administrator holds `student.manage`, never `student.update` literally.
+
+**A capability that is not reachable is not delivered.** `merge_sections` was
+complete, guarded and tested for months with no route and no resolver, and
+nothing filtered the sections it retired, so they stayed in every picker
+offering a choice the placement primitive refuses. Both halves are one piece of
+work: exposing an operation includes removing what it retires from the lists
+that offer it.
+
 ---
 
 ## 8. Migrating a route

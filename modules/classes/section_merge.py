@@ -100,9 +100,13 @@ def merge_sections(
             }
         moved.append(student.id)
 
-    # Retire the room, keeping everything that happened in it.
+    # Retire the room, keeping everything that happened in it — and keeping
+    # the decision itself, which the students' timelines record but the
+    # section did not.
     source.merged_into_class_id = target.id
     source.merged_on = when
+    source.merged_by_user_id = recorded_by_user_id
+    source.merge_reason = reason
     db.session.add(source)
     db.session.commit()
 

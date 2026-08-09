@@ -93,8 +93,14 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
     if has_permission(user_id, "attendance.manage"):
         # Branch scope: a restricted sub-admin with attendance.manage may only
         # see classes in their units. No-op when unrestricted.
+        # A merged-away section takes no more students, so there is nobody to
+        # mark. Offering it is offering a register that will always be empty.
         classes = (
-            filter_classes_by_branch(Class.query.filter_by(tenant_id=tenant_id))
+            filter_classes_by_branch(
+                Class.query.filter_by(tenant_id=tenant_id).filter(
+                    Class.merged_into_class_id.is_(None)
+                )
+            )
             .order_by(Class.name, Class.section)
             .all()
         )

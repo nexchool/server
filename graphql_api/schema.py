@@ -94,11 +94,14 @@ def _build_mutation_type() -> type:
     school.
     """
     from modules.attendance.resolvers import AttendanceMutation
+    from modules.classes.resolvers import ClassesMutation
     from modules.people.resolvers import PeopleMutation
     from modules.students.resolvers import StudentMutation
 
     @strawberry.type(description="Every change the platform accepts.")
-    class Mutation(PeopleMutation, StudentMutation, AttendanceMutation):
+    class Mutation(
+        PeopleMutation, StudentMutation, AttendanceMutation, ClassesMutation
+    ):
         pass
 
     return Mutation

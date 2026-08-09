@@ -93,6 +93,52 @@ class SchoolClass:
             "no status of its own, only the year it belongs to."
         ),
     )
+    merged_into: Optional["SectionMerge"] = strawberry.field(
+        default=None,
+        description=(
+            "Set when this section was merged into another. A section with "
+            "this set is absent from every list unless `includeMerged` asked "
+            "for it, so a client that sees one is looking at history — render "
+            "it as retired, not as a choice."
+        ),
+    )
+
+
+@strawberry.type(
+    description=(
+        "Where a section's future went when it was merged into another, and "
+        "who decided. Present only on a section that was merged away — its "
+        "records stay attached to it, but it takes no more students."
+    )
+)
+class SectionMerge:
+    into_class_id: strawberry.ID
+    into_display_name: Optional[str] = strawberry.field(
+        default=None, description="The surviving section, as a reader knows it."
+    )
+    merged_on: Optional[str] = None
+    reason: Optional[str] = None
+    merged_by_name: Optional[str] = strawberry.field(
+        default=None,
+        description=(
+            "Who performed the merge. Null for merges recorded before the "
+            "actor was kept, and for one performed by a deleted account — "
+            "said plainly rather than shown as nobody."
+        ),
+    )
+
+
+@strawberry.type(
+    description=(
+        "What a merge did: the section that was retired, the one that "
+        "absorbed it, and how many children moved."
+    )
+)
+class MergeSectionsResult:
+    merged_section_id: strawberry.ID
+    into_section_id: strawberry.ID
+    students_moved: int
+    merged_on: str
 
 
 @strawberry.type(description="A child placed in a class.")
@@ -269,7 +315,42 @@ def _class_fields(node_type, cls, *, student_count, teacher_count, status):
         student_count=student_count,
         teacher_count=teacher_count,
         status=status,
+        merged_into=_merge_to_graphql(cls),
     )
+
+
+def _merge_to_graphql(cls) -> Optional[SectionMerge]:
+    """The merge facts, or None for a section still taking students.
+
+    `merged_into_class_id` is the whole test — it is what the placement
+    primitive refuses on, so anything else would be a second opinion.
+    """
+    if not cls.merged_into_class_id:
+        return None
+
+    survivor = cls.merged_into
+    actor = cls.merged_by
+    return SectionMerge(
+        into_class_id=strawberry.ID(cls.merged_into_class_id),
+        into_display_name=survivor.display_name if survivor else None,
+        merged_on=cls.merged_on.isoformat() if cls.merged_on else None,
+        reason=cls.merge_reason,
+        merged_by_name=_actor_name(actor),
+    )
+
+
+def _actor_name(user) -> Optional[str]:
+    """Who this account belongs to, preferring the person over the login.
+
+    A login's `name` is a copy taken when the account was made; the person is
+    the record that gets corrected. Reading the login is what debt 15 is about,
+    so this reads the person and falls back only when there is no person to
+    read — an account created before the Person cutover.
+    """
+    if user is None:
+        return None
+    person = getattr(user, "person", None)
+    return (person.full_name if person else None) or user.name
 
 
 def _id(value) -> Optional[strawberry.ID]:
