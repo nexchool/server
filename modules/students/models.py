@@ -269,7 +269,19 @@ class Student(TenantBaseModel):
     def _class_display_name(self):
         """Class label for payloads. Class.name is a legacy nullable display
         column — grade-based classes (post multi-school migration) carry their
-        label on grade.name, so coalesce before joining with the section."""
+        label on grade.name, so coalesce before joining with the section.
+
+        **The hyphen is load-bearing — do not switch this to
+        `Class.display_name`.** That property joins with a space ("3 A"), and
+        the shipped Expo student list takes this string apart again:
+        `splitClassName` in `client/modules/students/components/StudentListItem.tsx`
+        reads up to the last "-" as the grade and the rest as the section. With a
+        space it finds no separator, and the section disappears from every row.
+
+        So the same student is labelled "3 A" on their dashboard and "3-A" on
+        their record, and that stays until the mobile client stops parsing it —
+        the same gate as debts 25, 31 and 2b. Registered as debt 41.
+        """
         c = self.current_class
         if not c:
             return None
