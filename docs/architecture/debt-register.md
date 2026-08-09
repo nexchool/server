@@ -89,6 +89,20 @@ case that breaks a screen — a bare `X[]` meeting an object — because an
 earlier version flagged all seven collection reads and the five harmless ones
 buried the two real ones.
 
+**Writes were the last gap, and are only partly closed.**
+`scripts/audit_client_write_payloads.py` runs real create/update/delete cycles
+against demo data and checks each response against the type the client
+declared — six responses across subjects, classes and holidays, all matching,
+each probe verifying its own cleanup and the script refusing to run against a
+non-local host. That is 6 of 104 non-GET calls. Another 60 declare a type some
+GET already verified, which is an inference about the write rather than a
+check of it, and ~20 return `void` or a bare message. The two that matter most
+here — `POST /api/students` and `POST /api/teachers`, whose serializers this
+migration changed — were read by hand: both answer with the same entity dict
+their detail GET returns, wrapped as the clients declare. Widening the audit
+means adding a probe with its own payloads; it must not be widened by skipping
+the delete.
+
 **A type assertion is a claim about the server that nothing verifies.** `tsc`
 was perfectly happy with all of this.
 
