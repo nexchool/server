@@ -25,10 +25,31 @@ from graphql_api.permissions import (
     requires_feature,
 )
 
-from .graphql.types import Holiday, HolidayPage, holidays_to_graphql
+from .graphql.types import (
+    AcademicCalendar,
+    CalendarDay,
+    CalendarSummary,
+    ExamWindow,
+    Holiday,
+    HolidayPage,
+    SchoolEvent,
+    calendar_to_graphql,
+    day_to_graphql,
+    event_to_graphql,
+    exam_window_to_graphql,
+    holidays_to_graphql,
+    summary_to_graphql,
+)
 
 PERM_READ = "holiday.read"
 PERM_MANAGE = "holiday.manage"
+
+# The calendar document answers to its own keys, NOT the holiday ones. Both
+# live in this module and both sit behind the same feature, which is exactly
+# why reusing one constant for the other was easy — and would have demanded a
+# holiday permission to read a calendar. A test caught it.
+PERM_CALENDAR_READ = "academic_calendar.read"
+PERM_CALENDAR_MANAGE = "academic_calendar.manage"
 
 # Read off the routes, not inferred: every holiday read answers to
 # `holiday.read` or `holiday.manage`, and all of them sit behind the
@@ -38,6 +59,13 @@ READS = [
     RequiresTenant,
     requires_feature("academic_calendar"),
     requires_any(PERM_READ, PERM_MANAGE),
+]
+
+CALENDAR_READS = [
+    IsAuthenticated,
+    RequiresTenant,
+    requires_feature("academic_calendar"),
+    requires_any(PERM_CALENDAR_READ, PERM_CALENDAR_MANAGE),
 ]
 
 MAX_PAGE_SIZE = 100
@@ -73,6 +101,21 @@ def _filters_from(where: Optional[HolidayFilter]) -> Dict[str, Any]:
         "search": where.search,
         "include_recurring": where.include_recurring,
     }
+
+
+def _computed(services, calendar) -> Dict[str, Any]:
+    """The summary, or the reason it cannot be computed.
+
+    `compute_summary` raises when the calendar is inconsistent — a term that
+    runs past the year, say. REST turns that into a 400; the transport needs
+    the same answer with a code rather than an unexpected error.
+    """
+    from .services import CalendarValidationError
+
+    try:
+        return services.compute_summary(calendar)
+    except CalendarValidationError as invalid:
+        raise ValidationError(str(getattr(invalid, "errors", invalid)))
 
 
 def _answered(result: Dict[str, Any]) -> Any:
@@ -149,3 +192,82 @@ class CalendarQuery:
             services.get_recurring_holidays(tenant_id=info.context.tenant_id)
         )
         return holidays_to_graphql(result["data"])
+
+    @strawberry.field(
+        permission_classes=CALENDAR_READS,
+        description=(
+            "The calendar this school is working on for a year, or null if it "
+            "has not started one. The document, not the days — ask "
+            "`calendarDays` for those."
+        ),
+    )
+    def academic_calendar(
+        self, info: strawberry.Info, academic_year_id: strawberry.ID
+    ) -> Optional[AcademicCalendar]:
+        from . import services
+
+        calendar = services.get_calendar_for_year(str(academic_year_id))
+        return calendar_to_graphql(calendar.to_dict()) if calendar else None
+
+    @strawberry.field(
+        permission_classes=CALENDAR_READS,
+        description=(
+            "What the year adds up to — working days against everything that "
+            "is not one. The numbers a school checks before publishing."
+        ),
+    )
+    def calendar_summary(
+        self, info: strawberry.Info, calendar_id: strawberry.ID
+    ) -> Optional[CalendarSummary]:
+        from . import services
+
+        calendar = services.get_calendar(str(calendar_id))
+        if calendar is None:
+            return None
+        return summary_to_graphql(_computed(services, calendar))
+
+    @strawberry.field(
+        permission_classes=CALENDAR_READS,
+        description=(
+            "Every day of the year and what the school is doing on it — what "
+            "a calendar grid draws. A whole year in one answer: the grid needs "
+            "all of it, so there is nothing to page."
+        ),
+    )
+    def calendar_days(
+        self, info: strawberry.Info, calendar_id: strawberry.ID
+    ) -> List[CalendarDay]:
+        from . import services
+
+        calendar = services.get_calendar(str(calendar_id))
+        if calendar is None:
+            return []
+        return [day_to_graphql(day) for day in services.get_days_feed(calendar)]
+
+    @strawberry.field(
+        permission_classes=CALENDAR_READS,
+        description="What the school has planned this year, beyond teaching.",
+    )
+    def calendar_events(
+        self, info: strawberry.Info, academic_year_id: strawberry.ID
+    ) -> List[SchoolEvent]:
+        from . import services
+
+        return [
+            event_to_graphql(row.to_dict())
+            for row in services.list_school_events(str(academic_year_id))
+        ]
+
+    @strawberry.field(
+        permission_classes=CALENDAR_READS,
+        description="The stretches of the year given over to examinations.",
+    )
+    def exam_windows(
+        self, info: strawberry.Info, academic_year_id: strawberry.ID
+    ) -> List[ExamWindow]:
+        from . import services
+
+        return [
+            exam_window_to_graphql(row.to_dict())
+            for row in services.list_exam_windows(str(academic_year_id))
+        ]

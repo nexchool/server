@@ -70,19 +70,6 @@ def _require_year_id():
 # Calendar state
 # ---------------------------------------------------------------------------
 
-@academics_bp.route("/calendar", methods=["GET"], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def get_calendar_state():
-    academic_year_id, err = _require_year_id()
-    if err:
-        return err
-    cal = services.get_calendar_for_year(academic_year_id)
-    return success_response(data=cal.to_dict() if cal else None)
-
-
 @academics_bp.route("/calendar", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
@@ -118,36 +105,6 @@ def update_calendar_state(calendar_id):
     except CalendarValidationError as e:
         return validation_error_response(e.errors)
     return success_response(data=cal.to_dict(), message="Calendar updated")
-
-
-@academics_bp.route("/calendar/<calendar_id>/summary", methods=["GET"])
-@tenant_required
-@auth_required
-@require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def get_calendar_summary(calendar_id):
-    cal = services.get_calendar(calendar_id)
-    if not cal:
-        return not_found_response("Calendar not found")
-    try:
-        return success_response(data=services.compute_summary(cal))
-    except CalendarValidationError as e:
-        return validation_error_response(e.errors)
-
-
-@academics_bp.route("/calendar/<calendar_id>/days", methods=["GET"])
-@tenant_required
-@auth_required
-@require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def get_calendar_days(calendar_id):
-    cal = services.get_calendar(calendar_id)
-    if not cal:
-        return not_found_response("Calendar not found")
-    try:
-        return success_response(data=services.get_days_feed(cal))
-    except CalendarValidationError as e:
-        return validation_error_response(e.errors)
 
 
 @academics_bp.route("/calendar/<calendar_id>/export", methods=["GET"])
@@ -367,19 +324,6 @@ def import_calendar_data(calendar_id):
 # Exam windows
 # ---------------------------------------------------------------------------
 
-@academics_bp.route("/calendar/exam-windows", methods=["GET"], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def list_exam_windows():
-    academic_year_id, err = _require_year_id()
-    if err:
-        return err
-    windows = services.list_exam_windows(academic_year_id)
-    return success_response(data=resolve_user_names([w.to_dict() for w in windows]))
-
-
 @academics_bp.route("/calendar/exam-windows", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required
@@ -430,19 +374,6 @@ def delete_exam_window(window_id):
 # ---------------------------------------------------------------------------
 # School events
 # ---------------------------------------------------------------------------
-
-@academics_bp.route("/calendar/events", methods=["GET"], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature("academic_calendar")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def list_school_events():
-    academic_year_id, err = _require_year_id()
-    if err:
-        return err
-    events = services.list_school_events(academic_year_id)
-    return success_response(data=resolve_user_names([e.to_dict() for e in events]))
-
 
 @academics_bp.route("/calendar/events", methods=["POST"], strict_slashes=False)
 @tenant_required

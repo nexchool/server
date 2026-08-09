@@ -26,6 +26,8 @@ from graphql_api.permissions import (
     requires_any,
 )
 
+from modules.academics.calendar.graphql.types import AcademicTerm
+
 from .graphql.types import (
     AcademicYear,
     Campus,
@@ -102,6 +104,12 @@ PERM_SUBJECT_READ = "subject.read"
 PERM_MEDIUM_READ = "school_setup.read"
 PERM_MEDIUM_MANAGE = "school_setup.manage"
 PERM_CLASS_SUBJECT_MANAGE = "class_subject.manage"
+
+# Terms answer to their own authority, not the calendar's — read off the
+# route, which asks for `academic_term.*`. The calendar module asks for
+# `academic_calendar.*`, and a person may hold one without the other.
+PERM_TERM_READ = "academic_term.read"
+PERM_TERM_MANAGE = "academic_term.manage"
 
 
 def _subject_filters_from(where: Optional[SubjectFilter]) -> Dict[str, Any]:
@@ -286,3 +294,29 @@ class AcademicsQuery:
             has_next_page=has_more,
             filters=filters,
         )
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires_any(PERM_TERM_READ, PERM_TERM_MANAGE),
+        ],
+        description=(
+            "How this school divides its year — terms or semesters, in "
+            "teaching order. No feature gate: `academics_advanced` is core, "
+            "so it can never be switched off."
+        ),
+    )
+    def academic_terms(
+        self, info: strawberry.Info, academic_year_id: Optional[strawberry.ID] = None
+    ) -> List["AcademicTerm"]:
+        from modules.academics.calendar.graphql.types import term_to_graphql
+        from modules.academics.term_routes import _list_terms
+
+        return [
+            term_to_graphql(row)
+            for row in _list_terms(
+                info.context.tenant_id,
+                str(academic_year_id) if academic_year_id else None,
+            )
+        ]

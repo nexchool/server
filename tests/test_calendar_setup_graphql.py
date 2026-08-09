@@ -60,7 +60,9 @@ def year(db_session, tenant):
 
     ay = AcademicYear(
         id=_new_id("ay-"), tenant_id=tenant.id, name="2026-2027",
-        start_date="2026-06-01", end_date="2027-03-31", is_active=True,
+        # Real dates, not strings: `AcademicYear.to_dict()` calls .isoformat()
+        # on them, and the calendar payload nests that serializer.
+        start_date=date(2026, 6, 1), end_date=date(2027, 3, 31), is_active=True,
     )
     db_session.add(ay)
     db_session.flush()
@@ -323,3 +325,286 @@ def test_reading_setup_needs_the_setup_authority(client, db_session, tenant):
     _user, token = _staff_with(db_session, tenant, "class.read")
 
     assert "FORBIDDEN" in _codes(_ask(client, tenant, token, SETUP))
+
+
+# ---------------------------------------------------------------------------
+# The calendar document, its days and what is planned in it
+# ---------------------------------------------------------------------------
+
+CALENDAR = """
+query C($yearId: ID!) {
+  academicCalendar(academicYearId: $yearId) {
+    id academicYearId academicYearName status currentStep totalSteps
+  }
+}
+"""
+
+SUMMARY = """
+query S($calendarId: ID!) {
+  calendarSummary(calendarId: $calendarId) {
+    totalDays workingDays publicHolidayDays weeklyHolidayDays
+    eventCount examWindowCount eventsByType { eventType count }
+    weeklyHolidaysConfig { days secondSaturday fourthSaturday }
+  }
+}
+"""
+
+DAYS = """
+query D($calendarId: ID!) {
+  calendarDays(calendarId: $calendarId) { date dayType hasEvent hasExam holidays { id name holidayType } }
+}
+"""
+
+EVENTS = "query E($yearId: ID!) { calendarEvents(academicYearId: $yearId) { name eventType startDate } }"
+WINDOWS = "query W($yearId: ID!) { examWindows(academicYearId: $yearId) { name examType startDate } }"
+TERMS = "query T($yearId: ID) { academicTerms(academicYearId: $yearId) { name sequence startDate isActive } }"
+
+
+@pytest.fixture
+def calendar_doc(db_session, tenant, year):
+    """Built directly rather than through `get_or_create_calendar`.
+
+    That service commits, and a commit inside the savepoint-bound test session
+    releases the savepoint the fixture rolls back — the row lands but the
+    session it lands in is no longer the one the request reads.
+    """
+    from modules.academics.calendar.models import AcademicCalendar
+    from modules.academics.calendar.services import default_weekly_holidays_config
+
+    calendar = AcademicCalendar(
+        id=_new_id("cal-"), tenant_id=tenant.id, academic_year_id=year.id,
+        status="draft", current_step=1,
+        weekly_holidays_config=default_weekly_holidays_config(),
+    )
+    db_session.add(calendar)
+    db_session.flush()
+    return calendar
+
+
+def test_a_school_without_a_calendar_gets_null_not_an_error(
+    client, db_session, tenant, year
+):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, CALENDAR, yearId=year.id)
+
+    assert "errors" not in body, body
+    assert body["data"]["academicCalendar"] is None
+
+
+def test_the_calendar_a_school_is_working_on(
+    client, db_session, tenant, year, calendar_doc
+):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, CALENDAR, yearId=year.id)
+
+    calendar = body["data"]["academicCalendar"]
+    assert calendar["academicYearId"] == year.id
+    assert calendar["status"] == "draft"
+
+
+def test_the_year_adds_up(client, db_session, tenant, year, calendar_doc, calendar):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, SUMMARY, calendarId=calendar_doc.id)
+
+    summary = body["data"]["calendarSummary"]
+    assert summary["totalDays"] > 0
+    assert summary["workingDays"] <= summary["totalDays"]
+
+
+def test_events_by_type_is_a_list_not_a_map(
+    client, db_session, tenant, year, calendar_doc
+):
+    """The types are the school's to invent, so a schema cannot grow a field
+    for each one."""
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, SUMMARY, calendarId=calendar_doc.id)
+
+    assert isinstance(body["data"]["calendarSummary"]["eventsByType"], list)
+
+
+def test_every_day_of_the_year_is_classified(
+    client, db_session, tenant, year, calendar_doc, calendar
+):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, DAYS, calendarId=calendar_doc.id)
+
+    days = body["data"]["calendarDays"]
+    assert len(days) > 300, "a year of days"
+    assert all(day["dayType"] for day in days)
+
+
+def test_a_calendar_nobody_has_is_not_found(client, db_session, tenant, year):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, SUMMARY, calendarId=_new_id("cal-"))
+
+    assert "errors" not in body, body
+    assert body["data"]["calendarSummary"] is None
+
+
+def test_what_the_school_has_planned(client, db_session, tenant, year):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, EVENTS, yearId=year.id)
+
+    assert "errors" not in body, body
+    assert isinstance(body["data"]["calendarEvents"], list)
+
+
+def test_the_exam_windows(client, db_session, tenant, year):
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, WINDOWS, yearId=year.id)
+
+    assert "errors" not in body, body
+    assert isinstance(body["data"]["examWindows"], list)
+
+
+def test_reading_the_calendar_document_needs_the_calendar_authority(
+    client, db_session, tenant, year
+):
+    _user, token = _staff_with(db_session, tenant, "class.read")
+
+    assert "FORBIDDEN" in _codes(_ask(client, tenant, token, CALENDAR, yearId=year.id))
+
+
+# ---------------------------------------------------------------------------
+# Terms answer to their own authority
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def terms(db_session, tenant, year):
+    from modules.academics.backbone.models import AcademicTerm
+
+    rows = [
+        AcademicTerm(
+            id=_new_id("term-"), tenant_id=tenant.id, academic_year_id=year.id,
+            name=name, sequence=seq, is_active=True,
+            start_date=date(2026, 6, 1) if seq == 1 else date(2026, 11, 1),
+            end_date=date(2026, 10, 31) if seq == 1 else date(2027, 3, 31),
+        )
+        for name, seq in (("Term 2", 2), ("Term 1", 1))
+    ]
+    db_session.add_all(rows)
+    db_session.flush()
+    return rows
+
+
+def test_terms_come_back_in_teaching_order(client, db_session, tenant, year, terms):
+    _user, token = _staff_with(db_session, tenant, "academic_term.read")
+
+    body = _ask(client, tenant, token, TERMS, yearId=year.id)
+
+    assert "errors" not in body, body
+    assert [t["name"] for t in body["data"]["academicTerms"]] == ["Term 1", "Term 2"]
+
+
+def test_terms_do_not_answer_to_the_calendar_authority(
+    client, db_session, tenant, year, terms
+):
+    """A person may hold one and not the other; the routes ask for different
+    keys and the fields keep that."""
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.manage")
+
+    assert "FORBIDDEN" in _codes(_ask(client, tenant, token, TERMS, yearId=year.id))
+
+
+# ---------------------------------------------------------------------------
+# A class's week
+# ---------------------------------------------------------------------------
+
+VERSIONS = """
+query V($classId: ID!, $includeDrafts: Boolean!) {
+  timetableVersions(classId: $classId, includeDrafts: $includeDrafts) {
+    id classId label status
+  }
+}
+"""
+
+TIMETABLE = """
+query T($classId: ID!) {
+  timetable(classId: $classId) {
+    editable
+    workingDays
+    version { id status label }
+    bellSchedule { id name lessonPeriods { id label } }
+    entries { id dayOfWeek periodLabel subjectName conflictFlags }
+  }
+}
+"""
+
+
+@pytest.fixture
+def a_class(db_session, tenant, year):
+    from modules.classes.models import Class
+
+    row = Class(
+        id=_new_id("c-"), tenant_id=tenant.id, name="Grade 5", section="A",
+        academic_year_id=year.id,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def test_a_class_with_no_timetable_yet(client, db_session, tenant, a_class):
+    _user, token = _staff_with(db_session, tenant, "timetable.read")
+
+    body = _ask(
+        client, tenant, token, VERSIONS, classId=a_class.id, includeDrafts=True
+    )
+
+    assert "errors" not in body, body
+    assert body["data"]["timetableVersions"] == []
+
+
+def test_reading_a_timetable_needs_a_timetable_authority(
+    client, db_session, tenant, a_class
+):
+    _user, token = _staff_with(db_session, tenant, "class.read")
+
+    body = _ask(
+        client, tenant, token, VERSIONS, classId=a_class.id, includeDrafts=True
+    )
+
+    assert "FORBIDDEN" in _codes(body)
+
+
+def test_a_school_without_the_timetable_module_is_not_asked_about_it(
+    client, db_session, tenant, a_class
+):
+    tenant.feature_flags = {"timetable": False}
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "timetable.read")
+
+    body = _ask(
+        client, tenant, token, VERSIONS, classId=a_class.id, includeDrafts=True
+    )
+
+    assert "FEATURE_DISABLED" in _codes(body)
+
+
+def test_a_reader_is_served_the_readers_view(client, db_session, tenant, a_class):
+    """`timetable.read` without `timetable.manage` gets reader mode, exactly
+    as the REST route decides it. The guard says whether the field runs; the
+    resolver decides how much."""
+    _user, token = _staff_with(db_session, tenant, "timetable.read")
+
+    body = _ask(client, tenant, token, TIMETABLE, classId=a_class.id)
+
+    assert "errors" not in body, body
+    assert body["data"]["timetable"]["editable"] is False
+
+
+def test_an_editor_is_told_it_is_editable(client, db_session, tenant, a_class):
+    _user, token = _staff_with(db_session, tenant, "timetable.manage")
+
+    body = _ask(client, tenant, token, TIMETABLE, classId=a_class.id)
+
+    assert "errors" not in body, body
+    assert isinstance(body["data"]["timetable"]["entries"], list)
