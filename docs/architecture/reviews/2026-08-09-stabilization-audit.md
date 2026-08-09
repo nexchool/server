@@ -43,43 +43,79 @@ REST business operations by module (top 10):
 
 ## 2. Findings
 
-### [BLOCKER] A School Admin cannot read their own school's setup
+### ~~[BLOCKER] A School Admin cannot read their own school's setup~~ — WRONG, see below
 
-`scripts/seed_rbac.py` defines 166 permissions across 4 roles. Resolving `.manage`
-implication, an Admin can satisfy every enforced key **except two**:
+**Retracted 2026-08-09, same day.** The measurement was right and the conclusion
+was backwards.
 
-```
-school_setup.read
-school_setup.manage
-```
+It is true that, resolving `.manage` implication, an Admin satisfies every enforced
+key except `school_setup.read` and `school_setup.manage`, and that `school_setup.read`
+is held only by the Teacher role. What I did not check was whether anything an
+administrator actually does needs those keys. Nothing does:
 
-`school_setup.read` is held by exactly one seeded role — **Teacher**. Admin holds
-neither key, so `setupStatus` and every `school_setup`-guarded surface returns 403
-to the person the module exists for. admin-web hides this behind an `isPlatformAdmin`
-gate, which the roadmap explicitly rules out as a fix.
+- The `school_setup` module's own routes are onboarding — operator work done from
+  the panel, not the tenant app. admin-web only asks for `setupStatus` when
+  `isPlatformAdmin`, which is the control-plane split working as designed, not a
+  workaround.
+- Mediums and subject contexts are guarded with `require_any_permission(...)` that
+  **also accepts `class_subject.manage`**, which Admin holds. No refusal.
 
-This is not a drifted local tenant: it is what `seed_rbac.py` gives every new tenant.
-Confirms and sharpens debt 33. → **Phase E1.**
+So the Admin role lacking the setup keys is correct, and the `isPlatformAdmin` gate
+should stay.
 
-### [BLOCKER] A navigation link 404s
+### [ARCHITECTURE DEBT] A teacher holds the school's onboarding permission — fixed
 
-`admin-web/src/components/academics/year-transition/TransitionComplete.tsx:212` links
-to `/dashboard/transport/enrollments`. No such page exists. A user completing year
-transition — the moment transport enrolment matters most — clicks through to a 404.
+What the same evidence actually showed, once read the right way round. A teacher
+holds `class_subject.read` and no manage key, while the mediums and subject-context
+*reads* accepted only `school_setup.read`, `school_setup.manage` or
+`class_subject.manage`. So the only way to let a teacher see those lists was to grant
+them `school_setup.read` — the school's onboarding readiness — as a side door.
 
-### [PRODUCT GAP] Section merge is implemented and unreachable
+Fixed in this pass: those reads now accept `class_subject.read` (REST and GraphQL),
+the grant is removed from both role definitions, and migration 103 revokes it from
+existing tenants. `seed_roles_for_tenant` only ever adds, so removing it from the
+seed alone would have changed nothing anywhere. Debt 33 closed.
+
+### [BLOCKER] Navigation links that 404 — fixed
+
+`TransitionComplete.tsx:212` linked to `/dashboard/transport/enrollments`, which does
+not exist; the screen is `/dashboard/transport/students`. Checking the rest of the app
+found four more, all pointing at `/academics` — the standalone hub that was replaced by
+a collapsible sidebar group, still the target of every "Back to academics" breadcrumb
+in bell-schedules and year-transition.
+
+A third, `/school-setup`, was reached from five places but sat behind a hard-coded
+`false` shim, so it never rendered. That shim and its dead CTAs are now deleted; one of
+them turned out to be hiding a real gap (debt 40).
+
+All fixed, and `admin-web/src/lib/internalLinks.test.ts` now resolves every literal
+internal `href` against the filesystem route tree. Next.js reports none of this — a
+link to a deleted page is not a build error, not a type error and not a lint error.
+
+### [PRODUCT GAP] Section merge is implemented and unreachable — already debt 18
 
 `modules/classes/section_merge.py:34` implements `merge_sections`, with model support
 already in place (`Class.merged_into_class_id`, `Class.merged_on`,
 `Class.is_merged_away`). It has **zero callers**: no route, no resolver, no script,
-no task. The capability exists in full and no user can invoke it. → **Phase B1.**
+no task. `modules/classes/services.py` never filters on those columns either, so a
+merged-away section would keep appearing in every picker.
 
-### [PRODUCT GAP] Merged sections are not excluded from active class queries
+Both halves were already registered as **debt 18**, which this audit re-derived
+independently without noticing. Recording that rather than opening a second item —
+the register is the authority, and a duplicate entry is how one item becomes two
+half-done ones. → **Phase B1.**
 
-`modules/classes/services.py` never references `merged_into_class_id` or
-`is_merged_away`. Once merge becomes reachable, merged-away sections will keep
-appearing in every class picker and list. Latent today only because no row can
-have the column set. Fix belongs in the same change as B1.
+### [UI GAP] admin-web cannot create a class
+
+Found while sweeping the dead `/school-setup` links. The classes page's only create
+affordance was `canCreate && isSchoolSetupEnabled()`, linking to the removed setup
+wizard, behind a flag hard-coded to `false` — so `class.create` was read and never
+used, and the zero-class empty state pointed at the same dead route.
+
+A school opening a new section mid-year has no way to add it from the tenant app.
+Dead markup removed; the gap is registered as **debt 40** rather than fixed here,
+because whether creating a section is operator work or school work is a product
+decision.
 
 ### [UI GAP] The Invoices screen is unreachable from navigation
 
@@ -213,13 +249,23 @@ Stated plainly so the backlog is not mistaken for complete:
 
 ---
 
-## 5. Proposed ordering change
+## 5. What this pass changed, and what it means for the ordering
 
-Phase A's evidence suggests one adjustment. The roadmap runs B → C → D → E, putting
-authorization at E. But the `school_setup` blocker makes an entire module inaccessible
-to its intended user *today*, and the eight-script seeding problem is what will
-generate the next such blocker. **E1 should move ahead of B.** It is small, it is
-contained, and every later phase inherits a trustworthy authorization baseline
-instead of building on top of one known-false grant.
+Implemented here (bucket 1, authorization + dead links): the teacher over-grant with
+migration 103 and `test_role_grants_are_honest.py`; five broken internal links with
+`internalLinks.test.ts` guarding the class; the `/school-setup` dead-code sweep.
 
-Phase E2 shrinks to a spot-check, since the isolation suspects came back clean.
+**Phase E1 shrinks to almost nothing.** The one authorization defect is closed and no
+other role can fail to satisfy a key it needs. What remains under E1 is debt 38 — the
+eight seeding scripts, and the fact that `seed_roles_for_tenant` can only ever add, so
+every over-grant is permanent until someone writes a migration. That is a real risk but
+not a blocker, and it belongs with the next authorization change rather than ahead of B.
+
+**Phase E2 shrinks to a spot-check**, since the isolation suspects came back clean.
+
+So the roadmap's B → C → D order stands. The correction worth carrying forward is
+methodological: this pass produced two findings that were confidently wrong in
+opposite directions (a "blocker" that refuses nobody, and a duplicate of debt 18).
+Both came from measuring a mechanism without checking whether any real user path runs
+through it. The audit half of each loop should end by naming the user and the screen,
+not just the guard and the grant.

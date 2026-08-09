@@ -339,7 +339,9 @@ ROLES = {
             'grade.read',
             'academic_term.read',
             'academic_calendar.read',
-            'school_setup.read',
+            # Deliberately NOT school_setup.read — see the note on the Teacher
+            # role in modules/rbac/role_seeder.py and debt 33. Keep these two
+            # role definitions in step; they are seeded by different callers.
         ]
     },
     'Student': {

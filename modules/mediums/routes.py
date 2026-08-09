@@ -18,9 +18,21 @@ from shared.helpers import (
 from . import mediums_bp, services
 
 
+# Which languages a school teaches in is read by two different people for two
+# different reasons: whoever is standing up the school (an onboarding authority)
+# and whoever works with class-subject configuration day to day. Reading the
+# list needs `class_subject.read` — the honest authority for "may look at how
+# classes and subjects are arranged". `class_subject.manage` satisfies it by
+# implication, so an administrator needs nothing extra.
+#
+# Before this, the read accepted only the two setup keys and `class_subject.manage`,
+# so a teacher — who holds `class_subject.read` and no manage key — could only be
+# let in by granting them `school_setup.read`. That handed a teacher the school's
+# onboarding readiness to buy them a medium list. See debt 33.
 PERM_READ = "school_setup.read"
 PERM_MANAGE = "school_setup.manage"
 PERM_CS = "class_subject.manage"
+PERM_CS_READ = "class_subject.read"
 
 
 def _actor_id():
@@ -32,7 +44,7 @@ def _actor_id():
 @tenant_required
 @auth_required
 @require_feature("class_management")
-@require_any_permission(PERM_READ, PERM_MANAGE, PERM_CS)
+@require_any_permission(PERM_READ, PERM_MANAGE, PERM_CS, PERM_CS_READ)
 def list_mediums():
     include_inactive = request.args.get("include_inactive", "").lower() in (
         "1",

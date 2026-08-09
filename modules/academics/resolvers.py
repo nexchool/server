@@ -105,6 +105,12 @@ PERM_MEDIUM_READ = "school_setup.read"
 PERM_MEDIUM_MANAGE = "school_setup.manage"
 PERM_CLASS_SUBJECT_MANAGE = "class_subject.manage"
 
+# The honest authority for reading the list: `class_subject.read`. A teacher
+# holds it and no manage key, so without this the only way to let them see the
+# mediums was to grant them `school_setup.read` — the school's onboarding
+# readiness — which is what the seeds used to do (debt 33).
+PERM_CLASS_SUBJECT_READ = "class_subject.read"
+
 # Terms answer to their own authority, not the calendar's — read off the
 # route, which asks for `academic_term.*`. The calendar module asks for
 # `academic_calendar.*`, and a person may hold one without the other.
@@ -211,7 +217,10 @@ class AcademicsQuery:
             IsAuthenticated,
             RequiresTenant,
             requires_any(
-                PERM_MEDIUM_READ, PERM_MEDIUM_MANAGE, PERM_CLASS_SUBJECT_MANAGE
+                PERM_MEDIUM_READ,
+                PERM_MEDIUM_MANAGE,
+                PERM_CLASS_SUBJECT_MANAGE,
+                PERM_CLASS_SUBJECT_READ,
             ),
         ],
         description=(

@@ -113,8 +113,13 @@ DEFAULT_ROLES: Dict[str, dict] = {
             "programme.read",
             "grade.read",
             "academic_term.read",
-            "school_setup.read",
             "academic_calendar.read",
+            # Deliberately NOT school_setup.read. Standing a school up is
+            # onboarding work the platform operator does from the panel; a
+            # teacher has no business reading their school's setup readiness.
+            # It was granted here only so a teacher could read the mediums and
+            # subject-context lists, which now accept `class_subject.read`
+            # above — the authority a teacher actually holds. See debt 33.
         ],
     },
     "Student": {
