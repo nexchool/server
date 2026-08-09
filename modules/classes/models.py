@@ -196,6 +196,11 @@ class Class(TenantBaseModel):
         return {
             "id": self.id,
             "name": self.name,
+            # What a school calls this class. `name` is a nullable legacy
+            # label, so a client composing "`${name} - ${section}`" printed
+            # "null - A" on every row; the rule lives on the model and both
+            # transports carry its answer.
+            "display_name": self.display_name,
             "section": self.section,
             "stream": self.stream,
             "grade_level": self.grade_level,
