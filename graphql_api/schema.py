@@ -54,6 +54,7 @@ def _build_query_type() -> type:
     """
     from modules.academics.calendar.resolvers import CalendarQuery
     from modules.academics.resolvers import AcademicsQuery
+    from modules.academics.school_day_resolvers import SchoolDayQuery
     from modules.academics.timetable_resolvers import TimetableQuery
     from modules.attendance.resolvers import AttendanceQuery
     from modules.auth.resolvers import IdentityQuery
@@ -76,6 +77,7 @@ def _build_query_type() -> type:
         SchoolSetupQuery,
         TimetableQuery,
         TeacherQuery,
+        SchoolDayQuery,
     ):
         pass
 

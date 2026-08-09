@@ -16,6 +16,8 @@ from typing import List, Optional
 
 import strawberry
 
+from .school_day_types import BellPeriod, bell_period_to_graphql
+
 
 def _date(value) -> Optional[datetime.date]:
     if not value:
@@ -36,25 +38,18 @@ class TimetableVersion:
     effective_to: Optional[datetime.date] = None
 
 
-@strawberry.type(description="One period in the school's daily rhythm.")
-class LessonPeriod:
-    id: strawberry.ID
-    bell_schedule_id: Optional[strawberry.ID] = None
-    period_number: Optional[int] = None
-    period_kind: Optional[str] = strawberry.field(
-        default=None, description="A lesson, a break, an assembly."
-    )
-    label: Optional[str] = None
-    starts_at: Optional[str] = None
-    ends_at: Optional[str] = None
-    sort_order: Optional[int] = None
-
-
-@strawberry.type(description="The clock a school teaches to.")
-class BellSchedule:
+@strawberry.type(
+    name="TimetableBellSchedule",
+    description=(
+        "The clock a timetable is drawn against — the narrow view the grid "
+        "needs. The catalogue entry, with its validity and default flag, is "
+        "`BellSchedule`; this is what rides inside one class's week."
+    ),
+)
+class TimetableBellSchedule:
     id: strawberry.ID
     name: Optional[str] = None
-    lesson_periods: List[LessonPeriod] = strawberry.field(default_factory=list)
+    lesson_periods: List[BellPeriod] = strawberry.field(default_factory=list)
 
 
 @strawberry.type(description="One lesson in the week — a subject, a slot, a teacher.")
@@ -90,7 +85,7 @@ class TimetableEntry:
 )
 class Timetable:
     version: Optional[TimetableVersion] = None
-    bell_schedule: Optional[BellSchedule] = None
+    bell_schedule: Optional[TimetableBellSchedule] = None
     working_days: List[int] = strawberry.field(
         default_factory=list, description="Days the school opens (0 = Monday)."
     )
@@ -145,23 +140,14 @@ def entry_to_graphql(row: dict) -> TimetableEntry:
     )
 
 
-def bell_to_graphql(row: Optional[dict]) -> Optional[BellSchedule]:
+def bell_to_graphql(row: Optional[dict]) -> Optional[TimetableBellSchedule]:
     if not row:
         return None
-    return BellSchedule(
+    return TimetableBellSchedule(
         id=strawberry.ID(row["id"]),
         name=row.get("name"),
         lesson_periods=[
-            LessonPeriod(
-                id=strawberry.ID(period["id"]),
-                bell_schedule_id=_id(period.get("bell_schedule_id")),
-                period_number=period.get("period_number"),
-                period_kind=period.get("period_kind"),
-                label=period.get("label"),
-                starts_at=period.get("starts_at"),
-                ends_at=period.get("ends_at"),
-                sort_order=period.get("sort_order"),
-            )
+            bell_period_to_graphql(period)
             for period in (row.get("lesson_periods") or [])
         ],
     )
