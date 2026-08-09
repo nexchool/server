@@ -59,6 +59,25 @@ def flask_app():
     return _app
 
 
+@pytest.fixture(autouse=True)
+def _no_throttling(flask_app):
+    """Run the suite with rate limiting off.
+
+    Throttling is a production protection and no test asserts it, but the
+    limiter counts in memory and the whole suite shares one app and one
+    counter — so the 120-per-minute GraphQL limit trips once enough GraphQL
+    tests land inside the same minute. That made `test_identity_graphql`
+    fail with `KeyError: 'data'` (a 429 body has no `data`) in some runs and
+    not others, which reads as a flake in identity rather than what it is.
+    """
+    from core.extensions import limiter
+
+    previous = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = previous
+
+
 @pytest.fixture(scope="session")
 def _db_engine(flask_app):
     """Bind to the real SQLAlchemy engine from the app."""

@@ -56,17 +56,6 @@ def _post(flask_app, tenant, path, body, headers=None):
     return flask_app.test_client().post(path, headers=base, json=body)
 
 
-@pytest.fixture(autouse=True)
-def _disable_rate_limit():
-    """These tests assert behaviour, not throttling; keep them deterministic."""
-    from core.extensions import limiter
-
-    prev = limiter.enabled
-    limiter.enabled = False
-    yield
-    limiter.enabled = prev
-
-
 # ---------------------------------------------------------------------------
 # S1 — web-facing reset URL + platform branch
 # ---------------------------------------------------------------------------

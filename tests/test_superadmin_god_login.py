@@ -40,17 +40,6 @@ def _new_id(prefix: str = "") -> str:
     return f"{prefix}{uuid.uuid4().hex[:12]}"
 
 
-@pytest.fixture(autouse=True)
-def _disable_rate_limit(flask_app):
-    """5/min login limiter would 429 multiple logins in one test run."""
-    from core.extensions import limiter
-
-    previous = limiter.enabled
-    limiter.enabled = False
-    yield
-    limiter.enabled = previous
-
-
 @pytest.fixture
 def setup_tenant(db_session):
     """An active tenant whose school setup is NOT complete."""
