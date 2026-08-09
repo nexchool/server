@@ -183,16 +183,25 @@ The same caveat applies to the 80 uncalled service functions below: **that list
 was built by counting call sites, so some entries will be aliased imports rather
 than dead code.** Triage each by searching the identifier, never by the count.
 
-### [ARCHITECTURE DEBT] Permission seeding is spread across eight scripts
+### [ARCHITECTURE DEBT] Permission seeding is spread across eight scripts — fixed
 
-Besides `seed_rbac.py`: `backfill_academic_calendar_permissions.py`,
-`backfill_admin_finance_permissions.py`, `backfill_teacher_leave_permissions.py`,
-`backfill_timetable_subject_permissions.py`, `fix_teacher_permissions.py`,
-`grant_hostel_permissions.py`, `seed_holiday_permissions.py`.
+Besides `seed_rbac.py`: seven backfill / grant / fix scripts, so a tenant's
+authorization state depended on which of them had been run against it.
 
-A tenant's authorization state therefore depends on which one-off backfills were run
-against it. This is the mechanism that produced the `school_setup` blocker above, and
-it will produce the next one. → fold into **Phase E1**.
+**The cause was not sprawl; it was that the canonical seeder silently did not
+work.** `seed_rbac`'s role phase called `create_role` and
+`assign_permission_to_role_by_name`, both of which resolve the tenant off the
+request. Run as a CLI there is none, so all four roles failed with "Tenant context
+is required", the script printed four crosses and exited 0, and `startup.sh` logged
+a warning and carried on. It has only ever created permission *rows*; every grant
+came from `seed_roles_for_tenant` at login. Each module then wrote its own script
+to do the per-tenant work the canonical seeder was named for.
+
+Fixed: one catalogue in `modules/rbac/catalog.py` that both seeders import (this
+also closes debt 6d), `seed_rbac` seeding every active tenant from it, six of the
+seven scripts deleted, and `scripts/reseed_rbac.py` adding the `--dry-run` and
+`--reconcile` that seeding never had. `fix_teacher_permissions` is kept — it
+repairs a `StaffAuthority` link, a user→role problem, not a permission backfill.
 
 ### [ARCHITECTURE DEBT] 80 public service functions with no caller
 

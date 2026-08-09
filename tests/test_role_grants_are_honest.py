@@ -1,44 +1,36 @@
-"""What each seeded role is allowed to hold, and why.
+"""What each seeded role holds, and what it takes to change that.
 
-Two things make role grants drift silently.
+Two things used to make role grants drift silently, and one still does.
 
-The first is that there are two definitions of the same four roles:
-`scripts/seed_rbac.py` (the CLI) and `modules/rbac/role_seeder.py` (what runs
-when a tenant is created and on every login). Nothing forces them to agree, and
-a key added to one is simply absent from the other depending on how a tenant was
-made.
+The first is fixed: there were two definitions of the same four roles —
+`scripts/seed_rbac.py` and `modules/rbac/role_seeder.py` — kept in step by a
+comment, so a tenant's authority depended on which seeder had made it. Both now
+read `modules/rbac/catalog.py`. The tests below assert that rather than assert
+the two agree, because "they agree" was the old guard and it passed right up
+until someone edited one file.
 
-The second is that `seed_roles_for_tenant` only ever adds. It backfills missing
-permissions and never revokes one, so an over-grant survives every reseed and
-can only be taken back by a migration. That makes an accidental grant permanent
-in practice, which is why the ones below are asserted rather than reviewed.
+The second is still true and deliberate: `seed_roles_for_tenant` runs on every
+login and only ever adds. Removing a key from the catalogue changes nothing
+anywhere until somebody reconciles — which is why taking `school_setup.read` off
+the Teacher role needed migration 103. `reconcile=True` is that path, and it is
+off by default because an operator's hand-made grant should not vanish because
+somebody signed in.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import pathlib
+import uuid
 
 import pytest
 
 SERVER = pathlib.Path(__file__).resolve().parent.parent
 
 
-def _load(path: pathlib.Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.fixture(scope="module")
-def cli_roles():
-    return _load(SERVER / "scripts" / "seed_rbac.py", "_seed_rbac_roles").ROLES
-
-
-@pytest.fixture(scope="module")
-def runtime_roles():
-    from modules.rbac.role_seeder import DEFAULT_ROLES
+def catalogue():
+    from modules.rbac.catalog import DEFAULT_ROLES
 
     return DEFAULT_ROLES
 
@@ -47,33 +39,48 @@ def _permissions(role_spec) -> set:
     return set(role_spec["permissions"])
 
 
-def test_the_two_role_definitions_name_the_same_roles(cli_roles, runtime_roles):
-    assert set(cli_roles) == set(runtime_roles)
+# ---------------------------------------------------------------------------
+# One definition
+# ---------------------------------------------------------------------------
+
+def test_the_runtime_seeder_reads_the_catalogue_rather_than_its_own_copy():
+    from modules.rbac.catalog import DEFAULT_ROLES
+    from modules.rbac.role_seeder import DEFAULT_ROLES as via_seeder
+
+    assert via_seeder is DEFAULT_ROLES
 
 
-@pytest.mark.parametrize("role", ["Admin", "Teacher", "Student", "Parent"])
-def test_the_two_role_definitions_grant_the_same_keys(
-    role, cli_roles, runtime_roles
-):
-    """A tenant's authority must not depend on which seeder created it.
+def test_the_cli_reads_the_catalogue_rather_than_its_own_copy():
+    """`seed_rbac.ROLES` keeps its old shape but must be derived, not written.
 
-    If this fails, decide which grant is correct and change both — do not
-    relax the test. The two callers are `scripts/seed_rbac.py` for a fresh
-    install and `seed_roles_for_tenant` for every tenant created since.
+    Loaded from the file rather than imported so this notices a literal being
+    pasted back in, which is exactly the regression worth catching.
     """
-    cli = _permissions(cli_roles[role])
-    runtime = _permissions(runtime_roles[role])
-    assert cli == runtime, (
-        f"{role} differs between the seeders — "
-        f"only in seed_rbac.py: {sorted(cli - runtime)}; "
-        f"only in role_seeder.py: {sorted(runtime - cli)}"
+    spec = importlib.util.spec_from_file_location(
+        "_seed_rbac_for_test", SERVER / "scripts" / "seed_rbac.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    from modules.rbac.catalog import DEFAULT_ROLES, PERMISSIONS
+
+    assert module.PERMISSIONS is PERMISSIONS
+    assert set(module.ROLES) == set(DEFAULT_ROLES)
+    for role, entry in module.ROLES.items():
+        assert entry["permissions"] is DEFAULT_ROLES[role]["permissions"]
+
+    source = (SERVER / "scripts" / "seed_rbac.py").read_text()
+    assert "'user.manage'" not in source and '"user.manage"' not in source, (
+        "seed_rbac.py has a permission literal again — the definitions belong "
+        "in modules/rbac/catalog.py, imported by both seeders"
     )
 
 
-@pytest.mark.parametrize("seeder", ["cli", "runtime"])
-def test_a_teacher_does_not_hold_the_schools_onboarding_authority(
-    seeder, cli_roles, runtime_roles
-):
+# ---------------------------------------------------------------------------
+# What the roles hold
+# ---------------------------------------------------------------------------
+
+def test_a_teacher_does_not_hold_the_schools_onboarding_authority(catalogue):
     """Standing a school up is the platform operator's work, done in the panel.
 
     `school_setup.read` answers "how far has onboarding got" — not a question a
@@ -81,23 +88,18 @@ def test_a_teacher_does_not_hold_the_schools_onboarding_authority(
     subject contexts; those reads now accept `class_subject.read`, which is the
     authority a teacher actually holds. See debt 33 and migration 103.
     """
-    roles = cli_roles if seeder == "cli" else runtime_roles
-    held = {k for k in _permissions(roles["Teacher"]) if k.startswith("school_setup")}
+    held = {k for k in _permissions(catalogue["Teacher"]) if k.startswith("school_setup")}
     assert held == set(), f"Teacher holds {sorted(held)}"
 
 
-@pytest.mark.parametrize("seeder", ["cli", "runtime"])
-def test_a_teacher_can_still_read_class_subject_configuration(
-    seeder, cli_roles, runtime_roles
-):
+def test_a_teacher_can_still_read_class_subject_configuration(catalogue):
     """The other half of the change above.
 
     Removing the setup key is only correct because this one is present — the
     mediums and subject-context reads accept it. Losing it would take the
     medium and subject-context lists away from every teacher.
     """
-    roles = cli_roles if seeder == "cli" else runtime_roles
-    assert "class_subject.read" in _permissions(roles["Teacher"])
+    assert "class_subject.read" in _permissions(catalogue["Teacher"])
 
 
 def test_the_reads_a_teacher_needs_accept_the_key_a_teacher_holds():
@@ -120,3 +122,131 @@ def test_the_reads_a_teacher_needs_accept_the_key_a_teacher_holds():
         assert "PERM_CS_READ)" in source, (
             f"{module.__name__} defines the read key but no guard accepts it"
         )
+
+
+# ---------------------------------------------------------------------------
+# Taking a grant away
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seeded_tenant(flask_app, db_session, tenant):
+    """This tenant's four default roles, seeded from the catalogue."""
+    from modules.rbac.catalog import PERMISSIONS
+    from modules.rbac.models import Permission
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+
+    for name, description in PERMISSIONS:
+        if not Permission.query.filter_by(name=name).first():
+            db_session.add(Permission(name=name, description=description))
+    db_session.flush()
+
+    with flask_app.test_request_context("/"):
+        seed_roles_for_tenant(tenant.id)
+    return tenant
+
+
+def _held_by(tenant_id, role_name) -> set:
+    from core.database import db
+    from modules.rbac.models import Permission, Role, RolePermission
+
+    role = Role.query.filter_by(name=role_name, tenant_id=tenant_id).first()
+    rows = (
+        db.session.query(Permission.name)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .filter(RolePermission.role_id == role.id)
+        .all()
+    )
+    return {name for (name,) in rows}
+
+
+def _grant_extra(db_session, tenant_id, role_name, key):
+    """A grant the catalogue does not name — what an operator's curl leaves."""
+    from modules.rbac.models import Permission, Role, RolePermission
+
+    permission = Permission.query.filter_by(name=key).first()
+    if permission is None:
+        permission = Permission(name=key, description="added by hand")
+        db_session.add(permission)
+        db_session.flush()
+    role = Role.query.filter_by(name=role_name, tenant_id=tenant_id).first()
+    db_session.add(
+        RolePermission(
+            tenant_id=tenant_id, role_id=role.id, permission_id=permission.id
+        )
+    )
+    db_session.flush()
+
+
+def test_signing_in_does_not_take_away_a_grant_made_by_hand(
+    flask_app, db_session, seeded_tenant
+):
+    """The default is add-only, and that is the point.
+
+    `seed_roles_for_tenant` runs on every login. If it reconciled there, an
+    operator who granted a key deliberately would lose it the next time anyone
+    signed in, with nothing to show why.
+    """
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+
+    _grant_extra(db_session, seeded_tenant.id, "Admin", "zz.granted.by.hand")
+
+    with flask_app.test_request_context("/"):
+        seed_roles_for_tenant(seeded_tenant.id)
+
+    assert "zz.granted.by.hand" in _held_by(seeded_tenant.id, "Admin")
+
+
+def test_reconciling_takes_away_what_the_catalogue_does_not_grant(
+    flask_app, db_session, seeded_tenant
+):
+    """The revocation path that did not exist, and needed migration 103."""
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+
+    _grant_extra(db_session, seeded_tenant.id, "Admin", "zz.granted.by.hand")
+    assert "zz.granted.by.hand" in _held_by(seeded_tenant.id, "Admin")
+
+    with flask_app.test_request_context("/"):
+        seed_roles_for_tenant(seeded_tenant.id, reconcile=True)
+
+    assert "zz.granted.by.hand" not in _held_by(seeded_tenant.id, "Admin")
+
+
+def test_reconciling_keeps_everything_the_catalogue_does_grant(
+    flask_app, db_session, seeded_tenant, catalogue
+):
+    """Guards the obvious way to get this wrong: revoking the lot."""
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+
+    with flask_app.test_request_context("/"):
+        seed_roles_for_tenant(seeded_tenant.id, reconcile=True)
+
+    for role_name, spec in catalogue.items():
+        assert _held_by(seeded_tenant.id, role_name) == set(spec["permissions"])
+
+
+def test_reconciling_leaves_a_role_the_school_made_alone(
+    flask_app, db_session, seeded_tenant
+):
+    """The catalogue describes the four default roles and nothing else.
+
+    A school that built its own role — an Exams Officer, a Cashier — has made a
+    decision the seeder knows nothing about, and must not have it emptied.
+    """
+    from modules.rbac.models import Role
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+
+    suffix = uuid.uuid4().hex[:8]
+    own = Role(
+        id=f"r-{suffix}",
+        tenant_id=seeded_tenant.id,
+        name=f"Exams Officer {suffix}",
+        description="Built by the school",
+    )
+    db_session.add(own)
+    db_session.flush()
+    _grant_extra(db_session, seeded_tenant.id, own.name, "zz.their.own.key")
+
+    with flask_app.test_request_context("/"):
+        seed_roles_for_tenant(seeded_tenant.id, reconcile=True)
+
+    assert "zz.their.own.key" in _held_by(seeded_tenant.id, own.name)

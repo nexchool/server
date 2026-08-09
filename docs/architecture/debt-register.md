@@ -6,9 +6,9 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-09 — items 34, 38–40 added from the Phase A stabilization audit
-(`reviews/2026-08-09-stabilization-audit.md`); 33, 18 and 37 closed; 36 withdrawn as
-mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
+**Last updated:** 2026-08-09 — items 34, 39 and 40 added from the Phase A stabilization
+audit (`reviews/2026-08-09-stabilization-audit.md`); 33, 18, 37, 38 and 6d closed; 36
+withdrawn as mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
 it is reachable now (see Closed).
 
 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE**; **Phase 4 started** (Attendance: corrections surfaced, feature gate built). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
@@ -40,7 +40,6 @@ control.
 | 5 | **Student family columns dual-written**: `father_*` / `mother_*` / `guardian_*` still read v1 columns while households exist | like-for-like switch shows some children a wrong parent name; Expo still reads the flat keys | M2 client work: Expo + admin-web speak household roles, then a migration drops the columns |
 | 6b | **~1043 `subadmin:<uuid>` roles accumulate and are never reaped.** Each sub-admin owns a private `Role` (`is_subadmin=True`) holding their permissions — per-user permission sets implemented as roles, the shape ADR-006 argues against. `delete_sub_admin` now withdraws the authority, but the Role and its `role_permissions` rows still remain, and `GET /api/rbac/roles` returns them intermixed with the school's real Authority Profiles (no `is_subadmin` filter). Also `_get_private_role` uses `.first()` with no ordering. | grew from a v1 shortcut | reap on delete + filter the roles list; revisit the shape when sub-admin UX is next touched |
 | 6c | **31 seeded permission keys are never checked anywhere**, including a dead `grades.*` namespace (7 keys, granted to Teacher and Student) shadowing the live `grade.read`/`grade.manage`. Dead keys are harmless but they make the catalogue lie about what the product enforces. | accreted with the seed list | prune with the next RBAC touch; the new key test makes pruning safe |
-| 6d | **`DEFAULT_ROLES` (`role_seeder.py`) and `ROLES` (`scripts/seed_rbac.py`) are duplicate definitions kept in step by hand.** Byte-identical today and now both covered by the key test, but nothing forces them to agree with each other. | two seeders, one truth | one should import the other |
 | 7b | **Bulk `UPDATE`/`DELETE` are outside the ORM tenant scope entirely** (`core/database.py` returns before adding criteria for non-SELECT). Most call sites filter `tenant_id` explicitly; five key only on a parent id and are one refactor from a leak: `devices/device_service.py`, `people/service.py` (primary-contact stand-down), `sub_admins/services.py` (role permissions), `announcements/services.py` (revision prune), `academics/services/timetable_v2.py` (entry delete by version). | the scope only covers reads | add explicit `tenant_id` to each; consider a lint |
 | 7c | **187 FK pairs can still legally cross tenants** — only `roles` and (since 097) `staff` carry `UNIQUE (tenant_id, id)`, so no composite guard can be declared against the other 40 parent tables. Verified 0 actual violations in live data. | needs a unique per parent table | opportunistic: add the unique + composite FK when touching a domain |
 | 7d | **The identity map defeats `.get()` scoping after an unscoped load.** `core/authentication.py::load_without_tenant_scope` nulls the tenant to load `User`/`Session`; once cached, a later scoped `.get()` returns the row with no SQL. Guarded today by `_acts_outside_own_tenant`, and only those two models use it — a real bypass the moment a third does. | sign-in must find the account before the tenant is known | keep the helper limited to User/Session; assert it in review |
@@ -48,7 +47,6 @@ control.
 | 11 | **Transport list pagination is opt-in**; clients still read whole arrays | a truncated array is indistinguishable from a complete one | M5: admin-web + Expo adopt the page, then the array goes |
 | 34 | **A navigation link 404s.** `admin-web/src/components/academics/year-transition/TransitionComplete.tsx:212` links to `/dashboard/transport/enrollments`; no such page exists. The link sits on the year-transition completion screen — the moment transport enrolment matters most. | the transport students screen was named `students`, the link was written against `enrollments` | point the link at `/dashboard/transport/students`, or build the enrolments screen if they are different things |
 | 40 | **admin-web cannot create a class.** The only affordance was `canCreate && isSchoolSetupEnabled()` on the classes page, linking to the School Setup wizard that was removed when onboarding moved to the panel. The flag was hard-coded `false`, so the button had already stopped rendering — `class.create` was read and never used, and the zero-class empty state pointed at the same dead route. The dead markup is gone; the gap is not. A school that opens a new section mid-year has no way to add it from the tenant app. | the wizard was removed before its replacement existed | decide whether creating a section is operator work (panel) or school work (admin-web); if the latter, build the form against the existing `POST /api/classes` |
-| 38 | **A tenant's authorization state depends on which one-off backfills were run against it.** Besides `seed_rbac.py` there are seven grant/backfill/fix scripts (`backfill_academic_calendar_permissions`, `backfill_admin_finance_permissions`, `backfill_teacher_leave_permissions`, `backfill_timetable_subject_permissions`, `fix_teacher_permissions`, `grant_hostel_permissions`, `seed_holiday_permissions`). This is the mechanism that produced debt 33, and it will produce the next one. | each module added its keys with its own script | one declarative seed that is the whole truth; backfills become migrations that replay it |
 | 39 | **80 public service functions look uncalled — but the list is not trustworthy as it stands.** It was built by counting call sites (`name(` outside the defining file), and that method reports a function imported under an alias as dead: `logout_user` scores zero callers and is very much alive, because `auth/routes.py` imports it as `logout_user as logout_user_service`. Closing debt 37 is what surfaced this. The list also mixes genuine rot with unreachable *capabilities* — `students.analyze_promotion`, `students.import_students_from_rows`, `rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`, `attendance.lock_after_hours`. Concentrated in transport (17), notifications (11), rbac (8), school_setup (7), auth (7), students (7). | features built ahead of their transport, plus genuine rot, plus a counting method that cannot see aliases | re-derive the list by searching each raw identifier across all four repos, then triage per item during Phase B/C — never in bulk. "Delete this" and "this is a feature with no door" and "this is aliased and live" all look identical from a call count. |
 | 12 | **`trial_ends_at` is never enforced**; no tenant invoice / receipt / dunning (`plans`, `tenant_usage` are scaffolding only) | commercial layer not built | Commercial module (Phase 5) — do not build billing on the current tenant lifecycle |
 | 13b | **Delegation expiry is felt within the cache TTL, not on the day.** Expiry is a property of the query (nothing reads a delegation outside its window), but the cached key list is a snapshot taken before it lapsed — so a delegate keeps the lent keys for up to ~120 s past the rollover. | the cache materializes a date-dependent answer | acceptable at 120 s; revisit if the TTL grows |
@@ -58,6 +56,48 @@ control.
 ---
 
 ## Closed
+
+**One permission catalogue, and seeding that works (2026-08-09).** Debts 38 and
+6d, which turned out to be the same defect seen from two sides.
+
+`modules/rbac/catalog.py` now holds the 166 permissions and the four default
+roles. `scripts/seed_rbac.py` and `modules/rbac/role_seeder.py` both import it;
+before, each carried its own copy of the roles, kept in step by a comment asking
+whoever edited one to remember the other, so a tenant's authority depended on
+which seeder had made it.
+
+**The root cause was worse than the duplication.** `seed_rbac`'s role phase
+called `create_role` and `assign_permission_to_role_by_name`, both of which
+resolve the tenant off the request — so run as a CLI it failed on all four roles
+with "Tenant context is required", printed four crosses, and exited 0. It has
+therefore only ever created permission *rows*; every role grant came from
+`seed_roles_for_tenant` on login. That silent half-failure is why each module
+wrote its own backfill: the canonical seeder did not do the job it was named
+for. It now seeds every active tenant from the catalogue, verified by revoking
+`hostel.manage` from Admin and watching a reseed put it back.
+
+Deleted, all redundant: `backfill_academic_calendar_permissions`,
+`backfill_admin_finance_permissions`, `backfill_teacher_leave_permissions`,
+`backfill_timetable_subject_permissions`, `grant_hostel_permissions`,
+`seed_holiday_permissions`. Two of them were already generic — "create the
+missing permission rows, then reseed" — under module-specific names. The last two
+ran from `startup.sh` and the infra Makefile, so both were repointed rather than
+just deleted. `fix_teacher_permissions` is **kept**: it repairs a teacher's
+`StaffAuthority` link, which is a user→role problem, not a permission backfill.
+
+`scripts/reseed_rbac.py` adds what seeding never had: `--dry-run` to report, and
+`--reconcile` to revoke what the catalogue no longer grants. Without it, removing
+a key changed nothing anywhere and taking one away needed a hand-written
+migration (103). Reconciling is off by default and off on login — an operator's
+hand-made grant should not vanish because somebody signed in — and it leaves
+roles a school created itself alone.
+
+One caveat found by running the dry run: it reported surplus `profile.*` grants
+and a missing `person.merge`, which turned out to be the *pytest* database, not
+the app's. Homebrew postgres owns `127.0.0.1:5432` and Docker binds `*:5432`, so
+`localhost` reaches the test DB while the app uses the container's. Against the
+app's own database the catalogue was already exactly in line, which is the best
+evidence the extraction was faithful.
 
 **The second login implementation is gone (2026-08-09).** Debt 37.
 `modules/auth/services.py` defined `login_user()` — authenticate, stamp

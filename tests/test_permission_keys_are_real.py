@@ -107,11 +107,12 @@ def test_every_permission_checked_in_a_route_is_seeded():
 
 
 def test_every_permission_a_seeded_role_grants_is_seeded():
-    """`role_seeder.DEFAULT_ROLES` is kept in step with the script by hand.
+    """A granted name with no Permission row grants nothing, silently.
 
-    A name here with no Permission row is dropped silently
-    (`role_seeder.py`: `if not perm: continue`), so the role is created
-    looking correct and granting less than it says.
+    `role_seeder.py` does `if not perm: continue`, so the role is created
+    looking correct and holding less than it says. Both halves now come from
+    `modules/rbac/catalog.py`, which makes this a check that the catalogue is
+    internally consistent rather than that two files were kept in step by hand.
     """
     from modules.rbac.role_seeder import DEFAULT_ROLES
 

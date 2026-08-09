@@ -12,370 +12,31 @@ Or from Flask shell:
 """
 
 from app import create_app
-from modules.rbac.services import (
-    create_role, create_permission,
-    assign_permission_to_role_by_name
-)
+from core.database import db
+from core.models import Tenant, TENANT_STATUS_ACTIVE
+from modules.rbac.models import RolePermission
+from modules.rbac.role_seeder import seed_roles_for_tenant
+from modules.rbac.services import create_permission
+
+
+def _grant_count(tenant_id: str) -> int:
+    return RolePermission.query.filter_by(tenant_id=tenant_id).count()
 
 
 # ==================== PERMISSIONS DEFINITION ====================
 
-PERMISSIONS = [
-    # User permissions
-    ('user.read', 'View user information'),
-    ('user.create', 'Create new users'),
-    ('user.update', 'Update user information'),
-    ('user.delete', 'Delete users'),
-    ('user.manage', 'Full user management access'),
-    # Reconciling records: deciding two rows describe one human. Its own
-    # key because it rewrites who the school's records refer to, across
-    # every module at once — not the same trust as editing an account.
-    ('person.merge', 'Combine two records that describe the same person'),
-    
-    # Role permissions
-    ('role.read', 'View roles'),
-    ('role.create', 'Create new roles'),
-    ('role.update', 'Update roles'),
-    ('role.delete', 'Delete roles'),
-    ('role.manage', 'Full role management access'),
-    
-    # Permission permissions
-    ('permission.read', 'View permissions'),
-    ('permission.create', 'Create new permissions'),
-    ('permission.update', 'Update permissions'),
-    ('permission.delete', 'Delete permissions'),
-    ('permission.manage', 'Full permission management access'),
-    
-    # Student permissions
-    ('student.read.self', 'View own student information'),
-    ('student.read.class', 'View class students information'),
-    ('student.read.all', 'View all students information'),
-    ('student.create', 'Create new students'),
-    ('student.update', 'Update student information'),
-    ('student.delete', 'Delete students'),
-    ('student.manage', 'Full student management access'),
-    
-    # Teacher permissions
-    ('teacher.read', 'View teacher information'),
-    ('teacher.create', 'Create new teachers'),
-    ('teacher.update', 'Update teacher information'),
-    ('teacher.delete', 'Delete teachers'),
-    ('teacher.manage', 'Full teacher management access'),
-    ('teacher.leave.apply', 'Apply for leave as a teacher'),
-    ('teacher.leave.manage', 'View and manage all teacher leave requests'),
-
-    # Student leave permissions
-    ('student.leave.apply', 'Apply for a leave as a student'),
-    ('student.leave.read.own', "Read one's own student leave requests"),
-    ('student.leave.read.class', "Read leave requests for the teacher's classes"),
-    ('student.leave.read.all', 'Read all student leave requests in the tenant'),
-    ('student.leave.approve.class', "Approve/reject leave requests for the teacher's classes"),
-    ('student.leave.approve.all', 'Approve/reject any student leave request (admin fallback)'),
-    ('student.leave.request_cancel', 'Request cancellation of an own leave (student)'),
-
-    # Announcement permissions
-    ('announcement.create', 'Create announcements as an admin'),
-    ('announcement.update', 'Edit/append revisions to announcements'),
-    ('announcement.recall', 'Recall a published announcement'),
-    ('announcement.read.own', 'Read announcements where I am a recipient'),
-    ('announcement.read.all', 'Read all announcements in the tenant (admin)'),
-
-    # Attendance permissions
-    ('attendance.read.self', 'View own attendance'),
-    ('attendance.read.class', 'View class attendance'),
-    ('attendance.read.all', 'View all attendance records'),
-    ('attendance.mark', 'Mark attendance'),
-    ('attendance.update', 'Update attendance records'),
-    ('attendance.manage', 'Full attendance management access'),
-    
-    # Academic permissions
-    ('grades.read.self', 'View own grades'),
-    ('grades.read.class', 'View class grades'),
-    ('grades.read.all', 'View all grades'),
-    ('grades.create', 'Create grade entries'),
-    ('grades.update', 'Update grade entries'),
-    ('grades.manage', 'Full grades management access'),
-    
-    # Class permissions
-    ('class.read', 'View class information'),
-    ('class.create', 'Create new classes'),
-    ('class.update', 'Update class information'),
-    ('class.delete', 'Delete classes'),
-    ('class.manage', 'Full class management access'),
-
-    # Subject permissions
-    ('subject.read', 'View subject information'),
-    ('subject.create', 'Create new subjects'),
-    ('subject.update', 'Update subject information'),
-    ('subject.delete', 'Delete subjects'),
-    ('subject.manage', 'Full subject management access'),
-
-    # Department permissions
-    ('department.read', 'View department information'),
-    ('department.manage', 'Full department management access'),
-
-    # Timetable permissions
-    ('timetable.read', 'View timetable information'),
-    ('timetable.create', 'Create timetable slots'),
-    ('timetable.update', 'Update timetable slots'),
-    ('timetable.delete', 'Delete timetable slots'),
-    ('timetable.manage', 'Full timetable management access'),
-
-    # Class subject & class teacher (academic backbone)
-    ('class_subject.read', 'View class subject assignments'),
-    ('class_subject.manage', 'Manage class subject assignments'),
-    ('class_teacher.manage', 'Manage class teacher assignments'),
-
-    # Academics hub (dashboards, health)
-    ('academics.read', 'View academic summaries and health'),
-    ('academics.manage', 'Full academic operations dashboard'),
-
-    # Course permissions
-    ('course.read', 'View course information'),
-    ('course.create', 'Create new courses'),
-    ('course.update', 'Update course information'),
-    ('course.delete', 'Delete courses'),
-    ('course.manage', 'Full course management access'),
-
-    # Finance permissions
-    ('finance.read', 'View finance and fee information'),
-    ('finance.collect', 'Collect fee payments'),
-    ('finance.refund', 'Refund payments'),
-    ('finance.manage', 'Full finance management access'),
-
-    # Fees Invoice & Receipt permissions
-    ('fees.invoice.create', 'Create fee invoices'),
-    ('fees.invoice.read', 'View fee invoices'),
-    ('fees.invoice.send_reminder', 'Send invoice reminders'),
-    ('fees.payment.record', 'Record fee payments'),
-    ('fees.receipt.download', 'Download fee receipts'),
-
-    # Transport permissions (granular + transport.manage; legacy grouped perms kept for old roles)
-    ('transport.manage', 'Full transport module access'),
-    ('transport.buses.create', 'Create buses'),
-    ('transport.buses.read', 'View buses'),
-    ('transport.buses.update', 'Update buses'),
-    ('transport.buses.delete', 'Delete or deactivate buses'),
-    ('transport.drivers.create', 'Create drivers'),
-    ('transport.drivers.read', 'View drivers'),
-    ('transport.drivers.update', 'Update drivers'),
-    ('transport.drivers.delete', 'Deactivate drivers'),
-    ('transport.routes.create', 'Create routes'),
-    ('transport.routes.read', 'View routes'),
-    ('transport.routes.update', 'Update routes'),
-    ('transport.routes.delete', 'Deactivate routes'),
-    ('transport.stops.create', 'Create transport stops'),
-    ('transport.stops.read', 'View transport stops'),
-    ('transport.stops.update', 'Update transport stops'),
-    ('transport.stops.delete', 'Deactivate transport stops'),
-    ('transport.assignments.create', 'Create bus assignments'),
-    ('transport.assignments.read', 'View bus assignments'),
-    ('transport.assignments.update', 'Update bus assignments'),
-    ('transport.assignments.delete', 'End bus assignments'),
-    ('transport.enrollment.create', 'Create transport enrollments'),
-    ('transport.enrollment.read', 'View transport enrollments'),
-    ('transport.enrollment.update', 'Update transport enrollments'),
-    ('transport.enrollment.delete', 'Deactivate transport enrollments'),
-    ('transport.fee_plans.read', 'View transport fee plans'),
-    ('transport.fee_plans.manage', 'Manage transport fee plans'),
-    ('transport.dashboard.read', 'View transport dashboard'),
-    ('transport.exports.read', 'Export transport CSV reports'),
-    ('transport.student.read_own', 'View own transport details (mobile)'),
-    ('transport.info.read.class', 'View transport info for students in own classes'),
-    ('transport.info.read.self', 'View own transport details'),
-    ('transport.drivers.manage', 'Manage drivers (legacy)'),
-    ('transport.routes.manage', 'Manage routes (legacy)'),
-    ('transport.assignments.manage', 'Manage bus assignments (legacy)'),
-
-    # Holiday permissions
-    ('holiday.read', 'View holidays and weekly-off calendar'),
-    ('holiday.create', 'Create holidays'),
-    ('holiday.update', 'Update holiday details'),
-    ('holiday.delete', 'Delete holidays'),
-    ('holiday.manage', 'Full holiday management access'),
-
-    # Multi-school structural masters
-    ('school_unit.read', 'View school units (campuses)'),
-    ('school_unit.manage', 'Manage school units (campuses)'),
-    ('programme.read', 'View academic programmes (board + medium)'),
-    ('programme.manage', 'Manage academic programmes'),
-    ('grade.read', 'View grades / standards master'),
-    ('grade.manage', 'Manage grades / standards master'),
-    ('religion.read', 'View religion master'),
-    ('religion.manage', 'Manage religion master'),
-    ('academic_term.read', 'View academic terms'),
-    ('academic_term.manage', 'Manage academic terms'),
-    ('academic_calendar.read', 'View the academic calendar (events, exams, summary)'),
-    ('academic_calendar.manage', 'Configure and publish the academic calendar'),
-    # Granular per-action calendar permissions. `manage` is a superset of all of
-    # these (rbac.services.has_permission), so the Admin role keeps full access.
-    ('academic_calendar.create', 'Create an academic calendar'),
-    ('academic_calendar.edit', 'Edit calendar setup, events, exams and semesters'),
-    ('academic_calendar.delete', 'Delete a draft academic calendar'),
-    ('academic_calendar.archive', 'Archive or restore an academic calendar'),
-    ('academic_calendar.duplicate', 'Duplicate an academic calendar'),
-    ('academic_calendar.export', 'Export the academic calendar (PDF/Excel/CSV)'),
-    ('academic_calendar.import', 'Import calendar data from a template'),
-    ('academic_calendar.print', 'Print the academic calendar'),
-    ('academic_calendar.settings', 'Manage academic calendar preferences'),
-
-    # School setup flow
-    ('school_setup.read', 'View school setup state and validation'),
-    ('school_setup.manage', 'Run school setup and mark it complete'),
-
-    # Audit log
-    ('audit_log.view', 'View tenant audit log'),
-
-    # Sub-admin management
-    ('subadmin.manage', 'Manage sub-admin accounts and their permissions'),
-
-    # Hostel module
-    ('hostel.read', 'View hostels, rooms, and beds'),
-    ('hostel.manage', 'Create / update / delete hostels, rooms, and beds'),
-    ('hostel.allocations.read', 'View hostel allocations'),
-    ('hostel.allocations.manage', 'Allocate students to beds / check out'),
-    ('hostel.visitors.read', 'View hostel visitor logs'),
-    ('hostel.visitors.manage', 'Check hostel visitors in / out'),
-    ('hostel.gatepass.create', 'Create hostel gatepass requests'),
-    ('hostel.gatepass.approve', 'Approve or reject hostel gatepasses (warden)'),
-    ('hostel.gatepass.gatekeeper', 'Mark gatepass checkout / checkin at the gate'),
-    ('hostel.gatepass.read', 'View hostel gatepasses'),
-    ('hostel.reports.read', 'View hostel occupancy reports and dashboard'),
-]
-
-
-# ==================== ROLES DEFINITION ====================
+# The definitions live in `modules/rbac/catalog.py` — one copy, imported by
+# this script and by `seed_roles_for_tenant`. They used to be two, kept in step
+# by a comment, and a tenant's authority depended on which one had made it.
+#
+# `ROLES` keeps the shape this script has always used. `catalog.DEFAULT_ROLES`
+# additionally carries `implied_by_relationship`, which only the tenant seeder
+# needs.
+from modules.rbac.catalog import DEFAULT_ROLES, PERMISSIONS  # noqa: F401
 
 ROLES = {
-    'Admin': {
-        'description': 'System administrator with full access',
-        'permissions': [
-            'user.manage',
-            'person.merge',
-            'role.manage',
-            'permission.manage',
-            'student.manage',
-            'teacher.manage',
-            'attendance.manage',
-            'grades.manage',
-            'course.manage',
-            'class.manage',
-            'subject.manage',
-            'department.manage',
-            'timetable.manage',
-            'finance.read',
-            'finance.manage',
-            'finance.collect',
-            'finance.refund',
-            'fees.invoice.create',
-            'fees.invoice.read',
-            'fees.invoice.send_reminder',
-            'fees.payment.record',
-            'fees.receipt.download',
-            'teacher.leave.manage',
-            'student.leave.read.all',
-            'student.leave.approve.all',
-            'announcement.create',
-            'announcement.update',
-            'announcement.recall',
-            'announcement.read.own',
-            'announcement.read.all',
-            'holiday.manage',
-            'class_subject.manage',
-            'class_teacher.manage',
-            'academics.read',
-            'academics.manage',
-            'transport.manage',
-            # Multi-school structural masters + setup flow
-            'school_unit.manage',
-            'programme.manage',
-            'grade.manage',
-            'religion.manage',
-            'academic_term.manage',
-            'academic_calendar.read',
-            'academic_calendar.manage',
-            # Audit log
-            'audit_log.view',
-            # Sub-admin management
-            'subadmin.manage',
-            # Hostel
-            'hostel.read',
-            'hostel.manage',
-            'hostel.allocations.read',
-            'hostel.allocations.manage',
-            'hostel.visitors.read',
-            'hostel.visitors.manage',
-            'hostel.gatepass.create',
-            'hostel.gatepass.approve',
-            'hostel.gatepass.gatekeeper',
-            'hostel.gatepass.read',
-            'hostel.reports.read',
-        ]
-    },
-    'Teacher': {
-        'description': 'School teacher with class management access',
-        'permissions': [
-            'student.read.class',
-            'attendance.mark',
-            'attendance.read.class',
-            'grades.create',
-            'grades.update',
-            'grades.read.class',
-            'course.read',
-            'class.read',
-            'subject.read',
-            'department.read',
-            'timetable.read',
-            'teacher.leave.apply',
-            'student.leave.read.class',
-            'student.leave.approve.class',
-            'announcement.read.own',
-            'holiday.read',
-            'class_subject.read',
-            'academics.read',
-            'transport.info.read.class',
-            'school_unit.read',
-            'programme.read',
-            'grade.read',
-            'academic_term.read',
-            'academic_calendar.read',
-            # Deliberately NOT school_setup.read — see the note on the Teacher
-            # role in modules/rbac/role_seeder.py and debt 33. Keep these two
-            # role definitions in step; they are seeded by different callers.
-        ]
-    },
-    'Student': {
-        'description': 'Student with limited access to own data',
-        'permissions': [
-            'student.read.self',
-            'attendance.read.self',
-            'grades.read.self',
-            'course.read',
-            'timetable.read',
-            'holiday.read',
-            'academics.read',
-            'transport.info.read.self',
-            'transport.student.read_own',
-            'student.leave.apply',
-            'student.leave.read.own',
-            'student.leave.request_cancel',
-            'announcement.read.own',
-        ]
-    },
-    'Parent': {
-        'description': 'Parent with access to their children\'s data',
-        'permissions': [
-            'student.read.self',  # Access to child's info
-            'attendance.read.self',
-            'grades.read.self',
-            'course.read',
-            'timetable.read',
-            'holiday.read',
-            'transport.info.read.self',
-            'transport.student.read_own',
-            'announcement.read.own',
-        ]
-    },
+    name: {"description": spec["description"], "permissions": spec["permissions"]}
+    for name, spec in DEFAULT_ROLES.items()
 }
 
 
@@ -419,44 +80,32 @@ def seed_rbac():
     
     print(f"\n  Summary: {stats['permissions_created']} created, {stats['permissions_existed']} already existed\n")
     
-    # 2. Create roles
-    print("👥 Creating Roles...")
-    for role_name, role_data in ROLES.items():
-        result = create_role(role_name, role_data['description'])
-        if result['success']:
-            print(f"  ✓ Created: {role_name}")
-            stats['roles_created'] += 1
-        else:
-            if 'already exists' in result['error']:
-                print(f"  ℹ Already exists: {role_name}")
-                stats['roles_existed'] += 1
-            else:
-                print(f"  ✗ Failed: {role_name} - {result['error']}")
-    
-    print(f"\n  Summary: {stats['roles_created']} created, {stats['roles_existed']} already existed\n")
-    
-    # 3. Assign permissions to roles
-    print("🔗 Assigning Permissions to Roles...")
-    for role_name, role_data in ROLES.items():
-        print(f"\n  Role: {role_name}")
-        for permission_name in role_data['permissions']:
-            result = assign_permission_to_role_by_name(role_name, permission_name)
-            if result['success']:
-                print(f"    ✓ {permission_name}")
-                stats['assignments_created'] += 1
-            else:
-                if 'already assigned' in result['error']:
-                    pass  # Silent for already assigned
-                else:
-                    print(f"    ✗ {permission_name} - {result['error']}")
-                    stats['assignments_failed'] += 1
-    
+    # 2 & 3. Roles, and their permissions, per tenant.
+    #
+    # This used to call `create_role` and `assign_permission_to_role_by_name`,
+    # which both resolve the tenant off the request — so from a CLI there is
+    # none, and every role failed with "Tenant context is required" while the
+    # script exited 0. Roles have therefore only ever come from
+    # `seed_roles_for_tenant`, and startup.sh logged four failures on every
+    # deploy. That silent half-failure is why each module ended up writing its
+    # own backfill script to do the per-tenant grants this was meant to do.
+    print("👥 Seeding roles per tenant...")
+    for tenant in Tenant.query.filter_by(status=TENANT_STATUS_ACTIVE).all():
+        before = _grant_count(tenant.id)
+        seed_roles_for_tenant(tenant.id)
+        added = _grant_count(tenant.id) - before
+        stats['roles_created'] += len(ROLES)
+        stats['assignments_created'] += added
+        print(f"  ✓ {tenant.subdomain or tenant.id}: {added} grant(s) added")
+
+    print(f"\n  Summary: {stats['assignments_created']} grant(s) added\n")
+
     print("\n" + "="*60)
     print("📊 Seeding Complete!")
     print("="*60)
     print(f"Permissions: {stats['permissions_created']} created, {stats['permissions_existed']} existed")
-    print(f"Roles: {stats['roles_created']} created, {stats['roles_existed']} existed")
-    print(f"Assignments: {stats['assignments_created']} created, {stats['assignments_failed']} failed")
+    print(f"Grants added: {stats['assignments_created']}")
+    print("To take a grant away, see: python -m scripts.reseed_rbac --dry-run")
     print("="*60 + "\n")
     
     return stats
