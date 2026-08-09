@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -320,3 +320,80 @@ def test_asking_for_fewer_suggestions_stops_early(db_session, tenant):
     db_session.flush()
 
     assert len(suggest_duplicates(tenant.id, limit=3)) == 3
+
+
+# ---------------------------------------------------------------------------
+# A common name is not a duplicate
+# ---------------------------------------------------------------------------
+
+def test_the_same_name_and_birthday_is_a_likely_duplicate(db_session, tenant):
+    _person(db_session, tenant, "Meera Shah", date_of_birth=date(2011, 4, 2))
+    _person(db_session, tenant, "  meera   SHAH ", date_of_birth=date(2011, 4, 2))
+
+    suggestions = suggest_duplicates(tenant.id)
+
+    assert len(suggestions) == 1
+    assert suggestions[0].reason == "same name and date of birth"
+
+
+def test_the_same_name_on_a_different_birthday_is_two_children(db_session, tenant):
+    """The case that made the scan quadratic.
+
+    A common name is a crowd, not a duplicate. These pairs were generated and
+    then thrown away one by one, which is work that grows with the square of
+    how common the name is — and because nothing was ever offered, the `limit`
+    could not end it early.
+    """
+    _person(db_session, tenant, "Ram Patel", date_of_birth=date(2010, 1, 1))
+    _person(db_session, tenant, "Ram Patel", date_of_birth=date(2012, 6, 6))
+
+    assert suggest_duplicates(tenant.id) == []
+
+
+def test_a_name_with_no_birthday_cannot_be_confirmed_by_one(db_session, tenant):
+    """Half a fact is not a match — and must not become one by bucketing."""
+    _person(db_session, tenant, "Kabir Modi")
+    _person(db_session, tenant, "Kabir Modi", date_of_birth=date(2010, 10, 10))
+
+    assert suggest_duplicates(tenant.id) == []
+
+
+def test_a_very_common_name_does_not_cost_the_square_of_itself(
+    db_session, tenant, monkeypatch
+):
+    """A regression guard on the work done, not on the clock.
+
+    Six hundred people share a name and share a birthday with nobody. Pairing
+    everyone who shares a name is 179,700 comparisons that find nothing; keying
+    on name *and* birthday asks for no pairs at all, because no two of them land
+    in the same bucket.
+
+    Counted rather than timed: 600 people took about 160ms under the old shape
+    on this machine, which no honest clock threshold separates from a slow test
+    run. The count is exact and the same everywhere. Measured on the real
+    database, the shape it protects against ran 500 people in 111ms, 2,000 in
+    1.7s and 4,000 in 6.9s — after the change, 4,000 took 19ms.
+    """
+    from modules.people import merge as merge_module
+
+    compared = {"pairs": 0}
+    original = merge_module._pairs
+
+    def counting(people):
+        for pair in original(people):
+            compared["pairs"] += 1
+            yield pair
+
+    monkeypatch.setattr(merge_module, "_pairs", counting)
+
+    for index in range(600):
+        _person(
+            db_session, tenant, "Ram Patel",
+            date_of_birth=date(2000, 1, 1) + timedelta(days=index),
+        )
+
+    assert suggest_duplicates(tenant.id) == []
+    assert compared["pairs"] == 0, (
+        f"{compared['pairs']} pairs compared for 600 people who share only a "
+        "name — the scan is pairing a crowd again"
+    )

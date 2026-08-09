@@ -293,11 +293,47 @@ Stated plainly so the backlog is not mistaken for complete:
 - UI screens whose backing endpoints are missing, beyond the two found
 - Backend functionality with no UI, beyond `merge_sections`
 - Remaining `users.id` references that should be Person/Staff
-- Performance claims from the roadmap (`suggest_duplicates` ~65s,
-  `_bus_operational_warning`, N+1s) — **unverified**, no measurement taken
+- Performance claims from the roadmap: `suggest_duplicates` **measured and
+  fixed** (below); `_bus_operational_warning` and the N+1 claims remain
+  **unverified**, no measurement taken
 - panel and Expo client screen inventories
 
 ---
+
+### [PERFORMANCE DEBT] `suggest_duplicates` — measured, and it was real
+
+The roadmap carried "~65s" for this. That figure was stale — a `perf(people)`
+commit had already rewritten the scan to read columns rather than ORM instances.
+On the demo school's 866 people it answers in **4.5ms**, and on 15,000 people
+with ordinary name spread, **55ms**.
+
+But measuring the shape rather than the average found a genuine cliff. Buckets
+were keyed on name alone, then each pair tested for a matching date of birth —
+so a common name cost the square of how common it is. Worse, the `limit` could
+only be reached through a match, so a large name bucket with distinct birthdays
+ran the whole quadratic and returned *nothing*. Measured on the real database:
+
+| people sharing one name | before | after |
+|---|---|---|
+| 500 | 111 ms | 6 ms |
+| 1,000 | 492 ms | 6 ms |
+| 2,000 | 1.74 s | 9 ms |
+| 4,000 | 6.86 s | 19 ms |
+
+Each doubling cost about four times as much — extrapolating, 15,000 people
+sharing a name is over a minute, which is plausibly where the original figure
+came from.
+
+Fixed by keying the bucket on name **and** date of birth together, so every pair
+in a bucket is a match by construction and the limit ends the work. Behaviour is
+unchanged, checked case by case: the real duplicate is still found (including
+through whitespace and case normalisation), same-name-different-birthday is
+still not offered, the household phone is still raised, and a missing birthday
+still cannot confirm a match.
+
+The regression guard counts comparisons rather than watching a clock — 600
+people who share only a name went from **179,700** pair comparisons to **0**,
+and a timing threshold loose enough to be stable was too loose to catch it.
 
 ## 5. What this pass changed, and what it means for the ordering
 
