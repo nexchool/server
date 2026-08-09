@@ -61,6 +61,7 @@ def _build_query_type() -> type:
     from modules.people.resolvers import PeopleQuery
     from modules.school_setup.resolvers import SchoolSetupQuery
     from modules.students.resolvers import StudentQuery
+    from modules.teachers.resolvers import TeacherQuery
 
     @strawberry.type(description="Every read the platform exposes.")
     class Query(
@@ -74,6 +75,7 @@ def _build_query_type() -> type:
         CalendarQuery,
         SchoolSetupQuery,
         TimetableQuery,
+        TeacherQuery,
     ):
         pass
 
