@@ -6,9 +6,10 @@
 > closes, move it to Closed with the migration or commit that closed it. When
 > a new shortcut is taken, register it here in the same commit that takes it.
 
-**Last updated:** 2026-08-09 — items 34, 36–40 added from the Phase A stabilization audit
-(`reviews/2026-08-09-stabilization-audit.md`); 33 and 18 closed. "Phase 2 covered …
-section merge" below meant *built*, not *reachable* — it is reachable now (see Closed).
+**Last updated:** 2026-08-09 — items 34, 37–40 added from the Phase A stabilization audit
+(`reviews/2026-08-09-stabilization-audit.md`); 33 and 18 closed; 36 withdrawn as
+mis-diagnosed. "Phase 2 covered … section merge" below meant *built*, not *reachable* —
+it is reachable now (see Closed).
 
 2026-08-08 — Phase 1 complete; Phase 2 complete; **Phase 3 COMPLETE**; **Phase 4 started** (Attendance: corrections surfaced, feature gate built). Phase 2 covered (student lifecycle, admissions, transfers, staff lifecycle, attendance corrections, section merge). Closed: 1–4, 6–8, 10, 13, 14, 14b, 14c, staff lifecycle (migrations 094–102). Residuals: 2b, 4b, 6b–6d, 7b–7d, 10b, 13b, 14d, 14e, 15. Phase 3: Students queries + lifecycle mutations built; conventions in `graphql-conventions.md`.
 
@@ -47,7 +48,6 @@ control.
 | 11 | **Transport list pagination is opt-in**; clients still read whole arrays | a truncated array is indistinguishable from a complete one | M5: admin-web + Expo adopt the page, then the array goes |
 | 34 | **A navigation link 404s.** `admin-web/src/components/academics/year-transition/TransitionComplete.tsx:212` links to `/dashboard/transport/enrollments`; no such page exists. The link sits on the year-transition completion screen — the moment transport enrolment matters most. | the transport students screen was named `students`, the link was written against `enrollments` | point the link at `/dashboard/transport/students`, or build the enrolments screen if they are different things |
 | 40 | **admin-web cannot create a class.** The only affordance was `canCreate && isSchoolSetupEnabled()` on the classes page, linking to the School Setup wizard that was removed when onboarding moved to the panel. The flag was hard-coded `false`, so the button had already stopped rendering — `class.create` was read and never used, and the zero-class empty state pointed at the same dead route. The dead markup is gone; the gap is not. A school that opens a new section mid-year has no way to add it from the tenant app. | the wizard was removed before its replacement existed | decide whether creating a section is operator work (panel) or school work (admin-web); if the latter, build the form against the existing `POST /api/classes` |
-| 36 | **Two finance screen trees are both live, and Invoices is reachable from neither menu.** `admin-web/src/app/(dashboard)/finance/*` has 7 pages including the only invoices screens; `dashboard/finance/*` has 5 and is what navigation links. `/finance/*` is reached solely by the student detail cross-link (`students/[id]/page.tsx:687`) and is protected in `middleware.ts:13` — so it is neither dead nor browsable, and a user arriving from a student sees a different fees implementation than one using the sidebar. | a route move that kept both trees | pick one tree, move invoices into it, redirect the other |
 | 37 | **A second, dead login implementation.** `modules/auth/services.py:366` defines `login_user()`; nothing calls it. `modules/auth/routes.py:196` implements login directly against `authenticate_user` / `authenticate_platform_admin`. Two authentication paths, one unused and free to drift, in the module where drift matters most. | the service predates the route's inlined flow | delete `login_user` once confirmed unreferenced across all four clients |
 | 38 | **A tenant's authorization state depends on which one-off backfills were run against it.** Besides `seed_rbac.py` there are seven grant/backfill/fix scripts (`backfill_academic_calendar_permissions`, `backfill_admin_finance_permissions`, `backfill_teacher_leave_permissions`, `backfill_timetable_subject_permissions`, `fix_teacher_permissions`, `grant_hostel_permissions`, `seed_holiday_permissions`). This is the mechanism that produced debt 33, and it will produce the next one. | each module added its keys with its own script | one declarative seed that is the whole truth; backfills become migrations that replay it |
 | 39 | **80 public service functions have no caller outside their own file.** Seven were verified by hand and all seven were genuinely uncalled, so the list is real rather than a matcher artifact — but it is untriaged. It mixes dead code with unreachable *capabilities* (`students.analyze_promotion`, `students.import_students_from_rows`, `rbac.delegate_authority`, `school_setup.duplicate_unit_to_unit`, `attendance.lock_after_hours`). Concentrated in transport (17), notifications (11), rbac (8), school_setup (7), auth (7), students (7). | features built ahead of their transport, plus genuine rot | triage per item during Phase B/C — never in bulk; "delete" and "this is a feature with no door" look identical from here |
@@ -59,6 +59,26 @@ control.
 ---
 
 ## Closed
+
+**Debt 36 was not a defect — withdrawn (2026-08-09).** It claimed two live
+finance screen trees reached by different paths, with Invoices unreachable from
+the menu. Neither half was true, and both came from reading a directory listing
+instead of the files.
+
+`src/app/(dashboard)/finance/*` is seven files of five to seven lines each: pure
+`redirect()` stubs kept so links and bookmarks from before the routes moved still
+land somewhere sensible. There is one implementation, under `dashboard/finance`.
+And `/finance/invoices` is not a hidden invoices screen — it carries a comment
+saying invoices were unified into Student Fees (`StudentFee` *is* the invoice)
+and redirects there. Nothing in the app calls itself Invoices, and no invoices
+service survives. Verified live: `/finance/student-fees` lands on
+`/dashboard/finance/student-fees`.
+
+What was real, and is fixed: the student detail page cross-linked to
+`/finance/student-fees`, so "Open fees" bounced through the compatibility layer
+instead of going where the page lives. `internalLinks.test.ts` now recognises a
+redirect stub and fails any internal link pointing at one — those routes exist
+for the outside world, not for this app to link to.
 
 **Section merge is reachable, and merged sections have left the pickers
 (2026-08-09).** Debt 18. `merge_sections` was complete, tested and unrouted;

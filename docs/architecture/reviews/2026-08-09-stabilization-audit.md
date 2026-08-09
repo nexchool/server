@@ -117,18 +117,31 @@ Dead markup removed; the gap is registered as **debt 40** rather than fixed here
 because whether creating a section is operator work or school work is a product
 decision.
 
-### [UI GAP] The Invoices screen is unreachable from navigation
+### ~~[UI GAP] The Invoices screen is unreachable from navigation~~ — WRONG, withdrawn
 
-Two finance screen trees exist and both are live:
+I claimed two live finance screen trees reached by different paths, with Invoices
+unreachable from the menu. Neither half was true. Both came from reading a
+directory listing instead of the files — the same mistake as the retracted
+blocker above, and the third time in this audit.
 
-- `src/app/(dashboard)/finance/*` — 7 pages, including the **only** invoices screens
-- `src/app/(dashboard)/dashboard/finance/*` — 5 pages, the ones the sidebar links
+`src/app/(dashboard)/finance/*` is seven files of five to seven lines: pure
+`redirect()` stubs, kept so links and bookmarks from before the routes moved
+still land somewhere sensible. There is one implementation, under
+`dashboard/finance`. And `/finance/invoices` is not a hidden invoices screen —
+it carries a comment saying invoices were unified into Student Fees (`StudentFee`
+*is* the invoice) and redirects there. Nothing in the app calls itself Invoices
+and no invoices service survives. Verified live: `/finance/student-fees` lands on
+`/dashboard/finance/student-fees`.
 
-Navigation links only `/dashboard/finance/*`. `/finance/*` is reached solely by a
-cross-link from the student detail page (`students/[id]/page.tsx:687` → "Open fees")
-and is protected in `middleware.ts:13`, so it is neither dead nor reachable by
-browsing. Net effect: **invoicing has no path from the menu**, and a user who arrives
-via a student sees a different implementation of fees than one who uses the sidebar.
+What was real: the student detail page cross-linked to `/finance/student-fees`,
+so "Open fees" bounced through the compatibility layer instead of going where the
+page lives. Fixed, and `internalLinks.test.ts` now recognises a redirect stub and
+fails any internal link pointing at one.
+
+**A directory listing is not evidence about what a file does.** Every wrong
+finding in this audit came from inferring behaviour from a name or a path. The
+cost of opening the file is seconds; the cost of not opening it, three times
+here, was a finding that sent work in the wrong direction.
 
 ### [ARCHITECTURE DEBT] Six confirmed dual transports
 
