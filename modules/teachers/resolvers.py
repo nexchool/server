@@ -19,10 +19,23 @@ from typing import Any, Dict, List, Optional
 import strawberry
 
 from graphql_api.errors import ValidationError
-from graphql_api.permissions import IsAuthenticated, RequiresTenant, requires
+from graphql_api.permissions import (
+    IsAuthenticated,
+    RequiresTenant,
+    requires,
+    requires_feature,
+)
 
 from .graphql.types import (
     DepartmentOption,
+    TeacherAvailability,
+    TeacherLeave,
+    TeacherSubjectAssignment,
+    TeacherWorkload,
+    availability_to_graphql,
+    leave_to_graphql,
+    teacher_subject_to_graphql,
+    workload_to_graphql,
     Teacher,
     TeacherDetail,
     TeacherPage,
@@ -33,6 +46,24 @@ from .graphql.types import (
 # `teacher.manage` implies every teacher action, so naming the read is the
 # whole rule. Read off the route.
 PERM_READ = "teacher.read"
+
+# The sub-surfaces are stricter than the list, and they do not agree with each
+# other. Read off each route rather than assumed from the module:
+#   subjects     teacher.manage         + teacher_management (CORE, no gate)
+#   availability teacher.manage         + timetable (OPTIONAL, gated)
+#   workload     teacher.manage         + timetable (OPTIONAL, gated)
+#   leaves       teacher.leave.manage   + teacher_management (CORE, no gate)
+# Bundling these behind one guard would hand somebody a screen they may not
+# open, or take away one they may.
+PERM_MANAGE = "teacher.manage"
+PERM_LEAVE_MANAGE = "teacher.leave.manage"
+
+TIMETABLE_READS = [
+    IsAuthenticated,
+    RequiresTenant,
+    requires_feature("timetable"),
+    requires(PERM_MANAGE),
+]
 
 MAX_PAGE_SIZE = 100
 
@@ -163,3 +194,78 @@ class TeacherQuery:
 
         row = services.get_teacher_by_id(str(id))
         return teacher_detail_to_graphql(row) if row else None
+
+    @strawberry.field(
+        permission_classes=[IsAuthenticated, RequiresTenant, requires(PERM_MANAGE)],
+        description="The subjects a teacher is assigned to teach.",
+    )
+    def teacher_subjects(
+        self, info: strawberry.Info, teacher_id: strawberry.ID
+    ) -> List[TeacherSubjectAssignment]:
+        from . import constraint_services
+
+        return [
+            teacher_subject_to_graphql(row)
+            for row in constraint_services.get_teacher_subjects(str(teacher_id))
+        ]
+
+    @strawberry.field(
+        permission_classes=TIMETABLE_READS,
+        description=(
+            "When a teacher is free. Rows exist only where the school has "
+            "said something — no rows means no constraint, not no availability."
+        ),
+    )
+    def teacher_availability(
+        self, info: strawberry.Info, teacher_id: strawberry.ID
+    ) -> List[TeacherAvailability]:
+        from . import constraint_services
+
+        return [
+            availability_to_graphql(row)
+            for row in constraint_services.get_teacher_availability(str(teacher_id))
+        ]
+
+    @strawberry.field(
+        permission_classes=TIMETABLE_READS,
+        description=(
+            "How much this teacher may be asked to teach. Every ceiling is "
+            "null when the school has set none for them."
+        ),
+    )
+    def teacher_workload(
+        self, info: strawberry.Info, teacher_id: strawberry.ID
+    ) -> TeacherWorkload:
+        from . import constraint_services
+
+        return workload_to_graphql(
+            constraint_services.get_workload_rule(str(teacher_id))
+        )
+
+    @strawberry.field(
+        permission_classes=[
+            IsAuthenticated,
+            RequiresTenant,
+            requires(PERM_LEAVE_MANAGE),
+        ],
+        description=(
+            "Leave requests across the school, for whoever decides them. A "
+            "teacher's own requests are a different question and a different "
+            "authority."
+        ),
+    )
+    def teacher_leaves(
+        self,
+        info: strawberry.Info,
+        status: Optional[str] = None,
+        teacher_id: Optional[strawberry.ID] = None,
+    ) -> List[TeacherLeave]:
+        from . import constraint_services
+
+        return [
+            leave_to_graphql(row)
+            for row in constraint_services.list_leaves(
+                status=status,
+                teacher_id=str(teacher_id) if teacher_id else None,
+            )
+        ]

@@ -155,3 +155,116 @@ def teacher_detail_to_graphql(row: dict) -> TeacherDetail:
         for subject in (row.get("subjects") or [])
     ]
     return node
+
+
+@strawberry.type(
+    description=(
+        "A subject a teacher is assigned to. The assignment, not the "
+        "catalogue entry — `subjectId` names the subject itself."
+    )
+)
+class TeacherSubjectAssignment:
+    id: strawberry.ID
+    teacher_id: strawberry.ID
+    subject_id: strawberry.ID
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
+
+
+@strawberry.type(
+    description=(
+        "Whether a teacher is free in one period of one day. Rows exist only "
+        "where a school has said something; silence means no constraint."
+    )
+)
+class TeacherAvailability:
+    id: strawberry.ID
+    teacher_id: strawberry.ID
+    day_of_week: int = strawberry.field(description="0 = Monday.")
+    period_number: int = 0
+    available: bool = True
+
+
+@strawberry.type(
+    description=(
+        "How much a teacher may be asked to teach. Null where the school has "
+        "set no ceiling, which is not the same as a ceiling of nil."
+    )
+)
+class TeacherWorkload:
+    id: Optional[strawberry.ID] = None
+    teacher_id: Optional[strawberry.ID] = None
+    max_periods_per_day: Optional[int] = None
+    max_periods_per_week: Optional[int] = None
+
+
+@strawberry.type(
+    description=(
+        "A teacher's request to be away. `workingDays` is what it costs their "
+        "balance — weekends and closures inside the range do not count."
+    )
+)
+class TeacherLeave:
+    id: strawberry.ID
+    teacher_id: strawberry.ID
+    teacher_name: Optional[str] = None
+    teacher_employee_id: Optional[str] = None
+    teacher_profile_picture: Optional[str] = None
+    leave_type: Optional[str] = None
+    status: Optional[str] = strawberry.field(
+        default=None, description="pending, approved, rejected or cancelled."
+    )
+    reason: Optional[str] = None
+    start_date: Optional[datetime.date] = None
+    end_date: Optional[datetime.date] = None
+    working_days: Optional[float] = None
+    academic_year: Optional[str] = None
+
+
+def teacher_subject_to_graphql(row: dict) -> TeacherSubjectAssignment:
+    return TeacherSubjectAssignment(
+        id=strawberry.ID(row["id"]),
+        teacher_id=strawberry.ID(row["teacher_id"]),
+        subject_id=strawberry.ID(row["subject_id"]),
+        subject_name=row.get("subject_name"),
+        subject_code=row.get("subject_code"),
+    )
+
+
+def availability_to_graphql(row: dict) -> TeacherAvailability:
+    return TeacherAvailability(
+        id=strawberry.ID(row["id"]),
+        teacher_id=strawberry.ID(row["teacher_id"]),
+        day_of_week=int(row.get("day_of_week") or 0),
+        period_number=int(row.get("period_number") or 0),
+        available=bool(row.get("available", True)),
+    )
+
+
+def workload_to_graphql(row) -> TeacherWorkload:
+    row = row or {}
+    return TeacherWorkload(
+        id=strawberry.ID(row["id"]) if row.get("id") else None,
+        teacher_id=(
+            strawberry.ID(row["teacher_id"]) if row.get("teacher_id") else None
+        ),
+        max_periods_per_day=row.get("max_periods_per_day"),
+        max_periods_per_week=row.get("max_periods_per_week"),
+    )
+
+
+def leave_to_graphql(row: dict) -> TeacherLeave:
+    return TeacherLeave(
+        id=strawberry.ID(row["id"]),
+        teacher_id=strawberry.ID(row["teacher_id"]),
+        teacher_name=row.get("teacher_name"),
+        teacher_employee_id=row.get("teacher_employee_id"),
+        teacher_profile_picture=row.get("teacher_profile_picture"),
+        leave_type=row.get("leave_type"),
+        status=row.get("status"),
+        reason=row.get("reason"),
+        start_date=_date(row.get("start_date")),
+        end_date=_date(row.get("end_date")),
+        working_days=row.get("working_days"),
+        academic_year=row.get("academic_year"),
+    )

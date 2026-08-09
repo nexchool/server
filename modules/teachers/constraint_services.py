@@ -648,9 +648,24 @@ def create_leave(
 
 
 def list_leaves(teacher_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
-    """List leave requests. Optionally filter by teacher or status."""
+    """List leave requests. Optionally filter by teacher or status.
+
+    The eager loads follow what `TeacherLeave.to_dict` reads: the requester's
+    name through Staff → Person, and their login only for the photograph.
+    Without them a school's leave queue costs three queries per row.
+    """
+    from sqlalchemy.orm import joinedload
+
+    from modules.people.employment import Staff
+    from modules.teachers.models import Teacher
+
     tenant_id = get_tenant_id()
-    query = TeacherLeave.query.filter_by(tenant_id=tenant_id)
+    query = TeacherLeave.query.options(
+        joinedload(TeacherLeave.teacher)
+        .joinedload(Teacher.staff)
+        .joinedload(Staff.person),
+        joinedload(TeacherLeave.teacher).joinedload(Teacher.user),
+    ).filter_by(tenant_id=tenant_id)
     if teacher_id:
         query = query.filter_by(teacher_id=teacher_id)
     if status:

@@ -354,3 +354,185 @@ def test_a_stranger_reads_nothing(client, tenant, staffroom):
     body = _list(client, tenant, None)
 
     assert "UNAUTHENTICATED" in _codes(body)
+
+
+# ---------------------------------------------------------------------------
+# The sub-surfaces, each with its own authority
+# ---------------------------------------------------------------------------
+
+SUBJECTS = """
+query S($teacherId: ID!) {
+  teacherSubjects(teacherId: $teacherId) {
+    id teacherId subjectId subjectName subjectCode
+  }
+}
+"""
+
+AVAILABILITY = """
+query A($teacherId: ID!) {
+  teacherAvailability(teacherId: $teacherId) {
+    id teacherId dayOfWeek periodNumber available
+  }
+}
+"""
+
+WORKLOAD = """
+query W($teacherId: ID!) {
+  teacherWorkload(teacherId: $teacherId) {
+    id teacherId maxPeriodsPerDay maxPeriodsPerWeek
+  }
+}
+"""
+
+LEAVES = """
+query L($status: String, $teacherId: ID) {
+  teacherLeaves(status: $status, teacherId: $teacherId) {
+    id teacherId teacherName teacherEmployeeId leaveType status
+    startDate endDate workingDays reason
+  }
+}
+"""
+
+
+@pytest.fixture
+def leave_request(db_session, tenant, staffroom):
+    from datetime import date as _date
+
+    from modules.teachers.models import TeacherLeave
+
+    working, _departed = staffroom
+    row = TeacherLeave(
+        id=_new_id("lv-"), tenant_id=tenant.id, teacher_id=working.id,
+        leave_type="casual", status="pending", reason="Family function",
+        start_date=_date(2026, 9, 1), end_date=_date(2026, 9, 2),
+        working_days=2, academic_year="2026-27",
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def test_a_teachers_subjects(client, db_session, tenant, staffroom):
+    working, _ = staffroom
+    _user, token = _staff_with(db_session, tenant, "teacher.manage")
+
+    body = _ask(client, tenant, token, SUBJECTS, teacherId=working.id)
+
+    assert "errors" not in body, body
+    assert isinstance(body["data"]["teacherSubjects"], list)
+
+
+def test_reading_subjects_needs_manage_not_merely_read(
+    client, db_session, tenant, staffroom
+):
+    """The route asks for `teacher.manage`, which is stricter than the list's
+    `teacher.read`. Copying the list's guard would have opened it wider."""
+    working, _ = staffroom
+    _user, token = _staff_with(db_session, tenant, "teacher.read")
+
+    body = _ask(client, tenant, token, SUBJECTS, teacherId=working.id)
+
+    assert "FORBIDDEN" in _codes(body)
+
+
+def test_availability_says_nothing_when_the_school_has_said_nothing(
+    client, db_session, tenant, staffroom
+):
+    working, _ = staffroom
+    _user, token = _staff_with(db_session, tenant, "teacher.manage")
+
+    body = _ask(client, tenant, token, AVAILABILITY, teacherId=working.id)
+
+    assert "errors" not in body, body
+    assert body["data"]["teacherAvailability"] == []
+
+
+def test_availability_is_behind_the_timetable_module(
+    client, db_session, tenant, staffroom
+):
+    """Its route sits behind `timetable`, not `teacher_management` — a school
+    with no timetable is not asked when its teachers are free."""
+    working, _ = staffroom
+    tenant.feature_flags = {"timetable": False}
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "teacher.manage")
+
+    body = _ask(client, tenant, token, AVAILABILITY, teacherId=working.id)
+
+    assert "FEATURE_DISABLED" in _codes(body)
+
+
+def test_subjects_are_not_behind_the_timetable_module(
+    client, db_session, tenant, staffroom
+):
+    """The two sit behind different features; one switch must not take both."""
+    working, _ = staffroom
+    tenant.feature_flags = {"timetable": False}
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "teacher.manage")
+
+    body = _ask(client, tenant, token, SUBJECTS, teacherId=working.id)
+
+    assert "errors" not in body, body
+
+
+def test_a_teacher_with_no_ceiling_set_reads_as_null_not_zero(
+    client, db_session, tenant, staffroom
+):
+    """No rule is not a rule of nil — a zero would read as "may teach nothing"."""
+    working, _ = staffroom
+    _user, token = _staff_with(db_session, tenant, "teacher.manage")
+
+    body = _ask(client, tenant, token, WORKLOAD, teacherId=working.id)
+
+    workload = body["data"]["teacherWorkload"]
+    assert workload["maxPeriodsPerDay"] is None
+    assert workload["maxPeriodsPerWeek"] is None
+
+
+def test_the_leave_requests_a_school_must_decide(
+    client, db_session, tenant, staffroom, leave_request
+):
+    _user, token = _staff_with(db_session, tenant, "teacher.leave.manage")
+
+    body = _ask(client, tenant, token, LEAVES, status=None, teacherId=None)
+
+    assert "errors" not in body, body
+    leaves = body["data"]["teacherLeaves"]
+    assert len(leaves) == 1
+    assert leaves[0]["teacherName"] == "Rekha Solanki"
+    assert leaves[0]["workingDays"] == 2
+
+
+def test_teacher_manage_reaches_leave_because_manage_means_the_resource(
+    client, db_session, tenant, staffroom, leave_request
+):
+    """`teacher.manage` DOES open this, and that is the rule working, not a
+    hole: `<resource>.manage` covers every key under that resource, and
+    `teacher.leave.manage` is one. The REST route behaves identically. What
+    must not reach it is somebody with neither."""
+    _user, token = _staff_with(db_session, tenant, "teacher.manage")
+
+    assert "errors" not in _ask(client, tenant, token, LEAVES, status=None, teacherId=None)
+
+
+def test_leave_is_not_open_to_just_anybody(
+    client, db_session, tenant, staffroom, leave_request
+):
+    _user, token = _staff_with(db_session, tenant, "student.read.all")
+
+    body = _ask(client, tenant, token, LEAVES, status=None, teacherId=None)
+
+    assert "FORBIDDEN" in _codes(body)
+
+
+def test_filtering_leave_by_what_is_still_undecided(
+    client, db_session, tenant, staffroom, leave_request
+):
+    _user, token = _staff_with(db_session, tenant, "teacher.leave.manage")
+
+    pending = _ask(client, tenant, token, LEAVES, status="pending", teacherId=None)
+    approved = _ask(client, tenant, token, LEAVES, status="approved", teacherId=None)
+
+    assert len(pending["data"]["teacherLeaves"]) == 1
+    assert approved["data"]["teacherLeaves"] == []

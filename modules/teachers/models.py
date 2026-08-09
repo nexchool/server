@@ -289,7 +289,15 @@ class TeacherLeave(TenantBaseModel):
         return {
             "id": self.id,
             "teacher_id": self.teacher_id,
-            "teacher_name": self.teacher.user.name if self.teacher and self.teacher.user else None,
+            # The name lives on the Person, reached through the employment
+            # (ADR-001/ADR-005). Reading it off the login left every
+            # account-less teacher nameless in the leave queue — and a teacher
+            # need not have a login since migration 094. Register item 15.
+            "teacher_name": (
+                self.teacher.staff.person.full_name
+                if self.teacher and self.teacher.staff and self.teacher.staff.person
+                else None
+            ),
             "teacher_employee_id": (
                 self.teacher.staff.employee_number
                 if self.teacher and self.teacher.staff
