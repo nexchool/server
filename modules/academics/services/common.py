@@ -51,4 +51,11 @@ def date_in_effective_range(
 
 
 def class_display_name(cls: Class) -> str:
-    return f"{cls.name}-{cls.section}"
+    """What a school calls this class.
+
+    Delegates to `Class.display_name`, which composes grade + section and falls
+    back to the legacy `name`. Building the label here as `name-section` printed
+    "None-A" for every class made by the structured form, where `name` is null
+    and the grade holds the label.
+    """
+    return cls.display_name or ""

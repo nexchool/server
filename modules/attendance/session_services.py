@@ -108,7 +108,7 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
             items.append(
                 {
                     "class_id": c.id,
-                    "class_name": f"{c.name}-{c.section}",
+                    "class_name": c.display_name,
                     "reason": "admin",
                     "can_mark": True,
                 }
@@ -135,7 +135,7 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
         items.append(
             {
                 "class_id": c.id,
-                "class_name": f"{c.name}-{c.section}",
+                "class_name": c.display_name,
                 "reason": "class_teacher",
                 "can_mark": True,
             }
@@ -157,7 +157,7 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
         items.append(
             {
                 "class_id": c.id,
-                "class_name": f"{c.name}-{c.section}",
+                "class_name": c.display_name,
                 "reason": "delegated",
                 "can_mark": True,
             }
@@ -165,7 +165,9 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
         seen.add(c.id)
 
 
-    items.sort(key=lambda x: x["class_name"])
+    # `display_name` is None for a class with no grade, no name and no
+    # section; sorting that against strings raises.
+    items.sort(key=lambda x: x["class_name"] or "")
     return {"success": True, "items": items}
 
 
@@ -212,7 +214,7 @@ def get_or_create_session(
     if existing:
         return {
             "success": True,
-            "session": serialize_session(existing, f"{cls.name}-{cls.section}"),
+            "session": serialize_session(existing, cls.display_name),
             "created": False,
         }
 
@@ -254,14 +256,14 @@ def get_or_create_session(
         if existing:
             return {
                 "success": True,
-                "session": serialize_session(existing, f"{cls.name}-{cls.section}"),
+                "session": serialize_session(existing, cls.display_name),
                 "created": False,
             }
         return {"success": False, "error": "Could not create attendance session"}
 
     return {
         "success": True,
-        "session": serialize_session(s, f"{cls.name}-{cls.section}"),
+        "session": serialize_session(s, cls.display_name),
         "created": True,
     }
 
@@ -412,7 +414,7 @@ def finalize_session(tenant_id: str, session_id: str, user_id: str) -> Dict[str,
     s.updated_by = user_id
     db.session.commit()
     cls = Class.query.get(s.class_id)
-    name = f"{cls.name}-{cls.section}" if cls else None
+    name = cls.display_name if cls else None
     return {"success": True, "session": serialize_session(s, name)}
 
 
@@ -436,7 +438,7 @@ def class_history(
 
     out = []
     for s in sessions:
-        out.append(serialize_session(s, f"{cls.name}-{cls.section}"))
+        out.append(serialize_session(s, cls.display_name))
 
     return {"success": True, "items": out}
 

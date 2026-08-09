@@ -59,7 +59,7 @@ def get_class_attendance_session(class_id):
         return success_response(data={"session": None, "records": []})
     return success_response(
         data={
-            "session": svc.serialize_session(s, f"{cls.name}-{cls.section}"),
+            "session": svc.serialize_session(s, cls.display_name),
             "records": svc.list_records_for_session(g.tenant_id, s.id),
         }
     )

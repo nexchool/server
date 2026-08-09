@@ -198,7 +198,7 @@ def _finalize_overview_payload(
 
     payload: Dict[str, Any] = {
         "class_id": class_id,
-        "class_name": f"{cls.name}-{cls.section}",
+        "class_name": cls.display_name,
         "date": date_str,
         "is_holiday": holiday_info is not None,
         "holiday_info": holiday_info,
