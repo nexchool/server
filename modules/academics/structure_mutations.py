@@ -378,8 +378,8 @@ class StructureMutation:
     @strawberry.mutation(
         permission_classes=_guard(PERM_MEDIUM_MANAGE, PERM_CLASS_SUBJECT_MANAGE),
         description=(
-            "Stop teaching in a language. Unlike the other three this is not "
-            "refused when a class still names the medium — see debt 44."
+            "Stop teaching in a language. Refused while a class, a programme "
+            "or a subject context still names it."
         ),
     )
     def remove_medium(self, info: strawberry.Info, id: strawberry.ID) -> bool:

@@ -5,7 +5,7 @@ Business logic for authentication, JWT token management, and sessions.
 """
 
 import jwt
-from datetime import datetime, timedelta
+from datetime import timedelta
 import os
 from typing import Optional, Tuple, Dict, List
 

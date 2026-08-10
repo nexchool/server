@@ -1,6 +1,5 @@
 from core.database import db
 from core.models import TenantBaseModel
-from datetime import datetime
 import uuid
 
 from sqlalchemy import CheckConstraint, Index, text

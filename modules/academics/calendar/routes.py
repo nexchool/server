@@ -39,7 +39,6 @@ from shared.helpers import (
 )
 
 from . import export_services, import_services, services
-from .activity import resolve_user_names
 from .services import CalendarValidationError
 
 # Granular per-action permissions. `manage` is a superset of every

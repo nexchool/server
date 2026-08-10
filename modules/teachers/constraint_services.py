@@ -58,7 +58,7 @@ def _notify_leave_managers(
             create_recipients,
             send_notification as enqueue_dispatch,
         )
-        from modules.notifications.enums import NotificationChannel, NotificationType
+        from modules.notifications.enums import NotificationChannel
 
         user_ids = get_leave_manager_user_ids(tenant_id)
         if not user_ids:

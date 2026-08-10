@@ -5,7 +5,6 @@ from sqlalchemy.orm import aliased, contains_eager, joinedload
 from datetime import datetime
 import logging
 import string
-import uuid
 from decimal import Decimal
 
 from core.database import db

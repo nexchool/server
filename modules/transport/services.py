@@ -18,7 +18,7 @@ from core.database import db
 from core.branch_scope import filter_by_student_ids
 from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
-from modules.finance.models import FeeComponent, FeeStructure, StudentFee, StudentFeeItem
+from modules.finance.models import FeeComponent, FeeStructure, StudentFee
 from modules.finance.services.student_fee_service import (
     assign_student_fees_for_structure,
     remove_student_fee_for_structure,

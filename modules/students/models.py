@@ -5,7 +5,6 @@ from sqlalchemy import text
 
 from core.database import db
 from core.models import TenantBaseModel
-from datetime import datetime
 import uuid
 from core.school_time import utc_now
 

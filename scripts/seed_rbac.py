@@ -12,7 +12,6 @@ Or from Flask shell:
 """
 
 from app import create_app
-from core.database import db
 from core.models import Tenant, TENANT_STATUS_ACTIVE
 from modules.rbac.models import RolePermission
 from modules.rbac.role_seeder import seed_roles_for_tenant

@@ -22,7 +22,6 @@ Coverage check: change a client field's declared type and confirm this
 reports it. `git stash` will not revert a committed change — use
 `git checkout <commit>~1 -- <file>`.
 """
-import json
 import re
 import sys
 from collections import defaultdict

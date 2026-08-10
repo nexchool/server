@@ -1,7 +1,6 @@
 from shared.s3_utils import profile_picture_public_url
 from core.database import db
 from core.models import TenantBaseModel
-from datetime import datetime
 import uuid
 from core.school_time import utc_now
 

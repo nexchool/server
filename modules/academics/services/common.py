@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Tuple
+from typing import Optional
 
 from modules.classes.models import Class
 from modules.teachers.models import Teacher

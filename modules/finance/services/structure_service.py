@@ -5,7 +5,6 @@ from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from core.tenant import get_tenant_id

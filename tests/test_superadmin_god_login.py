@@ -20,7 +20,6 @@ import uuid
 import pytest
 from flask import g
 
-from core.database import db
 from core.decorators.rbac import require_permission
 from core.decorators.setup import require_setup_complete
 from core.models import Tenant, TENANT_STATUS_ACTIVE, BILLING_CYCLE_YEARLY

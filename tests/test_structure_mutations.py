@@ -359,6 +359,51 @@ def test_removing_a_campus_that_still_teaches_classes_is_refused(
     assert "CONFLICT" in _codes(body), body
 
 
+def test_removing_a_medium_a_programme_is_taught_in_is_refused(
+    client, tenant, db_session, keeper
+):
+    """The guard the other three catalogues always had, and this one did not.
+
+    A programme is checked as well as a class on purpose: a school that stops
+    offering Gujarati still has programmes declared in it, and deleting the
+    medium out from under them leaves a reference to a row nothing can read.
+    """
+    from modules.academic_programmes.models import AcademicProgramme
+
+    _user, token = keeper
+    medium = _ask(
+        client, tenant, token, ADD_MEDIUM, input={"name": f"Marathi-{uuid.uuid4().hex[:5]}"}
+    )["data"]["addMedium"]
+
+    db_session.add(
+        AcademicProgramme(
+            id=_new_id("ap-"), tenant_id=tenant.id, name="State Board",
+            board="GSEB", code=f"GS-{uuid.uuid4().hex[:5]}", medium_id=medium["id"],
+        )
+    )
+    db_session.flush()
+
+    body = _ask(
+        client, tenant, token, "mutation R($id: ID!) { removeMedium(id: $id) }",
+        id=medium["id"],
+    )
+    assert "CONFLICT" in _codes(body), body
+
+
+def test_removing_a_medium_nothing_teaches_in_succeeds(client, tenant, keeper):
+    _user, token = keeper
+    medium = _ask(
+        client, tenant, token, ADD_MEDIUM, input={"name": f"Spare-{uuid.uuid4().hex[:5]}"}
+    )["data"]["addMedium"]
+
+    body = _ask(
+        client, tenant, token, "mutation R($id: ID!) { removeMedium(id: $id) }",
+        id=medium["id"],
+    )
+    assert body.get("errors") is None, body
+    assert body["data"]["removeMedium"] is True
+
+
 def test_removing_something_that_is_not_there_is_not_found(client, tenant, keeper):
     _user, token = keeper
 

@@ -12,7 +12,6 @@ vacuously enough to fail loudly. Read the catalogue instead.
 from __future__ import annotations
 
 import ast
-import sys
 from pathlib import Path
 
 SERVER_DIR = Path(__file__).resolve().parent.parent

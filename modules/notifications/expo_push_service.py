@@ -13,7 +13,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

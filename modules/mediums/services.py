@@ -104,9 +104,43 @@ def update_medium(
 
 
 def delete_medium(medium_id: str, tenant_id: str) -> Dict[str, Any]:
+    """Soft-delete, refused while anything still names this medium.
+
+    The other three structural catalogues — grades, programmes and campuses —
+    have always counted the classes referencing them and refused. This one did
+    not, so a school teaching parallel English and Gujarati sections could
+    delete "Gujarati" and leave every one of those sections pointing at a
+    soft-deleted row. Medium is part of a section's identity by the scale
+    contract, which makes an orphan here worse than in the other three, not
+    better (debt 44).
+
+    Three things can name a medium and all three count: a class is taught in
+    one, a programme is offered in one, and a subject context is defined for
+    one. Checking only classes would let a programme keep a reference to
+    something the school believes it has stopped teaching in.
+    """
     m = Medium.query.filter_by(id=medium_id, tenant_id=tenant_id).first()
     if not m or m.deleted_at is not None:
         return {"success": False, "error": "Medium not found"}
+
+    from modules.academic_programmes.models import AcademicProgramme
+    from modules.classes.models import Class
+    from modules.subject_contexts.models import SubjectContext
+
+    for model, what in (
+        (Class, "classes"),
+        (AcademicProgramme, "programmes"),
+        (SubjectContext, "subject contexts"),
+    ):
+        if model.query.filter_by(tenant_id=tenant_id, medium_id=medium_id).first():
+            return {
+                "success": False,
+                "error": (
+                    f"Medium is referenced by existing {what}; "
+                    "remove or reassign them first."
+                ),
+            }
+
     m.deleted_at = datetime.now(timezone.utc)
     m.is_active = False
     db.session.commit()
