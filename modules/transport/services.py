@@ -256,52 +256,89 @@ def compute_enrollment_transport_status(
     return TRANSPORT_STATUS_ACTIVE
 
 
+def scheduled_bus_routes(tenant_id: str, academic_year_id: Optional[str]) -> set:
+    """Every (bus, route) pairing that has an active schedule this year.
+
+    One query for the fleet. Asked per bus — which is what the fleet list and
+    the dashboard used to do — it is one query per bus on top of one for that
+    bus's assignments, so a fleet of 250 cost 512 queries to render a page of
+    twenty.
+    """
+    if not academic_year_id:
+        return set()
+    rows = (
+        db.session.query(
+            TransportRouteSchedule.bus_id, TransportRouteSchedule.route_id
+        )
+        .filter(
+            TransportRouteSchedule.tenant_id == tenant_id,
+            TransportRouteSchedule.academic_year_id == academic_year_id,
+            TransportRouteSchedule.is_active.is_(True),
+        )
+        .distinct()
+        .all()
+    )
+    return {(bus_id, route_id) for bus_id, route_id in rows}
+
+
+def operational_warning_for(
+    active_assignment,
+    *,
+    academic_year_id: Optional[str],
+    scheduled: set,
+) -> Dict[str, Any]:
+    """The warning itself, decided from what the caller already holds.
+
+    No queries: the assignment and the schedule set are passed in, so a caller
+    with a whole fleet reads them once rather than once per bus.
+    """
+    out: Dict[str, Any] = {"code": "ok", "message": None, "derived_state": None}
+
+    if not active_assignment or not active_assignment.route_id:
+        out["code"] = "no_active_route"
+        out["message"] = "This bus has no active route assigned."
+        out["derived_state"] = "no_active_route"
+        return out
+
+    route = active_assignment.route
+    if route.status != "active":
+        out["code"] = "no_active_route"
+        out["message"] = "Assigned route is inactive. This bus has no active route for new operations."
+        out["derived_state"] = "no_active_route"
+        return out
+
+    if academic_year_id and (active_assignment.bus_id, route.id) not in scheduled:
+        out["code"] = "no_active_schedules"
+        out["message"] = "This bus has no active schedules for the current academic year."
+        out["derived_state"] = "no_active_route"
+        return out
+
+    return out
+
+
 def _bus_operational_warning(
     tenant_id: str,
     bus_id: str,
     academic_year_id: Optional[str],
     on_date: date,
 ) -> Dict[str, Any]:
-    """
-    Derived warning for fleet UI when assignment/route/schedules are inconsistent.
+    """The warning for one bus, loading what it needs.
+
+    Kept for the single-bus detail view. A caller looping over a fleet should
+    read `scheduled_bus_routes` once and call `operational_warning_for`.
     """
     ay = academic_year_id or resolve_default_academic_year_id()
-    out: Dict[str, Any] = {
-        "code": "ok",
-        "message": None,
-        "derived_state": None,
-    }
     assigns = (
         TransportBusAssignment.query.options(joinedload(TransportBusAssignment.route))
         .filter_by(tenant_id=tenant_id, bus_id=bus_id, status="active")
         .all()
     )
     active_a = next((x for x in assigns if assignment_active_on(x, on_date)), None)
-    if not active_a or not active_a.route_id:
-        out["code"] = "no_active_route"
-        out["message"] = "This bus has no active route assigned."
-        out["derived_state"] = "no_active_route"
-        return out
-    rte = active_a.route
-    if rte.status != "active":
-        out["code"] = "no_active_route"
-        out["message"] = "Assigned route is inactive. This bus has no active route for new operations."
-        out["derived_state"] = "no_active_route"
-        return out
-    if ay:
-        sc = TransportRouteSchedule.query.filter(
-            TransportRouteSchedule.tenant_id == tenant_id,
-            TransportRouteSchedule.bus_id == bus_id,
-            TransportRouteSchedule.route_id == rte.id,
-            TransportRouteSchedule.academic_year_id == ay,
-            TransportRouteSchedule.is_active.is_(True),
-        ).count()
-        if sc == 0:
-            out["code"] = "no_active_schedules"
-            out["message"] = "This bus has no active schedules for the current academic year."
-            out["derived_state"] = "no_active_route"
-            return out
-    return out
+    return operational_warning_for(
+        active_a,
+        academic_year_id=ay,
+        scheduled=scheduled_bus_routes(tenant_id, ay),
+    )
 
 
 def _stop_active_on_route(tenant_id: str, route_id: str, stop_id: str) -> bool:
@@ -773,6 +810,10 @@ def list_buses(
     ):
         assignments_by_bus.setdefault(assignment.bus_id, []).append(assignment)
 
+    # The last thing that was still asked per bus. Read once, like the
+    # enrollments and the crew above.
+    scheduled = scheduled_bus_routes(tenant_id, ay)
+
     out = []
     for b in buses:
         d = b.to_dict()
@@ -796,8 +837,9 @@ def list_buses(
             d["assigned_route"] = {"id": active_a.route.id, "name": active_a.route.name}
         else:
             d["assigned_route"] = None
-        warn = _bus_operational_warning(tenant_id, b.id, ay, on)
-        d["transport_operational"] = warn
+        d["transport_operational"] = operational_warning_for(
+            active_a, academic_year_id=ay, scheduled=scheduled
+        )
         out.append(d)
     return paginate(out, page, per_page)
 
@@ -1837,9 +1879,27 @@ def dashboard_stats(academic_year_id: Optional[str] = None) -> Dict[str, Any]:
         awaiting = awaiting.filter(~Student.id.in_(children))
     students_opted_without_enrollment = awaiting.count()
 
+    # Two queries for the fleet, not two per bus. Counting how many buses lack
+    # a usable route used to cost 2N — a trust with 250 buses paid 500 queries
+    # for one number on a dashboard.
+    scheduled_pairs = scheduled_bus_routes(tenant_id, ay)
+    active_by_bus: Dict[str, List] = {}
+    for assignment in (
+        TransportBusAssignment.query.options(
+            joinedload(TransportBusAssignment.route)
+        )
+        .filter_by(tenant_id=tenant_id, status="active")
+        .all()
+    ):
+        active_by_bus.setdefault(assignment.bus_id, []).append(assignment)
+
     buses_without_active_routes = 0
     for b in active_buses:
-        warning = _bus_operational_warning(tenant_id, b.id, ay, on)
+        held = active_by_bus.get(b.id, [])
+        active_a = next((x for x in held if assignment_active_on(x, on)), None)
+        warning = operational_warning_for(
+            active_a, academic_year_id=ay, scheduled=scheduled_pairs
+        )
         if warning.get("code") != "ok":
             buses_without_active_routes += 1
 

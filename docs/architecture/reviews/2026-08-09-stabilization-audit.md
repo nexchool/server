@@ -293,9 +293,9 @@ Stated plainly so the backlog is not mistaken for complete:
 - UI screens whose backing endpoints are missing, beyond the two found
 - Backend functionality with no UI, beyond `merge_sections`
 - Remaining `users.id` references that should be Person/Staff
-- Performance claims from the roadmap: `suggest_duplicates` **measured and
-  fixed** (below); `_bus_operational_warning` and the N+1 claims remain
-  **unverified**, no measurement taken
+- Performance claims from the roadmap: `suggest_duplicates` and
+  `_bus_operational_warning` **measured and fixed** (below). The remaining N+1
+  and duplicate REST+GraphQL call claims are still **unverified**
 - panel and Expo client screen inventories
 
 ---
@@ -334,6 +334,42 @@ still cannot confirm a match.
 The regression guard counts comparisons rather than watching a clock — 600
 people who share only a name went from **179,700** pair comparisons to **0**,
 and a timing threshold loose enough to be stable was too loose to catch it.
+
+### [PERFORMANCE DEBT] `_bus_operational_warning` — measured, and it was an N+1
+
+Called once per bus inside two loops: the fleet list and the transport
+dashboard. Each call asked for that bus's assignments and then counted its
+schedules — two queries a bus, on top of the row itself. Counted on the real
+database:
+
+| fleet | `list_buses(page 1, 20)` | `dashboard_stats()` |
+|---|---|---|
+| 29 buses | 62 queries, 36 ms | 64 queries, 34 ms |
+| 104 buses | 212 queries, 114 ms | 214 queries, 123 ms |
+| 254 buses | 512 queries, 349 ms | 514 queries, 270 ms |
+
+Exactly 2N + constant, and **asking for a page of twenty still paid for the
+whole fleet** — the rows are built before the page is cut. 349ms on a local
+database with no network between the app and Postgres; against RDS at ~1ms a
+round trip, 512 queries is half a second of latency alone, growing linearly and
+without bound.
+
+The surrounding code had already learned this lesson — `list_buses` batches
+enrollments and crew assignments into dicts, with a comment explaining why. The
+warning was the one thing still asked per bus, and it re-queried assignments the
+loop already held. Split into `scheduled_bus_routes` (one query for the fleet)
+and `operational_warning_for` (no queries, decides from what the caller has);
+`_bus_operational_warning` stays as the single-bus wrapper for the detail view.
+
+| fleet | after |
+|---|---|
+| 29 buses | 5 queries, 3.8 ms |
+| 104 buses | 5 queries, 6.1 ms |
+| 254 buses | 5 queries, 9.7 ms |
+
+Constant, not linear. Verified equivalent bus by bus against the single-bus path
+across a fleet with a spread of states — no assignment, inactive route, active
+schedules — with zero disagreements.
 
 ## 5. What this pass changed, and what it means for the ordering
 

@@ -308,3 +308,131 @@ def test_the_dashboard_does_not_query_per_child(ctx, tenant, db_session, academi
     assert many <= few, (
         f"dashboard queries grew with the number of children ({few} -> {many}): N+1"
     )
+
+
+# ---------------------------------------------------------------------------
+# The fleet costs the same whether four buses run or four hundred
+# ---------------------------------------------------------------------------
+
+def _fleet(db_session, tenant, count):
+    """`count` buses, each with an active assignment to its own route."""
+    from modules.transport.models import (
+        TransportBus,
+        TransportBusAssignment,
+        TransportDriver,
+        TransportRoute,
+    )
+
+    suffix = uuid.uuid4().hex[:6]
+    driver = TransportDriver(
+        tenant_id=tenant.id, name=f"Driver {suffix}", phone=f"9{suffix}00",
+        license_number=f"LN-{suffix}", status="active",
+    )
+    db_session.add(driver)
+    db_session.flush()
+
+    for index in range(count):
+        bus = TransportBus(
+            tenant_id=tenant.id, bus_number=f"F{suffix}-{index}",
+            capacity=40, status="active",
+        )
+        route = TransportRoute(
+            tenant_id=tenant.id, name=f"R{suffix}-{index}", status="active"
+        )
+        db_session.add_all([bus, route])
+        db_session.flush()
+        db_session.add(
+            TransportBusAssignment(
+                tenant_id=tenant.id, bus_id=bus.id, route_id=route.id,
+                driver_id=driver.id, effective_from=date(2026, 1, 1),
+                status="active",
+            )
+        )
+    db_session.flush()
+
+
+def _queries_during(action):
+    seen = []
+
+    def record(conn, cursor, statement, params, context, executemany):
+        seen.append(statement)
+
+    event.listen(db.engine, "before_cursor_execute", record)
+    try:
+        action()
+    finally:
+        event.remove(db.engine, "before_cursor_execute", record)
+    return len(seen)
+
+
+def test_listing_the_fleet_does_not_query_per_bus(ctx, tenant, db_session):
+    """The operational warning used to be asked one bus at a time.
+
+    Each bus cost a query for its assignments and another counting its
+    schedules, on top of the row itself. Measured on the real database before
+    this changed: 29 buses took 62 queries, 104 took 212 and 254 took 512 — and
+    because the rows are built before the page is cut, asking for twenty of them
+    still paid for all 254.
+    """
+    from modules.transport import services
+
+    _fleet(db_session, tenant, 3)
+    few = _queries_during(lambda: services.list_buses(page=1, per_page=20))
+
+    _fleet(db_session, tenant, 15)
+    many = _queries_during(lambda: services.list_buses(page=1, per_page=20))
+
+    assert many <= few, (
+        f"fleet queries grew with the number of buses ({few} -> {many}): N+1"
+    )
+
+
+def test_the_dashboard_does_not_query_per_bus(ctx, tenant, db_session):
+    """Same shape, counting how many buses lack a usable route."""
+    from modules.transport import services
+
+    _fleet(db_session, tenant, 3)
+    few = _queries_during(services.dashboard_stats)
+
+    _fleet(db_session, tenant, 15)
+    many = _queries_during(services.dashboard_stats)
+
+    assert many <= few, (
+        f"dashboard queries grew with the number of buses ({few} -> {many}): N+1"
+    )
+
+
+def test_the_batched_warning_says_what_the_single_bus_one_says(
+    ctx, tenant, db_session
+):
+    """Two paths compute this now, and they must not drift.
+
+    `_bus_operational_warning` still loads for one bus, for the detail view;
+    the fleet reads the same facts once and decides in memory.
+    """
+    from modules.transport import services
+    from modules.transport.models import TransportBus, TransportRoute
+
+    _fleet(db_session, tenant, 3)
+    # A bus with no assignment at all, so more than one branch is compared.
+    db_session.add(
+        TransportBus(
+            tenant_id=tenant.id, bus_number=f"LONE-{uuid.uuid4().hex[:6]}",
+            capacity=40, status="active",
+        )
+    )
+    # And a bus whose route is not active.
+    stale = TransportRoute.query.filter_by(tenant_id=tenant.id).first()
+    if stale:
+        stale.status = "inactive"
+    db_session.flush()
+
+    ay = services.resolve_default_academic_year_id()
+    on = services._today()
+    rows = services.list_buses(page=1, per_page=100)
+    items = rows["items"] if isinstance(rows, dict) else rows
+
+    assert items, "no buses to compare"
+    for row in items:
+        single = services._bus_operational_warning(tenant.id, row["id"], ay, on)
+        assert row["transport_operational"] == single, row["id"]
