@@ -168,6 +168,23 @@ Never infer the kind from the message. A transport that recognised
 somebody rewords it, and then quietly reports a conflict as an unexpected
 error. Anything without a code is a state conflict.
 
+**When the service has no code** — and most older ones do not; the four
+structural masters return bare prose — matching the sentence is the only thing
+left, so do it with the rule above in mind rather than against it:
+
+- Take the fragments **from the source, not from memory.** The first draft of
+  `structure_mutations.py` matched `in use` and `cannot be deleted`, neither of
+  which any of those four services ever says, and missed both wordings they do.
+- Match the **shortest stable part** of the sentence, so rewording it for a
+  human does not reclassify it.
+- **Cover each distinct wording with a test.** An unmatched refusal does not
+  raise — it falls through to `VALIDATION_ERROR` — so the failure mode is a
+  conflict quietly reported as bad input, which nothing notices on its own.
+
+Giving the service a `code` is still the better fix, and the right moment is
+when that module is next opened for its own reasons; adding one to a service
+mid-migration changes REST behaviour in the same commit as a transport move.
+
 Refusals raised as exceptions deep in a service — `BranchForbidden` and its
 kin — are translated once, in `TranslateDomainRefusals`. REST turns those into
 status codes with a Flask error handler, which never runs inside a resolver:
@@ -250,6 +267,34 @@ nothing filtered the sections it retired, so they stayed in every picker
 offering a choice the placement primitive refuses. Both halves are one piece of
 work: exposing an operation includes removing what it retires from the lists
 that offer it.
+
+---
+
+## 7a. A partial update needs three states, not two
+
+An `update` mutation takes a changes object, and every field the caller omits
+arrives as `None`. So does every field they explicitly set to null. The services
+tell those apart — they key on presence, `if field not in data: continue` — and
+the screens rely on it: `BranchFormModal` sends null for a box the user emptied,
+meaning *clear this column*.
+
+Default optional fields to `strawberry.UNSET`, not `None`, and drop only UNSET:
+
+```python
+@strawberry.input
+class CampusChanges:
+    gr_number_scheme: Optional[str] = strawberry.UNSET   # not = None
+
+def _changes(payload) -> dict:
+    return {k: v for k, v in strawberry.asdict(payload).items()
+            if v is not strawberry.UNSET}
+```
+
+Filtering on `is not None` compiles, passes a create test, passes an update
+test, and turns every "clear this field" into a no-op. Nothing errors; the user
+saves, sees a success toast, and the old value is still there. Pin it with a
+test that clears one field and asserts a *neighbouring* field survived — one
+assertion catches both halves.
 
 ---
 

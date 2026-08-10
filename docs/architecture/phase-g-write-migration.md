@@ -1,15 +1,16 @@
 # Phase G — moving the writes to GraphQL
 
-**Status:** scoped, not started. **Date:** 2026-08-09.
+**Status:** in progress — slice 1 of ~12 done. **Scoped:** 2026-08-09.
+**Last slice:** the structural masters, 2026-08-10 (§7).
 
 Reads have migrated and writes have not: 40 GraphQL queries against 10
 mutations, and 257 REST business writes. Every slice so far moved a read
 surface and left that module's writes on REST, so "module X is on GraphQL" has
 never been more than half true.
 
-This is the scope for closing that. It is deliberately a plan and not a start —
-the sequencing question below changes what the first slice should be, and it is
-not mine to answer.
+This is the scope for closing that. §3's sequencing question was answered —
+**(B)**, admin-web-only writes first — and slice 1 is done; the counts below are
+as measured on 2026-08-09 and have not been re-run since.
 
 ---
 
@@ -138,12 +139,9 @@ mutations, move admin-web, delete the replaced routes, verify live.
 
 1. ~~subject-contexts~~ and ~~school-setup~~ — **disqualified, see §3a.**
    Neither has a screen that reaches its writes.
-2. **the structural masters** — grades, programmes, school-units, departments,
-   mediums: four writes each, twenty in total, no Expo, and verified live
-   (`/grades`, `/programmes`, `/school-units`, `/departments` are real screens
-   whose create and delete hooks are used by components). They share one shape,
-   so one pass covers all five and proves the write pattern on the smallest
-   surface that a user can actually reach. **This is the corrected first slice.**
+2. ~~**the structural masters**~~ — **done, 2026-08-10.** Twelve mutations over
+   campuses, programmes, grades and mediums; all nineteen REST routes on those
+   four modules deleted, blueprints and all. See §7.
 3. **transport** (25) — the largest movable block. Split across at least three
    slices (fleet, routes and stops, enrollments).
 4. **hostel** (12) — allocations, gatepasses, visitors.
@@ -183,3 +181,76 @@ Borrowed from what the read migration learned, and from what it got wrong:
   roadmap says.
 - Rewriting the service layer. Mutations call the same services the routes do;
   a slice that changes behaviour is not a transport migration.
+
+---
+
+## 7. Slice 1 — the structural masters (done, 2026-08-10)
+
+Twelve mutations in `modules/academics/structure_mutations.py`, composed into
+the schema as `StructureMutation`: `addCampus` / `updateCampus` / `removeCampus`,
+and the same three for programmes, grades and mediums. `modules/grades/routes.py`,
+`modules/academic_programmes/routes.py`, `modules/school_units/routes.py` and
+`modules/mediums/routes.py` are **deleted**, along with their blueprints and the
+registrations in `app.py`. Those four modules now have no REST surface at all.
+
+**Departments was dropped from the slice.** §4 listed five modules; departments
+has no GraphQL *read*, so migrating its writes would be a read-and-write slice
+rather than this one's shape. It stays on REST until that is done.
+
+### What the count in §1 got wrong, again
+
+§1 said four writes per module. The real number is three: `PATCH` and `PUT` are
+registered on one rule, so the route table counts one operation twice. Twelve
+mutations, not twenty, cover everything the clients call — and `mediums` has no
+detail `GET` at all, which is why the four modules had 19 routes and not 20.
+
+Worth stating because §3a already corrected this figure once in the other
+direction: **the route table is not a list of operations**, and neither is a
+count of `apiPost` call sites. Only the pair — an operation and a screen that
+reaches it — is.
+
+### Reachability, per operation
+
+Five of the twelve had no caller. Two more had a hook but no component:
+
+| operation | reached from |
+|---|---|
+| campus add / change / remove | `BranchFormModal`, `DeleteBranchDialog` |
+| grade add / remove | `GradesList` |
+| programme add / remove | `ProgrammesList` |
+| grade change, programme change | a hook, no component — no screen renames either |
+| medium add | `useCreateMedium`, called by nothing |
+| medium change / remove | no hook at all |
+
+They were built anyway: they are three lines each on top of a service that
+already exists, and a partial catalogue would be a stranger thing to hand the
+next person than a complete one. But note the shape — **a school cannot rename a
+grade or a programme in admin-web today**, and the mediums writes are the same
+orphan as debt 43's. That is a product gap the transport migration only made
+visible; it is not this slice's to close.
+
+### Two bugs caught by doing it
+
+**A partial update was silently dropping "clear this field".** `_changes()`
+filtered on `is not None`, which collapses "the caller omitted this" and "the
+caller sent null" into one thing. The services key on *presence*
+(`if field not in data: continue`), so null already means clear — and
+`BranchFormModal` sends null for every box the user empties. Filtering on
+`strawberry.UNSET` instead keeps the two apart. Pinned by
+`test_an_explicit_null_clears_a_field_and_an_omission_does_not`.
+
+**The refusal map was written from memory, not from the services.** Three of its
+five fragments (`in use`, `already in use`, `cannot be deleted`) match no message
+any of these four services return, and the two wordings that do exist
+(`referenced by existing classes`, `Cannot delete this branch because …`) were
+both missing. An in-use campus would have been reported as bad input. The lesson
+is the one this project keeps relearning: **read the strings, do not recall
+them** — and cover each distinct wording with a test, because an unmatched
+refusal does not fail loudly, it quietly downgrades to `VALIDATION_ERROR`.
+
+### One behaviour deliberately changed
+
+Deleting something still in use answered **400** over REST and answers **409**
+now. Both are client errors and every existing error path keeps working, but the
+refusal is now distinguishable from "you sent nonsense", which is the point of
+the code contract.

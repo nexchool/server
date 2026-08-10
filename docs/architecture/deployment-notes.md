@@ -73,6 +73,23 @@ python -m scripts.reseed_rbac --reconcile   # revoke what the catalogue no longe
 a default role that `modules/rbac/catalog.py` does not name, including one an
 operator added by hand.
 
+## 3a. Nineteen REST routes are gone — deploy the API and admin-web together
+
+`/api/grades/*`, `/api/programmes/*`, `/api/school-units/*` and `/api/mediums/*`
+no longer exist; those four modules have no blueprint. Every caller was in
+admin-web and now speaks GraphQL, and neither the Expo app nor the panel ever
+touched them (checked across `admin-web/src`, `panel/`, `client/`).
+
+The consequence for a deploy: **an admin-web build older than this one will get
+404s on the Branches, Grades and Programmes screens.** They are separate images,
+so ship the API and admin-web in the same release, or admin-web first. There is
+no migration and nothing to roll forward in the database — rolling the API back
+restores the routes, and a rolled-back API with the new admin-web is fine too,
+since GraphQL gained fields rather than losing them.
+
+Nothing outside the app referenced these paths, but if anything at the edge does
+— an nginx rule, a monitor, a saved Postman collection — it will start 404ing.
+
 ## 4. What to check after the first deploy
 
 - A **sub-admin with the Classes module** can open Classes and see the campus,
@@ -83,6 +100,13 @@ operator added by hand.
 - **Login refuses the sixth attempt in a minute**, not the tenth.
 - `GET /api/subscription/state` does not intermittently 500. That was the
   in-memory limiter's expiry thread and should be gone with §2.
+- **Branches** creates, edits and deletes a campus, and deleting one that still
+  has classes refuses with a message naming the count — now a **409**, where the
+  route answered 400. Same for a grade or programme a class still uses.
+- Emptying an optional box on the branch form (DISE no., GR scheme) and saving
+  actually clears it. That is the null-versus-omitted case in §7 of
+  `phase-g-write-migration.md` and the one thing in this slice that would fail
+  silently rather than loudly.
 
 ## 5. Not a deploy step, but it will surprise someone
 

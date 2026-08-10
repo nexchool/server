@@ -48,6 +48,69 @@ def _campus(tenant_id: str):
     return SchoolUnit.query.filter_by(tenant_id=tenant_id, code=CAMPUS_CODE).first()
 
 
+def _teach_the_same_subjects(
+    tenant_id: str, campus_id: str, grade_id: str, programme_id: str, year_id: str
+) -> None:
+    """Give the new sections the subjects their counterpart already teaches.
+
+    Not decoration. `school_setup` counts a class with no subjects as a blocker,
+    and one unresolved blocker leaves the whole tenant setup-incomplete — which
+    puts every admin screen behind "School setup is incomplete". A fixture that
+    opens a campus and stops has therefore been locking the local app out of
+    itself; a real school opening a branch does not leave its classes teaching
+    nothing.
+
+    The source is the same grade and programme on another campus, so the two
+    branches teach alike, which is also what makes the branch-scope tests this
+    fixture exists for meaningful.
+    """
+    from modules.classes.models import Class, ClassSubject
+
+    template = (
+        Class.query.filter(
+            Class.tenant_id == tenant_id,
+            Class.grade_id == grade_id,
+            Class.programme_id == programme_id,
+            Class.school_unit_id != campus_id,
+        )
+        .order_by(Class.section)
+        .first()
+    )
+    if template is None:
+        print("  ! no counterpart class to copy subjects from — left empty")
+        return
+
+    lessons = ClassSubject.query.filter_by(
+        tenant_id=tenant_id, class_id=template.id, deleted_at=None
+    ).all()
+    if not lessons:
+        print("  ! the counterpart class teaches nothing — left empty")
+        return
+
+    for new_class in Class.query.filter_by(
+        tenant_id=tenant_id, school_unit_id=campus_id, academic_year_id=year_id
+    ).all():
+        if ClassSubject.query.filter_by(
+            tenant_id=tenant_id, class_id=new_class.id
+        ).first():
+            continue
+        for lesson in lessons:
+            db.session.add(
+                ClassSubject(
+                    id=f"cs-{uuid.uuid4().hex[:12]}",
+                    tenant_id=tenant_id,
+                    class_id=new_class.id,
+                    subject_id=lesson.subject_id,
+                    weekly_periods=lesson.weekly_periods,
+                    is_mandatory=lesson.is_mandatory,
+                    is_elective_bucket=lesson.is_elective_bucket,
+                    sort_order=lesson.sort_order,
+                )
+            )
+        print(f"  + {len(lessons)} subject(s) for section {new_class.section}")
+    db.session.commit()
+
+
 def add(tenant: Tenant) -> None:
     from flask import g
 
@@ -110,6 +173,8 @@ def add(tenant: Tenant) -> None:
         )
         print(f"  + {grade.name} {section} on {CAMPUS_NAME}")
     db.session.commit()
+
+    _teach_the_same_subjects(tenant.id, campus.id, grade.id, programme.id, year.id)
 
     from modules.auth.models import User
     from modules.sub_admins.services import update_sub_admin

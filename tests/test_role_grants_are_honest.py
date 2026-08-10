@@ -110,18 +110,29 @@ def test_the_reads_a_teacher_needs_accept_the_key_a_teacher_holds():
     `class_subject.manage` and the teacher-facing list quietly 403s.
     """
     from modules.academics import resolvers as academics_resolvers
-    from modules.mediums import routes as medium_routes
     from modules.subject_contexts import routes as context_routes
 
-    assert medium_routes.PERM_CS_READ == "class_subject.read"
     assert context_routes.PERM_CS_READ == "class_subject.read"
     assert academics_resolvers.PERM_CLASS_SUBJECT_READ == "class_subject.read"
 
-    for module in (medium_routes, context_routes):
-        source = pathlib.Path(module.__file__).read_text()
-        assert "PERM_CS_READ)" in source, (
-            f"{module.__name__} defines the read key but no guard accepts it"
-        )
+    source = pathlib.Path(context_routes.__file__).read_text()
+    assert "PERM_CS_READ)" in source, (
+        f"{context_routes.__name__} defines the read key but no guard accepts it"
+    )
+
+    # The medium list is GraphQL now — its REST route is gone — so the guard is
+    # read off the field itself rather than out of a source file. `requires_any`
+    # spells its keys into the guard class's name, which makes the real object
+    # answerable without reaching into a closure.
+    mediums = next(
+        field
+        for field in academics_resolvers.AcademicsQuery.__strawberry_definition__.fields
+        if field.python_name == "mediums"
+    )
+    accepted = " ".join(guard.__name__ for guard in mediums.permission_classes)
+    assert "class_subject_read" in accepted, (
+        "the medium list no longer accepts the key a teacher actually holds"
+    )
 
 
 # ---------------------------------------------------------------------------

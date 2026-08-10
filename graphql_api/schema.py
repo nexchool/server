@@ -93,6 +93,7 @@ def _build_mutation_type() -> type:
     resolved the ORM scope is inert, so an unguarded write reaches every
     school.
     """
+    from modules.academics.structure_mutations import StructureMutation
     from modules.attendance.resolvers import AttendanceMutation
     from modules.classes.resolvers import ClassesMutation
     from modules.people.resolvers import PeopleMutation
@@ -100,7 +101,11 @@ def _build_mutation_type() -> type:
 
     @strawberry.type(description="Every change the platform accepts.")
     class Mutation(
-        PeopleMutation, StudentMutation, AttendanceMutation, ClassesMutation
+        PeopleMutation,
+        StudentMutation,
+        AttendanceMutation,
+        ClassesMutation,
+        StructureMutation,
     ):
         pass
 

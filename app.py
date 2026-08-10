@@ -180,14 +180,12 @@ def register_blueprints(app: Flask):
     from modules.search import search_bp
 
     # Multi-school structure (Phase 2): real blueprints.
-    from modules.school_units import school_units_bp
-    from modules.academic_programmes import academic_programmes_bp
-    from modules.grades import grades_bp
+    # Campuses, programmes, grades and mediums are GraphQL-only and have no
+    # blueprint — see each module's __init__.
     from modules.religions import religions_bp
     from modules.class_subjects import class_subjects_bp
     from modules.school_setup import school_setup_bp
     from modules.subject_contexts import subject_contexts_bp
-    from modules.mediums import mediums_bp
     # Subscription / billing (Phase 5).
     from modules.subscription import subscription_bp
     # Audit log
@@ -222,14 +220,10 @@ def register_blueprints(app: Flask):
     app.register_blueprint(search_bp, url_prefix='/api/search')
 
     # Multi-school structure
-    app.register_blueprint(school_units_bp, url_prefix='/api/school-units')
-    app.register_blueprint(academic_programmes_bp, url_prefix='/api/programmes')
-    app.register_blueprint(grades_bp, url_prefix='/api/grades')
     app.register_blueprint(religions_bp, url_prefix='/api/religions')
     app.register_blueprint(class_subjects_bp, url_prefix='/api/class-subjects')
     app.register_blueprint(school_setup_bp, url_prefix='/api/school-setup')
     app.register_blueprint(subject_contexts_bp, url_prefix='/api/subject-contexts')
-    app.register_blueprint(mediums_bp, url_prefix='/api/mediums')
     app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
     app.register_blueprint(audit_bp)
     app.register_blueprint(sub_admins_bp, url_prefix='/api/sub-admins')
