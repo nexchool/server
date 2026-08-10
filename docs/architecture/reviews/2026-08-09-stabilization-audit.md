@@ -293,9 +293,9 @@ Stated plainly so the backlog is not mistaken for complete:
 - UI screens whose backing endpoints are missing, beyond the two found
 - Backend functionality with no UI, beyond `merge_sections`
 - Remaining `users.id` references that should be Person/Staff
-- Performance claims from the roadmap: `suggest_duplicates` and
-  `_bus_operational_warning` **measured and fixed** (below). The remaining N+1
-  and duplicate REST+GraphQL call claims are still **unverified**
+- Performance claims from the roadmap are now all measured: `suggest_duplicates`
+  and `_bus_operational_warning` were real and are fixed; the duplicate
+  REST+GraphQL call claim **did not hold** (below)
 - panel and Expo client screen inventories
 
 ---
@@ -370,6 +370,49 @@ and `operational_warning_for` (no queries, decides from what the caller has);
 Constant, not linear. Verified equivalent bus by bus against the single-bus path
 across a fleet with a spread of states — no assignment, inactive route, active
 schedules — with zero disagreements.
+
+### ~~[PERFORMANCE DEBT] Duplicate REST + GraphQL calls~~ — not confirmed
+
+Measured from the browser's network log on cold loads of `/classes`,
+`/students` and `/teachers`. Every one makes the same shape: **2 GraphQL POSTs
+plus 5 ambient REST calls** — `auth/profile`, the notification list, the unread
+count, `subscription/state` and the SSE stream. None of them fetches the same
+data twice, and no screen reads over both transports.
+
+Checked statically as well: seven services import both `gql` and `apiGet`, but
+the REST reads that survive beside a GraphQL query are sub-resources
+(`/classes/<id>/subjects`, `unassigned-students`), exports, or records with no
+GraphQL equivalent. The one genuine overlap is student detail — `student(id)`
+exists on GraphQL and admin-web's detail page still reads
+`GET /api/students/<id>` — but only one of them is ever called, so it is a dual
+*transport* (debt 31) rather than a duplicate *call*.
+
+Worth recording for the next person: a soft navigation to `/classes` made
+**zero** network calls, served entirely from the TanStack cache. Any measurement
+of this kind has to force a cold load or it measures the cache.
+
+### [BLOCKER] Rate limits were counted per worker, and intermittently 500'd
+
+Found while measuring the above: `GET /api/subscription/state` returned 500 on
+one screen load and 200 on the next. The traceback is inside Flask-Limiter —
+`RuntimeError: threads can only be started once`, from the in-memory storage's
+expiry thread.
+
+`Limiter(key_func=get_remote_address)` was constructed with no storage URI, so
+every environment kept its counters in process memory while `REDIS_URL` sat
+unused. Two consequences, both measured:
+
+- **Intermittent 500s on any rate-limited route**, including login.
+- **The login limit was not the limit.** `@limiter.limit("5 per minute")` is
+  per process, and the API runs four gunicorn workers by default. Measured
+  against the running stack: **9 failed login attempts got through before the
+  first 429**, where `security-guardrails.md` requires five. Counters also reset
+  on every deploy.
+
+Fixed by pointing the limiter at `REDIS_URL` with in-memory fallback enabled, so
+a Redis outage degrades the limiter rather than taking the API down. Storage is
+now `RedisStorage`, and the same measurement gives **5 attempts before the first
+429**.
 
 ## 5. What this pass changed, and what it means for the ordering
 
