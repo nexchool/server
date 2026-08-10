@@ -98,24 +98,58 @@ The cost of (B) is honest and worth stating: for a while, a reviewer opening
 `modules/transport` finds writes in two places. The register should carry that
 as a known, time-boxed state rather than a surprise.
 
+## 3a. Correction — two of the picks below do not qualify
+
+*Added 2026-08-09, before the first slice, after auditing the two modules §4
+proposed starting with.*
+
+**subject-contexts is not a migratable slice.** Its five writes and three reads
+have no component consumer in any client. The chain stops one step short of a
+screen: `subjectContextsService` → `useSubjectContexts` → nothing.
+`useBulkUpsertSubjectContexts` and `useApplySubjectContexts` are exported and
+called by no component; the one apparent reference to `useSubjectContexts` is
+`CreateSectionModal` importing `useMediums`, which lives in that file by
+accident of placement. Expo and panel never touch the routes.
+
+The *domain* is live — `school_setup/promote_service.py` calls `apply_for_grade`
+and `seed_service.py` creates `SubjectContext` rows — so this is not dead code.
+It is a live domain whose HTTP surface and client code were the **removed
+admin-web setup wizard's** interface; `subjectContextsService.ts` was last
+touched by that wizard's commit, and onboarding has since moved to the panel.
+
+**school-setup looks the same.** Nine write functions in
+`schoolSetupService.ts`, and the only screen that imports the service is
+`SetupGate`, which reads status. The wizard those writes belonged to is gone.
+
+**So the 92 figure in §1 is an upper bound.** It counted `apiPost(...)` call
+sites inside admin-web service modules, not whether a screen can reach them —
+the same error as debt 39's "80 uncalled functions", measured one level away
+from the question. Every module in §4 needs a reachability check before it is
+scheduled, not after.
+
+Module-level import reachability is too coarse to do this in bulk: a service is
+"reached" if any one of its exports is, so `subjectContextsService` looks live
+because `useMediums` shares its hook file. It has to be done per operation.
+
 ## 4. Proposed order under (B)
 
 Each slice is one module's admin-web-only writes: model the acts, build the
 mutations, move admin-web, delete the replaced routes, verify live.
 
-1. **subject-contexts** (5) — smallest, no GraphQL yet, no Expo. The slice that
-   proves the write pattern on something whose failure surface is small.
-2. **school-setup** (9) — no Expo. Note `setupStatus` is already a query that
-   writes (debt 32); this slice is the moment to fix that rather than carry it.
+1. ~~subject-contexts~~ and ~~school-setup~~ — **disqualified, see §3a.**
+   Neither has a screen that reaches its writes.
+2. **the structural masters** — grades, programmes, school-units, departments,
+   mediums: four writes each, twenty in total, no Expo, and verified live
+   (`/grades`, `/programmes`, `/school-units`, `/departments` are real screens
+   whose create and delete hooks are used by components). They share one shape,
+   so one pass covers all five and proves the write pattern on the smallest
+   surface that a user can actually reach. **This is the corrected first slice.**
 3. **transport** (25) — the largest movable block. Split across at least three
    slices (fleet, routes and stops, enrollments).
 4. **hostel** (12) — allocations, gatepasses, visitors.
-5. **the structural masters** — mediums, departments, programmes, grades,
-   school-units (15 between them). Small, and they share one shape, so they
-   should share one pass.
-6. **students** (7) and **academics** (9) — both already have GraphQL, so these
+5. **students** (7) and **academics** (9) — both already have GraphQL, so these
    are extensions rather than first cuts.
-7. **teachers** (5) — small, but 16 of its writes are Expo's, so expect the
+6. **teachers** (5) — small, but 16 of its writes are Expo's, so expect the
    module to stay visibly split longest.
 
 Roughly a dozen slices the size of the section-merge work done this session.
