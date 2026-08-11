@@ -186,6 +186,50 @@ def test_removing_a_grade_nothing_uses_succeeds(client, tenant, keeper):
     assert body["data"]["removeGrade"] is True
 
 
+def test_a_grade_added_without_an_order_takes_the_one_in_its_name(
+    client, tenant, keeper
+):
+    """Because a grade can now be created while opening a section.
+
+    That form asks for a name and nothing else, and `sequence` is what orders
+    grades everywhere — sorted as text, "Std 10" comes before "Std 2". The old
+    default was 0, which put every such grade at the very front of the ladder.
+    """
+    _user, token = keeper
+
+    added = _ask(client, tenant, token, ADD_GRADE, input={"name": "Std 7"})
+    assert added.get("errors") is None, added
+    assert added["data"]["addGrade"]["sequence"] == 7
+
+
+def test_a_grade_whose_name_has_no_number_goes_to_the_end(
+    client, tenant, db_session, keeper
+):
+    """LKG, Nursery, or anything unexpected.
+
+    Last is the honest place for it: visible, and correctable — rather than
+    silently landing in the middle of the ladder and reordering promotion.
+    """
+    from modules.grades.models import Grade
+
+    _user, token = keeper
+    db_session.add(
+        Grade(id=_new_id("gr-"), tenant_id=tenant.id, name=f"X{uuid.uuid4().hex[:6]}", sequence=40)
+    )
+    db_session.flush()
+
+    added = _ask(client, tenant, token, ADD_GRADE, input={"name": "Nursery"})
+    assert added.get("errors") is None, added
+    assert added["data"]["addGrade"]["sequence"] == 41
+
+
+def test_an_explicit_order_still_wins(client, tenant, keeper):
+    _user, token = keeper
+
+    added = _ask(client, tenant, token, ADD_GRADE, input={"name": "Std 3", "sequence": 99})
+    assert added["data"]["addGrade"]["sequence"] == 99
+
+
 def test_a_campus_keeps_its_gr_number_scheme_through_create_and_change(
     client, tenant, keeper
 ):

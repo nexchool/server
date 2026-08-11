@@ -434,3 +434,74 @@ opposite directions (a "blocker" that refuses nobody, and a duplicate of debt 18
 Both came from measuring a mechanism without checking whether any real user path runs
 through it. The audit half of each loop should end by naming the user and the screen,
 not just the guard and the grant.
+
+---
+
+## 6. Grade — how it is modelled, and the entry point moved (2026-08-10)
+
+*Audited on request before changing anything, then a business decision taken.*
+
+### What a Grade is, as built
+
+`grades` is a **flat, tenant-wide catalogue**: `name` unique per tenant among
+active rows, `sequence` for order, and nothing else. No programme, no campus,
+no academic year, no division. Two tables reference it — `classes.grade_id` and
+`subject_contexts.grade_id`. In the demo tenant, grade "1" is one row shared by
+two programmes across five sections.
+
+So a grade is created **once for the whole organisation**, and a Class/Section
+is the per-(campus × programme × grade × section × year × medium) thing.
+
+### Where that sits against the canon
+
+`modules/academic-management.md` and the v2 memory both describe
+**Programme → Academic Year → Academic Division → Grade → Section**, with a
+programme owning its academic structure. The table implements none of that
+nesting. Four consequences, all real:
+
+1. **A programme's grade span cannot be expressed.** Every programme is offered
+   every grade, so a section can be opened on a year that programme does not run.
+2. **Graduation cannot be derived.** The canon defines it as "the highest grade
+   of a Programme"; with a shared catalogue there is no such value.
+3. **One spelling wins per tenant.** `name` is unique tenant-wide, so "Std 1"
+   under one board and "Grade 1" under another are either one row (one board's
+   house style imposed on the other) or two rows at the same level.
+4. **Division hangs off the Class, not the Grade.** Grade 1 is always Primary,
+   but that is recorded per section. Live data is consistent — every grade maps
+   to exactly one division — by the seeder's discipline, not by any constraint.
+
+The flat model earns its keep in one way worth protecting: a single `sequence`
+makes promotion order, grade-wise reporting and the class-list sort work across
+the whole organisation.
+
+### Decision (user, 2026-08-10)
+
+**Grades are no longer created as their own step.** Creating a grade first and
+a class second is backwards — the school is opening a section, and the grade is
+a detail of it. So:
+
+- The Grades screen **loses its create surface** (quick-add presets and the add
+  form are gone). It remains for reading, renaming and removing.
+- **Add a section** takes a grade by name — pick an existing one or type a new
+  one, created on submit before the section.
+- Deliberately **not** done: splitting grades per programme. That was offered
+  and not chosen; the shared level and its single sequence stay.
+
+### What this forced
+
+`create_grade` defaulted an absent `sequence` to **0**, which put a
+newly-created grade at the *front* of the ladder — harmless while the only
+caller was a form that always sent one, wrong the moment a grade can be typed
+while opening a section. It now infers: the number in the name is the level
+("Std 6" → 6), and a name with no number goes to the end where it is visible
+and correctable rather than silently mid-ladder.
+
+The same rule lives on the client as `lib/gradeLevel.ts`, which is what lets the
+form warn that "Std 6" would sit at the same level as an existing "6" — two
+names for one year, both valid to the unique index, and a split in promotion
+and every grade-wise report if it goes through.
+
+### Still open
+
+Consequences 1, 2 and 4 above are untouched by this change and remain
+unregistered pending a decision on programme-scoped grades.
