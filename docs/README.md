@@ -201,6 +201,10 @@ docs/
 │
 │   Business workflows implemented by the platform.
 │
+├── operations/
+│
+│   Reaching and operating the deployed environments.
+│
 └── archive/
 │
 │   Pre-v2 documentation, kept for history. Never build against it.
