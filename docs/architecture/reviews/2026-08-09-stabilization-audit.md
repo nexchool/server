@@ -505,3 +505,90 @@ and every grade-wise report if it goes through.
 
 Consequences 1, 2 and 4 above are untouched by this change and remain
 unregistered pending a decision on programme-scoped grades.
+
+---
+
+## 7. Grade and Class — where they are used, and how the relationships are held (2026-08-10)
+
+*Full dependency audit, requested before planning any change.*
+
+### Size of each
+
+|  | Grade | Class |
+|---|---|---|
+| tables with an FK into it | **2** (`classes`, `subject_contexts`) | **12** |
+| server modules touching its id | 7 | 17 |
+| REST routes | 0 (GraphQL-only since 2026-08-10) | **46** across 4 files |
+| admin-web files | 16 | 57 |
+| **Expo files** | **0** | **44** |
+
+The last row is the one that decides sequencing. **The mobile app never sees a
+grade** — it reads classes and their composed labels. So grade work carries no
+mobile-release gate, and class work carries a heavy one.
+
+A class's identity is populated in practice, not just in theory: of 14 classes,
+0 lack a grade, programme, campus or division; 2 lack a medium; 2 still carry
+the legacy free-text `name`.
+
+### How each relationship is actually held
+
+Three of them are held **twice**, and the three are not in the same condition.
+
+**1. Student → Class — a maintained mirror.**
+`students.class_id` alongside `student_class_enrollments` (which carries the
+year, status, and the `promoted_from_enrollment_id` chain).
+*State: in agreement.* Of 278 students with a class, 0 have no current
+enrollment and 0 point somewhere else. One owner writes both —
+`students/class_enrollment_service.py`.
+*Cost: the mirror is the dominant read path* — ~41 read sites against 10 files
+that use the enrollment table.
+
+**2. Teacher → Class — a maintained mirror.**
+`classes.teacher_id` alongside `class_teacher_assignments` (role, effective
+dating, `allow_attendance_marking`).
+*State: in agreement.* 12 legacy values, 12 active primary assignments, 0
+disagreements. Two writers — `classes/services.py` and
+`academics/services/class_teacher_assignments.py` — and **both** maintain the
+pair, which is why it holds.
+*Cost: ~10 files read the column.*
+
+**3. Subject → Class — a stale, unreachable duplicate.**
+`class_subjects` (the real one: periods, mandatory/elective, term, context)
+alongside `subject_load` (`class_id`, `subject_id`, `weekly_periods` — a strict
+subset).
+*State: already drifted.* Every `subject_load` row exists in `class_subjects`,
+but **6 class-subject pairs have no load row**, and nothing keeps them in step.
+*Cost: none — it is dead.* The 4 routes are called by a service in each client;
+neither reaches a screen. `ClassSubjectLoadSection.tsx` is rendered by no page
+(the class detail uses `ClassSubjectsSection`), and Expo's `useSubjectLoad` has
+no consumer.
+
+### A fourth duplication: the class label
+
+Three places compose one independently, in two spellings:
+`Class.display_name` (space — canonical), `classes/bulk_services.py:155`
+(its own `f"{grade.name} {section}"`), and the student payloads
+(`students/models.py` + `students/graphql/types.py`, hyphen — debt 41).
+
+### Proposed order
+
+Cheapest and safest first; each step stands alone.
+
+1. **Delete `subject_load` and its whole vertical** — table, 4 routes, both
+   clients' service/hook/types, and the orphan admin-web component. Nothing
+   reads it, it is already stale, and it removes one of the three duplicate
+   pairs outright. No Expo gate, because no Expo screen uses it.
+2. **One label composer.** Point `bulk_services` at `Class.display_name`. The
+   hyphen form stays until Expo stops parsing it (debt 41).
+3. **Retire `classes.teacher_id`.** ~10 files read through to
+   `class_teacher_assignments` instead, then drop the column. Expo reads the
+   teacher out of payloads, not the column, so this is server-side.
+4. **Decide `students.class_id` last.** 41 read sites, and unlike the other two
+   it earns its keep — every student list joins on it. The honest choice is
+   *keep it and make it explicitly a cache*: one writer (already true), plus a
+   test asserting it agrees with the current enrollment. Removing it is a large
+   change for a denormalisation that is working.
+
+Grade needs no structural work: two FKs, no mobile gate, and its remaining
+questions (programme span, graduation, division) are the modelling decision in
+§6, not a dependency problem.
