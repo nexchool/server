@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from core.database import db
 from modules.notifications.enums import NotificationChannel, NotificationRecipientStatus
 from modules.notifications.models import Notification, NotificationRecipient
+from core.school_time import utc_now
 
 
 def _channel_aggregate_label(channels: Sequence[str]) -> str:
@@ -79,7 +80,7 @@ def create_recipients(notification_id: str, user_ids: Sequence[str]) -> int:
     if not to_add:
         return 0
 
-    now = datetime.utcnow()
+    now = utc_now()
     mappings = [
         {
             "id": str(uuid.uuid4()),

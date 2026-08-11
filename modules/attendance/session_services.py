@@ -21,13 +21,13 @@ from core.database import db
 from modules.academics.backbone.models import (
     AttendanceRecord,
     AttendanceSession,
-    ClassTeacherAssignment,
 )
 from modules.classes.models import Class
 from modules.academics.calendar.holiday_services import get_holiday_for_date
 from modules.rbac.services import has_permission
 from modules.students.models import Student
 from modules.teachers.models import Teacher
+from core.school_time import school_today
 
 
 def serialize_session(s: AttendanceSession, class_name: Optional[str] = None) -> Dict[str, Any]:
@@ -50,29 +50,9 @@ def serialize_session(s: AttendanceSession, class_name: Optional[str] = None) ->
 
 
 def _teacher_for_user(tenant_id: str, user_id: str) -> Optional[Teacher]:
-    return Teacher.query.filter_by(tenant_id=tenant_id, user_id=user_id).first()
+    from modules.teachers.services import teacher_for_user
 
-
-def _primary_class_teacher_assignment(
-    tenant_id: str, class_id: str, on_date: date
-) -> Optional[ClassTeacherAssignment]:
-    rows = (
-        ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id, class_id=class_id)
-        .filter(
-            ClassTeacherAssignment.role == "primary",
-            ClassTeacherAssignment.is_active.is_(True),
-            ClassTeacherAssignment.deleted_at.is_(None),
-        )
-        .all()
-    )
-    for r in rows:
-        ef, et = r.effective_from, r.effective_to
-        if ef and on_date < ef:
-            continue
-        if et and on_date > et:
-            continue
-        return r
-    return None
+    return teacher_for_user(user_id, tenant_id)
 
 
 def can_user_mark_session(
@@ -81,6 +61,17 @@ def can_user_mark_session(
     session: AttendanceSession,
     class_id: str,
 ) -> bool:
+    """May this user write to this session?
+
+    Resolved through Teaching Assignment (ADR-014): the class teacher in
+    effect on the session's day — time is part of the question — provided the
+    responsibility allows marking, or a teacher explicitly delegated as the
+    session's marker. The old fallback that matched `classes.teacher_id`
+    against the login is gone: that column is a cache, and it now names the
+    teacher, not their account (migration 095).
+    """
+    from modules.academics.teaching_assignment import class_teacher_of
+
     if has_permission(user_id, "attendance.manage"):
         return True
 
@@ -91,16 +82,8 @@ def can_user_mark_session(
     if session.assigned_marker_teacher_id and session.assigned_marker_teacher_id == t.id:
         return True
 
-    cta = _primary_class_teacher_assignment(tenant_id, class_id, session.session_date)
-    if cta and cta.teacher_id == t.id and cta.allow_attendance_marking:
-        return True
-
-    # Legacy: class.teacher_id (User) matches
-    cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
-    if cls and cls.teacher_id == user_id:
-        return True
-
-    return False
+    cta = class_teacher_of(class_id, on=session.session_date)
+    return bool(cta and cta.teacher_id == t.id and cta.allow_attendance_marking)
 
 
 def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: date) -> Dict[str, Any]:
@@ -110,8 +93,14 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
     if has_permission(user_id, "attendance.manage"):
         # Branch scope: a restricted sub-admin with attendance.manage may only
         # see classes in their units. No-op when unrestricted.
+        # A merged-away section takes no more students, so there is nobody to
+        # mark. Offering it is offering a register that will always be empty.
         classes = (
-            filter_classes_by_branch(Class.query.filter_by(tenant_id=tenant_id))
+            filter_classes_by_branch(
+                Class.query.filter_by(tenant_id=tenant_id).filter(
+                    Class.merged_into_class_id.is_(None)
+                )
+            )
             .order_by(Class.name, Class.section)
             .all()
         )
@@ -119,7 +108,7 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
             items.append(
                 {
                     "class_id": c.id,
-                    "class_name": f"{c.name}-{c.section}",
+                    "class_name": c.display_name,
                     "reason": "admin",
                     "can_mark": True,
                 }
@@ -130,31 +119,23 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
     if not teacher:
         return {"success": True, "items": []}
 
-    # Primary assignments with attendance authority
-    ctas = (
-        ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id, teacher_id=teacher.id)
-        .filter(
-            ClassTeacherAssignment.is_active.is_(True),
-            ClassTeacherAssignment.deleted_at.is_(None),
-            ClassTeacherAssignment.allow_attendance_marking.is_(True),
-        )
-        .all()
-    )
+    # Class-teacher responsibilities with attendance authority, in effect on
+    # the requested day — asked of Teaching Assignment (ADR-014), not the
+    # tables that happen to express it.
+    from modules.academics.teaching_assignment import classes_taught_by
+
     seen = set()
-    for cta in ctas:
-        ef, et = cta.effective_from, cta.effective_to
-        if ef and session_day < ef:
+    for held in classes_taught_by(teacher.id, on=session_day):
+        if not held.allow_attendance_marking:
             continue
-        if et and session_day > et:
-            continue
-        c = Class.query.get(cta.class_id)
+        c = Class.query.get(held.class_id)
         if not c:
             continue
         seen.add(c.id)
         items.append(
             {
                 "class_id": c.id,
-                "class_name": f"{c.name}-{c.section}",
+                "class_name": c.display_name,
                 "reason": "class_teacher",
                 "can_mark": True,
             }
@@ -176,28 +157,17 @@ def get_eligible_classes_for_user(tenant_id: str, user_id: str, session_day: dat
         items.append(
             {
                 "class_id": c.id,
-                "class_name": f"{c.name}-{c.section}",
+                "class_name": c.display_name,
                 "reason": "delegated",
                 "can_mark": True,
             }
         )
         seen.add(c.id)
 
-    # Legacy class teacher user pointer
-    legacy = Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).all()
-    for c in legacy:
-        if c.id in seen:
-            continue
-        items.append(
-            {
-                "class_id": c.id,
-                "class_name": f"{c.name}-{c.section}",
-                "reason": "legacy_class_teacher",
-                "can_mark": True,
-            }
-        )
 
-    items.sort(key=lambda x: x["class_name"])
+    # `display_name` is None for a class with no grade, no name and no
+    # section; sorting that against strings raises.
+    items.sort(key=lambda x: x["class_name"] or "")
     return {"success": True, "items": items}
 
 
@@ -216,11 +186,11 @@ def get_or_create_session(
     # Branch scope: restricted sub-admins may only touch classes in their units.
     assert_class_allowed(class_id)
 
-    # Attendance can only be taken for a day that has occurred. date.today() is the
+    # Attendance can only be taken for a day that has occurred. school_today() is the
     # server date, matching the rest of this module (e.g. the route default); for
     # IST / UTC+ tenants the only divergence is before dawn local time, outside
     # marking hours.
-    if session_date > date.today():
+    if session_date > school_today():
         return {
             "success": False,
             "error": "Attendance cannot be taken for a future date",
@@ -244,19 +214,28 @@ def get_or_create_session(
     if existing:
         return {
             "success": True,
-            "session": serialize_session(existing, f"{cls.name}-{cls.section}"),
+            "session": serialize_session(existing, cls.display_name),
             "created": False,
         }
 
-    cta = _primary_class_teacher_assignment(tenant_id, class_id, session_date)
+    # A delegated marker must be a real teacher of this organization — the
+    # column would otherwise accept any teacher id from any tenant.
+    if assigned_marker_teacher_id:
+        marker = Teacher.query.filter_by(
+            id=assigned_marker_teacher_id, tenant_id=tenant_id
+        ).first()
+        if marker is None:
+            return {"success": False, "error": "Unknown teacher for assigned marker"}
 
+    # class_teacher_assignment_id is no longer written: nothing ever read it,
+    # and "who was the class teacher that day" is answered by the dated
+    # Teaching Assignment service (ADR-014), not a snapshot of a row id.
     s = AttendanceSession(
         tenant_id=tenant_id,
         class_id=class_id,
         session_date=session_date,
         status="draft",
         assigned_marker_teacher_id=assigned_marker_teacher_id,
-        class_teacher_assignment_id=cta.id if cta else None,
         notes=notes,
         attendance_source="manual",
         created_by=user_id,
@@ -277,14 +256,14 @@ def get_or_create_session(
         if existing:
             return {
                 "success": True,
-                "session": serialize_session(existing, f"{cls.name}-{cls.section}"),
+                "session": serialize_session(existing, cls.display_name),
                 "created": False,
             }
         return {"success": False, "error": "Could not create attendance session"}
 
     return {
         "success": True,
-        "session": serialize_session(s, f"{cls.name}-{cls.section}"),
+        "session": serialize_session(s, cls.display_name),
         "created": True,
     }
 
@@ -348,8 +327,19 @@ def upsert_records(
     if not s:
         return {"success": False, "error": "Session not found"}
 
-    if s.status == "finalized" and not has_permission(user_id, "attendance.manage"):
-        return {"success": False, "error": "Session is finalized"}
+    # A settled register is not marked again — it is corrected, which leaves
+    # a reason and a name. Two ways to be settled: somebody finalised it, or
+    # the school's own deadline passed (see correction_service.is_locked).
+    from .correction_service import is_locked
+
+    if is_locked(s) and not has_permission(user_id, "attendance.manage"):
+        return {
+            "success": False,
+            "error": (
+                "This attendance is settled. Request a correction so the "
+                "change carries a reason."
+            ),
+        }
 
     if not can_user_mark_session(tenant_id, user_id, s, s.class_id):
         return {"success": False, "error": "Not allowed to mark this session"}
@@ -424,7 +414,7 @@ def finalize_session(tenant_id: str, session_id: str, user_id: str) -> Dict[str,
     s.updated_by = user_id
     db.session.commit()
     cls = Class.query.get(s.class_id)
-    name = f"{cls.name}-{cls.section}" if cls else None
+    name = cls.display_name if cls else None
     return {"success": True, "session": serialize_session(s, name)}
 
 
@@ -448,7 +438,7 @@ def class_history(
 
     out = []
     for s in sessions:
-        out.append(serialize_session(s, f"{cls.name}-{cls.section}"))
+        out.append(serialize_session(s, cls.display_name))
 
     return {"success": True, "items": out}
 
@@ -456,7 +446,7 @@ def class_history(
 def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = None) -> Dict[str, Any]:
     st = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
     if not st:
-        return {"success": False, "error": "Student not found"}
+        return {"success": False, "code": "NOT_FOUND", "error": "Student not found"}
 
     # Branch scope: restricted sub-admins may only read students in their units.
     assert_student_allowed(student_id)
@@ -504,6 +494,11 @@ def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = N
             "source": "sessions_v2",
             "total_days": total,
             "present": present,
+            # Counted here rather than by each screen. A parent asking "how
+            # many days has she missed" is asking one question, and two
+            # clients counting it themselves is two chances to differ.
+            "absent": sum(1 for r in recs if r["status"] == "absent"),
+            "late": sum(1 for r in recs if r["status"] == "late"),
             "percentage": pct,
             "records": recs,
         },
@@ -511,7 +506,9 @@ def student_history_v2(tenant_id: str, student_id: str, month: Optional[str] = N
 
 
 def me_student_attendance_v2(tenant_id: str, user_id: str, month: Optional[str] = None) -> Dict[str, Any]:
-    st = Student.query.filter_by(user_id=user_id, tenant_id=tenant_id).first()
+    from modules.students.services import student_for_user
+
+    st = student_for_user(user_id, tenant_id)
     if not st:
         return {"success": False, "error": "Student not found"}
     return student_history_v2(tenant_id, st.id, month=month)

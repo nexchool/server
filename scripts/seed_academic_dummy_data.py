@@ -37,7 +37,7 @@ from modules.academics.backbone.models import (
 )
 from modules.attendance.models import Attendance as LegacyAttendance
 from modules.auth.models import Session, User
-from modules.classes.models import Class, ClassSubject, ClassTeacher, SubjectLoad
+from modules.classes.models import Class, ClassSubject, SubjectLoad
 from modules.fees.models import FeeInvoice, FeeInvoiceItem, FeePayment, FeeReceipt
 from modules.finance.models import (
     FeeComponent,
@@ -48,12 +48,14 @@ from modules.finance.models import (
     StudentFeeItem,
 )
 from modules.notifications.models import Notification
-from modules.rbac.models import Role, UserRole
+from modules.people.employment import Staff, StaffEmploymentPeriod
+from modules.people.models import Family, FamilyMember, Person
+from modules.people.service import employ
+from modules.rbac.models import Role
 from modules.schedule.models import ScheduleOverride
 from modules.students.models import Student, StudentDocument
 from modules.subjects.models import Subject
 from modules.teachers.models import Teacher
-from modules.timetable.models import TimetableSlot
 
 
 def _get_default_tenant_id() -> str:
@@ -92,14 +94,12 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
     AttendanceSession.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     TimetableEntry.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     TimetableVersion.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
-    TimetableSlot.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
 
     ClassSubjectTeacher.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     ClassSubject.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     StudentClassEnrollment.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     ClassTeacherAssignment.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     SubjectLoad.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
-    ClassTeacher.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     LegacyAttendance.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
 
     Payment.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
@@ -138,8 +138,22 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
         if ids:
             Session.query.filter(Session.user_id.in_(ids)).delete(synchronize_session=False)
             Notification.query.filter(Notification.user_id.in_(ids)).delete(synchronize_session=False)
-            UserRole.query.filter(UserRole.user_id.in_(ids)).delete(synchronize_session=False)
             User.query.filter(User.id.in_(ids)).delete(synchronize_session=False)
+
+    # The People model, cleared last: accounts, employment and family
+    # participation all reference a person, and the person outlives them all.
+    # Employee numbers are unique per organization, so leaving employment behind
+    # would collide with the staff this run is about to create.
+    StaffEmploymentPeriod.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    Staff.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    FamilyMember.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    Family.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    db.session.flush()
+    # Only people nothing points at any more; the platform admin keeps theirs.
+    Person.query.filter(
+        Person.tenant_id == tenant_id,
+        ~Person.id.in_(db.session.query(User.person_id).filter(User.person_id.isnot(None))),
+    ).delete(synchronize_session=False)
 
     db.session.flush()
 
@@ -183,15 +197,10 @@ def _assign_role(tenant_id: str, user_id: str, role_name: str) -> None:
     role = Role.query.filter_by(tenant_id=tenant_id, name=role_name).first()
     if not role:
         raise RuntimeError(f'Role "{role_name}" not found for tenant. Run seed_rbac first.')
-    db.session.add(
-        UserRole(
-            id=str(uuid.uuid4()),
-            tenant_id=tenant_id,
-            user_id=user_id,
-            role_id=role.id,
-            created_at=datetime.utcnow(),
-        )
-    )
+    from modules.rbac.authority_service import grant_authority
+
+    user = User.query.get(user_id)
+    grant_authority(employ(tenant_id, user.person_id).id, role.id)
 
 
 def run_seed() -> None:
@@ -227,10 +236,18 @@ def run_seed() -> None:
     for i, (tname, temail) in enumerate(teacher_specs, start=1):
         u = _user(tenant_id, temail, tname, password)
         _assign_role(tenant_id, u.id, "Teacher")
+        # A teacher is an employed person who teaches (ADR-005).
+        staff = employ(
+            tenant_id,
+            u.person_id,
+            employee_number=f"EMP{i:03d}",
+            designation="Teacher",
+        )
         t = Teacher(
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
             user_id=u.id,
+            staff_id=staff.id,
             employee_id=f"EMP{i:03d}",
             designation="Teacher",
             status="active",
@@ -274,6 +291,7 @@ def run_seed() -> None:
             id=str(uuid.uuid4()),
             tenant_id=tenant_id,
             user_id=u.id,
+            person_id=u.person_id,
             admission_number=f"ADM{idx:03d}",
             roll_number=idx,
             academic_year="2025-2026",

@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from core.school_time import utc_now
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -84,7 +85,7 @@ def test_soft_deleted_user_rejected_with_401(flask_app):
     from datetime import datetime
 
     status, ran = _call_protected(
-        flask_app, _fake_user(deleted_at=datetime.utcnow())
+        flask_app, _fake_user(deleted_at=utc_now())
     )
     assert status == 401
     assert ran is False

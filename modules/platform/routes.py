@@ -311,7 +311,7 @@ def get_tenant(tenant_id):
 @auth_required
 @platform_admin_required
 def update_tenant(tenant_id):
-    """PATCH /platform/tenants/<id>  Body: name?, contact_email?, phone?, address?, logo_url?, tagline?, board_affiliation?"""
+    """PATCH /platform/tenants/<id>  Body: name?, contact_email?, phone?, address?, logo_url?, tagline?, board_affiliation?, timezone?"""
     data = request.get_json() or {}
     result = services.update_tenant(
         tenant_id=tenant_id,
@@ -323,6 +323,7 @@ def update_tenant(tenant_id):
         logo_url=data.get("logo_url"),
         tagline=data.get("tagline"),
         board_affiliation=data.get("board_affiliation"),
+        timezone=data.get("timezone"),
     )
     if not result["success"]:
         return error_response("NotFound", result["error"], 404)

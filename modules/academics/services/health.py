@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any, Dict, List
 
 from core.database import db
@@ -10,10 +9,11 @@ from modules.academics.backbone.models import ClassSubjectTeacher, TimetableEntr
 from modules.classes.models import Class, ClassSubject
 
 from modules.attendance.session_services import attendance_pending_for_class_today
+from core.school_time import school_today
 
 
 def compute_health(tenant_id: str) -> Dict[str, Any]:
-    today = date.today()
+    today = school_today()
 
     # Load the tenant's classes once, then answer each question with a single
     # batched query + in-memory set membership — no per-class / per-subject N+1.
@@ -21,7 +21,7 @@ def compute_health(tenant_id: str) -> Dict[str, Any]:
     class_map = {c.id: c for c in classes}
 
     def _label(c) -> str:
-        return f"{c.name}-{c.section}"
+        return (c.display_name or "")
 
     active_class_subjects = (
         ClassSubject.query.filter_by(tenant_id=tenant_id)
@@ -126,7 +126,7 @@ def compute_health(tenant_id: str) -> Dict[str, Any]:
         for c in classes:
             if attendance_pending_for_class_today(tenant_id, c.id, today):
                 attendance_pending.append(
-                    {"class_id": c.id, "class_name": f"{c.name}-{c.section}"}
+                    {"class_id": c.id, "class_name": (c.display_name or "")}
                 )
 
     return {

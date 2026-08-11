@@ -29,7 +29,6 @@ from __future__ import annotations
 import os
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -57,6 +56,25 @@ def flask_app():
     from app import app as _app
     _app.config["TESTING"] = True
     return _app
+
+
+@pytest.fixture(autouse=True)
+def _no_throttling(flask_app):
+    """Run the suite with rate limiting off.
+
+    Throttling is a production protection and no test asserts it, but the
+    limiter counts in memory and the whole suite shares one app and one
+    counter — so the 120-per-minute GraphQL limit trips once enough GraphQL
+    tests land inside the same minute. That made `test_identity_graphql`
+    fail with `KeyError: 'data'` (a 429 body has no `data`) in some runs and
+    not others, which reads as a flake in identity rather than what it is.
+    """
+    from core.extensions import limiter
+
+    previous = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = previous
 
 
 @pytest.fixture(scope="session")
@@ -141,7 +159,11 @@ def tenant(db_session):
     t = Tenant(
         id=_new_id("t-"),
         name="Test School",
-        subdomain=f"test-{uuid.uuid4().hex[:6]}",
+        # Full uuid, not a short prefix. Some tests commit their tenant, so the
+        # subdomains accumulate in the developer's database run after run, and a
+        # six-character name drawn against thousands of survivors collides often
+        # enough to fail a suite that has nothing wrong with it.
+        subdomain=f"test-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -264,3 +286,38 @@ def student2(db_session, tenant):
         name="Amit Singh",
         admission_suffix=uuid.uuid4().hex[:8],
     )
+
+
+# ---------------------------------------------------------------------------
+# Employment — teaching is a participation of it (ADR-005)
+# ---------------------------------------------------------------------------
+
+def employ_for(user, **employment):
+    """Record that the organization employs the person behind this account.
+
+    Tests that need a teacher go through the same business action the services
+    use, so a teaching record is never created against employment that does not
+    exist (ADR-005).
+    """
+    from core.database import db
+    from modules.people.service import employ
+
+    staff = employ(user.tenant_id, user.person_id, **employment)
+    db.session.flush()
+    return staff
+
+
+def grant_profile_to(user, role_id, **employment):
+    """Give this account's person an Authority Profile.
+
+    Authority is held by the employment, not by the account (ADR-013), so a test
+    that wants an administrator has to employ them first — which is also the
+    order the school does it in: you are hired, then you are given rights.
+    """
+    from core.database import db
+    from modules.rbac.authority_service import grant_authority
+
+    staff = employ_for(user, **employment)
+    grant_authority(staff.id, role_id)
+    db.session.flush()
+    return staff

@@ -1,10 +1,12 @@
-"""Tests for the paginated subject catalogue: services.list_subjects_paginated,
-create_subject with class_ids, and the GET /api/subjects/ envelope switch.
+"""The subject catalogue: `services.subjects_page`, `subjects_matching_count`
+and `create_subject` with class_ids.
 
-Service tests use the real-DB savepoint harness (conftest `db_session`,
-`tenant`) — the logic is SQL filtering/pagination, which we want to exercise
-against PostgreSQL. Route tests are pure-Python (unwrap decorators, mock the
-service) following test_subjects_mine.py.
+Exercised against PostgreSQL through the conftest savepoint harness, because
+what is being tested is SQL filtering and paging.
+
+The catalogue is read over GraphQL — `GET /api/subjects/` is deleted — so the
+field itself, its guard and its enums are covered in
+`test_academics_graphql.py`. What lives here is the service beneath both.
 """
 from __future__ import annotations
 
@@ -122,45 +124,60 @@ def _make_class_subject(db_session, tenant, klass, subject, *, weekly_periods=5,
 
 
 # ---------------------------------------------------------------------------
-# list_subjects_paginated — pagination
+# subjects_page — paging
 # ---------------------------------------------------------------------------
 
-def test_pagination_envelope_and_page_slicing(db_session, tenant):
+def test_a_page_starts_where_the_offset_says(db_session, tenant):
     from modules.subjects import services
 
     for i in range(25):
         _make_subject(db_session, tenant, name=f"Subject {i:02d}")
 
-    result = services.list_subjects_paginated(tenant.id, page=2, per_page=10)
+    items, has_more = services.subjects_page(tenant.id, first=10, offset=10)
 
-    assert result["total"] == 25
-    assert result["page"] == 2
-    assert result["per_page"] == 10
-    assert result["total_pages"] == 3
-    assert [s["name"] for s in result["items"]] == [
-        f"Subject {i:02d}" for i in range(10, 20)
-    ]
+    assert has_more is True
+    assert [s["name"] for s in items] == [f"Subject {i:02d}" for i in range(10, 20)]
+    assert services.subjects_matching_count(tenant.id) == 25
 
 
-def test_per_page_is_capped_at_100(db_session, tenant):
+def test_the_last_page_says_there_is_no_more(db_session, tenant):
     from modules.subjects import services
 
-    _make_subject(db_session, tenant, name="Solo")
-    result = services.list_subjects_paginated(tenant.id, per_page=5000)
-    assert result["per_page"] == 100
+    for i in range(25):
+        _make_subject(db_session, tenant, name=f"Subject {i:02d}")
+
+    items, has_more = services.subjects_page(tenant.id, first=10, offset=20)
+
+    assert has_more is False
+    assert len(items) == 5
 
 
-def test_empty_result_has_zero_total_pages(db_session, tenant):
+def test_the_page_size_is_capped_by_the_service(db_session, tenant):
+    """A cap a caller can route around is not a cap."""
     from modules.subjects import services
 
-    result = services.list_subjects_paginated(tenant.id, search="nope")
-    assert result["items"] == []
-    assert result["total"] == 0
-    assert result["total_pages"] == 0
+    for i in range(3):
+        _make_subject(db_session, tenant, name=f"Subject {i}")
+
+    items, _has_more = services.subjects_page(tenant.id, first=5000)
+    assert len(items) == 3
+
+    from modules.subjects.services import MAX_PER_PAGE
+
+    assert MAX_PER_PAGE == 100
+
+
+def test_a_catalogue_nothing_matches_is_empty(db_session, tenant):
+    from modules.subjects import services
+
+    items, has_more = services.subjects_page(tenant.id, search="nope")
+    assert items == []
+    assert has_more is False
+    assert services.subjects_matching_count(tenant.id, search="nope") == 0
 
 
 # ---------------------------------------------------------------------------
-# list_subjects_paginated — search + filters
+# subjects_page — search + filters
 # ---------------------------------------------------------------------------
 
 def test_search_matches_name_code_description_case_insensitive(db_session, tenant):
@@ -171,11 +188,11 @@ def test_search_matches_name_code_description_case_insensitive(db_session, tenan
                   description="includes basic mathematics")
     _make_subject(db_session, tenant, name="History", code="HIST")
 
-    result = services.list_subjects_paginated(tenant.id, search="math")
-    assert {s["name"] for s in result["items"]} == {"Mathematics", "Science"}
+    found, _ = services.subjects_page(tenant.id, search="math")
+    assert {s["name"] for s in found} == {"Mathematics", "Science"}
 
-    by_code = services.list_subjects_paginated(tenant.id, search="hist")
-    assert [s["name"] for s in by_code["items"]] == ["History"]
+    by_code, _ = services.subjects_page(tenant.id, search="hist")
+    assert [s["name"] for s in by_code] == ["History"]
 
 
 def test_subject_type_filter(db_session, tenant):
@@ -184,8 +201,9 @@ def test_subject_type_filter(db_session, tenant):
     _make_subject(db_session, tenant, name="Cricket", subject_type="activity")
     _make_subject(db_session, tenant, name="Maths", subject_type="core")
 
-    result = services.list_subjects_paginated(tenant.id, subject_type="activity")
-    assert [s["name"] for s in result["items"]] == ["Cricket"]
+    found, _ = services.subjects_page(tenant.id, subject_type="activity")
+    assert [s["name"] for s in found] == ["Cricket"]
+    assert services.subjects_matching_count(tenant.id, subject_type="activity") == 1
 
 
 def test_include_inactive_toggle(db_session, tenant):
@@ -194,11 +212,11 @@ def test_include_inactive_toggle(db_session, tenant):
     _make_subject(db_session, tenant, name="Active One")
     _make_subject(db_session, tenant, name="Dormant", is_active=False)
 
-    default = services.list_subjects_paginated(tenant.id)
-    assert {s["name"] for s in default["items"]} == {"Active One"}
+    default, _ = services.subjects_page(tenant.id)
+    assert {s["name"] for s in default} == {"Active One"}
 
-    with_inactive = services.list_subjects_paginated(tenant.id, include_inactive=True)
-    assert {s["name"] for s in with_inactive["items"]} == {"Active One", "Dormant"}
+    with_inactive, _ = services.subjects_page(tenant.id, include_inactive=True)
+    assert {s["name"] for s in with_inactive} == {"Active One", "Dormant"}
 
 
 def test_sort_by_code_desc(db_session, tenant):
@@ -207,8 +225,8 @@ def test_sort_by_code_desc(db_session, tenant):
     _make_subject(db_session, tenant, name="A", code="AAA")
     _make_subject(db_session, tenant, name="B", code="ZZZ")
 
-    result = services.list_subjects_paginated(tenant.id, sort_by="code", sort_dir="desc")
-    assert [s["code"] for s in result["items"]] == ["ZZZ", "AAA"]
+    found, _ = services.subjects_page(tenant.id, sort_by="code", sort_dir="desc")
+    assert [s["code"] for s in found] == ["ZZZ", "AAA"]
 
 
 def _make_other_tenant(db_session):
@@ -217,7 +235,7 @@ def _make_other_tenant(db_session):
     t = Tenant(
         id=_nid("t-"),
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -233,12 +251,13 @@ def test_no_cross_tenant_leakage(db_session, tenant):
     _make_subject(db_session, tenant, name="Ours")
     _make_subject(db_session, other, name="Theirs")
 
-    result = services.list_subjects_paginated(tenant.id, search="")
-    assert {s["name"] for s in result["items"]} == {"Ours"}
+    found, _ = services.subjects_page(tenant.id, search="")
+    assert {s["name"] for s in found} == {"Ours"}
+    assert services.subjects_matching_count(tenant.id) == 1
 
 
 # ---------------------------------------------------------------------------
-# list_subjects_paginated — classes[] / programmes[] enrichment
+# subjects_page — classes[] / programmes[] enrichment
 # ---------------------------------------------------------------------------
 
 def test_items_carry_classes_and_programmes(db_session, tenant):
@@ -253,15 +272,18 @@ def test_items_carry_classes_and_programmes(db_session, tenant):
     unassigned = _make_subject(db_session, tenant, name="Drawing")
     cs = _make_class_subject(db_session, tenant, klass, subject, weekly_periods=6)
 
-    result = services.list_subjects_paginated(tenant.id)
-    by_name = {s["name"]: s for s in result["items"]}
+    found, _ = services.subjects_page(tenant.id)
+    by_name = {s["name"]: s for s in found}
 
     maths = by_name["Maths"]
     assert maths["classes"] == [
         {
             "class_subject_id": cs.id,
             "class_id": klass.id,
-            "class_name": "5-A",
+            # Named by its grade, from Class.display_name — not the "5-A"
+            # free-text label, which is empty for every class the structured
+            # form creates.
+            "class_name": "Grade 5 A",
             "grade_name": "Grade 5",
             "programme_id": prog.id,
             "programme_name": "GSEB Gujarati",
@@ -282,8 +304,8 @@ def test_inactive_class_subject_rows_are_excluded(db_session, tenant):
     subject = _make_subject(db_session, tenant, name="Maths")
     _make_class_subject(db_session, tenant, klass, subject, status="inactive")
 
-    result = services.list_subjects_paginated(tenant.id)
-    assert result["items"][0]["classes"] == []
+    found, _ = services.subjects_page(tenant.id)
+    assert found[0]["classes"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -468,81 +490,60 @@ def test_route_create_without_class_ids_skips_permission_check(monkeypatch):
     assert captured.get("success") is True
 
 
+
 # ---------------------------------------------------------------------------
-# Route: GET /api/subjects/ envelope switch + param validation (pure-Python)
+# The one REST read the Expo client still needs
 # ---------------------------------------------------------------------------
 
-class _FakeArgs(dict):
-    def get(self, key, default=None):
-        return super().get(key, default)
+def test_the_mobile_subject_list_still_answers(flask_app, db_session, tenant):
+    """`GET /api/subjects/` is `subjectService.getSubjects` on mobile.
 
+    The administrator's paginated catalogue that used to hide behind this
+    URL's query params is gone — admin-web reads `subjectCatalogue` on
+    GraphQL. The flat array stays until the Expo release that moves the app,
+    and reads `list_subjects_filtered`, the same function GraphQL's `subjects`
+    field calls, so there is one reader.
+    """
+    from modules.auth.services import generate_access_token
+    from modules.rbac.models import Permission, Role, RolePermission
+    from modules.auth.models import User
+    from tests.conftest import grant_profile_to
 
-def _run_list_handler(monkeypatch, args: dict):
-    from modules.subjects import routes
+    _make_subject(db_session, tenant, name="Mathematics", code="MATH")
+    _make_subject(db_session, tenant, name="Retired", is_active=False)
 
-    monkeypatch.setattr(
-        routes, "g", type("G", (), {"tenant_id": "t1"})(), raising=False
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        id=f"u-{suffix}", tenant_id=tenant.id, email=f"{suffix}@test.school",
+        password_hash="x" * 60, name="Staff",
     )
-    monkeypatch.setattr(
-        routes, "request", type("R", (), {"args": _FakeArgs(args)})()
+    db_session.add(user)
+    db_session.flush()
+    role = Role(id=f"r-{suffix}", tenant_id=tenant.id, name=f"Role-{suffix}")
+    db_session.add(role)
+    db_session.flush()
+    permission = Permission.query.filter_by(name="subject.read").first()
+    if permission is None:
+        permission = Permission(id=_nid("perm-"), name="subject.read")
+        db_session.add(permission)
+        db_session.flush()
+    db_session.add(
+        RolePermission(
+            tenant_id=tenant.id, role_id=role.id, permission_id=permission.id
+        )
+    )
+    db_session.flush()
+    grant_profile_to(user, role.id, employee_number=f"EMP-{suffix}")
+
+    response = flask_app.test_client().get(
+        "/api/subjects/",
+        headers={
+            "X-Tenant-Subdomain": tenant.subdomain,
+            "Authorization": f"Bearer {generate_access_token(user)}",
+        },
     )
 
-    captured = {}
-    monkeypatch.setattr(
-        routes,
-        "success_response",
-        lambda data=None, **kw: captured.__setitem__("data", data) or ("ok", 200),
-    )
-    monkeypatch.setattr(
-        routes,
-        "validation_error_response",
-        lambda msg, **kw: captured.__setitem__("error", msg) or ("bad", 400),
-    )
-
-    handler = routes.list_subjects
-    while hasattr(handler, "__wrapped__"):
-        handler = handler.__wrapped__
-    response = handler()
-    return response, captured
-
-
-def test_route_without_list_params_returns_legacy_array(monkeypatch):
-    from modules.subjects import routes
-
-    legacy = [{"id": "s1", "name": "Maths"}]
-    monkeypatch.setattr(
-        routes.services, "get_subjects", lambda tid, include_inactive=False: legacy
-    )
-    response, captured = _run_list_handler(monkeypatch, {})
-    assert response == ("ok", 200)
-    assert captured["data"] == legacy
-
-
-def test_route_with_page_param_returns_envelope(monkeypatch):
-    from modules.subjects import routes
-
-    envelope = {"items": [], "total": 0, "page": 1, "per_page": 20, "total_pages": 0}
-    monkeypatch.setattr(
-        routes.services, "list_subjects_paginated", lambda tid, **kw: envelope
-    )
-    response, captured = _run_list_handler(monkeypatch, {"page": "1"})
-    assert response == ("ok", 200)
-    assert captured["data"] == envelope
-
-
-def test_route_rejects_non_integer_page(monkeypatch):
-    response, captured = _run_list_handler(monkeypatch, {"page": "abc"})
-    assert response == ("bad", 400)
-    assert "page" in captured["error"]
-
-
-def test_route_rejects_bad_sort_by(monkeypatch):
-    response, captured = _run_list_handler(monkeypatch, {"sort_by": "evil"})
-    assert response == ("bad", 400)
-    assert "sort_by" in captured["error"]
-
-
-def test_route_rejects_bad_subject_type(monkeypatch):
-    response, captured = _run_list_handler(monkeypatch, {"subject_type": "wizardry"})
-    assert response == ("bad", 400)
-    assert "subject_type" in captured["error"]
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()["data"]
+    assert isinstance(payload, list), "the mobile app reads a flat array"
+    assert [s["name"] for s in payload] == ["Mathematics"]

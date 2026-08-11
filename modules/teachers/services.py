@@ -1,20 +1,28 @@
 from shared.safe_error import safe_error
 from typing import List, Dict, Optional, Any, Set
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import contains_eager, joinedload, selectinload
 from datetime import datetime
-import secrets
 
 from core.database import db
+from core.branch_scope import filter_teachers_by_branch
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
+from modules.rbac.models import Role
 from modules.rbac.services import (
     assign_role_to_user_by_email,
     remove_login_for_deleted_profile,
 )
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.departments.models import DEPARTMENT_STATUS_ACTIVE, Department
+from modules.people.employment import (
+    EMPLOYED_STATUSES,
+    Staff,
+    StaffEmploymentPeriod,
+)
+from modules.people.models import Person
+from modules.people.service import record_employment_standing
 from .models import Teacher
 
 # Columns the client may sort by.
@@ -68,8 +76,8 @@ def generate_employee_id(
     pattern = get_teacher_employee_pattern(tid)
     return allocate_next_id(
         tenant_id=tid,
-        model=Teacher,
-        col_name="employee_id",
+        model=Staff,
+        col_name="employee_number",
         pattern=pattern,
         reserved=reserved,
         max_len=MAX_TEACHER_ID_LEN,
@@ -213,56 +221,101 @@ def create_teacher(
         except (RuntimeError, ValueError) as e:
             return {"success": False, "error": str(e)}
 
-        # Generate email if not provided (use employee_id based)
-        actual_email = email if email else f"{employee_id.lower()}@teacher.school"
-        temp_password = generate_teacher_password(name)
-
         # Plan enforcement: do not allow creating teachers beyond plan limit
         allowed, limit_msg = _check_teacher_plan_limit(tenant_id)
         if not allowed:
             return {'success': False, 'error': limit_msg}
 
-        # Check email uniqueness (tenant-scoped). Include soft-deleted rows: the
-        # (email, tenant_id) unique constraint is not scoped to deleted_at, so a
-        # soft-deleted email must be caught here to avoid an IntegrityError on insert.
-        existing_user = User.get_user_by_email(actual_email, tenant_id=tenant_id, include_deleted=True)
-        if existing_user:
-            if Teacher.query.filter_by(user_id=existing_user.id).first():
-                return {'success': False, 'error': 'Email already linked to another teacher'}
-            user = existing_user
-        else:
-            user = User()
-            user.tenant_id = tenant_id
-            user.email = actual_email
-            user.name = name
-            user.set_password(temp_password)
-            user.email_verified = True
-            user.force_password_reset = True
-            user.save()
+        # No email means no login (ADR-003): the old synthesized
+        # @teacher.school placeholder accounts — whose passwords were
+        # derivable from the teacher's name — are no longer minted.
+        user = None
+        existing_user = None
+        temp_password = None
+        if email:
+            temp_password = generate_teacher_password(name)
+
+            # Check email uniqueness (tenant-scoped). Include soft-deleted rows:
+            # the (email, tenant_id) unique constraint is not scoped to
+            # deleted_at, so a soft-deleted email must be caught here to avoid
+            # an IntegrityError on insert.
+            existing_user = User.get_user_by_email(
+                email, tenant_id=tenant_id, include_deleted=True
+            )
+            if existing_user:
+                if Teacher.query.filter_by(user_id=existing_user.id).first():
+                    return {'success': False, 'error': 'Email already linked to another teacher'}
+                user = existing_user
+            else:
+                user = User()
+                user.tenant_id = tenant_id
+                user.email = email
+                user.name = name
+                user.set_password(temp_password)
+                user.email_verified = True
+                user.force_password_reset = True
+                user.save()
 
         # Ensure Teacher role exists and has all its permissions for this tenant.
         # This is a no-op if everything is already correct (idempotent).
         seed_roles_for_tenant(tenant_id)
 
-        # Assign Teacher role (for both new and existing users)
-        role_result = assign_role_to_user_by_email(actual_email, 'Teacher', tenant_id=tenant_id)
-        if not role_result['success']:
-            db.session.rollback()
-            return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
+        # A teacher is an employed person who teaches (ADR-005): the employment
+        # is the Staff relationship, and teaching hangs off it. It is created
+        # before the profile is granted, because authority is held by the
+        # employment and there is nothing to grant it to otherwise. Someone
+        # already employed here keeps the employment they have. With an
+        # account, the account carries the person; without one, the hire
+        # itself records the person.
+        from modules.people.service import employ, record_person
+
+        if user is not None:
+            person = user.person
+        else:
+            # record_person constructs without persisting (People takes what
+            # it is told); the caller owns attaching it to the session.
+            person = record_person(tenant_id, name)
+            db.session.add(person)
+            db.session.flush()
+
+        joined_on = (
+            datetime.strptime(date_of_joining, '%Y-%m-%d').date()
+            if date_of_joining
+            else None
+        )
+        staff = employ(
+            tenant_id,
+            person.id,
+            employee_number=employee_id,
+            designation=designation,
+            department_id=resolved_department_id,
+            joined_on=joined_on,
+        )
+
+        # Grant the teaching profile to that employment. Authority is held by
+        # the employment either way (ADR-013); the email-keyed helper is just
+        # the historical path for accounts.
+        if user is not None:
+            role_result = assign_role_to_user_by_email(email, 'Teacher', tenant_id=tenant_id)
+            if not role_result['success']:
+                db.session.rollback()
+                return {'success': False, 'error': f"Could not assign Teacher role: {role_result.get('error')}"}
+        else:
+            from modules.rbac.authority_service import grant_authority
+
+            teacher_role = Role.query.filter_by(tenant_id=tenant_id, name='Teacher').first()
+            if teacher_role is None:
+                db.session.rollback()
+                return {'success': False, 'error': 'Teacher role is not seeded for this tenant'}
+            grant_authority(staff.id, teacher_role.id)
 
         teacher = Teacher(
             tenant_id=tenant_id,
-            user_id=user.id,
-            employee_id=employee_id,
-            designation=designation,
-            department_id=resolved_department_id,
+            user_id=user.id if user is not None else None,
+            staff_id=staff.id,
             qualification=qualification,
             specialization=specialization,
             experience_years=experience_years,
-            phone=phone,
-            address=address,
-            date_of_joining=datetime.strptime(date_of_joining, '%Y-%m-%d').date() if date_of_joining else None,
-            status='active',
         )
         teacher.save()
 
@@ -273,7 +326,7 @@ def create_teacher(
 
         if email and not existing_user:
             result['credentials'] = {
-                'email': actual_email,
+                'email': email,
                 'employee_id': employee_id,
                 'password': temp_password,
                 'must_reset': True,
@@ -322,27 +375,56 @@ def list_teachers(
     # returned when the department filter/search below isn't in play.
     # Eager-load what to_dict() touches; otherwise each row lazy-loads
     # department_ref and we're back to a per-row query up to the 100-row page cap.
-    query = Teacher.query.join(User).outerjoin(
-        Department, Teacher.department_id == Department.id
-    ).options(joinedload(Teacher.department_ref))
+    # Filtering, sorting and searching read the same facts the payload shows:
+    # the person and the employment. Reading one and filtering the other lets a
+    # teacher be displayed as inactive while still turning up under "active".
+    # Staff and Person are inner: every teacher has an employment, and every
+    # employment has a person. The account is OUTER: a teacher may have no
+    # login (ADR-003, migration 094), and an inner join would silently drop
+    # them from the list.
+    query = (
+        Teacher.query.outerjoin(User)
+        .join(Staff, Teacher.staff_id == Staff.id)
+        .join(Person, Staff.person_id == Person.id)
+        .outerjoin(Department, Staff.department_id == Department.id)
+        .options(
+            # The account is joined above for the email filter; to_dict reads
+            # its email and picture too, so reuse that join rather than paying
+            # a query a row for it.
+            contains_eager(Teacher.user),
+            contains_eager(Teacher.staff).options(
+                contains_eager(Staff.person),
+                contains_eager(Staff.department),
+                selectinload(Staff.periods),
+            ),
+        )
+    )
+
+    # A sub-admin restricted to one campus sees that campus's teachers.
+    query = filter_teachers_by_branch(query)
 
     if status:
+        # "Active" is not a column any more: it is whether the employment is
+        # one someone is currently serving.
+        currently_employed = Staff.employment_status.in_(EMPLOYED_STATUSES)
         query = query.filter(
-            db.func.lower(Teacher.status) == status.strip().lower()
+            currently_employed
+            if status.strip().lower() == "active"
+            else db.not_(currently_employed)
         )
 
     if department_id:
-        query = query.filter(Teacher.department_id == department_id)
+        query = query.filter(Staff.department_id == department_id)
 
     if designation:
-        query = query.filter(Teacher.designation.ilike(f"%{designation.strip()}%"))
+        query = query.filter(Staff.designation.ilike(f"%{designation.strip()}%"))
 
     date_from = _parse_date(date_of_joining_from)
     if date_from:
-        query = query.filter(Teacher.date_of_joining >= date_from)
+        query = query.filter(Staff.joined_on_column() >= date_from)
     date_to = _parse_date(date_of_joining_to)
     if date_to:
-        query = query.filter(Teacher.date_of_joining <= date_to)
+        query = query.filter(Staff.joined_on_column() <= date_to)
 
     if search:
         term = search.strip()
@@ -350,21 +432,21 @@ def list_teachers(
             pattern = f"%{term}%"
             field = search_field if search_field in SEARCH_FIELDS else "all"
             if field == "name":
-                query = query.filter(User.name.ilike(pattern))
+                query = query.filter(Person.full_name.ilike(pattern))
             elif field == "employee_id":
-                query = query.filter(Teacher.employee_id.ilike(pattern))
+                query = query.filter(Staff.employee_number.ilike(pattern))
             elif field == "email":
                 query = query.filter(User.email.ilike(pattern))
             elif field == "phone":
-                query = query.filter(Teacher.phone.ilike(pattern))
+                query = query.filter(Person.phone_number.ilike(pattern))
             else:
                 query = query.filter(
                     db.or_(
-                        User.name.ilike(pattern),
+                        Person.full_name.ilike(pattern),
                         User.email.ilike(pattern),
-                        Teacher.employee_id.ilike(pattern),
+                        Staff.employee_number.ilike(pattern),
                         Department.name.ilike(pattern),
-                        Teacher.phone.ilike(pattern),
+                        Person.phone_number.ilike(pattern),
                     )
                 )
 
@@ -376,18 +458,18 @@ def list_teachers(
         return expr.nulls_last() if nulls_last else expr
 
     if sort_key == "name":
-        order_cols = [_ordered(User.name)]
+        order_cols = [_ordered(Person.full_name)]
     elif sort_key == "designation":
-        order_cols = [_ordered(Teacher.designation, nulls_last=True)]
+        order_cols = [_ordered(Staff.designation, nulls_last=True)]
     elif sort_key == "department":
         order_cols = [_ordered(Department.name, nulls_last=True)]
     elif sort_key == "date_of_joining":
-        order_cols = [_ordered(Teacher.date_of_joining, nulls_last=True)]
+        order_cols = [_ordered(Staff.joined_on_column(), nulls_last=True)]
     else:  # employee_id (default)
-        order_cols = [_ordered(Teacher.employee_id)]
+        order_cols = [_ordered(Staff.employee_number)]
 
     if sort_key != "employee_id":
-        order_cols.append(Teacher.employee_id.asc())
+        order_cols.append(Staff.employee_number.asc())
 
     query = query.order_by(*order_cols)
 
@@ -415,9 +497,11 @@ def list_teachers(
     all_departments = list_active_departments(get_tenant_id())
     all_designations = [
         r[0]
-        for r in Teacher.query.with_entities(_distinct(Teacher.designation))
-        .filter(Teacher.designation.isnot(None), Teacher.designation != "")
-        .order_by(Teacher.designation)
+        for r in db.session.query(_distinct(Staff.designation))
+        .select_from(Teacher)
+        .join(Staff, Teacher.staff_id == Staff.id)
+        .filter(Staff.designation.isnot(None), Staff.designation != "")
+        .order_by(Staff.designation)
         .all()
     ]
 
@@ -438,9 +522,38 @@ def get_teacher_by_id(teacher_id: str) -> Optional[Dict]:
     return teacher.to_dict(include_subjects=True) if teacher else None
 
 
+def teacher_for_user(user_id: str, tenant_id: Optional[str] = None):
+    """The teaching record of whoever is signed in, or None.
+
+    Reached along the chain the canon defines rather than through
+    `teachers.user_id`: an account belongs to a Person (ADR-001, ADR-003), a
+    Person the school employs is Staff, and teaching is what that employment
+    does (ADR-005).
+
+    The column it replaces is a leftover from before any of that, and reading
+    it answered "you teach nothing" to a teacher whose login was added after
+    they were hired — which showed up as an empty class list rather than an
+    error, so nobody reported it as one.
+    """
+    from modules.auth.models import User
+    from modules.people.employment import Staff
+
+    account = User.query.filter_by(id=user_id).first()
+    if account is None or account.person_id is None:
+        return None
+
+    query = (
+        Teacher.query.join(Staff, Teacher.staff_id == Staff.id)
+        .filter(Staff.person_id == account.person_id)
+    )
+    if tenant_id:
+        query = query.filter(Teacher.tenant_id == tenant_id)
+    return query.first()
+
+
 def get_teacher_by_user_id(user_id: str) -> Optional[Dict]:
-    """Get teacher details by User ID."""
-    teacher = Teacher.query.filter_by(user_id=user_id).first()
+    """Get teacher details for whoever is signed in."""
+    teacher = teacher_for_user(user_id)
     return teacher.to_dict() if teacher else None
 
 
@@ -475,47 +588,92 @@ def update_teacher(
         if not teacher:
             return {'success': False, 'error': 'Teacher not found'}
 
-        if name is not None:
-            teacher.user.name = name
-            teacher.user.save()
-        if phone is not None:
-            teacher.phone = phone
-        if designation is not None:
-            teacher.designation = designation
+        employment = teacher.staff
+        if employment is None:
+            return {'success': False, 'error': 'Teacher has no employment on record'}
+
         if department_id is not NOT_PROVIDED:
             resolved_department_id, department_error = _resolve_department(
                 department_id, None, teacher.tenant_id,
-                current_department_id=teacher.department_id,
+                current_department_id=employment.department_id,
             )
             if department_error:
                 return {'success': False, 'error': department_error}
-            teacher.department_id = resolved_department_id
+            employment.department_id = resolved_department_id
         elif department is not None:
             resolved_department_id, department_error = _resolve_department(
                 None, department, teacher.tenant_id,
-                current_department_id=teacher.department_id,
+                current_department_id=employment.department_id,
             )
             if department_error:
                 return {'success': False, 'error': department_error}
-            teacher.department_id = resolved_department_id
+            employment.department_id = resolved_department_id
+
+        # What the teaching record owns.
         if qualification is not None:
             teacher.qualification = qualification
         if specialization is not None:
             teacher.specialization = specialization
         if experience_years is not None:
             teacher.experience_years = experience_years
-        if address is not None:
-            teacher.address = address
-        if date_of_joining is not None:
-            teacher.date_of_joining = datetime.strptime(date_of_joining, '%Y-%m-%d').date()
-        if status is not None:
-            teacher.status = status
+
+        _record_edit_against_the_employment(
+            teacher,
+            name=name,
+            phone=phone,
+            address=address,
+            status=status,
+            designation=designation,
+            date_of_joining=_parse_date(date_of_joining),
+        )
 
         teacher.save()
         return {'success': True, 'teacher': teacher.to_dict()}
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': safe_error(e, "Failed to update teacher")}
+
+
+def _record_edit_against_the_employment(
+    teacher, *, name, phone, address, status, designation, date_of_joining,
+):
+    """Send an edit of a teacher's record to the person and employment it describes.
+
+    A teacher record mixes three things: facts about the human (name, phone,
+    address), facts about the employment (designation, department, when they
+    joined, whether they still work here) and facts about the teaching itself
+    (qualification, specialisation, subjects). The first two have a home
+    outside this table, and each goes to its own owner. The third stays, being
+    what a teacher is as distinct from what an employee is (ADR-005).
+    """
+    from modules.people.service import (
+        ensure_employment_period,
+        record_employment_standing,
+        revise_identity,
+    )
+
+    staff = teacher.staff
+    if staff is None:
+        return
+
+    if name is not None and teacher.user is not None:
+        teacher.user.name = name
+
+    revise_identity(
+        staff.person,
+        {"full_name": name, "phone_number": phone, "address": address},
+    )
+
+    if designation is not None:
+        staff.designation = designation
+
+    if date_of_joining is not None:
+        period = ensure_employment_period(staff, date_of_joining)
+        # Correcting when someone joined corrects the period they are serving.
+        # Opening a second one would say they left and came back.
+        period.joined_on = date_of_joining
+
+    record_employment_standing(staff, status)
 
 
 # Matches students' bulk cap: one request should not queue unbounded work, and
@@ -549,7 +707,7 @@ def bulk_update_teacher_status(teacher_ids: List[str], status: str) -> Dict:
         ).all()
         found_ids = {t.id for t in teachers}
         for teacher in teachers:
-            teacher.status = status
+            record_employment_standing(teacher.staff, status)
         db.session.commit()
         return {
             "success": True,
@@ -564,10 +722,9 @@ def bulk_update_teacher_status(teacher_ids: List[str], status: str) -> Dict:
 def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
     """Delete many teachers in one tenant-scoped transaction.
 
-    Same teardown as `delete_teacher`, set-based: detach class-teacher rows and
-    the legacy homeroom pointer first (neither FK cascades, so SQLAlchemy would
-    otherwise null a NOT NULL column), then the teacher rows, then soft-
-    deactivate the backing logins.
+    Same teardown as `delete_teacher`, set-based: the teacher rows go (the
+    homeroom-pointer FK detaches itself, ON DELETE SET NULL since migration
+    095), then the backing logins are soft-deactivated.
 
     Returns {success, deleted, missing}.
     """
@@ -595,26 +752,24 @@ def bulk_delete_teachers(teacher_ids: List[str]) -> Dict:
             return {"success": True, "deleted": 0, "missing": ids}
 
         found_ids = [t.id for t in teachers]
-        user_ids = [t.user_id for t in teachers if t.user_id]
+        # (user_id, person_id) pairs: an account-less teacher (ADR-003) still
+        # holds authority on their employment, which must be withdrawn.
+        teardowns = [
+            (t.user_id, t.staff.person_id if t.staff else None) for t in teachers
+        ]
 
-        from modules.classes.models import ClassTeacher, Class
-
-        ClassTeacher.query.filter(ClassTeacher.teacher_id.in_(found_ids)).delete(
-            synchronize_session=False
-        )
-        if user_ids:
-            Class.query.filter(
-                Class.tenant_id == tenant_id, Class.teacher_id.in_(user_ids)
-            ).update({Class.teacher_id: None}, synchronize_session=False)
-
+        # classes.teacher_id references teachers.id ON DELETE SET NULL
+        # (migration 095) — the database detaches the homeroom pointers.
         for teacher in teachers:
             db.session.delete(teacher)
         db.session.flush()  # clear teachers.user_id before touching the users
 
-        for user_id in user_ids:
+        for user_id, person_id in teardowns:
             # hard=False: a teacher's user is referenced by NOT NULL / NO ACTION
             # FKs (attendance.marked_by, classes.teacher_id) — see delete_teacher.
-            remove_login_for_deleted_profile(user_id, tenant_id, "Teacher", hard=False)
+            remove_login_for_deleted_profile(
+                user_id, tenant_id, "Teacher", hard=False, person_id=person_id
+            )
 
         db.session.commit()
         return {
@@ -644,23 +799,21 @@ def delete_teacher(teacher_id: str) -> Dict:
 
         tenant_id = teacher.tenant_id
         user_id = teacher.user_id
+        person_id = teacher.staff.person_id if teacher.staff else None
 
-        # class_teachers has no ON DELETE CASCADE on its FK, so SQLAlchemy would
-        # try to SET teacher_id = NULL (NOT NULL column) and raise a violation.
-        # Explicitly remove those rows before deleting the teacher.
-        from modules.classes.models import ClassTeacher, Class
-        ClassTeacher.query.filter_by(teacher_id=teacher_id).delete(synchronize_session=False)
-        # Clear the legacy homeroom pointer (classes.teacher_id -> users.id) so no
-        # class still lists this departed teacher as its class teacher.
-        Class.query.filter_by(tenant_id=tenant_id, teacher_id=user_id).update(
-            {Class.teacher_id: None}, synchronize_session=False
-        )
-
+        # classes.teacher_id (the class-teacher cache) references teachers.id
+        # with ON DELETE SET NULL since migration 095 — the database detaches
+        # the homeroom pointer itself; no hand-written cleanup needed.
         db.session.delete(teacher)
         db.session.flush()  # clear teachers.user_id before touching the user
 
         # Soft-deactivate the backing login (hard=False) — see docstring.
-        remove_login_for_deleted_profile(user_id, tenant_id, "Teacher", hard=False)
+        # person_id is passed explicitly: an account-less teacher (ADR-003)
+        # still holds authority on their employment, and it must be withdrawn
+        # even with no user row to resolve the person through.
+        remove_login_for_deleted_profile(
+            user_id, tenant_id, "Teacher", hard=False, person_id=person_id
+        )
 
         db.session.commit()
         return {'success': True, 'message': 'Teacher deleted successfully'}

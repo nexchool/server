@@ -35,10 +35,12 @@ from modules.transport.models import (
     TransportEnrollment,
     TransportRoute,
 )
+from core.school_time import utc_now
+from core.school_time import school_today
 
 
 def _today() -> date:
-    return date.today()
+    return school_today()
 
 
 def _active_academic_year(tenant_id: str) -> Dict[str, Any]:
@@ -142,6 +144,14 @@ def _today_ops(tenant_id: str) -> Dict[str, Any]:
 def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = True) -> Dict[str, Any]:
     timetable_enabled = is_feature_enabled(tenant_id, "timetable")
 
+    # Every class the school runs. Needed by two unrelated alerts below, so it
+    # is read here rather than inside either — a school that does not use
+    # timetables still has classes, and still wants to know which have no
+    # subjects on them.
+    all_class_ids = [
+        c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
+    ]
+
     # Timetable conflicts: same teacher, same dow, same period in two active timetables.
     # Skipped entirely when timetable is off — disabled feature shouldn't surface alerts.
     timetable_conflicts = 0
@@ -174,9 +184,6 @@ def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = Tru
         )
         timetable_conflicts = len(conflict_rows)
 
-        all_class_ids = [
-            c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
-        ]
         classes_with_timetable = {
             row[0]
             for row in db.session.query(TimetableVersion.class_id)
@@ -348,7 +355,7 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
     )
 
     # Last 7 days collection grouped by date
-    cutoff = datetime.utcnow() - timedelta(days=6)
+    cutoff = utc_now() - timedelta(days=6)
     rows = (
         db.session.query(
             cast(Payment.created_at, Date).label("pay_date"),
@@ -377,8 +384,8 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
     current_7_total = sum(d["amount"] for d in last_7)
 
     # Previous week window (days 8–14 ago) for trend comparison
-    prev_start = datetime.utcnow() - timedelta(days=14)
-    prev_end = datetime.utcnow() - timedelta(days=7)
+    prev_start = utc_now() - timedelta(days=14)
+    prev_end = utc_now() - timedelta(days=7)
     prev_total_row = (
         db.session.query(func.coalesce(func.sum(Payment.amount), 0))
         .filter(

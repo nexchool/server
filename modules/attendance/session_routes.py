@@ -11,6 +11,7 @@ from shared.helpers import error_response, success_response, validation_error_re
 from modules.rbac.services import has_permission
 
 from . import session_services as svc
+from core.school_time import school_today
 
 PERM_MARK = "attendance.mark"
 PERM_READ_CLASS = "attendance.read.class"
@@ -25,7 +26,7 @@ PERM_MANAGE = "attendance.manage"
 @require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_MANAGE)
 def eligible_classes():
-    d = date.today()
+    d = school_today()
     ds = request.args.get("date")
     if ds:
         d = date.fromisoformat(ds[:10])
@@ -41,7 +42,7 @@ def eligible_classes():
 @require_feature("attendance")
 @require_any_permission(PERM_MARK, PERM_READ_CLASS, PERM_READ_ALL, PERM_MANAGE)
 def get_class_attendance_session(class_id):
-    ds = request.args.get("date") or date.today().isoformat()
+    ds = request.args.get("date") or school_today().isoformat()
     try:
         d = date.fromisoformat(ds[:10])
     except ValueError:
@@ -58,7 +59,7 @@ def get_class_attendance_session(class_id):
         return success_response(data={"session": None, "records": []})
     return success_response(
         data={
-            "session": svc.serialize_session(s, f"{cls.name}-{cls.section}"),
+            "session": svc.serialize_session(s, cls.display_name),
             "records": svc.list_records_for_session(g.tenant_id, s.id),
         }
     )
@@ -143,9 +144,10 @@ def student_attendance_v2(student_id):
     user_id = g.current_user.id
     if has_permission(user_id, PERM_READ_SELF) and not has_permission(user_id, PERM_READ_ALL):
         from modules.students.models import Student
+        from modules.students.services import is_own_studentship
 
         st = Student.query.filter_by(id=student_id).first()
-        if not st or st.user_id != user_id:
+        if not is_own_studentship(st, g.current_user):
             if not has_permission(user_id, PERM_READ_CLASS):
                 return error_response("Forbidden", "You can only view your own attendance", 403)
 

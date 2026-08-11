@@ -5,6 +5,7 @@ Centralized initialization of Flask extensions.
 Extensions are initialized here and then imported throughout the app.
 """
 
+import os
 import re
 
 from flask_cors import CORS
@@ -38,7 +39,6 @@ def init_extensions(app):
     # CORS_ORIGIN_REGEX (env var): a single regex that allows any matching origin.
     # Use in production to accept all tenant subdomains without listing them individually.
     # Example: CORS_ORIGIN_REGEX=^https://[a-z0-9-]+\.nexchool\.in$
-    import os
     cors_origin_regex = os.getenv('CORS_ORIGIN_REGEX', '').strip()
     if cors_origin_regex:
         try:
@@ -72,4 +72,20 @@ def init_extensions(app):
     mail.init_app(app)
 
     # Initialize rate limiter (per-route limits applied on login and platform routes)
+    #
+    # Share the counters in Redis. Without a storage URI Flask-Limiter keeps them
+    # in process memory, and this runs four gunicorn workers by default — so
+    # `@limiter.limit("5 per minute")` on login was five attempts *per worker*,
+    # four times the protection the security guardrails ask for, and the count
+    # reset on every deploy. The in-memory backend also spawns a expiry thread
+    # per process and raised `RuntimeError: threads can only be started once`
+    # under load, which surfaced as intermittent 500s on any limited route.
+    #
+    # Falls back to in-memory when Redis is not configured (tests, a bare local
+    # run) and when it is configured but unreachable — a rate limiter should
+    # degrade rather than take the API down with it.
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    if redis_url:
+        app.config.setdefault("RATELIMIT_STORAGE_URI", redis_url)
+        app.config.setdefault("RATELIMIT_IN_MEMORY_FALLBACK_ENABLED", True)
     limiter.init_app(app)

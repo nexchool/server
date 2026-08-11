@@ -1,14 +1,12 @@
-"""
-RBAC Role Seeder
+"""Seeding a tenant's default roles.
 
-Single source of truth for default role definitions and the idempotent
-seed_roles_for_tenant() helper.
+The role definitions live in `catalog.py`; this module only applies them. That
+split is the point: `scripts/seed_rbac.py` used to carry its own copy of the four
+roles and this file carried another, kept in step by a comment. Whichever seeder
+had made a tenant decided what its roles held.
 
-Kept as a standalone leaf module (no imports from teachers / students / platform)
-so it can be safely imported from any service without circular-import issues.
-
-IMPORTANT: Keep DEFAULT_ROLES permission lists in sync with server/scripts/seed_rbac.py
-ROLES so tenant-scoped roles match global RBAC definitions after seed_rbac runs.
+Kept as a leaf module (no imports from teachers / students / platform) so it can
+be imported from any service without a circular import.
 """
 
 from typing import Dict
@@ -16,146 +14,14 @@ from typing import Dict
 from core.database import db
 from modules.rbac.models import Role, Permission, RolePermission
 
-
-# ---------------------------------------------------------------------------
-# Default role definitions (mirrors scripts/seed_rbac.py ROLES)
-# ---------------------------------------------------------------------------
-
-DEFAULT_ROLES: Dict[str, dict] = {
-    "Admin": {
-        "description": "System administrator with full access",
-        "permissions": [
-            "user.manage",
-            "role.manage",
-            "permission.manage",
-            "audit_log.view",
-            "student.manage",
-            "teacher.manage",
-            "attendance.manage",
-            "grades.manage",
-            "course.manage",
-            "class.manage",
-            "subject.manage",
-            "department.manage",
-            "timetable.manage",
-            "finance.read",
-            "finance.manage",
-            "finance.collect",
-            "finance.refund",
-            "fees.invoice.create",
-            "fees.invoice.read",
-            "fees.invoice.send_reminder",
-            "fees.payment.record",
-            "fees.receipt.download",
-            "teacher.leave.manage",
-            "student.leave.read.all",
-            "student.leave.approve.all",
-            "announcement.create",
-            "announcement.update",
-            "announcement.recall",
-            "announcement.read.own",
-            "announcement.read.all",
-            "holiday.manage",
-            "class_subject.manage",
-            "class_teacher.manage",
-            "academics.read",
-            "academics.manage",
-            "transport.manage",
-            "school_unit.manage",
-            "programme.manage",
-            "grade.manage",
-            "religion.manage",
-            "academic_term.manage",
-            "subadmin.manage",
-            # Hostel
-            "hostel.read",
-            "hostel.manage",
-            "hostel.allocations.read",
-            "hostel.allocations.manage",
-            "hostel.visitors.read",
-            "hostel.visitors.manage",
-            "hostel.gatepass.create",
-            "hostel.gatepass.approve",
-            "hostel.gatepass.gatekeeper",
-            "hostel.gatepass.read",
-            "hostel.reports.read",
-            # Academic calendar. `manage` is a superset of the granular
-            # create/edit/delete/archive/duplicate/export/import/print/settings
-            # permissions, which are only handed out individually to sub-admins.
-            "academic_calendar.read",
-            "academic_calendar.manage",
-        ],
-    },
-    "Teacher": {
-        "description": "School teacher with class management access",
-        "permissions": [
-            "student.read.class",
-            "attendance.mark",
-            "attendance.read.class",
-            "grades.create",
-            "grades.update",
-            "grades.read.class",
-            "course.read",
-            "class.read",
-            "subject.read",
-            "department.read",
-            "timetable.read",
-            "teacher.leave.apply",
-            "student.leave.read.class",
-            "student.leave.approve.class",
-            "announcement.read.own",
-            "holiday.read",
-            "class_subject.read",
-            "academics.read",
-            "transport.info.read.class",
-            "school_unit.read",
-            "programme.read",
-            "grade.read",
-            "academic_term.read",
-            "school_setup.read",
-            "academic_calendar.read",
-        ],
-    },
-    "Student": {
-        "description": "Student with limited access to own data",
-        "permissions": [
-            "student.read.self",
-            "attendance.read.self",
-            "grades.read.self",
-            "course.read",
-            "timetable.read",
-            "holiday.read",
-            "academics.read",
-            "transport.info.read.self",
-            "transport.student.read_own",
-            "student.leave.apply",
-            "student.leave.read.own",
-            "student.leave.request_cancel",
-            "announcement.read.own",
-        ],
-    },
-    "Parent": {
-        "description": "Parent with access to their children's data",
-        "permissions": [
-            "student.read.self",
-            "attendance.read.self",
-            "grades.read.self",
-            "course.read",
-            "timetable.read",
-            "holiday.read",
-            "transport.info.read.self",
-            "transport.student.read_own",
-            "announcement.read.own",
-        ],
-    },
-}
+# Re-exported: `platform/services.py` and the tests import DEFAULT_ROLES from
+# here, and the definition moving is not a reason to make them all move too.
+from modules.rbac.catalog import DEFAULT_ROLES  # noqa: F401
 
 
-# ---------------------------------------------------------------------------
-# Seeding helper
-# ---------------------------------------------------------------------------
-
-def seed_roles_for_tenant(tenant_id: str) -> Dict[str, str]:
+def seed_roles_for_tenant(
+    tenant_id: str, *, reconcile: bool = False
+) -> Dict[str, str]:
     """
     Create default roles (Admin, Teacher, Student, Parent) and assign their
     permissions for the given tenant.  Idempotent — safe to call multiple times.
@@ -163,6 +29,20 @@ def seed_roles_for_tenant(tenant_id: str) -> Dict[str, str]:
     - If a role already exists, any *missing* permissions are backfilled.
     - If a global Permission row does not exist yet, it is silently skipped
       (run seed_rbac first to create global permissions).
+
+    `reconcile` also takes away what the catalogue no longer grants. It is off
+    here because this runs on every login, and an operator who granted a key by
+    hand should not have it removed under them by signing in. It is on for the
+    deliberate reseed (`scripts/reseed_rbac.py`), which is where a school is
+    being brought back in line with the catalogue on purpose.
+
+    Without it, removing a key from the catalogue changes nothing anywhere: the
+    seeder only adds, so every tenant keeps what it was once given. That is why
+    taking `school_setup.read` off the Teacher role needed migration 103 rather
+    than an edit.
+
+    Only the four default roles are touched. A role a school created itself is
+    not in the catalogue and is left alone.
 
     Returns:
         dict mapping role_name -> role_id for the tenant.
@@ -188,11 +68,17 @@ def seed_roles_for_tenant(tenant_id: str) -> Dict[str, str]:
                         permission_id=perm.id,
                     )
                 )
+
+            if reconcile:
+                _revoke_beyond_catalogue(tenant_id, role, role_data["permissions"])
         else:
             role = Role(
                 tenant_id=tenant_id,
                 name=role_name,
                 description=role_data["description"],
+                # A student's access follows from being a student rather than
+                # being granted to their account (ADR-013).
+                implied_by_relationship=role_data.get("implied_by_relationship"),
             )
             db.session.add(role)
             db.session.flush()
@@ -211,3 +97,34 @@ def seed_roles_for_tenant(tenant_id: str) -> Dict[str, str]:
 
     db.session.commit()
     return role_ids
+
+
+def _revoke_beyond_catalogue(tenant_id: str, role, granted: list) -> int:
+    """Take away what this role holds and the catalogue does not grant.
+
+    Compared by permission *name*, not id: the catalogue is a list of names, and
+    matching on anything else would silently keep a grant whose row happens to
+    differ.
+
+    Deliberately literal — a role holding `student.manage` and not
+    `student.update` is correct, because manage implies it, so nothing here
+    expands implications. The catalogue lists exactly what each role is granted,
+    and this removes exactly what it does not.
+    """
+    keep = set(granted)
+    doomed = [
+        rp
+        for rp, perm in (
+            db.session.query(RolePermission, Permission)
+            .join(Permission, Permission.id == RolePermission.permission_id)
+            .filter(
+                RolePermission.role_id == role.id,
+                RolePermission.tenant_id == tenant_id,
+            )
+            .all()
+        )
+        if perm.name not in keep
+    ]
+    for row in doomed:
+        db.session.delete(row)
+    return len(doomed)

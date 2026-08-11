@@ -13,7 +13,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -84,53 +84,3 @@ def send_expo_push(
     return False, False
 
 
-def send_expo_push_batch(
-    messages: List[Dict],
-) -> List[Tuple[str, bool, bool]]:
-    """
-    Batch send (Expo accepts multiple messages per request).
-
-    Each message dict must include keys: to, title, body, optional data.
-
-    Returns list of (token, ok, deactivate).
-    """
-    if not messages:
-        return []
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate",
-    }
-    token = os.getenv("EXPO_ACCESS_TOKEN", "").strip()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    body_bytes = json.dumps(messages).encode("utf-8")
-    req = urllib.request.Request(EXPO_PUSH_URL, data=body_bytes, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        logger.exception("Expo batch push error: %s", e)
-        return [(m.get("to", ""), False, False) for m in messages]
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return [(m.get("to", ""), False, False) for m in messages]
-
-    out: List[Tuple[str, bool, bool]] = []
-    data_list = parsed.get("data") or []
-    for i, m in enumerate(messages):
-        tok = m.get("to", "")
-        item = data_list[i] if i < len(data_list) else {}
-        status = item.get("status")
-        if status == "ok":
-            out.append((tok, True, False))
-            continue
-        details = item.get("details") or {}
-        derr = str(details.get("error") or "").lower()
-        err = (item.get("message") or "").lower()
-        deactivate = "devicenotregistered" in derr or "invalidcredentials" in err
-        out.append((tok, False, deactivate))
-    return out

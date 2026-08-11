@@ -147,7 +147,7 @@ class _AttemptResult:
 def _load_subject_specs(
     tenant_id: str,
     class_id: str,
-    class_teacher_user_id: Optional[str],
+    class_teacher_id: Optional[str],
 ) -> Tuple[List[_SubjectSpec], List[str]]:
     """Build one :class:`_SubjectSpec` per active class_subject.
 
@@ -176,20 +176,13 @@ def _load_subject_specs(
             )
             continue
 
-        # A class_subject is considered the "class teacher's" subject when
-        # its primary teacher's user_id matches the class homeroom teacher.
+        # A class_subject is considered the "class teacher's" subject when its
+        # primary teacher IS the class teacher — both sides are teachers.id
+        # now, so the comparison is direct (no login hop, no lookup).
         # This gives it a weak preference for period 1.
-        is_ct_subject = False
-        if class_teacher_user_id:
-            primary = candidates[0]
-            # Look up Teacher.user_id indirectly via CST → Teacher row.
-            # Avoid N+1 — keep this lightweight, only called once per subject.
-            from modules.teachers.models import Teacher  # local import avoids cycles
-            t = Teacher.query.filter_by(
-                id=primary.teacher_id, tenant_id=tenant_id
-            ).first()
-            if t and str(t.user_id) == str(class_teacher_user_id):
-                is_ct_subject = True
+        is_ct_subject = bool(
+            class_teacher_id and str(candidates[0].teacher_id) == str(class_teacher_id)
+        )
 
         specs.append(
             _SubjectSpec(
@@ -720,7 +713,7 @@ def generate_timetable(
     *,
     bell_schedule_id: str,
     working_days: List[int],
-    class_teacher_user_id: Optional[str] = None,
+    class_teacher_id: Optional[str] = None,
     exclude_class_id: Optional[str] = None,
     seed: Optional[int] = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
@@ -756,7 +749,7 @@ def generate_timetable(
     if not working_days:
         return _fail("working_days must be non-empty (ISO 1=Mon … 7=Sun)")
 
-    specs, warnings = _load_subject_specs(tenant_id, class_id, class_teacher_user_id)
+    specs, warnings = _load_subject_specs(tenant_id, class_id, class_teacher_id)
     if not specs:
         return {
             "success": False,

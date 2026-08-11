@@ -15,6 +15,7 @@ from core.database import db
 from core.models import TenantBaseModel
 
 from .enums import StudentFeeStatus, PaymentStatus
+from core.school_time import utc_now
 
 
 class FeeStructureClass(TenantBaseModel):
@@ -46,7 +47,7 @@ class FeeStructureClass(TenantBaseModel):
         nullable=False,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     fee_structure = db.relationship("FeeStructure", backref=db.backref("structure_classes", lazy=True))
     class_ref = db.relationship("Class", backref=db.backref("fee_structure_classes", lazy=True))
@@ -77,8 +78,8 @@ class FeeStructure(TenantBaseModel):
         server_default=text("false"),
     )
     due_date = db.Column(db.Date, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     components = db.relationship(
         "FeeComponent",
@@ -143,8 +144,8 @@ class FeeComponent(TenantBaseModel):
     amount = db.Column(db.Numeric(12, 2), nullable=False)
     is_optional = db.Column(db.Boolean, nullable=False, default=False, server_default=text("false"))
     sort_order = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     def to_dict(self):
         return {
@@ -199,8 +200,8 @@ class StudentFee(TenantBaseModel):
     total_amount = db.Column(db.Numeric(12, 2), nullable=False)
     paid_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0, server_default="0")
     due_date = db.Column(db.Date, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # passive_deletes: rely on DB FK ON DELETE CASCADE; ORM must not null student_id first (NOT NULL).
     student = db.relationship(
@@ -266,8 +267,8 @@ class StudentFeeItem(TenantBaseModel):
     )
     amount = db.Column(db.Numeric(12, 2), nullable=False)
     paid_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0, server_default="0")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     fee_component = db.relationship("FeeComponent", backref=db.backref("student_fee_items", lazy=True))
 
@@ -331,8 +332,8 @@ class Payment(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     created_by_user = db.relationship("User", backref=db.backref("payments_created", lazy=True))
 

@@ -8,6 +8,7 @@ import uuid
 from sqlalchemy import ColumnDefault
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class Hostel(TenantBaseModel):
@@ -25,14 +26,14 @@ class Hostel(TenantBaseModel):
     address = db.Column(db.Text, nullable=True)
     capacity = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     rooms = db.relationship(
         "HostelRoom",
@@ -89,14 +90,14 @@ class HostelRoom(TenantBaseModel):
     )
     capacity = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     hostel = db.relationship(
         "Hostel",
@@ -158,14 +159,14 @@ class HostelBed(TenantBaseModel):
         index=True,
     )
     status = db.Column(db.String(20), nullable=False, default="active", server_default="active")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     room = db.relationship(
         "HostelRoom",
@@ -241,8 +242,8 @@ class HostelAllocation(TenantBaseModel):
         db.ForeignKey("academic_years.id", ondelete="SET NULL"),
         nullable=True,
     )
-    check_in_at = db.Column(db.DateTime, nullable=False)
-    check_out_at = db.Column(db.DateTime, nullable=True)
+    check_in_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    check_out_at = db.Column(db.DateTime(timezone=True), nullable=True)
     status = db.Column(
         db.String(20),
         nullable=False,
@@ -250,14 +251,14 @@ class HostelAllocation(TenantBaseModel):
         server_default="active",
     )
     notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     student = db.relationship(
         "Student",
@@ -327,12 +328,12 @@ class HostelVisitor(TenantBaseModel):
     phone = db.Column(db.String(20), nullable=False)
     name = db.Column(db.String(200), nullable=False)
     relation_type = db.Column(db.String(50), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     visitor_logs = db.relationship(
@@ -383,11 +384,11 @@ class HostelVisitorLog(TenantBaseModel):
         db.ForeignKey("hostel_rooms.id", ondelete="SET NULL"),
         nullable=True,
     )
-    check_in_at = db.Column(db.DateTime, nullable=False)
-    check_out_at = db.Column(db.DateTime, nullable=True)
+    check_in_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    check_out_at = db.Column(db.DateTime(timezone=True), nullable=True)
     purpose = db.Column(db.String(200), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    deleted_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     visitor = db.relationship(
         "HostelVisitor",
@@ -478,12 +479,12 @@ class HostelGatepass(TenantBaseModel):
         default="pending",
         server_default="pending",
     )
-    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    approved_at = db.Column(db.DateTime, nullable=True)
-    actual_out_at = db.Column(db.DateTime, nullable=True)
-    actual_in_at = db.Column(db.DateTime, nullable=True)
-    departure_datetime = db.Column(db.DateTime, nullable=False)
-    expected_return_datetime = db.Column(db.DateTime, nullable=False)
+    requested_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    actual_out_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    actual_in_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    departure_datetime = db.Column(db.DateTime(timezone=True), nullable=False)
+    expected_return_datetime = db.Column(db.DateTime(timezone=True), nullable=False)
     reason = db.Column(db.String(500), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     parent_phone = db.Column(db.String(20), nullable=False)
@@ -493,17 +494,17 @@ class HostelGatepass(TenantBaseModel):
         default="not_required",
         server_default="not_required",
     )
-    parent_consent_notified_at = db.Column(db.DateTime, nullable=True)
+    parent_consent_notified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     parent_notification_type = db.Column(db.String(50), nullable=True)
     approved_by_user_id = db.Column(db.String(36), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     student = db.relationship("Student", foreign_keys=[student_id])
     hostel = db.relationship("Hostel", foreign_keys=[hostel_id])
@@ -535,7 +536,7 @@ class HostelGatepass(TenantBaseModel):
             return False
         if self.expected_return_datetime is None:
             return False
-        return datetime.utcnow() > self.expected_return_datetime
+        return utc_now() > self.expected_return_datetime
 
     def can_transition_to(self, new_status: str) -> bool:
         """Check whether a state transition is legal.
@@ -642,7 +643,7 @@ class HostelGatepassAudit(db.Model):
     actor_type = db.Column(db.String(20), nullable=False)
     actor_id = db.Column(db.String(36), nullable=True)
     notes = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     gatepass = db.relationship(
         "HostelGatepass",

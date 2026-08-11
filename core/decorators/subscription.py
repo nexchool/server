@@ -26,6 +26,7 @@ from core.models import (
     TENANT_STATUS_SUSPENDED,
     TENANT_STATUS_DELETED,
 )
+from core.school_time import utc_now
 
 
 def _subscription_state(tenant_id: str) -> dict:
@@ -79,7 +80,7 @@ def _subscription_state(tenant_id: str) -> dict:
             "message": "This tenant is closed.",
         }
     elif status == TENANT_STATUS_TRIAL:
-        if trial_ends_at is not None and datetime.utcnow() > trial_ends_at:
+        if trial_ends_at is not None and utc_now() > trial_ends_at:
             state = {
                 "tenant_id": tenant_id,
                 "status": status,

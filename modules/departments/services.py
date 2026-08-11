@@ -111,14 +111,20 @@ def _counts_for(tenant_id: str, department_ids: list) -> Dict[str, Dict[str, int
     from modules.classes.models import Class
     from modules.teachers.models import Teacher
 
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+
+    # Which department someone belongs to, and whether they still work here,
+    # are both the employment's answers now.
     teacher_rows = (
-        db.session.query(Teacher.department_id, func.count(Teacher.id))
+        db.session.query(Staff.department_id, func.count(Teacher.id))
+        .select_from(Teacher)
+        .join(Staff, Teacher.staff_id == Staff.id)
         .filter(
             Teacher.tenant_id == tenant_id,
-            Teacher.department_id.in_(department_ids),
-            Teacher.status == _TEACHER_STATUS_ACTIVE,
+            Staff.department_id.in_(department_ids),
+            Staff.employment_status.in_(EMPLOYED_STATUSES),
         )
-        .group_by(Teacher.department_id)
+        .group_by(Staff.department_id)
         .all()
     )
     for department_id, count in teacher_rows:
@@ -375,9 +381,11 @@ def delete_department(department_id: str, tenant_id: str) -> Dict:
     # — clear it in the same transaction as the soft delete.
     from modules.teachers.models import Teacher
 
-    Teacher.query.filter(
-        Teacher.tenant_id == tenant_id, Teacher.department_id == department_id
-    ).update({Teacher.department_id: None}, synchronize_session=False)
+    from modules.people.employment import Staff
+
+    Staff.query.filter(
+        Staff.tenant_id == tenant_id, Staff.department_id == department_id
+    ).update({Staff.department_id: None}, synchronize_session=False)
 
     department.deleted_at = datetime.now(timezone.utc)
     db.session.commit()
@@ -423,12 +431,16 @@ def get_department_stats(tenant_id: str) -> Dict:
     ).count()
 
     # Active teachers only — see the note in _counts_for.
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+
     teachers_assigned = (
         db.session.query(func.count(Teacher.id))
+        .select_from(Teacher)
+        .join(Staff, Teacher.staff_id == Staff.id)
         .filter(
             Teacher.tenant_id == tenant_id,
-            Teacher.department_id.isnot(None),
-            Teacher.status == _TEACHER_STATUS_ACTIVE,
+            Staff.department_id.isnot(None),
+            Staff.employment_status.in_(EMPLOYED_STATUSES),
         )
         .scalar()
     ) or 0

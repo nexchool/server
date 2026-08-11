@@ -4,33 +4,34 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, contains_eager, joinedload
 from datetime import datetime
 import logging
-import secrets
 import string
-import uuid
 from decimal import Decimal
 
 from core.database import db
 from core.tenant import get_tenant_id
 from core.models import Tenant
 from modules.auth.models import User
-from modules.rbac.services import (
-    assign_role_to_user_by_email,
-    remove_login_for_deleted_profile,
-)
+from modules.rbac.services import remove_login_for_deleted_profile
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.academic_programmes.models import AcademicProgramme
 from modules.classes.models import Class
+from modules.people.models import Person
 from shared.s3_utils import delete_file, fetch_s3_object_bytes, upload_file
 from shared.storage_constants import DOCUMENTS, STUDENTS, TENANTS
 from .models import Student, StudentDocument, DocumentType
 from .document_schemas import validate_document_type
-from .student_schemas import DEFAULT_STUDENT_STATUS, STUDENT_STATUS_VALUES
+from .student_schemas import (
+    DEFAULT_STUDENT_STATUS,
+    STUDENT_STATUS_VALUES,
+    WORKFLOW_ONLY_STATUSES,
+)
 from .class_enrollment_service import (
     assign_student_to_class,
     student_matches_academic_year_filter,
     student_matches_class_filter,
     student_matches_any_class_filter,
 )
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +169,9 @@ def generate_student_password(name: str, date_of_birth: Optional[str]) -> str:
         try:
             birth_year = datetime.strptime(date_of_birth, '%Y-%m-%d').year
         except ValueError:
-            birth_year = datetime.utcnow().year
+            birth_year = utc_now().year
     else:
-        birth_year = datetime.utcnow().year
+        birth_year = utc_now().year
     
     return f"{name_part}{birth_year}"
 
@@ -356,40 +357,80 @@ def create_student(
                 user.force_password_reset = True  # Force password change on first login
                 user.save()
 
-            # Ensure Student role exists and has all its permissions for this tenant.
-            # This is a no-op if everything is already correct (idempotent).
+            # Ensure the Student profile exists with its permissions for this
+            # tenant (idempotent). It is NOT granted: a student's access is
+            # implied by the Student relationship itself (migration 087), and
+            # granting would require an employment to hold it (ADR-013) —
+            # which is why the old grant call here failed for every
+            # admin-created student login after migration 089.
             seed_roles_for_tenant(tenant_id)
 
-            # Assign Student role (for both new and existing users)
-            role_result = assign_role_to_user_by_email(email, 'Student', tenant_id=tenant_id)
-            if not role_result['success']:
-                db.session.rollback()
-                return {'success': False, 'error': f"Could not assign Student role: {role_result.get('error')}"}
-        
-        # Student without email/login credentials - create minimal user placeholder
-        if not user:
-            # Use admission number as email identifier
-            user = User()
-            user.tenant_id = tenant_id
-            user.email = f"{admission_number.lower()}@student.placeholder"
-            user.name = name
-            user.set_password(secrets.token_urlsafe(32))  # Random unusable password
-            user.email_verified = False
-            user.force_password_reset = False
-            user.save()
+        # The student relationship belongs to a human (ADR-001). With an
+        # account, that account already carries the Person; without one, the
+        # admission itself records the person. No email means no login
+        # (ADR-003) — the old placeholder accounts (@student.placeholder,
+        # unusable random password) are no longer minted.
+        from modules.people.service import (
+            fill_blank_identity,
+            record_family_member,
+            record_person,
+        )
+
+        if user is not None:
+            person = user.person
+        else:
+            # record_person constructs without persisting (People takes what
+            # it is told); the caller owns attaching it to the session.
+            person = record_person(tenant_id, name)
+            db.session.add(person)
+            db.session.flush()
+
+        parsed_date_of_birth = (
+            datetime.strptime(date_of_birth, '%Y-%m-%d').date() if date_of_birth else None
+        )
+        if person is not None:
+            fill_blank_identity(
+                person,
+                {
+                    "date_of_birth": parsed_date_of_birth,
+                    "gender": gender,
+                    "phone_number": phone,
+                    "address": address,
+                },
+            )
+
+            # Admission is where the school says who is responsible for this
+            # child, so the family is recorded now rather than by a later
+            # migration. A sibling already enrolled joins the same family.
+            # The guardian the admission form names is the adult the school
+            # will call, whatever their relationship turns out to be. Recording
+            # that as a fact of the household is what lets both parents be kept
+            # without the father being stored twice.
+            for member_name, member_relationship, member_phone, member_email, member_occupation, is_contact in (
+                (guardian_name, guardian_relationship, guardian_phone, guardian_email, guardian_occupation, True),
+                (father_name, 'father', father_phone, father_email, father_occupation, False),
+                (mother_name, 'mother', mother_phone, mother_email, mother_occupation, False),
+            ):
+                record_family_member(
+                    tenant_id,
+                    person.id,
+                    name=member_name,
+                    relationship=member_relationship,
+                    phone=member_phone,
+                    email=member_email,
+                    occupation=member_occupation,
+                    is_primary_contact=is_contact,
+                )
 
         # Create Student Profile (tenant-scoped)
         student = Student(
             tenant_id=tenant_id,
-            user_id=user.id,
+            user_id=user.id if user is not None else None,
+            person_id=person.id if person is not None else None,
             admission_number=admission_number,
             academic_year_id=ay_id,
             roll_number=roll_number,
             class_id=class_id,
-            date_of_birth=datetime.strptime(date_of_birth, '%Y-%m-%d').date() if date_of_birth else None,
-            gender=gender,
-            phone=phone,
-            address=address,
             guardian_name=guardian_name,
             guardian_relationship=guardian_relationship,
             guardian_phone=guardian_phone,
@@ -419,7 +460,6 @@ def create_student(
             guardian_occupation=_clean_str(guardian_occupation),
             guardian_aadhar_number=_clean_str(guardian_aadhar_number),
 
-            aadhar_number=_clean_str(aadhar_number),
             apaar_id=_clean_str(apaar_id),
             emis_number=_clean_str(emis_number),
             udise_student_id=_clean_str(udise_student_id),
@@ -561,7 +601,15 @@ def _attach_transport_summary(rows: List[Dict], academic_year_id: Optional[str])
             r.update(extra)
 
 
-def list_students(
+# Sorts whose key can never be null, so a cursor over them cannot skip or
+# repeat a row. `class`, `programme` and `roll_number` are all nullable and
+# mutable — a cursor over those silently loses students, which is worse than
+# admitting the sort needs an offset.
+CURSORABLE_COLUMNS = {"admission_number", "name"}
+
+
+def _student_list_query(
+    *,
     class_id: str = None,
     class_ids: List[str] = None,
     academic_year_id: str = None,
@@ -574,38 +622,39 @@ def list_students(
     admission_date_to: str = None,
     sort_by: str = "admission_number",
     sort_dir: str = "asc",
-    page: Optional[int] = None,
-    per_page: Optional[int] = None,
-    include_transport_summary: bool = False,
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
-    _restrict_class_ids: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """
-    List students with filtering, searching, sorting and pagination.
+    restrict_class_ids: Optional[List[str]] = None,
+):
+    """The filtered, sorted student query — the one both transports run.
 
-    Returns an envelope: {items, total, page, per_page, total_pages}.
-    When `page` and `per_page` are not provided all matching rows are returned
-    (total_pages = 1) so callers that don't paginate still work.
+    Extracted so REST and GraphQL cannot answer the same question
+    differently while both exist. A filter added here reaches both; a filter
+    added to only one of them is the drift this is here to prevent.
 
-    `_restrict_class_ids` is an internal hard-scope used by the teacher code path
-    to limit results to classes the teacher owns; it's AND-ed with any client
-    class filters.
+    Returns ``(query, sort_key, is_desc)``, or ``None`` when the caller is
+    scoped to no classes at all — a teacher who teaches nothing matches no
+    students, which is not the same as no filter.
     """
     from core.branch_scope import filter_students_by_branch
 
-    query = Student.query.join(User)
+    # Person is inner-joined: every student relationship belongs to a human
+    # (ADR-001), and filtering, searching and sorting must read the same facts
+    # the payload shows rather than the columns left over beside them.
+    # The account is OUTER-joined: a student may have no login (ADR-003,
+    # migration 094), and an inner join would silently drop them from the list.
+    query = Student.query.outerjoin(User).join(Person, Student.person_id == Person.id)
 
     # Branch scope backstop: restrict to students in allowed-branch classes
     # (classless excluded) regardless of client filters. No-op if unrestricted.
     query = filter_students_by_branch(query)
 
     # Teacher scope: hard ceiling on which classes are visible at all.
-    if _restrict_class_ids is not None:
-        if not _restrict_class_ids:
-            return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
-        query = query.filter(student_matches_any_class_filter(_restrict_class_ids))
+    if restrict_class_ids is not None:
+        if not restrict_class_ids:
+            return None
+        query = query.filter(student_matches_any_class_filter(restrict_class_ids))
 
     # Client-supplied class scoping (AND-ed with the teacher ceiling above).
     if class_ids:
@@ -635,7 +684,7 @@ def list_students(
         query = query.filter(Student.class_id.in_(class_filter))
 
     if gender:
-        query = query.filter(db.func.lower(Student.gender) == gender.strip().lower())
+        query = query.filter(db.func.lower(Person.gender) == gender.strip().lower())
 
     if student_status:
         query = query.filter(
@@ -672,7 +721,7 @@ def list_students(
     if term:
         pattern = f"%{term}%"
         if field == "name":
-            query = query.filter(User.name.ilike(pattern))
+            query = query.filter(Person.full_name.ilike(pattern))
         elif field == "admission_number":
             query = query.filter(Student.admission_number.ilike(pattern))
         elif field == "email":
@@ -684,9 +733,11 @@ def list_students(
         else:
             query = query.filter(
                 db.or_(
-                    User.name.ilike(pattern),
+                    Person.full_name.ilike(pattern),
                     User.email.ilike(pattern),
                     Student.admission_number.ilike(pattern),
+                    # Guardian details still live on the student row until the
+                    # family read moves with the client (see the debt register).
                     Student.guardian_phone.ilike(pattern),
                     AcademicProgramme.name.ilike(pattern),
                 )
@@ -714,7 +765,7 @@ def list_students(
             _ordered(Class.section, nulls_last=True),
         ]
     elif sort_key == "name":
-        order_cols = [_ordered(User.name)]
+        order_cols = [_ordered(Person.full_name)]
     elif sort_key == "roll_number":
         order_cols = [_ordered(Student.roll_number, nulls_last=True)]
     else:  # admission_number (default)
@@ -723,16 +774,73 @@ def list_students(
     if sort_key != "admission_number":
         order_cols.append(Student.admission_number.asc())
 
-    query = query.order_by(*order_cols)
+    return query.order_by(*order_cols), sort_key, is_desc
+
+
+def list_students(
+    class_id: str = None,
+    class_ids: List[str] = None,
+    academic_year_id: str = None,
+    search: str = None,
+    search_field: str = "all",
+    gender: str = None,
+    student_status: str = None,
+    is_transport_opted: Optional[bool] = None,
+    admission_date_from: str = None,
+    admission_date_to: str = None,
+    sort_by: str = "admission_number",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+    include_transport_summary: bool = False,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
+    _restrict_class_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    List students with filtering, searching, sorting and pagination.
+
+    Returns an envelope: {items, total, page, per_page, total_pages}.
+    When `page` and `per_page` are not provided all matching rows are returned
+    (total_pages = 1) so callers that don't paginate still work.
+
+    `_restrict_class_ids` is an internal hard-scope used by the teacher code path
+    to limit results to classes the teacher owns; it's AND-ed with any client
+    class filters.
+    """
+    built = _student_list_query(
+        class_id=class_id,
+        class_ids=class_ids,
+        academic_year_id=academic_year_id,
+        search=search,
+        search_field=search_field,
+        gender=gender,
+        student_status=student_status,
+        is_transport_opted=is_transport_opted,
+        admission_date_from=admission_date_from,
+        admission_date_to=admission_date_to,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        school_unit_id=school_unit_id,
+        programme_id=programme_id,
+        grade_id=grade_id,
+        restrict_class_ids=_restrict_class_ids,
+    )
+    if built is None:
+        return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
+    query, _sort_key, _is_desc = built
 
     # Pagination. If the caller doesn't ask for a page, return everything
     # (keeps non-paginating callers like the mobile app working).
     total = query.count()
     # Eager-load the relationships to_dict touches (user, class, programme,
     # grade) so serialization stays at a constant number of queries per page.
-    # User is already inner-joined above — contains_eager reuses that join.
+    # The account is already outer-joined above — contains_eager reuses that
+    # join and leaves user None for account-less students.
     query = query.options(
         contains_eager(Student.user),
+        joinedload(Student.person),
         joinedload(Student.current_class).joinedload(Class.programme),
         joinedload(Student.current_class).joinedload(Class.grade),
     )
@@ -749,7 +857,13 @@ def list_students(
 
     # Skip the profile_picture URL on list responses — each value is a
     # presigned S3 URL and generating hundreds per page is pure overhead.
-    items = [s.to_dict(include_profile_picture=False) for s in students]
+    # The household is not shown in a list, and reading it costs four queries
+    # a row. The flat guardian_/father_/mother_ keys still carry the contact
+    # details a list needs, and they are plain columns.
+    items = [
+        s.to_dict(include_profile_picture=False, include_family=False)
+        for s in students
+    ]
     if include_transport_summary:
         _attach_transport_summary(items, academic_year_id)
 
@@ -782,9 +896,47 @@ def attach_transport_to_student_dict(
     return student_dict
 
 
+def student_for_user(user_id: str, tenant_id: Optional[str] = None):
+    """The studentship of whoever is signed in, or None.
+
+    Reached through the Person, not through `students.user_id`. The account is
+    optional (ADR-003) and the Person is the identity (ADR-001), so a child
+    who has never been given a login is still a student and must still be able
+    to be recognised — reading the column found nobody and quietly answered
+    "you have no record here".
+
+    Unambiguous under either family-access mode: the Student relationship is
+    what carries the Account (ADR-011), so one account resolves to one child.
+    Siblings hold their own credentials rather than sharing one.
+    """
+    from modules.auth.models import User
+
+    account = User.query.filter_by(id=user_id).first()
+    if account is None or account.person_id is None:
+        return None
+
+    query = Student.query.filter_by(person_id=account.person_id)
+    if tenant_id:
+        query = query.filter_by(tenant_id=tenant_id)
+    return query.first()
+
+
+def is_own_studentship(student, user) -> bool:
+    """Whether this signed-in person is the child whose record this is.
+
+    Compares the Person rather than the account for the same reason
+    `student_for_user` looks one up that way.
+    """
+    if student is None or user is None:
+        return False
+    return (
+        student.person_id is not None and student.person_id == user.person_id
+    )
+
+
 def get_student_by_user_id(user_id: str) -> Optional[Dict]:
-    """Get student details by User ID"""
-    student = Student.query.filter_by(user_id=user_id).first()
+    """Get student details for whoever is signed in."""
+    student = student_for_user(user_id)
     return student.to_dict() if student else None
 
 
@@ -819,6 +971,7 @@ def _apply_placement_update(
 
 def update_student(
     student_id: str,
+    family=None,
     name: Optional[str] = None,
     roll_number: Optional[int] = None,
     date_of_birth: Optional[str] = None,
@@ -911,8 +1064,10 @@ def update_student(
         if not student:
             return {'success': False, 'error': 'Student not found'}
             
-        # Update User fields
-        if name is not None:
+        # Update the login's display name too — when there is a login
+        # (ADR-003: a student may have none). The person's name is revised
+        # below either way.
+        if name is not None and student.user is not None:
             student.user.name = name
             student.user.save()
             
@@ -1053,9 +1208,53 @@ def update_student(
         if house_name is not None:
             student.house_name = _clean_str(house_name)
         if student_status is not None:
-            student.student_status = _clean_str(student_status)
+            # Leaving, finishing and moving school are workflows, not fields:
+            # each closes a placement, carries a date and a reason, and is
+            # recorded. Setting the word here would leave the rest undone —
+            # which is how graduated students went on being billed.
+            cleaned_status = _clean_str(student_status)
+            if cleaned_status in WORKFLOW_ONLY_STATUSES:
+                return {
+                    "success": False,
+                    "error": (
+                        f"'{cleaned_status}' is the outcome of a workflow, not an "
+                        "edit. Use the withdraw, graduate or transfer action so "
+                        "the placement is closed and the reason recorded."
+                    ),
+                }
+            student.student_status = cleaned_status
         if academic_result is not None:
             student.academic_result = _clean_str(academic_result)
+
+        if family is not None:
+            from modules.people.service import record_household
+
+            record_household(student.tenant_id, student.person_id, family)
+
+        # The same edit reaches the human it describes. Until now only
+        # admission did this, so a Person recorded at admission stopped
+        # agreeing with the student the moment anyone corrected the record.
+        _record_edit_against_the_person(
+            student,
+            name=name,
+            date_of_birth=(
+                datetime.strptime(date_of_birth, '%Y-%m-%d').date()
+                if date_of_birth else None
+            ),
+            gender=gender,
+            phone=phone,
+            address=address,
+            aadhar_number=aadhar_number,
+            father=(father_name, father_phone, father_email, father_occupation),
+            mother=(mother_name, mother_phone, mother_email, mother_occupation),
+            guardian=(
+                guardian_name,
+                guardian_relationship or student.guardian_relationship,
+                guardian_phone,
+                guardian_email,
+                guardian_occupation,
+            ),
+        )
 
         perr = _apply_placement_update(
             student,
@@ -1086,6 +1285,86 @@ def update_student(
         db.session.rollback()
         return {'success': False, 'error': safe_error(e, "Failed to update student")}
 
+def _record_edit_against_the_person(
+    student, *, name, date_of_birth, gender, phone, address, aadhar_number,
+    father, mother, guardian,
+):
+    """Send an edit of a student's record to the person and family it describes.
+
+    A student profile carries two different kinds of fact: things true of the
+    human (their date of birth, how to reach them, who their parents are) and
+    things true of their studentship (roll number, house, previous school).
+    Only the first kind belongs to People, and only that is forwarded here.
+    """
+    from modules.people.service import revise_family_member, revise_identity
+
+    person = student.person
+    if person is None:
+        return
+
+    revise_identity(
+        person,
+        {
+            "full_name": _clean_str(name),
+            "date_of_birth": date_of_birth,
+            "gender": _clean_str(gender),
+            "phone_number": _clean_str(phone),
+            "address": _clean_str(address),
+            "aadhaar_number": _clean_str(aadhar_number),
+        },
+    )
+
+    father_name, father_phone, father_email, father_occupation = father
+    mother_name, mother_phone, mother_email, mother_occupation = mother
+    (
+        guardian_name,
+        guardian_relationship,
+        guardian_phone,
+        guardian_email,
+        guardian_occupation,
+    ) = guardian
+
+    for member_name, member_relationship, member_phone, member_email, member_occupation in (
+        (father_name, "father", father_phone, father_email, father_occupation),
+        (mother_name, "mother", mother_phone, mother_email, mother_occupation),
+        (
+            guardian_name,
+            guardian_relationship,
+            guardian_phone,
+            guardian_email,
+            guardian_occupation,
+        ),
+    ):
+        # An edit that names nobody in a role says nothing about that role. The
+        # school clearing a father's phone is a correction to the father the
+        # household already has, which needs his name to find him.
+        if not member_name:
+            member_name = _name_on_record(student, member_relationship)
+            if not member_name:
+                continue
+
+        revise_family_member(
+            student.tenant_id,
+            student.person_id,
+            relationship=member_relationship,
+            name=member_name,
+            phone=member_phone,
+            email=member_email,
+            occupation=member_occupation,
+        )
+
+
+def _name_on_record(student, relationship: Optional[str]) -> Optional[str]:
+    """The name the student record already carries for this role, if any."""
+    from modules.people.service import family_role_for
+
+    return {
+        "father": student.father_name,
+        "mother": student.mother_name,
+        "guardian": student.guardian_name,
+    }.get(family_role_for(relationship))
+
+
 def bulk_update_status(student_ids: List[str], student_status: str) -> Dict:
     """Set student_status for many students in one tenant-scoped transaction.
 
@@ -1104,6 +1383,19 @@ def bulk_update_status(student_ids: List[str], student_status: str) -> Dict:
         return {
             "success": False,
             "error": f"Invalid status. Allowed: {', '.join(STUDENT_STATUS_VALUES)}",
+        }
+    # Marking a cohort as `leaving` at year end is an ordinary thing to do in
+    # bulk. Withdrawing, graduating or transferring them is not: each ends a
+    # placement and carries a date and a reason per student, so it goes
+    # through its workflow one child at a time.
+    if student_status in WORKFLOW_ONLY_STATUSES:
+        return {
+            "success": False,
+            "error": (
+                f"'{student_status}' is the outcome of a workflow, not a bulk "
+                "edit. Withdraw, graduate or transfer each student so the "
+                "placement is closed and the reason recorded."
+            ),
         }
 
     try:
@@ -1164,7 +1456,9 @@ def bulk_delete_students(student_ids: List[str]) -> Dict:
             return {"success": True, "deleted": 0, "missing": ids}
 
         found_ids = [s.id for s in students]
-        user_ids = [s.user_id for s in students if s.user_id]
+        # (user_id, person_id) pairs: an account-less student (ADR-003) still
+        # needs its person passed so any held authority can be checked.
+        teardowns = [(s.user_id, s.person_id) for s in students]
 
         from modules.finance.models import StudentFee
 
@@ -1180,8 +1474,10 @@ def bulk_delete_students(student_ids: List[str]) -> Dict:
             db.session.delete(student)
         db.session.flush()  # clear students.user_id before the users go
 
-        for user_id in user_ids:
-            remove_login_for_deleted_profile(user_id, tenant_id, "Student")
+        for user_id, person_id in teardowns:
+            remove_login_for_deleted_profile(
+                user_id, tenant_id, "Student", person_id=person_id
+            )
 
         db.session.commit()
 
@@ -1229,6 +1525,7 @@ def delete_student(student_id: str) -> Dict:
             return {'success': False, 'error': 'Student not found'}
 
         user_id = student.user_id
+        person_id = student.person_id
 
         from modules.finance.models import StudentFee
 
@@ -1244,7 +1541,11 @@ def delete_student(student_id: str) -> Dict:
         # student must also remove its backing account. Otherwise an active,
         # login-capable user with the Student role but no Student row is left
         # behind (its dashboard 404s) and the email stays reserved. Same txn.
-        remove_login_for_deleted_profile(user_id, tenant_id, "Student")
+        # person_id is passed explicitly because an account-less student
+        # (ADR-003) has no user row to resolve it through.
+        remove_login_for_deleted_profile(
+            user_id, tenant_id, "Student", person_id=person_id
+        )
 
         db.session.commit()
 
@@ -1378,17 +1679,6 @@ def list_student_documents(student_id: str) -> Dict:
         return {"success": False, "error": safe_error(e)}
 
 
-def get_student_document_by_id(document_id: str, student_id: str) -> Optional[Dict]:
-    """Get a single document by id, verifying it belongs to student and tenant."""
-    tenant_id = get_tenant_id()
-    if not tenant_id:
-        return None
-    doc = StudentDocument.query.filter_by(
-        id=document_id, student_id=student_id, tenant_id=tenant_id
-    ).first()
-    return doc.to_dict() if doc else None
-
-
 def get_student_document_file_content(document_id: str, student_id: str) -> Dict:
     """
     Load file bytes from S3 for authenticated download proxy.
@@ -1454,3 +1744,147 @@ def delete_student_document(document_id: str, student_id: str) -> Dict:
     except Exception as e:
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
+
+MAX_PAGE_SIZE = 100
+
+
+def cursor_values(row, sort_key: str) -> List[Any]:
+    """What identifies this row's position in the current order.
+
+    The transport makes these opaque; what they *are* is the sort key plus the
+    admission number that breaks its ties, which is the only thing that can
+    resume a walk exactly where it stopped.
+    """
+    if sort_key == "name":
+        return [row.person.full_name if row.person else "", row.admission_number]
+    return [row.admission_number]
+
+
+def students_page(
+    *,
+    after: Optional[List[Any]] = None,
+    offset: Optional[int] = None,
+    first: int = 25,
+    sort_by: str = "admission_number",
+    sort_dir: str = "asc",
+    restrict_class_ids: Optional[List[str]] = None,
+    **filters,
+):
+    """One page of students, walked by key or skipped to by offset.
+
+    **Prefer `after`.** OFFSET makes the database count past everything it
+    skips, so page 300 of a fifteen-thousand-student trust costs three hundred
+    times page one — and a student admitted while somebody pages shifts every
+    later row, so a child is seen twice or not at all. Walking from the last
+    row seen costs the same at any depth and cannot skip anyone.
+
+    `offset` exists because a page-number UI has to be able to jump, which a
+    cursor cannot express, and because it is exactly what the REST list this
+    replaces already did. It is the caller's choice of a known cost, not a
+    default.
+
+    A cursor is only offered for sorts whose key cannot be null
+    (`CURSORABLE_COLUMNS`); over a nullable, mutable key it would silently
+    lose students.
+
+    Returns (rows, has_more). The caller asks for one more row than it needs;
+    that extra row is the whole of `hasNextPage`, with no second query.
+    """
+    first = max(1, min(int(first), MAX_PAGE_SIZE))
+
+    built = _student_list_query(
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        restrict_class_ids=restrict_class_ids,
+        **filters,
+    )
+    if built is None:
+        return [], False
+    query, sort_key, is_desc = built
+    query = query.options(joinedload(Student.person))
+
+    if after:
+        query = query.filter(_after_predicate(after, sort_key, is_desc))
+    elif offset:
+        query = query.offset(max(0, int(offset)))
+
+    rows = query.limit(first + 1).all()
+    return rows[:first], len(rows) > first
+
+
+def _after_predicate(after: List[Any], sort_key: str, is_desc: bool):
+    """Everything ordered strictly past the row this cursor names."""
+    from sqlalchemy import tuple_
+
+    if sort_key not in CURSORABLE_COLUMNS:
+        raise ValueError(
+            f"Sorting by {sort_key} cannot be paged with a cursor because the "
+            "value may be empty and may change. Use offset for this sort."
+        )
+
+    if sort_key == "name":
+        columns = tuple_(Person.full_name, Student.admission_number)
+        # The name sort's tie-breaker is always ascending, so a descending
+        # name sort is not a plain row-value comparison: it is "an earlier
+        # name, or the same name and a later admission number".
+        name, admission_number = after[0], after[1]
+        if is_desc:
+            return db.or_(
+                Person.full_name < name,
+                db.and_(
+                    Person.full_name == name,
+                    Student.admission_number > admission_number,
+                ),
+            )
+        return columns > (name, admission_number)
+
+    value = after[0]
+    return (
+        Student.admission_number < value
+        if is_desc
+        else Student.admission_number > value
+    )
+
+
+def students_matching_count(
+    *,
+    restrict_class_ids: Optional[List[str]] = None,
+    **filters,
+) -> int:
+    """How many students the same filters match.
+
+    Separate from the page on purpose: counting fifteen thousand rows is real
+    work, and a client that only renders a list should not pay for a total it
+    never shows. Sorting is irrelevant to a count, so it is not passed on.
+    """
+    built = _student_list_query(restrict_class_ids=restrict_class_ids, **filters)
+    if built is None:
+        return 0
+    query, _sort_key, _is_desc = built
+    return query.count()
+
+
+def classes_by_id(class_ids):
+    """Several classes in one query — for the GraphQL class loader."""
+    wanted = [cid for cid in set(class_ids) if cid]
+    if not wanted:
+        return {}
+    rows = (
+        Class.query.options(joinedload(Class.grade), joinedload(Class.programme))
+        .filter(Class.id.in_(wanted))
+        .all()
+    )
+    return {row.id: row for row in rows}
+
+
+def get_student_row(student_id: str):
+    """One student, with the person their name lives on.
+
+    Returns the row rather than a dict: GraphQL builds its own shape, and a
+    serializer that carries every column is what the REST payload already is.
+    """
+    return (
+        Student.query.options(joinedload(Student.person))
+        .filter_by(id=student_id)
+        .first()
+    )

@@ -23,7 +23,7 @@ from app import create_app
 from core.database import db
 from core.models import Tenant
 from modules.auth.models import User
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.rbac.services import create_permission
 from scripts.seed_rbac import PERMISSIONS
 
@@ -97,8 +97,10 @@ def create_super_admin_user(email: str, password: str, name: str = None) -> bool
             db.session.rollback()
             return False
 
-        user_role = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
-        db.session.add(user_role)
+        from modules.people.service import employ
+        from modules.rbac.authority_service import grant_authority
+
+        grant_authority(employ(tenant_id, user.person_id).id, admin_role.id)
         db.session.commit()
 
         print(f"✓ Super admin user created: {email}")

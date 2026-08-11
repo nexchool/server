@@ -11,6 +11,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from tests._model_loader import load_all_models  # noqa: E402
+from core.school_time import utc_now
 
 load_all_models()
 
@@ -84,7 +85,7 @@ def test_hostel_soft_delete():
     assert hostel.deleted_at is None
 
     # Simulate soft delete
-    hostel.deleted_at = datetime.utcnow()
+    hostel.deleted_at = utc_now()
     assert hostel.deleted_at is not None
 
 
@@ -151,7 +152,7 @@ def test_hostel_room_soft_delete():
     assert room.deleted_at is None
 
     # Simulate soft delete
-    room.deleted_at = datetime.utcnow()
+    room.deleted_at = utc_now()
     assert room.deleted_at is not None
 
 
@@ -239,7 +240,7 @@ def test_hostel_bed_soft_delete():
     assert bed.deleted_at is None
 
     # Simulate soft delete
-    bed.deleted_at = datetime.utcnow()
+    bed.deleted_at = utc_now()
     assert bed.deleted_at is not None
 
 

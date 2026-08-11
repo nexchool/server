@@ -4,12 +4,9 @@ School Units Module
 Sub-schools / campuses inside a tenant (e.g. "Modi Primary",
 "Modi Higher Secondary"). One tenant can have many SchoolUnits.
 
-Phase 2: CRUD API exposed at /api/school-units.
+The whole HTTP surface is GraphQL, under the v2 name for these — a campus:
+`campuses` to read, `addCampus` / `updateCampus` / `removeCampus` to change.
+There is no REST blueprint.
 """
 
-from flask import Blueprint
-
-school_units_bp = Blueprint("school_units", __name__)
-
 from . import models  # noqa: E402, F401
-from . import routes  # noqa: E402, F401

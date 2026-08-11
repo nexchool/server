@@ -18,6 +18,81 @@ def get_tenant_id():
     return getattr(g, "tenant_id", None)
 
 
+def find_tenant(
+    request_body: Optional[Dict[str, Any]] = None,
+    allow_default: bool = True,
+    fall_back_to_default: bool = False,
+):
+    """
+    Locate the tenant a request belongs to. Returns the Tenant or None.
+
+    This is the single tenant-lookup algorithm; every caller (middleware, auth
+    routes, GraphQL context) goes through it so the resolution order can never
+    drift between transports. Pure lookup: it neither sets ``g`` nor builds
+    responses, and it does not check tenant status — callers decide how to
+    reject a suspended tenant.
+
+    Order: request body -> X-Tenant-ID / X-Tenant-Subdomain headers ->
+    Host subdomain -> configured default.
+
+    Args:
+        request_body: Parsed JSON body, for auth routes where the tenant may
+            arrive as tenant_id / tenantId / subdomain instead of a header.
+        allow_default: Allow falling back to DEFAULT_TENANT_SUBDOMAIN when the
+            Host has no subdomain (localhost / single-domain deployments).
+        fall_back_to_default: Also use the default tenant when nothing else
+            resolved, regardless of Host shape.
+    """
+    from core.models import Tenant
+    from core.models import TENANT_STATUS_ACTIVE
+
+    def _active_by_subdomain(value: Optional[str]):
+        subdomain = (value or "").strip().lower()
+        if not subdomain:
+            return None
+        return Tenant.query.filter_by(
+            subdomain=subdomain,
+            status=TENANT_STATUS_ACTIVE,
+        ).first()
+
+    def _default_tenant():
+        return _active_by_subdomain(
+            current_app.config.get("DEFAULT_TENANT_SUBDOMAIN") or "default"
+        )
+
+    body = request_body or {}
+
+    # 1. Request body (so login/register can send subdomain or tenant_id without UI tenant picker)
+    tenant_id_from_body = body.get("tenant_id") or body.get("tenantId")
+    tenant = Tenant.query.get(tenant_id_from_body) if tenant_id_from_body else None
+    if tenant is None:
+        tenant = _active_by_subdomain(body.get("subdomain"))
+
+    # 2. Header — X-Tenant-ID (UUID) or X-Tenant-Subdomain (slug)
+    if tenant is None:
+        tenant_id_header = (request.headers.get("X-Tenant-ID") or "").strip()
+        if tenant_id_header:
+            # PK lookup intentionally skips the status filter; callers block
+            # inactive tenants after resolution.
+            tenant = Tenant.query.get(tenant_id_header)
+    if tenant is None:
+        tenant = _active_by_subdomain(request.headers.get("X-Tenant-Subdomain"))
+
+    # 3. Subdomain from Host
+    if tenant is None and request.host:
+        parts = request.host.lower().split(".")
+        if len(parts) >= 2 and parts[0] not in ("www", "api"):
+            tenant = _active_by_subdomain(parts[0])
+        elif len(parts) == 1 and allow_default:
+            tenant = _default_tenant()
+
+    # 4. Default tenant from config (single domain / localhost)
+    if tenant is None and fall_back_to_default and allow_default:
+        tenant = _default_tenant()
+
+    return tenant
+
+
 def resolve_tenant_for_auth(
     request_body: Optional[Dict[str, Any]] = None,
     use_default: bool = True,
@@ -29,67 +104,16 @@ def resolve_tenant_for_auth(
     Sets g.tenant_id and g.tenant on success.
     Returns None on success, or (status_code, response) on failure (caller should return that).
     """
-    from core.models import Tenant
     from core.models import TENANT_STATUS_ACTIVE
 
     if getattr(g, "tenant_id", None) is not None:
         return None
 
-    tenant = None
-    body = request_body or {}
-
-    # 1. Request body (so login/register can send subdomain or tenant_id without UI tenant picker)
-    tenant_id_from_body = body.get("tenant_id") or body.get("tenantId")
-    if tenant_id_from_body:
-        tenant = Tenant.query.get(tenant_id_from_body)
-    if tenant is None and body.get("subdomain"):
-        sub = (body.get("subdomain") or "").strip().lower()
-        if sub:
-            tenant = Tenant.query.filter_by(
-                subdomain=sub,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
-
-    # 2. Header — X-Tenant-ID (UUID) or X-Tenant-Subdomain (slug)
-    if tenant is None:
-        tenant_id_header = (request.headers.get("X-Tenant-ID") or "").strip()
-        if tenant_id_header:
-            # PK lookup intentionally skips status filter here;
-            # the status check below (line ~102) blocks inactive tenants.
-            tenant = Tenant.query.get(tenant_id_header)
-
-    if tenant is None:
-        subdomain_header = (request.headers.get("X-Tenant-Subdomain") or "").strip().lower()
-        if subdomain_header:
-            tenant = Tenant.query.filter_by(
-                subdomain=subdomain_header,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
-
-    # 3. Subdomain from Host
-    if tenant is None and request.host:
-        parts = request.host.lower().split(".")
-        if len(parts) >= 2 and parts[0] not in ("www", "api"):
-            subdomain = parts[0]
-            tenant = Tenant.query.filter_by(
-                subdomain=subdomain,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
-        elif len(parts) == 1 and use_default:
-            default_sub = (current_app.config.get("DEFAULT_TENANT_SUBDOMAIN") or "default").strip().lower()
-            tenant = Tenant.query.filter_by(
-                subdomain=default_sub,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
-
-    # 4. Default tenant from config (single domain / localhost)
-    if tenant is None and use_default:
-        default_sub = (current_app.config.get("DEFAULT_TENANT_SUBDOMAIN") or "default").strip().lower()
-        if default_sub:
-            tenant = Tenant.query.filter_by(
-                subdomain=default_sub,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
+    tenant = find_tenant(
+        request_body=request_body,
+        allow_default=use_default,
+        fall_back_to_default=use_default,
+    )
 
     if tenant is None:
         return (
@@ -126,40 +150,10 @@ def resolve_tenant():
     if getattr(g, "tenant_id", None) is not None:
         return
 
-    from core.models import Tenant
     from core.models import TENANT_STATUS_ACTIVE
 
-    tenant = None
-    # 1. Header — X-Tenant-ID (UUID) or X-Tenant-Subdomain (slug)
-    tenant_id_header = request.headers.get("X-Tenant-ID", "").strip()
-    if tenant_id_header:
-        # PK lookup intentionally skips status filter here;
-        # the status check below blocks inactive tenants.
-        tenant = Tenant.query.get(tenant_id_header)
-
-    if tenant is None:
-        subdomain_header = (request.headers.get("X-Tenant-Subdomain") or "").strip().lower()
-        if subdomain_header:
-            tenant = Tenant.query.filter_by(
-                subdomain=subdomain_header,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
-    # 2. Subdomain
-    if tenant is None and request.host:
-        parts = request.host.lower().split(".")
-        # Support: subdomain.domain.tld or subdomain.localhost
-        if len(parts) >= 2 and parts[0] not in ("www", "api"):
-            subdomain = parts[0]
-            tenant = Tenant.query.filter_by(
-                subdomain=subdomain,
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
-        # If single part (e.g. localhost), use default tenant by subdomain if configured
-        elif len(parts) == 1:
-            tenant = Tenant.query.filter_by(
-                subdomain="default",
-                status=TENANT_STATUS_ACTIVE,
-            ).first()
+    # No request body here: middleware runs before a route reads its payload.
+    tenant = find_tenant()
 
     if tenant is None:
         return (

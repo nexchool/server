@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from core.branch_scope import filter_by_student_ids
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,7 @@ from modules.hostel.models import (
     HostelAllocation,
     HostelBed,
 )
+from core.school_time import utc_now
 
 
 class AllocationService:
@@ -108,7 +110,7 @@ class AllocationService:
             )
 
         allocation.status = HostelAllocation.STATUS_COMPLETED
-        allocation.check_out_at = check_out_at or datetime.utcnow()
+        allocation.check_out_at = check_out_at or utc_now()
 
         # Free the bed.
         bed = self.session.get(HostelBed, allocation.bed_id)
@@ -155,6 +157,10 @@ class AllocationService:
             HostelAllocation.tenant_id == tenant_id,
             HostelAllocation.deleted_at.is_(None),
         )
+
+        # Which bed a child sleeps in is a fact about the child, so a sub-admin
+        # restricted to one campus sees their campus's boarders.
+        query = filter_by_student_ids(query, HostelAllocation.student_id)
 
         if hostel_id is not None:
             query = query.filter(HostelAllocation.hostel_id == hostel_id)

@@ -1,3 +1,5 @@
+from datetime import date as _date
+
 from flask import request, g
 from modules.teachers import teachers_bp
 from core.decorators import (
@@ -297,3 +299,128 @@ def delete_teacher(teacher_id):
     if result['success']:
         return success_response(message='Teacher deleted successfully')
     return error_response('DeleteError', result['error'], 400)
+
+
+# ---------------------------------------------------------------------------
+# Employment lifecycle — a teacher is an employed person (ADR-005)
+# ---------------------------------------------------------------------------
+
+def _teacher_employment(teacher_id):
+    """The employment behind a teacher, or an error response."""
+    from .models import Teacher
+
+    teacher = Teacher.query.filter_by(id=teacher_id).first()
+    if teacher is None or teacher.staff_id is None:
+        return None, not_found_response('Teacher')
+    return teacher.staff_id, None
+
+
+def _parse_day(raw):
+    if not raw:
+        return None, None
+    try:
+        return _date.fromisoformat(str(raw)), None
+    except ValueError:
+        return None, validation_error_response(
+            {'last_working_day': 'must be an ISO date (YYYY-MM-DD)'}
+        )
+
+
+def _separation_route(teacher_id, action, message):
+    from modules.people import separation
+
+    staff_id, err = _teacher_employment(teacher_id)
+    if err:
+        return err
+
+    data = request.get_json() or {}
+    last_day, parse_err = _parse_day(data.get('last_working_day'))
+    if parse_err:
+        return parse_err
+
+    result = getattr(separation, action)(
+        staff_id,
+        last_working_day=last_day,
+        reason=(data.get('reason') or None),
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('EmploymentError', result.get('error', 'Failed'), 400)
+    return success_response(data=result, message=message)
+
+
+@teachers_bp.route('/<teacher_id>/resign', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_UPDATE)
+def resign_teacher(teacher_id):
+    """They leave of their own accord. Body: { last_working_day?, reason? }"""
+    return _separation_route(teacher_id, 'resign', 'Resignation recorded')
+
+
+@teachers_bp.route('/<teacher_id>/retire', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_UPDATE)
+def retire_teacher(teacher_id):
+    """A career here ends. Body: { last_working_day?, reason? }"""
+    return _separation_route(teacher_id, 'retire', 'Retirement recorded')
+
+
+@teachers_bp.route('/<teacher_id>/terminate', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_UPDATE)
+def terminate_teacher(teacher_id):
+    """The organization ends the employment. Body: { last_working_day?, reason? }"""
+    return _separation_route(teacher_id, 'terminate', 'Termination recorded')
+
+
+@teachers_bp.route('/<teacher_id>/rejoin', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_UPDATE)
+def rejoin_teacher(teacher_id):
+    """A former colleague returns — a new period, the same employee."""
+    from modules.people import separation
+
+    staff_id, err = _teacher_employment(teacher_id)
+    if err:
+        return err
+
+    data = request.get_json() or {}
+    joined_on, parse_err = _parse_day(data.get('joined_on'))
+    if parse_err:
+        return parse_err
+
+    result = separation.rejoin(
+        staff_id,
+        joined_on=joined_on,
+        designation=(data.get('designation') or None),
+        department_id=(data.get('department_id') or None),
+        reason=(data.get('reason') or None),
+        recorded_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('EmploymentError', result.get('error', 'Failed'), 400)
+    return success_response(data=result, message='Rejoining recorded')
+
+
+@teachers_bp.route('/<teacher_id>/employment-timeline', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_READ)
+def teacher_employment_timeline(teacher_id):
+    """Their employment history, oldest first."""
+    from modules.people import separation
+
+    staff_id, err = _teacher_employment(teacher_id)
+    if err:
+        return err
+    events = separation.employment_timeline(staff_id)
+    return success_response(data=[event.to_dict() for event in events])

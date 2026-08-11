@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Tuple
+from typing import Optional
 
 from modules.classes.models import Class
 from modules.teachers.models import Teacher
+from core.school_time import school_today
 
 
 def get_class_for_tenant(class_id: str, tenant_id: str) -> Optional[Class]:
@@ -20,14 +21,19 @@ def teacher_belongs_to_tenant(teacher_id: str, tenant_id: str) -> bool:
 
 def teacher_is_active_for_class(teacher: Teacher, cls: Class, on_date: Optional[date] = None) -> bool:
     """Teacher must match tenant, be active, and (loosely) align with class academic year dates."""
-    if teacher.tenant_id != cls.tenant_id or (teacher.status or "").lower() != "active":
+    employment = teacher.staff
+    if teacher.tenant_id != cls.tenant_id or employment is None:
         return False
-    d = on_date or date.today()
+    # Someone can only be given a class while they still work here (ADR-005).
+    if not employment.is_employed:
+        return False
+    d = on_date or school_today()
     if cls.start_date and d < cls.start_date:
         return False
     if cls.end_date and d > cls.end_date:
         return False
-    if teacher.date_of_joining and d < teacher.date_of_joining:
+    joined_on = employment.joined_on
+    if joined_on and d < joined_on:
         return False
     return True
 
@@ -45,4 +51,11 @@ def date_in_effective_range(
 
 
 def class_display_name(cls: Class) -> str:
-    return f"{cls.name}-{cls.section}"
+    """What a school calls this class.
+
+    Delegates to `Class.display_name`, which composes grade + section and falls
+    back to the legacy `name`. Building the label here as `name-section` printed
+    "None-A" for every class made by the structured form, where `name` is null
+    and the grade holds the label.
+    """
+    return cls.display_name or ""

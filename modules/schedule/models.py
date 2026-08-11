@@ -10,20 +10,22 @@ from datetime import datetime
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class ScheduleOverride(TenantBaseModel):
     """
-    A per-day override of a timetable slot or timetable entry.
+    A per-day override of a timetable entry.
 
     override_type:
       'substitute' – different teacher takes the class
       'activity'   – replaced by an activity (sports, assembly, library, etc.)
       'cancelled'  – class is cancelled for the day
 
-    Prefer timetable_entry_id for new rows; slot_id remains for legacy timetable_slots.
-    Uniqueness is enforced via partial indexes on (slot_id, override_date) and
-    (timetable_entry_id, override_date) — see migration 023.
+    Uniqueness is enforced via a partial index on
+    (timetable_entry_id, override_date) — see migration 023. The parallel
+    ``slot_id`` pointer at the legacy `timetable_slots` table went with that
+    table in migration 096; the API still calls the id ``slot_id``.
     """
     __tablename__ = "schedule_overrides"
 
@@ -32,12 +34,6 @@ class ScheduleOverride(TenantBaseModel):
     TYPE_CANCELLED = "cancelled"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    slot_id = db.Column(
-        db.String(36),
-        db.ForeignKey("timetable_slots.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
-    )
     timetable_entry_id = db.Column(
         db.String(36),
         db.ForeignKey("timetable_entries.id", ondelete="CASCADE"),
@@ -59,21 +55,23 @@ class ScheduleOverride(TenantBaseModel):
         db.ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
-    slot_ref = db.relationship("TimetableSlot", foreign_keys=[slot_id], lazy=True)
     timetable_entry = db.relationship("TimetableEntry", foreign_keys=[timetable_entry_id], lazy=True)
     substitute_teacher = db.relationship("Teacher", foreign_keys=[substitute_teacher_id], lazy=True)
     creator = db.relationship("User", foreign_keys=[created_by], lazy=True)
 
     def to_dict(self):
-        sub_name = None
-        if self.substitute_teacher and self.substitute_teacher.user:
-            sub_name = self.substitute_teacher.user.name
+        sub = self.substitute_teacher
+        sub_name = (
+            sub.staff.person.full_name if sub and sub.staff and sub.staff.person else None
+        )
         return {
             "id": self.id,
-            "slot_id": self.slot_id,
+            # The API has always called this id "slot_id"; it identifies the
+            # timetable entry the override covers.
+            "slot_id": self.timetable_entry_id,
             "timetable_entry_id": self.timetable_entry_id,
             "override_scope": self.override_scope,
             "override_date": self.override_date.isoformat() if self.override_date else None,
@@ -87,4 +85,7 @@ class ScheduleOverride(TenantBaseModel):
         }
 
     def __repr__(self):
-        return f"<ScheduleOverride slot={self.slot_id} date={self.override_date} type={self.override_type}>"
+        return (
+            f"<ScheduleOverride entry={self.timetable_entry_id} "
+            f"date={self.override_date} type={self.override_type}>"
+        )

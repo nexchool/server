@@ -17,6 +17,7 @@ import uuid
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class UserSchoolUnit(TenantBaseModel):
@@ -48,12 +49,12 @@ class UserSchoolUnit(TenantBaseModel):
         nullable=False,
         index=True,
     )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     def to_dict(self):

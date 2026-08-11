@@ -13,6 +13,7 @@ from sqlalchemy import Index, text
 from core.database import db
 from core.models import TenantBaseModel
 from sqlalchemy.dialects.postgresql import JSONB
+from core.school_time import utc_now
 
 
 class Subject(TenantBaseModel):
@@ -49,8 +50,8 @@ class Subject(TenantBaseModel):
     updated_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     def save(self):
         db.session.add(self)

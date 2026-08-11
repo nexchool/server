@@ -11,6 +11,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from tests._model_loader import load_all_models  # noqa: E402
+from core.school_time import utc_now
 
 load_all_models()
 
@@ -188,7 +189,7 @@ def test_is_overdue_false_when_not_active():
 
 def test_is_overdue_true_when_active_and_past_return():
     """Active gatepass with past expected_return_datetime is overdue."""
-    past_return = datetime.utcnow() - timedelta(hours=1)
+    past_return = utc_now() - timedelta(hours=1)
     gp = _build_gatepass(
         status="active",
         departure_datetime=past_return - timedelta(hours=8),
@@ -199,10 +200,10 @@ def test_is_overdue_true_when_active_and_past_return():
 
 def test_is_overdue_false_when_active_but_not_yet_due():
     """Active gatepass with future return is not overdue."""
-    future_return = datetime.utcnow() + timedelta(hours=3)
+    future_return = utc_now() + timedelta(hours=3)
     gp = _build_gatepass(
         status="active",
-        departure_datetime=datetime.utcnow(),
+        departure_datetime=utc_now(),
         expected_return_datetime=future_return,
     )
     assert gp.is_overdue is False

@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+from core.school_time import utc_now
 
 
 def test_complete_hostel_lifecycle(
@@ -64,7 +65,7 @@ def test_complete_hostel_lifecycle(
             hostel_id=hostel.id,
             room_id=room.id,
             bed_id=bed.id,
-            check_in_at=datetime.utcnow(),
+            check_in_at=utc_now(),
         )
 
     # ----- 2. Student requests a gatepass -----
@@ -73,8 +74,8 @@ def test_complete_hostel_lifecycle(
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() + timedelta(hours=2),
-        expected_return_datetime=datetime.utcnow() + timedelta(hours=12),
+        departure_datetime=utc_now() + timedelta(hours=2),
+        expected_return_datetime=utc_now() + timedelta(hours=12),
         reason="Visiting parents",
         parent_phone="+91-9876543210",
     )
@@ -87,8 +88,8 @@ def test_complete_hostel_lifecycle(
             student_id=student.id,
             hostel_id=hostel.id,
             gatepass_type="day_out",
-            departure_datetime=datetime.utcnow() + timedelta(hours=1),
-            expected_return_datetime=datetime.utcnow() + timedelta(hours=6),
+            departure_datetime=utc_now() + timedelta(hours=1),
+            expected_return_datetime=utc_now() + timedelta(hours=6),
             reason="Coaching",
             parent_phone="+91-9876543210",
         )
@@ -179,7 +180,7 @@ def test_workflow_overdue_path(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     gp = gp_service.create_gatepass(
@@ -188,8 +189,8 @@ def test_workflow_overdue_path(
         hostel_id=hostel.id,
         gatepass_type="night_out",
         # Departed yesterday, expected back 2 hours ago — way past grace.
-        departure_datetime=datetime.utcnow() - timedelta(hours=10),
-        expected_return_datetime=datetime.utcnow() - timedelta(hours=2),
+        departure_datetime=utc_now() - timedelta(hours=10),
+        expected_return_datetime=utc_now() - timedelta(hours=2),
         reason="Home",
         parent_phone="+91-9876543210",
     )
@@ -223,8 +224,8 @@ def test_workflow_rejection_path(db_session, tenant, hostel, student):
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() + timedelta(hours=2),
-        expected_return_datetime=datetime.utcnow() + timedelta(hours=12),
+        departure_datetime=utc_now() + timedelta(hours=2),
+        expected_return_datetime=utc_now() + timedelta(hours=12),
         reason="Home",
         parent_phone="+91-9876543210",
     )
@@ -242,8 +243,8 @@ def test_workflow_rejection_path(db_session, tenant, hostel, student):
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="day_out",
-        departure_datetime=datetime.utcnow() + timedelta(hours=1),
-        expected_return_datetime=datetime.utcnow() + timedelta(hours=6),
+        departure_datetime=utc_now() + timedelta(hours=1),
+        expected_return_datetime=utc_now() + timedelta(hours=6),
         reason="Coaching",
         parent_phone="+91-9876543210",
     )

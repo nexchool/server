@@ -9,6 +9,7 @@ from typing import Optional
 
 from flask import render_template_string
 from core.tenant import get_tenant_id
+from core.school_time import utc_now
 
 try:
     from weasyprint import HTML
@@ -40,7 +41,7 @@ def _render_invoice_html(invoice_id: str) -> Optional[str]:
     if not data:
         return None
 
-    data["now"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    data["now"] = utc_now().strftime("%Y-%m-%d %H:%M UTC")
     return render_template_string(_INVOICE_TEMPLATE, **data)
 
 

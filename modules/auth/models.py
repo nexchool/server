@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import os
 import secrets
 import uuid
+from core.school_time import utc_now
 
 
 class User(TenantBaseModel):
@@ -28,6 +29,24 @@ class User(TenantBaseModel):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Authentication
+    # The human this account belongs to (ADR-003). Nullable until the People
+    # backfill has run everywhere; a later migration makes it mandatory.
+    person_id = db.Column(
+        db.String(36),
+        db.ForeignKey("persons.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    # Declared as a relationship, not just a column: it is what tells the unit
+    # of work to insert the person before the account that references them.
+    # Declared from this side so People can see that a person signs in here
+    # without importing Identity (ADR-001, and the dependency order).
+    person = db.relationship(
+        "Person",
+        foreign_keys=[person_id],
+        backref=db.backref("accounts", lazy=True),
+    )
+
     email = db.Column(db.String(120), nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
 
@@ -41,7 +60,7 @@ class User(TenantBaseModel):
 
     # Password Reset
     reset_password_token = db.Column(db.String(255), nullable=True)
-    reset_password_sent_at = db.Column(db.DateTime, nullable=True)
+    reset_password_sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
     force_password_reset = db.Column(db.Boolean, default=False, nullable=False)
 
     # Platform Admin (Super Admin panel access)
@@ -49,14 +68,14 @@ class User(TenantBaseModel):
 
     # Login lockout (tenant logins only; platform admin is not locked)
     failed_login_count = db.Column(db.Integer, nullable=False, default=0)
-    login_locked_until = db.Column(db.DateTime, nullable=True)
+    login_locked_until = db.Column(db.DateTime(timezone=True), nullable=True)
 
     # Account status
     is_suspended = db.Column(db.Boolean, nullable=False, default=False)
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     # Metadata
-    last_login_at = db.Column(db.DateTime, nullable=True)
+    last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
     default_unit_id = db.Column(
         db.String(36),
         db.ForeignKey("school_units.id", ondelete="SET NULL"),
@@ -64,12 +83,12 @@ class User(TenantBaseModel):
         index=True,
         comment="Preferred campus for this admin. NULL = show all units. UI filter only, not a permission gate.",
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        default=utc_now,
+        onupdate=utc_now
     )
 
     # Relationships
@@ -80,7 +99,8 @@ class User(TenantBaseModel):
         cascade="all, delete-orphan"
     )
 
-    # Note: roles relationship is defined in RBAC module via UserRole model
+    # Authority is held by the person's employment, not the account (ADR-013):
+    # see modules/rbac/authority_service.py.
 
     def set_password(self, password: str) -> None:
         """Hash and set user password"""
@@ -129,7 +149,7 @@ class User(TenantBaseModel):
         """Generate a secure token for password reset"""
         token = secrets.token_urlsafe(32)
         self.reset_password_token = token
-        self.reset_password_sent_at = datetime.utcnow()
+        self.reset_password_sent_at = utc_now()
         return token
     
     def is_reset_token_valid(self, token):
@@ -138,7 +158,7 @@ class User(TenantBaseModel):
             return False
         if self.reset_password_token != token:
             return False
-        if self.reset_password_sent_at + timedelta(minutes=self.RESET_TOKEN_EXP_MINUTES) < datetime.utcnow():
+        if self.reset_password_sent_at + timedelta(minutes=self.RESET_TOKEN_EXP_MINUTES) < utc_now():
             return False
         return True
     
@@ -155,7 +175,7 @@ REFRESH_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRES_DAYS", 7))
 
 def refresh_token_expiry():
     """Calculate refresh token expiry timestamp"""
-    return datetime.utcnow() + timedelta(days=REFRESH_DAYS)
+    return utc_now() + timedelta(days=REFRESH_DAYS)
 
 
 class Session(TenantBaseModel):
@@ -177,16 +197,16 @@ class Session(TenantBaseModel):
 
     refresh_token = db.Column(db.Text, nullable=True, index=True)
     refresh_token_expires_at = db.Column(
-        db.DateTime, 
+        db.DateTime(timezone=True), 
         default=refresh_token_expiry,
         nullable=False
     )
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    last_accessed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    last_accessed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     revoked = db.Column(db.Boolean, nullable=False, default=False)
-    revoked_at = db.Column(db.DateTime, nullable=True)
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     # Device metadata
     ip_address = db.Column(db.String(45), nullable=True)  # IPv4 + IPv6 safe
@@ -201,7 +221,7 @@ class Session(TenantBaseModel):
     def revoke(self):
         """Revoke this session"""
         self.revoked = True
-        self.revoked_at = datetime.utcnow()
+        self.revoked_at = utc_now()
         self.save()
     
     def save(self):

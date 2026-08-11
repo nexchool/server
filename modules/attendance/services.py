@@ -32,40 +32,33 @@ from modules.academics.calendar.holiday_services import get_holiday_for_date
 
 from . import session_services as session_svc
 from .models import Attendance
+from core.school_time import school_today
 
 
 def get_teacher_class_ids(user_id: str) -> List[str]:
+    """Class ids this user's teacher may mark attendance for.
+
+    Asked of Teaching Assignment (ADR-014): class-teacher responsibilities
+    whose `allow_attendance_marking` is on. The old fallback that matched
+    `classes.teacher_id` against the login is gone — the column is a cache and
+    names the teacher since migration 095, and every cached class teacher was
+    given an owner row by that migration.
+
+    Users with attendance.manage bypass this entirely (admin override).
     """
-    Get class IDs for attendance marking.
+    from modules.academics.teaching_assignment import classes_taught_by
+    from modules.teachers.services import teacher_for_user
 
-    Includes legacy Class.teacher_id and authoritative ClassTeacherAssignment (primary + allow_attendance).
-    Users with attendance.manage permission bypass this and can mark any class (admin override).
-    """
-    from modules.academics.backbone.models import ClassTeacherAssignment
-    from modules.teachers.models import Teacher
-
-    ids: List[str] = []
-
-    direct_classes = Class.query.filter_by(teacher_id=user_id).all()
-    ids.extend(c.id for c in direct_classes)
-
-    teacher = Teacher.query.filter_by(user_id=user_id).first()
-    if teacher:
-        rows = (
-            ClassTeacherAssignment.query.filter_by(
-                tenant_id=teacher.tenant_id,
-                teacher_id=teacher.id,
-            )
-            .filter(
-                ClassTeacherAssignment.is_active.is_(True),
-                ClassTeacherAssignment.deleted_at.is_(None),
-                ClassTeacherAssignment.allow_attendance_marking.is_(True),
-            )
-            .all()
+    teacher = teacher_for_user(user_id)
+    if not teacher:
+        return []
+    return list(
+        dict.fromkeys(
+            a.class_id
+            for a in classes_taught_by(teacher.id)
+            if a.allow_attendance_marking
         )
-        ids.extend(r.class_id for r in rows)
-
-    return list(dict.fromkeys(ids))
+    )
 
 
 def mark_attendance(
@@ -89,7 +82,7 @@ def mark_attendance(
 
         att_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
-        if att_date > date.today():
+        if att_date > school_today():
             return {"success": False, "error": "Cannot mark attendance for future dates"}
 
         tenant_id = get_tenant_id()
@@ -205,14 +198,18 @@ def _finalize_overview_payload(
 
     payload: Dict[str, Any] = {
         "class_id": class_id,
-        "class_name": f"{cls.name}-{cls.section}",
+        "class_name": cls.display_name,
         "date": date_str,
         "is_holiday": holiday_info is not None,
         "holiday_info": holiday_info,
         "grade_level": cls.grade_level,
         "academic_year": cls.academic_year_ref.name if cls.academic_year_ref else None,
         "academic_year_id": cls.academic_year_id,
-        "class_teacher_name": cls.teacher.name if cls.teacher else None,
+        "class_teacher_name": (
+            cls.teacher.staff.person.full_name
+            if cls.teacher and cls.teacher.staff and cls.teacher.staff.person
+            else None
+        ),
         "class_start_date": cls.start_date.isoformat() if cls.start_date else None,
         "class_end_date": cls.end_date.isoformat() if cls.end_date else None,
         "date_within_academic_window": date_within_academic_window,
@@ -238,9 +235,14 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
     Class roster for a date with attendance — prefers v2 session + records, else legacy rows.
     """
     try:
+        from modules.people.employment import Staff
+        from modules.teachers.models import Teacher
+
         cls = (
             Class.query.options(
-                joinedload(Class.teacher),
+                joinedload(Class.teacher)
+                .joinedload(Teacher.staff)
+                .joinedload(Staff.person),
                 joinedload(Class.academic_year_ref),
             ).get(class_id)
         )

@@ -21,6 +21,7 @@ from core.tenant import get_tenant_id
 from modules.academics.backbone.models import StudentClassEnrollment
 from modules.classes.models import Class
 from modules.students.models import Student
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def assign_student_to_class(
     if not student:
         return {"success": False, "error": "Student not found"}
 
-    today = datetime.utcnow().date()
+    today = utc_now().date()
 
     def _run() -> Optional[str]:
         err = _assign_student_to_class_impl(
@@ -113,6 +114,11 @@ def _assign_student_to_class_impl(
     cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
     if not cls:
         return "Class not found"
+    if cls.merged_into_class_id is not None:
+        # "Only future activities use the merged Section." Guarded here
+        # rather than at each caller, so admission, transfer, bulk import
+        # and promotion targets are all covered by one rule.
+        return "That section has been merged; place the student in the section it merged into"
 
     resolved_ay = cls.academic_year_id
     if academic_year_id and academic_year_id != resolved_ay:
@@ -151,6 +157,20 @@ def _assign_student_to_class_impl(
             academic_year_id=academic_year_id,
             promoted_from_id=None,
         )
+        db.session.flush()
+        return None
+
+    # A move inside one academic year is a section transfer, and the canon is
+    # exact about it: "Section Transfer modifies the current Academic
+    # Enrollment." Closing and reopening would read as the student leaving 8A
+    # and joining 8B — two placements for one year — and would stamp
+    # `promoted_from_enrollment_id`, which is a promotion's word for a thing
+    # that is not a promotion. Where they moved *from* is kept by the
+    # SectionTransferred event, which is where transfer history belongs.
+    if len(current_rows) == 1 and current_rows[0].academic_year_id == academic_year_id:
+        current_rows[0].class_id = class_id
+        student.class_id = class_id
+        student.academic_year_id = academic_year_id
         db.session.flush()
         return None
 

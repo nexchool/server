@@ -287,6 +287,72 @@ def filter_students_by_branch(query):
     return query.filter(Student.class_id.in_(class_subq.select()))
 
 
+def _allowed_teacher_id_subquery(allowed_units: Set[str]):
+    """Scalar subquery: teachers who teach at least one class in the allowed set.
+
+    Asks Teaching Assignment which teachers are attached to which classes,
+    rather than knowing that teaching is expressed by more than one table
+    (ADR-014). This function used to union three of them, which is what the
+    ambiguity cost before teaching had one owner.
+    """
+    from modules.academics.teaching_assignment import current_teaching_links
+    from modules.classes.models import Class
+
+    tenant_id = getattr(g, "tenant_id", None)
+    class_subq = _allowed_class_id_subquery(allowed_units)
+
+    links = current_teaching_links(tenant_id).subquery()
+    return (
+        db_session().query(links.c.teacher_id)
+        .filter(links.c.class_id.in_(class_subq.select()))
+        .subquery()
+    )
+
+
+def db_session():
+    from core.database import db
+
+    return db.session
+
+
+def filter_teachers_by_branch(query):
+    """Restrict a Teacher query to teachers teaching in the allowed branches.
+
+    A teacher assigned to no class anywhere is excluded, the same way a student
+    with no class is — an unrestricted admin still sees them, and they become
+    visible to a campus the moment they are given a class there.
+
+    No-op if unrestricted.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return query
+
+    from modules.teachers.models import Teacher
+
+    teacher_subq = _allowed_teacher_id_subquery(allowed)
+    return query.filter(Teacher.id.in_(teacher_subq.select()))
+
+
+def filter_by_student_ids(query, student_fk_column):
+    """Restrict any query by its student FK to students in allowed branches.
+
+    Hostel allocations and transport enrollments are both, in the end, a child:
+    which bed they sleep in and which bus they ride are facts about a student,
+    so they are scoped by the student rather than by the building or the
+    vehicle. A trust may run one fleet across every campus; saying a bus
+    belongs to a campus would be inventing a fact nobody recorded.
+
+    No-op if unrestricted.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return query
+
+    student_subq = _allowed_student_id_subquery(allowed)
+    return query.filter(student_fk_column.in_(student_subq.select()))
+
+
 def filter_fees_by_branch(query, student_fk_column):
     """Restrict a fee-domain query by its student FK to allowed-branch students.
 

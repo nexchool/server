@@ -5,43 +5,44 @@ from typing import List, Dict, Optional
 from sqlalchemy import distinct, func, or_
 from sqlalchemy.exc import IntegrityError, DataError
 from sqlalchemy.orm import joinedload
-from datetime import datetime
+from datetime import date, datetime
 
 from core.database import db
 from core.tenant import get_tenant_id
-from .models import Class, ClassTeacher
+from modules.academics.backbone.models import (
+    ClassSubjectTeacher,
+    ClassTeacherAssignment,
+)
+from .models import Class, ClassSubject
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
-def _resolve_class_teacher_user_id(tenant_id: str, teacher_id: str | None) -> str | None:
+def _resolve_class_teacher_id(tenant_id: str, teacher_id: str | None) -> str | None:
     """
-    `classes.teacher_id` points to `users.id`, but many client screens deal in `teachers.id`.
-    Accept either:
-    - a `users.id` (teacher user's id)
-    - a `teachers.id` (teacher profile id)
+    `classes.teacher_id` caches the class teacher as a `teachers.id`
+    (migration 095). Clients historically sent either id, so both are accepted:
+    - a `teachers.id` — what every teacher picker returns
+    - a `users.id` — legacy mobile payloads, mapped to the teacher behind it
 
-    Returns the resolved `users.id` to store in `classes.teacher_id`, or None.
-    Raises ValueError if the provided id cannot be resolved for this tenant.
+    Returns the `teachers.id` to store, or None. Raises ValueError when the id
+    names nobody who teaches in this tenant — a class teacher must be a
+    teacher, not merely an account.
     """
     if not teacher_id:
         return None
 
-    # Try interpreting as Teacher.id first (most common client payload)
     from modules.teachers.models import Teacher
 
     teacher = Teacher.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
+    if teacher is None:
+        teacher = Teacher.query.filter_by(
+            user_id=teacher_id, tenant_id=tenant_id
+        ).first()
     if teacher:
-        return teacher.user_id
-
-    # Otherwise treat as User.id; validate that it's a teacher user in this tenant.
-    # (At minimum validate existence; role validation may vary by deployment.)
-    from modules.auth.models import User
-
-    user = User.query.filter_by(id=teacher_id, tenant_id=tenant_id).first()
-    if user:
-        return user.id
+        return teacher.id
 
     raise ValueError("Invalid teacher.")
 
@@ -126,7 +127,7 @@ def create_class(
         # Normalize: empty string -> None for optional fields
         teacher_id = teacher_id if teacher_id else None
         try:
-            teacher_id = _resolve_class_teacher_user_id(tenant_id, teacher_id)
+            teacher_id = _resolve_class_teacher_id(tenant_id, teacher_id)
         except ValueError:
             return {
                 'success': False,
@@ -149,11 +150,20 @@ def create_class(
         if department_error:
             return {'success': False, 'error': department_error}
 
-        # Explicit duplicate check (name, section, academic_year_id) - gives clear error
+        # A class is identified by where it sits, not by what it is called:
+        # (tenant, campus, programme, grade, section, academic year). `name` is
+        # a nullable legacy label and is empty for every class created through
+        # the structured form, so checking it instead — as this did — collapsed
+        # the test to (section, year) and refused a second Grade 1 A on another
+        # programme or campus. A trust running two mediums on one campus has
+        # exactly that, and so does the demo school: Grade 1 A exists twice,
+        # once GSEB Gujarati and once GSEB English.
         logger.warning("[create_class] checking for duplicate")
         existing = Class.query.filter_by(
             tenant_id=tenant_id,
-            name=name.strip(),
+            school_unit_id=school_unit_id,
+            programme_id=programme_id,
+            grade_id=grade_id,
             section=section.strip(),
             academic_year_id=academic_year_id,
         ).first()
@@ -161,7 +171,10 @@ def create_class(
             logger.warning("create_class: FAILED - duplicate found, existing id=%r", existing.id if existing else None)
             return {
                 'success': False,
-                'error': 'Class with this name, section and academic year already exists'
+                'error': (
+                    'That section already exists for this grade, programme and '
+                    'campus in this academic year.'
+                ),
             }
 
         logger.warning("[create_class] no duplicate, creating Class object")
@@ -183,6 +196,13 @@ def create_class(
         )
         logger.warning("[create_class] saving to database")
         new_class.save()
+        if teacher_id:
+            # The cache was written by the constructor; the RESPONSIBILITY
+            # belongs to class_teacher_assignments (ADR-014). For years this
+            # path wrote only the cache, leaving class teachers the owner
+            # table knew nothing about.
+            _name_the_class_teacher(new_class, teacher_id)
+            new_class.save()
         logger.warning("[create_class] SUCCESS class_id=%r", new_class.id)
 
         return {
@@ -253,39 +273,59 @@ SEARCH_FIELDS = {"all", "name", "section", "grade", "programme", "branch"}
 MAX_PER_PAGE = 100
 
 
-def _teacher_links(tenant_id: str):
-    """(class_id, user_id) for every teacher attached to a class, deduplicated.
+def _name_the_class_teacher(cls, teacher_id):
+    """Record who is responsible for this class, and refresh the cache.
 
-    A class reaches its teachers two ways and both have to be counted:
+    The responsibility belongs to `class_teacher_assignments` (ADR-014), so it
+    is written there first and the cache is set from it. A class form that
+    wrote only the cache is how the concept came to have two homes.
 
-    - `class_teachers` rows — subject-teacher assignments, keyed by `teachers.id`.
-    - `classes.teacher_id` — the class teacher, keyed by `users.id`.
-
-    `assign_teacher_to_class` writes both, but `create_class` / `update_class`
-    set only `classes.teacher_id`, so a class whose teacher came from the normal
-    form has no junction row at all. Counting the junction alone reported
-    `teacher_count: 0` next to a populated `teacher_name` on the same row.
-
-    The two columns point at different tables, so they're unioned in *user* id
-    space — `teachers.user_id` is the common denominator — and UNION dedupes a
-    teacher who is both class teacher and subject teacher.
+    `teacher_id` is a `teachers.id` (resolve with _resolve_class_teacher_id).
     """
+    from modules.academics.backbone.models import ClassTeacherAssignment
     from modules.teachers.models import Teacher
 
-    via_junction = (
-        db.session.query(
-            ClassTeacher.class_id.label("class_id"),
-            Teacher.user_id.label("user_id"),
-        )
-        .join(Teacher, Teacher.id == ClassTeacher.teacher_id)
-        .filter(ClassTeacher.tenant_id == tenant_id)
-    )
-    via_class_teacher = db.session.query(
-        Class.id.label("class_id"),
-        Class.teacher_id.label("user_id"),
-    ).filter(Class.tenant_id == tenant_id, Class.teacher_id.isnot(None))
+    for held in ClassTeacherAssignment.query.filter_by(
+        tenant_id=cls.tenant_id, class_id=cls.id, role="primary", is_active=True
+    ).all():
+        held.is_active = False
+        db.session.add(held)
+    db.session.flush()
 
-    return via_junction.union(via_class_teacher)
+    if not teacher_id:
+        cls.teacher_id = None
+        return
+
+    teacher = Teacher.query.filter_by(tenant_id=cls.tenant_id, id=teacher_id).first()
+    if teacher is None:
+        cls.teacher_id = None
+        return
+
+    db.session.add(
+        ClassTeacherAssignment(
+            tenant_id=cls.tenant_id,
+            class_id=cls.id,
+            teacher_id=teacher.id,
+            role="primary",
+            is_active=True,
+        )
+    )
+    cls.teacher_id = teacher.id
+
+
+def _teacher_links(tenant_id: str):
+    """(class_id, teacher_id) for everyone currently teaching a class.
+
+    Asks Teaching Assignment rather than joining tables here, so this module
+    does not need to know that teaching is expressed by two of them (ADR-014).
+
+    Counted in teacher-id space now, not user-id. The previous version unioned
+    `classes.teacher_id`, which is a cache — nothing may decide anything from
+    it — and normalising on user_id only existed to make that union possible.
+    """
+    from modules.academics.teaching_assignment import current_teaching_links
+
+    return current_teaching_links(tenant_id)
 
 
 def _count_subqueries(tenant_id: str):
@@ -315,7 +355,7 @@ def _count_subqueries(tenant_id: str):
     teacher_counts = (
         db.session.query(
             links.c.class_id.label("class_id"),
-            func.count(distinct(links.c.user_id)).label("count"),
+            func.count(distinct(links.c.teacher_id)).label("count"),
         )
         .group_by(links.c.class_id)
         .subquery()
@@ -348,7 +388,8 @@ def _build_sort_order(sort_by: str, sort_dir: str, student_col, teacher_col):
     return [primary, Class.section.asc(), Class.id.asc()]
 
 
-def get_all_classes(
+def _class_list_query(
+    *,
     academic_year_id: Optional[str] = None,
     school_unit_id: Optional[str] = None,
     programme_id: Optional[str] = None,
@@ -356,27 +397,37 @@ def get_all_classes(
     department_id: Optional[str] = None,
     search: Optional[str] = None,
     search_field: str = "all",
-    sort_by: str = "grade",
-    sort_dir: str = "asc",
-    page: Optional[int] = None,
-    per_page: Optional[int] = None,
-) -> Dict:
-    """List classes for the current tenant with filters, search, sort, paging.
+    include_merged: bool = False,
+):
+    """The one query every class list is built from.
 
-    Returns an envelope: {items, total, page, per_page, total_pages}. When
-    `page`/`per_page` are omitted every matching row is returned with
-    total_pages = 1, so callers that just want the full list (the structured
-    class pickers) keep working.
+    Both transports go through here. A filter added to one list and not the
+    other is drift nobody sees until a school asks why the spreadsheet and the
+    screen disagree.
 
-    Each item carries `student_count`, `teacher_count` and a derived `status`
-    ("active" when the class sits in the tenant's active academic year, else
-    "archived" — `classes` has no status column of its own).
+    Merged-away sections are left out unless asked for. A section that was
+    merged into another takes no more students — placing one there is refused
+    at the primitive — so offering it in a picker is offering a choice the
+    system will reject. `include_merged=True` is for the views that exist to
+    explain the past: a class list someone is auditing, and the record of the
+    merge itself.
+
+    Returns (query, student_col, teacher_col). The query selects
+    (Class, student_count, teacher_count, academic_year.is_active) and carries
+    no ordering, no paging and no eager loads — a count should pay for none of
+    those.
     """
-    from core.branch_scope import filter_classes_by_branch
+    from core.branch_scope import assert_unit_allowed, filter_classes_by_branch
     from modules.academic_programmes.models import AcademicProgramme
     from modules.academics.academic_year.models import AcademicYear
     from modules.grades.models import Grade
     from modules.school_units.models import SchoolUnit
+
+    # Branch scope: naming a branch outside this person's scope is a refusal,
+    # not an empty list. Here rather than in a route so it holds however the
+    # list is reached. No-op for unrestricted users.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
 
     tenant_id = get_tenant_id()
     student_counts, teacher_counts = _count_subqueries(tenant_id)
@@ -410,6 +461,8 @@ def get_all_classes(
         query = query.filter(Class.grade_id == grade_id)
     if department_id:
         query = query.filter(Class.department_id == department_id)
+    if not include_merged:
+        query = query.filter(Class.merged_into_class_id.is_(None))
 
     term = (search or "").strip()
     if term:
@@ -426,21 +479,73 @@ def get_all_classes(
         ]
         query = query.filter(or_(*clauses))
 
-    # Eager-load what to_dict() touches; otherwise each row lazy-loads seven
-    # relationships and we're back to the N+1 this query exists to kill.
-    query = query.options(
+    return query, student_col, teacher_col
+
+
+def _with_list_relationships(query):
+    """Eager-load what a rendered class row reads.
+
+    Without this each row lazy-loads seven relationships and we are back to the
+    N+1 the grouped counts exist to kill.
+    """
+    from modules.people.employment import Staff
+    from modules.teachers.models import Teacher
+
+    return query.options(
         joinedload(Class.school_unit),
         joinedload(Class.programme),
         joinedload(Class.grade),
         joinedload(Class.medium),
         joinedload(Class.academic_year_ref),
-        joinedload(Class.teacher),
+        # The class teacher's name reads Teacher -> Staff -> Person (ADR-001).
+        joinedload(Class.teacher).joinedload(Teacher.staff).joinedload(Staff.person),
         joinedload(Class.department_ref),
     )
 
-    total = query.order_by(None).count()
 
-    query = query.order_by(*_build_sort_order(sort_by, sort_dir, student_col, teacher_col))
+def get_all_classes(
+    academic_year_id: Optional[str] = None,
+    school_unit_id: Optional[str] = None,
+    programme_id: Optional[str] = None,
+    grade_id: Optional[str] = None,
+    department_id: Optional[str] = None,
+    search: Optional[str] = None,
+    search_field: str = "all",
+    sort_by: str = "grade",
+    sort_dir: str = "asc",
+    page: Optional[int] = None,
+    per_page: Optional[int] = None,
+    include_merged: bool = False,
+) -> Dict:
+    """List classes for the current tenant with filters, search, sort, paging.
+
+    Returns an envelope: {items, total, page, per_page, total_pages}. When
+    `page`/`per_page` are omitted every matching row is returned with
+    total_pages = 1.
+
+    Each item carries `student_count`, `teacher_count` and a derived `status`
+    ("active" when the class sits in the tenant's active academic year, else
+    "archived" — `classes` has no status column of its own).
+
+    This is what the CSV export renders. Screens read `classes_page`, which
+    walks the same query without building every row it skips.
+    """
+    query, student_col, teacher_col = _class_list_query(
+        academic_year_id=academic_year_id,
+        school_unit_id=school_unit_id,
+        programme_id=programme_id,
+        grade_id=grade_id,
+        department_id=department_id,
+        search=search,
+        search_field=search_field,
+        include_merged=include_merged,
+    )
+
+    total = query.count()
+
+    query = _with_list_relationships(query).order_by(
+        *_build_sort_order(sort_by, sort_dir, student_col, teacher_col)
+    )
 
     if page and per_page:
         query = query.limit(per_page).offset((page - 1) * per_page)
@@ -448,13 +553,7 @@ def get_all_classes(
     else:
         total_pages = 1
 
-    items = []
-    for cls, student_count, teacher_count, year_is_active in query.all():
-        data = cls.to_dict()
-        data["student_count"] = student_count or 0
-        data["teacher_count"] = teacher_count or 0
-        data["status"] = "active" if year_is_active else "archived"
-        items.append(data)
+    items = [row_to_dict(row) for row in query.all()]
 
     return {
         "items": items,
@@ -463,6 +562,64 @@ def get_all_classes(
         "per_page": per_page or total,
         "total_pages": total_pages,
     }
+
+
+def row_to_dict(row) -> Dict:
+    """One list row as the REST export renders it."""
+    cls, student_count, teacher_count, year_is_active = row
+    data = cls.to_dict()
+    data["student_count"] = student_count or 0
+    data["teacher_count"] = teacher_count or 0
+    data["status"] = "active" if year_is_active else "archived"
+    return data
+
+
+def classes_page(
+    *,
+    first: int = 25,
+    offset: Optional[int] = None,
+    sort_by: str = "grade",
+    sort_dir: str = "asc",
+    **filters,
+):
+    """One page of classes, and whether another follows.
+
+    Paged by offset rather than by cursor, deliberately. A cursor is only sound
+    over a key that cannot be null and does not change, and a class list has
+    none: every order it offers is either nullable (a class may have no grade),
+    mutable (grade order, a name), or a count that changes as children are
+    admitted. Offering a cursor over those would not error — it would quietly
+    skip classes.
+
+    The cost is one a class list can carry. Unlike students, a school's classes
+    are bounded by its own structure: twenty campuses of forty sections is
+    eight hundred rows, not fifteen thousand.
+
+    Returns (rows, has_more). One row more than asked for is fetched, and that
+    extra row *is* `hasNextPage` — no second query.
+    """
+    first = max(1, min(int(first), MAX_PER_PAGE))
+
+    query, student_col, teacher_col = _class_list_query(**filters)
+    query = _with_list_relationships(query).order_by(
+        *_build_sort_order(sort_by, sort_dir, student_col, teacher_col)
+    )
+
+    if offset:
+        query = query.offset(max(0, int(offset)))
+
+    rows = query.limit(first + 1).all()
+    return rows[:first], len(rows) > first
+
+
+def classes_matching_count(**filters) -> int:
+    """How many classes the same filters match, ignoring paging.
+
+    Separate from the page so a caller that shows no total does not pay for
+    one. Sorting cannot change a count, so it is not accepted here.
+    """
+    query, _student_col, _teacher_col = _class_list_query(**filters)
+    return query.count()
 
 
 def get_classes_stats(
@@ -481,8 +638,13 @@ def get_classes_stats(
     `total_teachers` counts *distinct* teachers across the matching classes —
     one teacher taking four classes is one teacher, not four.
     """
-    from core.branch_scope import filter_classes_by_branch
+    from core.branch_scope import assert_unit_allowed, filter_classes_by_branch
     from modules.students.models import Student
+
+    # Same refusal the list makes: a branch outside this person's scope is a
+    # "no", not a zero. No-op for unrestricted users.
+    if school_unit_id:
+        assert_unit_allowed(school_unit_id)
 
     tenant_id = get_tenant_id()
 
@@ -515,12 +677,10 @@ def get_classes_stats(
         .scalar()
     ) or 0
 
-    # Counts both attachment routes (see `_teacher_links`) in user-id space, so
-    # a class teacher set through the class form is included and a teacher who
-    # is both class teacher and subject teacher is counted once.
+    # A teacher who is both class teacher and subject teacher is counted once.
     links = _teacher_links(tenant_id).subquery()
     total_teachers = (
-        db.session.query(func.count(distinct(links.c.user_id)))
+        db.session.query(func.count(distinct(links.c.teacher_id)))
         .filter(links.c.class_id.in_(class_ids))
         .scalar()
     ) or 0
@@ -533,35 +693,135 @@ def get_classes_stats(
     }
 
 
-def get_class_by_id(class_id: str) -> Optional[Dict]:
-    """Get class details by ID"""
-    cls = Class.query.get(class_id)
-    return cls.to_dict() if cls else None
+def class_detail(class_id: str) -> Optional[Dict]:
+    """One class, the children placed in it and everyone teaching it.
 
+    Returns rows rather than serialized dicts: the transport builds the shape
+    a client renders, and a serializer that carries every column is what the
+    REST payload already was.
 
-def get_class_detail(class_id: str) -> Optional[Dict]:
-    """Get class details with students and assigned teachers."""
-    cls = Class.query.get(class_id)
+    Branch scope is asserted here rather than by a caller, so it holds however
+    this is reached — a class in a branch outside the reader's scope is a
+    refusal, not an empty page.
+    """
+    from core.branch_scope import assert_class_allowed
+
+    assert_class_allowed(class_id)  # no-op for unrestricted users
+
+    cls = _with_list_relationships(Class.query).filter(Class.id == class_id).first()
     if not cls:
         return None
 
     from modules.students.models import Student
 
-    # Get students in this class
-    students = Student.query.filter_by(class_id=class_id).all()
-    students_data = [s.to_dict() for s in students]
+    students = (
+        Student.query.options(joinedload(Student.person))
+        .filter(Student.class_id == class_id)
+        .all()
+    )
 
-    # Get assigned teachers via ClassTeacher junction
-    class_teachers = ClassTeacher.query.filter_by(class_id=class_id).all()
-    teachers_data = [ct.to_dict() for ct in class_teachers]
+    return {
+        "class": cls,
+        "status": (
+            "active"
+            if cls.academic_year_ref and cls.academic_year_ref.is_active
+            else "archived"
+        ),
+        "students": students,
+        "teachers": _teaching_this_class(class_id),
+    }
 
+
+def legacy_detail_payload(detail: Dict) -> Dict:
+    """`class_detail` in the keys the Expo client already reads.
+
+    ⚠️ Exists for `GET /api/classes/<id>` only; admin-web reads the GraphQL
+    `class` field. Deliberately a second *shape*, never a second *reader* —
+    the previous version of this was a second reader, and the two drifted.
+    Delete with the Expo release that moves the mobile app.
+    """
+    cls = detail["class"]
+    students = detail["students"]
     data = cls.to_dict()
-    data['students'] = students_data
-    data['teachers'] = teachers_data
-    data['student_count'] = len(students_data)
-    data['teacher_count'] = len(teachers_data)
-
+    data["status"] = detail["status"]
+    data["students"] = [student.to_dict() for student in students]
+    data["teachers"] = [
+        {
+            "teacher_id": held["teacher_id"],
+            "teacher_name": held["teacher_name"],
+            "subject_id": held["subject_id"],
+            "role": held["role"],
+            "is_class_teacher": held["is_class_teacher"],
+        }
+        for held in detail["teachers"]
+    ]
+    data["student_count"] = len(students)
+    data["teacher_count"] = len(data["teachers"])
     return data
+
+
+def _teaching_this_class(class_id: str) -> List[Dict]:
+    """Everyone teaching a class, whatever their responsibility.
+
+    Asks Teaching Assignment for the responsibilities (ADR-014), then names
+    them once: the teacher through Staff -> Person (ADR-001), their employee
+    number from the employment that holds it, and the subject from the
+    catalogue. Naming them here rather than per row is what keeps the detail
+    page at three queries instead of one per teacher.
+    """
+    from modules.academics.teaching_assignment import (
+        class_teachers_for,
+        subject_teachers_for,
+    )
+    from modules.people.employment import Staff
+    from modules.subjects.models import Subject
+    from modules.teachers.models import Teacher
+
+    holding = list(class_teachers_for([class_id]).get(class_id, []))
+    for subject_held in subject_teachers_for([class_id]).values():
+        holding.extend(subject_held)
+    if not holding:
+        return []
+
+    teachers = {
+        teacher.id: teacher
+        for teacher in Teacher.query.options(
+            joinedload(Teacher.staff).joinedload(Staff.person)
+        )
+        .filter(Teacher.id.in_({held.teacher_id for held in holding}))
+        .all()
+    }
+    wanted_subjects = {held.subject_id for held in holding if held.subject_id}
+    subjects = (
+        {
+            subject.id: subject
+            for subject in Subject.query.filter(Subject.id.in_(wanted_subjects)).all()
+        }
+        if wanted_subjects
+        else {}
+    )
+
+    named = []
+    for held in holding:
+        teacher = teachers.get(held.teacher_id)
+        employment = teacher.staff if teacher else None
+        subject = subjects.get(held.subject_id) if held.subject_id else None
+        named.append(
+            {
+                "teacher_id": held.teacher_id,
+                "teacher_name": (
+                    employment.person.full_name
+                    if employment and employment.person
+                    else None
+                ),
+                "employee_number": employment.employee_number if employment else None,
+                "subject_id": held.subject_id,
+                "subject_name": subject.name if subject else None,
+                "role": held.role,
+                "is_class_teacher": held.subject_id is None,
+            }
+        )
+    return named
 
 
 def update_class(
@@ -618,7 +878,7 @@ def update_class(
         # Check teacher is not already class teacher of another class (one teacher = one class)
         if teacher_id is not None:
             try:
-                teacher_id = _resolve_class_teacher_user_id(tenant_id, teacher_id if teacher_id else None)
+                teacher_id = _resolve_class_teacher_id(tenant_id, teacher_id if teacher_id else None)
             except ValueError:
                 return {'success': False, 'error': 'Invalid academic year or teacher.'}
 
@@ -657,7 +917,10 @@ def update_class(
         if academic_year_id is not None:
             cls.academic_year_id = academic_year_id
         if teacher_id is not None:
-            cls.teacher_id = teacher_id if teacher_id else None
+            # The class form names a class teacher by their login. Record the
+            # responsibility where it is owned, then let the cache follow —
+            # writing only the cache is what let this concept have two homes.
+            _name_the_class_teacher(cls, teacher_id or None)
         if start_date is not None:
             cls.start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
         if end_date is not None:
@@ -908,16 +1171,16 @@ def assign_teacher_to_class(
                 return {'success': False, 'error': 'Subject not found'}
             subject_id_val = subj.id
 
-        # Check if already assigned
-        existing = ClassTeacher.query.filter_by(class_id=class_id, teacher_id=teacher_id).first()
-        if existing:
+        from modules.academics.teaching_assignment import teaches_anything_in
+
+        if teaches_anything_in(teacher_id, class_id):
             return {'success': False, 'error': 'Teacher already assigned to this class'}
 
         if is_class_teacher:
             # One teacher can only be class teacher of one class
             existing_as_ct_via_class = Class.query.filter(
                 Class.tenant_id == cls.tenant_id,
-                Class.teacher_id == teacher.user_id,
+                Class.teacher_id == teacher.id,
                 Class.id != class_id,
             ).first()
             if existing_as_ct_via_class:
@@ -926,55 +1189,136 @@ def assign_teacher_to_class(
                     'error': 'This teacher is already the class teacher of another class. A teacher can only be class teacher of one class.',
                 }
 
-            existing_as_ct_via_junction = ClassTeacher.query.filter(
-                ClassTeacher.tenant_id == cls.tenant_id,
-                ClassTeacher.teacher_id == teacher_id,
-                ClassTeacher.is_class_teacher == True,
-                ClassTeacher.class_id != class_id,
+            elsewhere = ClassTeacherAssignment.query.filter(
+                ClassTeacherAssignment.tenant_id == cls.tenant_id,
+                ClassTeacherAssignment.teacher_id == teacher_id,
+                ClassTeacherAssignment.role == "primary",
+                ClassTeacherAssignment.is_active.is_(True),
+                ClassTeacherAssignment.deleted_at.is_(None),
+                ClassTeacherAssignment.class_id != class_id,
             ).first()
-            if existing_as_ct_via_junction:
+            if elsewhere:
                 return {
                     'success': False,
                     'error': 'This teacher is already the class teacher of another class. A teacher can only be class teacher of one class.',
                 }
 
-            # Only one class teacher per class: clear any existing for this class
-            cls.teacher_id = None
-            for ct_row in ClassTeacher.query.filter_by(class_id=class_id, is_class_teacher=True).all():
-                ct_row.is_class_teacher = False
-                db.session.add(ct_row)
+            # Only one class teacher per class: stand down whoever held it.
+            for held in ClassTeacherAssignment.query.filter_by(
+                tenant_id=cls.tenant_id, class_id=class_id, role="primary", is_active=True
+            ).all():
+                held.is_active = False
+                db.session.add(held)
+            db.session.flush()
+
+            db.session.add(
+                ClassTeacherAssignment(
+                    tenant_id=cls.tenant_id,
+                    class_id=class_id,
+                    teacher_id=teacher_id,
+                    role="primary",
+                    is_active=True,
+                )
+            )
+            # The cache follows the owner; nothing decides from it (ADR-014).
+            cls.teacher_id = teacher.id
             db.session.add(cls)
 
-        ct = ClassTeacher(
-            tenant_id=cls.tenant_id,
-            class_id=class_id,
-            teacher_id=teacher_id,
-            subject_id=subject_id_val,
-            subject=None,  # Use subject_id only
-            is_class_teacher=is_class_teacher,
-        )
-        db.session.add(ct)
+        if subject_id_val:
+            offered = ClassSubject.query.filter_by(
+                tenant_id=cls.tenant_id, class_id=class_id, subject_id=subject_id_val
+            ).first()
+            if offered is None:
+                return {
+                    'success': False,
+                    'error': (
+                        'This class does not offer that subject yet. Add it to the '
+                        "class's subjects first, then assign a teacher to it."
+                    ),
+                }
 
-        # Keep Class.teacher_id in sync when adding as class teacher
-        if is_class_teacher:
-            cls.teacher_id = teacher.user_id
-            db.session.add(cls)
+            already = ClassSubjectTeacher.query.filter_by(
+                tenant_id=cls.tenant_id,
+                class_subject_id=offered.id,
+                teacher_id=teacher_id,
+            ).first()
+            if already is None:
+                db.session.add(
+                    ClassSubjectTeacher(
+                        tenant_id=cls.tenant_id,
+                        class_subject_id=offered.id,
+                        teacher_id=teacher_id,
+                        role="primary",
+                        is_active=True,
+                    )
+                )
+            else:
+                already.is_active = True
+                db.session.add(already)
 
         db.session.commit()
-        return {'success': True, 'assignment': ct.to_dict(), 'message': 'Teacher assigned to class'}
+        return {
+            'success': True,
+            'assignment': {
+                'class_id': class_id,
+                'teacher_id': teacher_id,
+                'subject_id': subject_id_val,
+                'is_class_teacher': is_class_teacher,
+            },
+            'message': 'Teacher assigned to class',
+        }
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': safe_error(e)}
 
 
 def remove_teacher_from_class(class_id: str, teacher_id: str) -> Dict:
-    """Remove a teacher from a class."""
+    """Stand this teacher's responsibilities for the class down.
+
+    Ended rather than deleted: a teacher who taught this class until today did
+    teach it, and marks and attendance already attributed to them must keep
+    resolving to them when asked about a date in the past (ADR-014).
+    """
     try:
-        ct = ClassTeacher.query.filter_by(class_id=class_id, teacher_id=teacher_id).first()
-        if not ct:
+        from modules.academics.backbone.models import (
+            ClassSubjectTeacher,
+            ClassTeacherAssignment,
+        )
+        from modules.academics.teaching_assignment import teaches_anything_in
+        from modules.teachers.models import Teacher
+
+        if not teaches_anything_in(teacher_id, class_id):
             return {'success': False, 'error': 'Teacher is not assigned to this class'}
 
-        db.session.delete(ct)
+        ended_on = school_today()
+        for held in ClassTeacherAssignment.query.filter_by(
+            tenant_id=get_tenant_id(), class_id=class_id,
+            teacher_id=teacher_id, is_active=True,
+        ).all():
+            held.is_active = False
+            held.effective_to = held.effective_to or ended_on
+            db.session.add(held)
+
+        offered_here = db.session.query(ClassSubject.id).filter(
+            ClassSubject.tenant_id == get_tenant_id(),
+            ClassSubject.class_id == class_id,
+        )
+        for held in ClassSubjectTeacher.query.filter(
+            ClassSubjectTeacher.tenant_id == get_tenant_id(),
+            ClassSubjectTeacher.teacher_id == teacher_id,
+            ClassSubjectTeacher.class_subject_id.in_(offered_here),
+            ClassSubjectTeacher.is_active.is_(True),
+        ).all():
+            held.is_active = False
+            held.effective_to = held.effective_to or ended_on
+            db.session.add(held)
+
+        cls = Class.query.filter_by(id=class_id, tenant_id=get_tenant_id()).first()
+        teacher = Teacher.query.filter_by(id=teacher_id).first()
+        if cls and teacher and cls.teacher_id == teacher.id:
+            cls.teacher_id = None
+            db.session.add(cls)
+
         db.session.commit()
         return {'success': True, 'message': 'Teacher removed from class'}
     except Exception as e:
@@ -998,11 +1342,28 @@ def get_unassigned_students(class_id: str) -> List[Dict]:
     return [s.to_dict() for s in students]
 
 
+def _currently_teaching():
+    """Teachers the school can still assign: those whose employment is current.
+
+    Whether someone still works here is the employment's answer (ADR-005), not
+    a flag on the teaching record — otherwise a teacher who has left keeps
+    turning up in pickers.
+    """
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+    from modules.teachers.models import Teacher
+
+    return Teacher.query.join(Staff, Teacher.staff_id == Staff.id).filter(
+        Staff.employment_status.in_(EMPLOYED_STATUSES)
+    )
+
+
 def get_unassigned_teachers(class_id: str) -> List[Dict]:
     """Get teachers not yet assigned to this class."""
     from modules.teachers.models import Teacher
-    assigned_ids = [ct.teacher_id for ct in ClassTeacher.query.filter_by(class_id=class_id).all()]
-    query = Teacher.query.filter(Teacher.status == 'active')
+    from modules.academics.teaching_assignment import teacher_ids_teaching_in
+
+    assigned_ids = list(teacher_ids_teaching_in([class_id]))
+    query = _currently_teaching()
     if assigned_ids:
         query = query.filter(~Teacher.id.in_(assigned_ids))
     return [t.to_dict() for t in query.all()]
@@ -1013,7 +1374,7 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
     Get teachers who can be selected as class teacher.
     Excludes teachers who are already class teachers of another class.
     If class_id is given (e.g. when editing), includes the current class's teacher.
-    A teacher is "class teacher" if: Class.teacher_id = user_id, or ClassTeacher.is_class_teacher = True.
+    A teacher is a class teacher if class_teacher_assignments says so (ADR-014).
     """
     tenant_id = get_tenant_id()
     if not tenant_id:
@@ -1021,28 +1382,31 @@ def get_available_class_teachers(class_id: str = None) -> List[Dict]:
 
     from modules.teachers.models import Teacher
 
-    # User IDs already assigned as class teacher via Class.teacher_id (exclude class_id if editing)
+    # Teacher ids already cached as class teacher (exclude class_id if editing).
+    # The cache keys on teachers.id since migration 095, so this set and the
+    # owner-table set below live in the same id space.
     class_filter = Class.query.filter(
         Class.tenant_id == tenant_id,
         Class.teacher_id.isnot(None),
     )
     if class_id:
         class_filter = class_filter.filter(Class.id != class_id)
-    class_teacher_user_ids = {c.teacher_id for c in class_filter.all()}
+    cached_class_teacher_ids = {c.teacher_id for c in class_filter.all()}
 
-    # Teacher IDs already assigned as class teacher via ClassTeacher.is_class_teacher (exclude class_id if editing)
-    ct_filter = ClassTeacher.query.filter(
-        ClassTeacher.tenant_id == tenant_id,
-        ClassTeacher.is_class_teacher == True,
+    # Teachers already responsible for another class, per the owner table.
+    ct_filter = ClassTeacherAssignment.query.filter(
+        ClassTeacherAssignment.tenant_id == tenant_id,
+        ClassTeacherAssignment.role == "primary",
+        ClassTeacherAssignment.is_active.is_(True),
+        ClassTeacherAssignment.deleted_at.is_(None),
     )
     if class_id:
-        ct_filter = ct_filter.filter(ClassTeacher.class_id != class_id)
-    ct_class_teacher_ids = {ct.teacher_id for ct in ct_filter.all()}
+        ct_filter = ct_filter.filter(ClassTeacherAssignment.class_id != class_id)
+    ct_class_teacher_ids = {held.teacher_id for held in ct_filter.all()}
 
-    query = Teacher.query.filter(Teacher.status == 'active')
-    if class_teacher_user_ids:
-        query = query.filter(~Teacher.user_id.in_(class_teacher_user_ids))
-    if ct_class_teacher_ids:
-        query = query.filter(~Teacher.id.in_(ct_class_teacher_ids))
+    query = _currently_teaching()
+    already_holding = cached_class_teacher_ids | ct_class_teacher_ids
+    if already_holding:
+        query = query.filter(~Teacher.id.in_(already_holding))
 
     return [t.to_dict() for t in query.all()]

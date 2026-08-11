@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 from core.database import db
 from . import activity
 from .holidays import Holiday, HOLIDAY_TYPES, HOLIDAY_APPLIES_TO, DAY_NAMES
+from core.school_time import school_today
 
 
 def _holiday_label(h: Holiday) -> str:
@@ -74,13 +75,13 @@ def get_holiday_for_date(check_date: date, tenant_id: str) -> Optional[Dict]:
     Check if a specific date is a holiday (non-recurring range OR recurring weekly-off).
     Returns the first matching holiday dict, or None if the date is a working day.
 
-    When the tenant has `holiday_management` disabled, this returns None
+    When the tenant has `academic_calendar` disabled, this returns None
     unconditionally — existing holiday rows are ignored so attendance/leave
     treat every day as a working day.
     """
     from core.feature_flags import is_feature_enabled
 
-    if not is_feature_enabled(tenant_id, "holiday_management"):
+    if not is_feature_enabled(tenant_id, "academic_calendar"):
         return None
     try:
         # Non-recurring: date falls within [start_date, end_date]
@@ -122,11 +123,11 @@ def get_working_days_info_for_range(
     holiday_occurrences is a list of dicts, each being a holiday.to_dict() enriched
     with an `occurrence_date` field (YYYY-MM-DD) for the specific date that is a holiday.
 
-    Returns "all working days, no holidays" when `holiday_management` is off.
+    Returns "all working days, no holidays" when `academic_calendar` is off.
     """
     from core.feature_flags import is_feature_enabled
 
-    if not is_feature_enabled(tenant_id, "holiday_management"):
+    if not is_feature_enabled(tenant_id, "academic_calendar"):
         total = (end_date - start_date).days + 1
         return total, total, []
 
@@ -282,7 +283,7 @@ def calendar_range_summary(
     Expand all holiday occurrences in [start_date, end_date] for calendar UIs.
 
     Uses the same rules as attendance (non-recurring ranges + recurring weekly offs).
-    Returns an empty occurrences list when `holiday_management` is disabled.
+    Returns an empty occurrences list when `academic_calendar` is disabled.
     """
     from core.feature_flags import is_feature_enabled
 
@@ -296,7 +297,7 @@ def calendar_range_summary(
     if sd > ed:
         return {"success": False, "error": "start_date must be on or before end_date"}
 
-    if not is_feature_enabled(tenant_id, "holiday_management"):
+    if not is_feature_enabled(tenant_id, "academic_calendar"):
         total = (ed - sd).days + 1
         return {
             "success": True,
@@ -326,7 +327,7 @@ def calendar_range_summary(
 def get_upcoming_holidays(tenant_id: str, limit: int = 10) -> Dict:
     """Return upcoming non-recurring holidays starting from today."""
     try:
-        today = date.today()
+        today = school_today()
         holidays = (
             Holiday.query
             .filter(Holiday.tenant_id == tenant_id)

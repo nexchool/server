@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 CALENDAR_STATUSES = ("draft", "published", "archived")
 
@@ -128,7 +129,7 @@ class AcademicCalendar(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
 
     academic_year = db.relationship("AcademicYear", foreign_keys=[academic_year_id])
@@ -203,7 +204,7 @@ class ExamWindow(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
 
     academic_year = db.relationship("AcademicYear", foreign_keys=[academic_year_id])
@@ -272,7 +273,7 @@ class SchoolEvent(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
 
     academic_year = db.relationship("AcademicYear", foreign_keys=[academic_year_id])

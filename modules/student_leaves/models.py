@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 # Leave type and status values are kept as module-level tuples to avoid
@@ -60,7 +61,7 @@ class StudentLeave(TenantBaseModel):
 
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at = db.Column(
-        db.DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=datetime.utcnow
+        db.DateTime(timezone=True), nullable=False, server_default=text("now()"), onupdate=utc_now
     )
 
     # Relationships

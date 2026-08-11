@@ -1,7 +1,9 @@
 """
 Timetable Module
 
-Manages class timetables: slots per class, day, period with subject and teacher.
+The signed-in person's own weekly timetable, read from the class timetables
+(`TimetableVersion` + `TimetableEntry`) that `/api/classes/<id>/timetable`
+owns. This module holds no timetable data of its own.
 """
 
 from flask import Blueprint

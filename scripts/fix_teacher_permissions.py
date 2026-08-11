@@ -4,7 +4,7 @@ Fix Teacher Permissions
 Diagnoses and fixes the "No permissions assigned" error that blocks a teacher
 from logging in. Two root causes are handled:
 
-  1. The teacher's User account has no UserRole row → assigns the Teacher role.
+  1. The teacher's employment holds no Teacher profile → grants it.
   2. The Teacher role exists but has no RolePermissions rows → backfills them.
 
 Usage (from the app/ directory):
@@ -26,7 +26,7 @@ from app import create_app
 from core.database import db
 from core.models import Tenant, TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
 from modules.auth.models import User
-from modules.rbac.models import Role, Permission, RolePermission, UserRole
+from modules.rbac.models import Role, Permission, RolePermission, StaffAuthority
 from modules.rbac.services import get_user_permissions
 from modules.rbac.role_seeder import DEFAULT_ROLES
 
@@ -86,8 +86,17 @@ def _ensure_user_has_teacher_role(user: User, dry_run: bool) -> tuple[bool, str]
             "Run seed_rbac or backfill script first."
         )
 
-    existing = UserRole.query.filter_by(
-        user_id=user.id, role_id=role.id
+    from modules.people.employment import Staff
+    from modules.rbac.authority_service import grant_authority
+
+    employment = Staff.query.filter_by(
+        tenant_id=user.tenant_id, person_id=user.person_id
+    ).first()
+    if employment is None:
+        return False, "Not employed here, so there is nothing to hold the profile."
+
+    existing = StaffAuthority.query.filter_by(
+        staff_id=employment.id, role_id=role.id
     ).first()
     if existing:
         return False, "Teacher role already assigned."
@@ -95,12 +104,7 @@ def _ensure_user_has_teacher_role(user: User, dry_run: bool) -> tuple[bool, str]
     if dry_run:
         return True, f"[DRY-RUN] Would assign Teacher role to {user.email}"
 
-    user_role = UserRole(
-        tenant_id=user.tenant_id,
-        user_id=user.id,
-        role_id=role.id,
-    )
-    db.session.add(user_role)
+    grant_authority(employment.id, role.id)
     db.session.commit()
     return True, f"Teacher role assigned to {user.email}"
 

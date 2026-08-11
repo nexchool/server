@@ -79,7 +79,7 @@ def init_db(app):
     with app.app_context():
         from core.models import Tenant, Plan, AuditLog, PlatformSetting
         from modules.auth.models import User, Session
-        from modules.rbac.models import Role, Permission, RolePermission, UserRole
+        from modules.rbac.models import Role, Permission, RolePermission
         from modules.sub_admins.models import UserSchoolUnit  # noqa: F401
         from modules.students.models import Student, StudentDocument, StudentPromotionBatch
         from modules.student_leaves.models import StudentLeave  # noqa: F401
@@ -92,7 +92,7 @@ def init_db(app):
         from modules.subjects.models import Subject
         from modules.departments.models import Department  # noqa: F401
         from modules.teachers.models import Teacher
-        from modules.classes.models import Class, ClassTeacher, ClassSubject
+        from modules.classes.models import Class, ClassSubject
         from modules.academics.backbone.models import (
             AcademicSettings,
             AcademicTerm,
@@ -126,7 +126,6 @@ def init_db(app):
             NotificationRecipient,
             NotificationTemplate,
         )
-        from modules.timetable.models import TimetableSlot, TimetableConfig
         from modules.schedule.models import ScheduleOverride
         from modules.academics.calendar.holidays import Holiday
         from modules.devices.models import DeviceToken

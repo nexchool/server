@@ -9,11 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+from core.school_time import utc_now
 
 
 def _future(hours: int) -> datetime:
     """Helper: a datetime `hours` hours in the future (UTC)."""
-    return datetime.utcnow() + timedelta(hours=hours)
+    return utc_now() + timedelta(hours=hours)
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +365,8 @@ def test_find_overdue_respects_grace_period(db_session, tenant, hostel, student)
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() - timedelta(hours=5),
-        expected_return_datetime=datetime.utcnow() - timedelta(minutes=10),
+        departure_datetime=utc_now() - timedelta(hours=5),
+        expected_return_datetime=utc_now() - timedelta(minutes=10),
         reason="Home",
         parent_phone="9876543210",
     )

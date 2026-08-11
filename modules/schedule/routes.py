@@ -23,6 +23,7 @@ from shared.helpers import (
     not_found_response,
 )
 from . import services
+from core.school_time import school_today
 
 
 @schedule_bp.route("/today", methods=["GET"], strict_slashes=False)
@@ -101,7 +102,7 @@ def upsert_override():
         except ValueError:
             return validation_error_response("override_date must be YYYY-MM-DD")
     else:
-        override_date = date.today()
+        override_date = school_today()
 
     result = services.upsert_override(
         slot_id=slot_id,
@@ -141,7 +142,7 @@ def delete_override():
         return validation_error_response("slot_id is required")
 
     date_str = data.get("override_date")
-    override_date = date.fromisoformat(date_str) if date_str else date.today()
+    override_date = date.fromisoformat(date_str) if date_str else school_today()
 
     result = services.delete_override(slot_id, override_date, g.tenant_id)
     if not result.get("success"):

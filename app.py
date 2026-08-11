@@ -14,7 +14,7 @@ Usage:
 
 import logging
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -64,6 +64,30 @@ def create_app(config_name=None):
     # Register blueprints
     register_blueprints(app)
 
+    # The People domain has no REST surface; import it so its models register
+    # with SQLAlchemy regardless of which transports are mounted.
+    import modules.people.models  # noqa: F401
+
+    # Registers the rule that an account belongs to a person. Imported here
+    # rather than left to whichever module happens to load first, because a
+    # structural guarantee that depends on import order is not a guarantee.
+    import modules.auth.person_link  # noqa: F401
+
+    # Teaching cannot outlive the employment it hangs off (ADR-005). The
+    # rule lives in Academic because it is a fact about teaching; People
+    # only announces that somebody has left.
+    from modules.academics.teaching_participation import register as _register_teaching_ends
+    _register_teaching_ends()
+
+    # Registers the rule that a change of employment standing drops the
+    # holder's cached permissions. Same reason as above: a guarantee that
+    # depends on import order is not a guarantee.
+    import modules.rbac.authority_service  # noqa: F401
+
+    # Mount the GraphQL endpoint (/api/graphql)
+    from graphql_api import register_graphql
+    register_graphql(app)
+
     # Tenant resolution: resolve by subdomain or X-Tenant-ID for /api/* (except health)
     register_tenant_middleware(app)
 
@@ -101,6 +125,11 @@ def register_tenant_middleware(app: Flask):
             return None
         # Auth routes resolve tenant in the route (supports body subdomain/tenant_id, header, host, default)
         if request.path.startswith("/api/auth/"):
+            return None
+        # GraphQL resolves tenant inside its own context: one endpoint serves both
+        # public (login) and tenant-scoped operations, so failing the whole request
+        # here would block the public ones. See graphql_api.context.
+        if path == "/api/graphql":
             return None
         # CORS preflight: skip tenant resolution so OPTIONS succeeds and browser can send actual request
         if request.method == "OPTIONS":
@@ -151,14 +180,12 @@ def register_blueprints(app: Flask):
     from modules.search import search_bp
 
     # Multi-school structure (Phase 2): real blueprints.
-    from modules.school_units import school_units_bp
-    from modules.academic_programmes import academic_programmes_bp
-    from modules.grades import grades_bp
+    # Campuses, programmes, grades and mediums are GraphQL-only and have no
+    # blueprint — see each module's __init__.
     from modules.religions import religions_bp
     from modules.class_subjects import class_subjects_bp
     from modules.school_setup import school_setup_bp
     from modules.subject_contexts import subject_contexts_bp
-    from modules.mediums import mediums_bp
     # Subscription / billing (Phase 5).
     from modules.subscription import subscription_bp
     # Audit log
@@ -193,14 +220,10 @@ def register_blueprints(app: Flask):
     app.register_blueprint(search_bp, url_prefix='/api/search')
 
     # Multi-school structure
-    app.register_blueprint(school_units_bp, url_prefix='/api/school-units')
-    app.register_blueprint(academic_programmes_bp, url_prefix='/api/programmes')
-    app.register_blueprint(grades_bp, url_prefix='/api/grades')
     app.register_blueprint(religions_bp, url_prefix='/api/religions')
     app.register_blueprint(class_subjects_bp, url_prefix='/api/class-subjects')
     app.register_blueprint(school_setup_bp, url_prefix='/api/school-setup')
     app.register_blueprint(subject_contexts_bp, url_prefix='/api/subject-contexts')
-    app.register_blueprint(mediums_bp, url_prefix='/api/mediums')
     app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
     app.register_blueprint(audit_bp)
     app.register_blueprint(sub_admins_bp, url_prefix='/api/sub-admins')
@@ -341,6 +364,28 @@ def register_error_handlers(app: Flask):
             response.headers.setdefault(
                 "Vary", "X-Tenant-ID, X-Tenant-Subdomain, Authorization"
             )
+        return response
+
+    @app.after_request
+    def stamp_tenant_features(response):
+        """Tell the client, on every response, which feature set it is seeing.
+
+        A super-admin switching a module off used to reach admin-web only when
+        the user logged out and back in — so the school kept a Transport link
+        it was no longer entitled to, and only found out by clicking it.
+
+        The stamp changes when the enabled set changes; the client compares it
+        against the last one it saw and re-reads its profile when they differ.
+        Costs nothing: tenant resolution has already loaded this row, so the
+        flags are in memory by the time we get here.
+        """
+        if not request.path.startswith("/api/"):
+            return response
+        tenant = getattr(g, "tenant", None)
+        if tenant is not None:
+            from core.feature_flags import feature_stamp
+
+            response.headers["X-Feature-Stamp"] = feature_stamp(tenant.feature_flags)
         return response
 
     @app.after_request

@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from core.school_time import utc_now
 
 SERVER_DIR = Path(__file__).resolve().parent.parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -53,17 +54,6 @@ def _post(flask_app, tenant, path, body, headers=None):
     if headers:
         base.update(headers)
     return flask_app.test_client().post(path, headers=base, json=body)
-
-
-@pytest.fixture(autouse=True)
-def _disable_rate_limit():
-    """These tests assert behaviour, not throttling; keep them deterministic."""
-    from core.extensions import limiter
-
-    prev = limiter.enabled
-    limiter.enabled = False
-    yield
-    limiter.enabled = prev
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +152,7 @@ def test_reset_invalid_token_returns_400(flask_app, db_session, tenant):
 def test_reset_expired_token_returns_400(flask_app, db_session, tenant):
     user = _make_user(db_session, tenant)
     token = _issue_token(db_session, user)
-    user.reset_password_sent_at = datetime.utcnow() - timedelta(minutes=31)
+    user.reset_password_sent_at = utc_now() - timedelta(minutes=31)
     db_session.flush()
 
     resp = _post(

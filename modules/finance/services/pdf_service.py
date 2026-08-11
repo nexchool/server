@@ -28,6 +28,7 @@ except (ImportError, OSError):
     HTML = None  # type: ignore[assignment,misc]
 
 from .student_fee_service import get_student_fee
+from core.school_time import utc_now
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +208,7 @@ def _build_receipt_context(payment_id: str, show_note: bool = True) -> Optional[
         "amount_paid": _fmt(amount),
         "balance_amount": _fmt(balance),
         "show_note": show_note,
-        "now": datetime.utcnow().strftime("%d-%m-%Y %H:%M UTC"),
+        "now": utc_now().strftime("%d-%m-%Y %H:%M UTC"),
     }
 
 
@@ -270,7 +271,7 @@ def _build_invoice_context(student_fee_id: str, show_note: bool = True) -> Optio
         "paid_amount": paid_total,
         "outstanding": total - paid_total,
         "show_note": show_note,
-        "now": datetime.utcnow().strftime("%d-%m-%Y %H:%M UTC"),
+        "now": utc_now().strftime("%d-%m-%Y %H:%M UTC"),
         "_fmt": _fmt,
     }
 

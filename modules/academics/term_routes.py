@@ -127,17 +127,6 @@ def _list_terms(tenant_id: str, academic_year_id: Optional[str]) -> List[Dict]:
     return [_term_to_dict(t) for t in rows]
 
 
-@academics_bp.route("/terms", methods=["GET"], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature("academics_advanced")
-@require_any_permission(PERM_READ, PERM_MANAGE)
-def list_academic_terms():
-    return success_response(
-        data=_list_terms(g.tenant_id, request.args.get("academic_year_id")),
-    )
-
-
 @academics_bp.route("/terms", methods=["POST"], strict_slashes=False)
 @tenant_required
 @auth_required

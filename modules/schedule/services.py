@@ -6,15 +6,15 @@ Business logic for today's schedule. Returns slots enriched with:
   - teacher_unavailable: teacher has an availability record blocking this period
   - override: active ScheduleOverride for this slot+date (substitute/activity/cancelled)
 
-Timetable v2 (TimetableEntry + TimetableVersion) is the source of truth after migration 023.
-Legacy TimetableSlot rows are used only when no v2 entries exist for the user.
+TimetableEntry + TimetableVersion are the source of truth (migration 023).
+The parallel `timetable_slots` table this module used to fall back to is gone
+(migration 096); ``slot_id`` survives only as the name of the id in the API
+payload, and it carries a timetable entry id.
 """
 from shared.safe_error import safe_error
 
 from datetime import date
 from typing import List, Dict, Optional, Tuple
-
-from sqlalchemy import or_
 
 from core.branch_scope import assert_class_allowed
 from core.database import db
@@ -22,8 +22,8 @@ from modules.academics.backbone.models import TimetableEntry, TimetableVersion
 from modules.academics.services.common import class_display_name
 from modules.academics.services.timetable_v2 import _bell_period_map
 from modules.classes.models import Class
-from modules.timetable.models import TimetableSlot
 from modules.schedule.models import ScheduleOverride
+from core.school_time import school_today
 
 
 def _time_to_str(t) -> Optional[str]:
@@ -31,44 +31,6 @@ def _time_to_str(t) -> Optional[str]:
     if t is None:
         return None
     return t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)
-
-
-def _build_slot_response(
-    slot: TimetableSlot,
-    today: date,
-    override: Optional[ScheduleOverride],
-    on_leave_teacher_ids: set,
-    unavail_set: set,
-) -> Dict:
-    """Build enriched slot response dict."""
-    class_name = None
-    if slot.class_ref:
-        class_name = f"{slot.class_ref.name}-{slot.class_ref.section}"
-
-    teacher_on_leave = slot.teacher_id in on_leave_teacher_ids
-    teacher_unavailable = (slot.teacher_id, slot.day_of_week, slot.period_number) in unavail_set
-
-    base = {
-        "slot_id": slot.id,
-        "class_id": slot.class_id,
-        "class_name": class_name,
-        "subject_id": slot.subject_id,
-        "subject_name": slot.subject_ref.name if slot.subject_ref else None,
-        "teacher_id": slot.teacher_id,
-        "teacher_name": (
-            slot.teacher_ref.user.name
-            if slot.teacher_ref and slot.teacher_ref.user
-            else None
-        ),
-        "period_number": slot.period_number,
-        "start_time": _time_to_str(slot.start_time),
-        "end_time": _time_to_str(slot.end_time),
-        "teacher_on_leave": teacher_on_leave,
-        "teacher_unavailable": teacher_unavailable,
-        "needs_coverage": teacher_on_leave or teacher_unavailable,
-        "override": override.to_dict() if override else None,
-    }
-    return base
 
 
 def _get_today_constraints(tenant_id: str, today: date, day_of_week: int):
@@ -100,30 +62,18 @@ def _get_today_constraints(tenant_id: str, today: date, day_of_week: int):
 def _get_overrides_for_date(
     tenant_id: str,
     today: date,
-    slot_ids: Optional[List[str]] = None,
     entry_ids: Optional[List[str]] = None,
 ) -> Dict[str, ScheduleOverride]:
-    """Return dict keyed by slot_id or timetable_entry_id (whichever identifies the row)."""
-    slot_ids = slot_ids or []
+    """Overrides on this date, keyed by the timetable entry they cover."""
     entry_ids = entry_ids or []
-    if not slot_ids and not entry_ids:
+    if not entry_ids:
         return {}
-    q = ScheduleOverride.query.filter(
+    rows = ScheduleOverride.query.filter(
         ScheduleOverride.tenant_id == tenant_id,
         ScheduleOverride.override_date == today,
-    )
-    conds = []
-    if slot_ids:
-        conds.append(ScheduleOverride.slot_id.in_(slot_ids))
-    if entry_ids:
-        conds.append(ScheduleOverride.timetable_entry_id.in_(entry_ids))
-    q = q.filter(conds[0] if len(conds) == 1 else or_(*conds))
-    out: Dict[str, ScheduleOverride] = {}
-    for o in q.all():
-        key = o.slot_id or o.timetable_entry_id
-        if key:
-            out[key] = o
-    return out
+        ScheduleOverride.timetable_entry_id.in_(entry_ids),
+    ).all()
+    return {o.timetable_entry_id: o for o in rows if o.timetable_entry_id}
 
 
 def _build_entry_schedule_response(
@@ -157,7 +107,13 @@ def _build_entry_schedule_response(
         "subject_id": subject_id,
         "subject_name": subj.name if subj else None,
         "teacher_id": tid,
-        "teacher_name": e.teacher.user.name if e.teacher and e.teacher.user else None,
+        # The name belongs to the Person, not the login (ADR-001) — a teacher
+        # may have no account at all (migration 094).
+        "teacher_name": (
+            e.teacher.staff.person.full_name
+            if e.teacher and e.teacher.staff and e.teacher.staff.person
+            else None
+        ),
         "period_number": e.period_number,
         "start_time": start_time,
         "end_time": end_time,
@@ -242,7 +198,7 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
 
     Enriched with leave/unavailability detection and active overrides.
     """
-    today = date.today()
+    today = school_today()
     day_of_week = today.weekday()  # 0=Monday … 6=Sunday (legacy slots + availability tuples)
     dow_iso = today.isoweekday()  # 1=Monday … 7=Sunday (TimetableEntry)
 
@@ -251,7 +207,9 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
 
     on_leave_ids, unavail_set = _get_today_constraints(tenant_id, today, day_of_week)
 
-    teacher = Teacher.query.filter_by(user_id=user_id, tenant_id=tenant_id).first()
+    from modules.teachers.services import teacher_for_user
+
+    teacher = teacher_for_user(user_id, tenant_id)
     if teacher:
         v2_rows = _teacher_entries_today_v2(tenant_id, teacher.id, dow_iso)
         if v2_rows:
@@ -270,22 +228,11 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
                 )
                 for e, ver, cls in v2_rows
             ]
-        slots = (
-            TimetableSlot.query.filter_by(
-                tenant_id=tenant_id,
-                teacher_id=teacher.id,
-                day_of_week=day_of_week,
-            )
-            .order_by(TimetableSlot.period_number)
-            .all()
-        )
-        overrides = _get_overrides_for_date(tenant_id, today, slot_ids=[s.id for s in slots])
-        return [
-            _build_slot_response(s, today, overrides.get(s.id), on_leave_ids, unavail_set)
-            for s in slots
-        ]
+        return []
 
-    student = Student.query.filter_by(user_id=user_id, tenant_id=tenant_id).first()
+    from modules.students.services import student_for_user
+
+    student = student_for_user(user_id, tenant_id)
     if student and student.class_id:
         v2_rows = _student_entries_today_v2(tenant_id, student.class_id, dow_iso)
         if v2_rows:
@@ -304,27 +251,13 @@ def get_todays_schedule(user_id: str, tenant_id: str) -> List[Dict]:
                 )
                 for e, ver, cls in v2_rows
             ]
-        slots = (
-            TimetableSlot.query.filter_by(
-                tenant_id=tenant_id,
-                class_id=student.class_id,
-                day_of_week=day_of_week,
-            )
-            .order_by(TimetableSlot.period_number)
-            .all()
-        )
-        overrides = _get_overrides_for_date(tenant_id, today, slot_ids=[s.id for s in slots])
-        return [
-            _build_slot_response(s, today, overrides.get(s.id), on_leave_ids, unavail_set)
-            for s in slots
-        ]
 
     return []
 
 
 def get_all_slots_today(tenant_id: str) -> List[Dict]:
     """Admin view: all timetable slots today, enriched with coverage data."""
-    today = date.today()
+    today = school_today()
     day_of_week = today.weekday()
     dow_iso = today.isoweekday()
 
@@ -346,45 +279,28 @@ def get_all_slots_today(tenant_id: str) -> List[Dict]:
             )
             for e, ver, cls in v2_rows
         ]
-    slots = (
-        TimetableSlot.query.filter_by(tenant_id=tenant_id, day_of_week=day_of_week)
-        .order_by(TimetableSlot.class_id, TimetableSlot.period_number)
-        .all()
-    )
-    overrides = _get_overrides_for_date(tenant_id, today, slot_ids=[s.id for s in slots])
-    return [
-        _build_slot_response(s, today, overrides.get(s.id), on_leave_ids, unavail_set)
-        for s in slots
-    ]
+    return []
 
 
 def _override_target_class_id(
     tenant_id: str,
-    slot: Optional[TimetableSlot],
     entry: Optional[TimetableEntry],
 ) -> Optional[str]:
-    """Resolve the class_id an override target reaches.
-
-    Legacy slot carries ``class_id`` directly; a v2 entry reaches its class
-    through its TimetableVersion. Returns None if it cannot be resolved.
-    """
-    if slot is not None:
-        return slot.class_id
-    if entry is not None:
-        ver = TimetableVersion.query.filter_by(
-            id=entry.timetable_version_id, tenant_id=tenant_id
-        ).first()
-        return ver.class_id if ver else None
-    return None
+    """The class an override target reaches, through its TimetableVersion."""
+    if entry is None:
+        return None
+    ver = TimetableVersion.query.filter_by(
+        id=entry.timetable_version_id, tenant_id=tenant_id
+    ).first()
+    return ver.class_id if ver else None
 
 
 def _assert_override_target_in_branch(
     tenant_id: str,
-    slot: Optional[TimetableSlot],
     entry: Optional[TimetableEntry],
 ) -> None:
     """Branch-scope guard for override targets. No-op when unrestricted."""
-    class_id = _override_target_class_id(tenant_id, slot, entry)
+    class_id = _override_target_class_id(tenant_id, entry)
     if class_id is not None:
         assert_class_allowed(class_id)
 
@@ -404,15 +320,14 @@ def upsert_override(
     if override_type not in valid_types:
         return {"success": False, "error": f"override_type must be one of {sorted(valid_types)}"}
 
-    slot = TimetableSlot.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
-    entry = None if slot else TimetableEntry.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
-    if not slot and not entry:
-        return {"success": False, "error": "Timetable slot or entry not found"}
+    entry = TimetableEntry.query.filter_by(id=slot_id, tenant_id=tenant_id).first()
+    if not entry:
+        return {"success": False, "error": "Timetable entry not found"}
 
-    # Branch scope: an override hangs off a slot/entry that reaches a branch
+    # Branch scope: an override hangs off an entry that reaches a branch
     # through its class. Restricted sub-admins may only override in-branch
     # classes. No-op when unrestricted.
-    _assert_override_target_in_branch(tenant_id, slot, entry)
+    _assert_override_target_in_branch(tenant_id, entry)
 
     if override_type == ScheduleOverride.TYPE_SUBSTITUTE:
         if not substitute_teacher_id:
@@ -423,14 +338,9 @@ def upsert_override(
             return {"success": False, "error": "Substitute teacher not found"}
 
     try:
-        if slot:
-            existing = ScheduleOverride.query.filter_by(
-                slot_id=slot_id, override_date=override_date, tenant_id=tenant_id
-            ).first()
-        else:
-            existing = ScheduleOverride.query.filter_by(
-                timetable_entry_id=entry.id, override_date=override_date, tenant_id=tenant_id
-            ).first()
+        existing = ScheduleOverride.query.filter_by(
+            timetable_entry_id=entry.id, override_date=override_date, tenant_id=tenant_id
+        ).first()
 
         if existing:
             existing.override_type = override_type
@@ -442,8 +352,7 @@ def upsert_override(
         else:
             override = ScheduleOverride(
                 tenant_id=tenant_id,
-                slot_id=slot.id if slot else None,
-                timetable_entry_id=entry.id if entry else None,
+                timetable_entry_id=entry.id,
                 override_date=override_date,
                 override_type=override_type,
                 substitute_teacher_id=substitute_teacher_id,
@@ -460,30 +369,25 @@ def upsert_override(
 
 
 def delete_override(slot_id: str, override_date: date, tenant_id: str) -> Dict:
-    """Remove an override (restore original slot). ``slot_id`` may be legacy slot id or timetable entry id."""
+    """Remove an override (restore the scheduled period).
+
+    ``slot_id`` is the timetable entry id — the name the API payload has
+    always used for it.
+    """
     override = ScheduleOverride.query.filter_by(
-        slot_id=slot_id, override_date=override_date, tenant_id=tenant_id
+        timetable_entry_id=slot_id, override_date=override_date, tenant_id=tenant_id
     ).first()
-    if not override:
-        override = ScheduleOverride.query.filter_by(
-            timetable_entry_id=slot_id, override_date=override_date, tenant_id=tenant_id
-        ).first()
     if not override:
         return {"success": False, "error": "No override found for this slot on this date"}
 
-    # Branch scope: resolve the override's underlying slot/entry to its class
-    # and assert. No-op when unrestricted.
-    slot = (
-        TimetableSlot.query.filter_by(id=override.slot_id, tenant_id=tenant_id).first()
-        if override.slot_id
-        else None
-    )
+    # Branch scope: resolve the override's entry to its class and assert.
+    # No-op when unrestricted.
     entry = (
         TimetableEntry.query.filter_by(id=override.timetable_entry_id, tenant_id=tenant_id).first()
         if override.timetable_entry_id
         else None
     )
-    _assert_override_target_in_branch(tenant_id, slot, entry)
+    _assert_override_target_in_branch(tenant_id, entry)
 
     db.session.delete(override)
     db.session.commit()

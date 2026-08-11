@@ -17,6 +17,7 @@ from .models import (
     SCHOOL_UNIT_TYPE_CAMPUS,
     SCHOOL_UNIT_STATUS_ACTIVE,
 )
+from core.school_time import utc_now
 
 
 def _active(query):
@@ -184,7 +185,7 @@ def delete_school_unit(unit_id: str, tenant_id: str) -> Dict:
         }
 
     try:
-        unit.deleted_at = datetime.utcnow()
+        unit.deleted_at = utc_now()
         unit.status = "inactive"
         db.session.commit()
     except Exception as e:

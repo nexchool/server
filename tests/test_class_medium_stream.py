@@ -51,8 +51,8 @@ def test_create_class_persists_medium_id_and_stream(monkeypatch):
     monkeypatch.setattr(services, "Class", fake_class_cls)
     monkeypatch.setattr(services, "get_tenant_id", lambda: "t1")
 
-    # Stub _resolve_class_teacher_user_id to be a no-op
-    monkeypatch.setattr(services, "_resolve_class_teacher_user_id", lambda tid, tid2: None)
+    # Stub _resolve_class_teacher_id to be a no-op
+    monkeypatch.setattr(services, "_resolve_class_teacher_id", lambda tid, tid2: None)
 
     result = services.create_class(
         name="Grade 11 A",

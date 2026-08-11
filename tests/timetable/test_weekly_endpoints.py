@@ -320,48 +320,45 @@ def test_normalize_to_iso_monday_sunday_returns_previous_monday():
 
 
 def test_build_weekly_response_buckets_periods_into_days():
+    """Entries are stored ISO (1=Mon); the payload speaks 0=Mon."""
     from modules.timetable.services import _build_weekly_response
 
     ay = SimpleNamespace(id="ay-1", name="2025-2026")
     week_start = date(2026, 5, 25)
     week_end = date(2026, 5, 31)
 
-    period_a = SimpleNamespace(
-        id="p-1",
-        day_of_week=0,  # Monday
-        period_number=1,
-        start_time=time(9, 0),
-        end_time=time(9, 45),
-        subject_id="subj-1",
-        subject_ref=SimpleNamespace(id="subj-1", name="Math"),
-        class_id="c-1",
-        class_ref=SimpleNamespace(id="c-1", name="V-A"),
-        teacher_id="t-1",
-        teacher_ref=SimpleNamespace(
-            id="t-1",
-            user=SimpleNamespace(name="Mr. Sharma"),
-        ),
-        room="R-101",
+    teacher = SimpleNamespace(
+        id="t-1",
+        staff=SimpleNamespace(person=SimpleNamespace(full_name="Mr. Sharma")),
     )
-    period_b = SimpleNamespace(
-        id="p-2",
-        day_of_week=2,  # Wednesday
-        period_number=1,
-        start_time=time(10, 0),
-        end_time=time(10, 45),
-        subject_id="subj-2",
-        subject_ref=SimpleNamespace(id="subj-2", name="Science"),
-        class_id="c-1",
-        class_ref=SimpleNamespace(id="c-1", name="V-A"),
-        teacher_id="t-1",
-        teacher_ref=SimpleNamespace(
-            id="t-1",
-            user=SimpleNamespace(name="Mr. Sharma"),
-        ),
-        room=None,
-    )
+    klass = SimpleNamespace(id="c-1", name="V-A")
 
-    out = _build_weekly_response(ay, week_start, week_end, [period_a, period_b])
+    def _entry(entry_id, iso_day, subject_name, room):
+        return SimpleNamespace(
+            id=entry_id,
+            day_of_week=iso_day,
+            period_number=1,
+            class_subject=SimpleNamespace(
+                subject_ref=SimpleNamespace(id=f"subj-{entry_id}", name=subject_name)
+            ),
+            teacher=teacher,
+            room=room,
+        )
+
+    rows = [
+        (
+            _entry("p-1", 1, "Math", "R-101"),
+            klass,
+            SimpleNamespace(starts_at=time(9, 0), ends_at=time(9, 45)),
+        ),
+        (
+            _entry("p-2", 3, "Science", None),
+            klass,
+            SimpleNamespace(starts_at=time(10, 0), ends_at=time(10, 45)),
+        ),
+    ]
+
+    out = _build_weekly_response(ay, week_start, week_end, rows)
 
     assert out["academic_year"]["id"] == "ay-1"
     assert out["week_start_date"] == "2026-05-25"
@@ -373,6 +370,8 @@ def test_build_weekly_response_buckets_periods_into_days():
     assert monday["date"] == "2026-05-25"
     assert len(monday["periods"]) == 1
     assert monday["periods"][0]["subject"]["name"] == "Math"
+    assert monday["periods"][0]["start_time"] == "09:00"
+    assert monday["periods"][0]["teacher"]["name"] == "Mr. Sharma"
 
     wednesday = out["days"][2]
     assert wednesday["day_of_week"] == 2

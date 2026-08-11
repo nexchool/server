@@ -77,25 +77,6 @@ def _send_via_dispatcher(
     )
 
 
-def render_email_template(template_name: str, context: Dict) -> str:
-    """
-    DEPRECATED: Render an email template from filesystem.
-    Use notification template service for new code.
-    """
-    _deprecation_warning()
-    import os
-    from jinja2 import Environment, FileSystemLoader, select_autoescape
-
-    BASE_DIR = os.path.dirname(__file__)
-    TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
-    env = Environment(
-        loader=FileSystemLoader(TEMPLATE_DIR),
-        autoescape=select_autoescape(["html", "xml"]),
-    )
-    template = env.get_template(template_name)
-    return template.render(**context)
-
-
 def send_email(
     to_email: str,
     subject: str,
@@ -147,20 +128,3 @@ def send_template_email(
     _send_via_dispatcher(to_email=to_email, notification_type=notification_type, context=context, subject=subject)
 
 
-def send_email_old_signature(
-    to_email: str,
-    context: Dict,
-    template_name: str,
-    body: str = "",
-    subject: str = "",
-    is_html: bool = True,
-) -> None:
-    """
-    DEPRECATED: Legacy function signature.
-    Redirects to send_template_email or send_email.
-    """
-    _deprecation_warning()
-    if template_name:
-        send_template_email(to_email=to_email, template_name=template_name, context=context, subject=subject)
-    else:
-        send_email(to_email=to_email, subject=subject, body=body, is_html=is_html)

@@ -38,6 +38,7 @@ from core.decorators import auth_required, tenant_required  # tenant_required st
 from core.database import db
 from core.extensions import limiter
 from shared.helpers import success_response, error_response
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,7 @@ def login():
                     message='Logins are temporarily disabled. Please try again later.',
                     status_code=503
                 )
-            if user_by_email.login_locked_until and user_by_email.login_locked_until > datetime.utcnow():
+            if user_by_email.login_locked_until and user_by_email.login_locked_until > utc_now():
                 return error_response(
                     error='TooManyAttempts',
                     message='Account temporarily locked due to too many failed attempts. Try again later.',
@@ -266,7 +267,7 @@ def login():
                     max_attempts = int(max_attempts_str) if max_attempts_str and str(max_attempts_str).isdigit() else 5
                     user_by_email.failed_login_count = (user_by_email.failed_login_count or 0) + 1
                     if user_by_email.failed_login_count >= max_attempts:
-                        user_by_email.login_locked_until = datetime.utcnow() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+                        user_by_email.login_locked_until = utc_now() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
                         user_by_email.failed_login_count = 0
                     user_by_email.save()
                 return error_response(
@@ -309,7 +310,7 @@ def login():
                     message='Logins are temporarily disabled. Please try again later.',
                     status_code=503
                 )
-            if user.login_locked_until and user.login_locked_until > datetime.utcnow():
+            if user.login_locked_until and user.login_locked_until > utc_now():
                 return error_response(
                     error='TooManyAttempts',
                     message='Account temporarily locked due to too many failed attempts. Try again later.',
@@ -377,7 +378,7 @@ def _finalize_login(user, tenant, is_god_login):
         user.failed_login_count = 0
         user.login_locked_until = None
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = utc_now()
     user.save()
 
     access_minutes = None
@@ -490,7 +491,7 @@ def login_link_redeem():
     admin-web's session handling is unchanged.
     """
     from .handoff import redeem as redeem_handoff
-    from core.decorators.auth import _load_without_tenant_scope
+    from core.authentication import load_without_tenant_scope
     from core.models import Tenant, TENANT_STATUS_ACTIVE
 
     data = request.get_json(silent=True) or {}
@@ -505,7 +506,7 @@ def login_link_redeem():
 
     # Identity comes from the code, not the request tenant. Load the platform
     # admin unscoped (their User row lives in their home tenant) and the target.
-    user = _load_without_tenant_scope(
+    user = load_without_tenant_scope(
         lambda: User.query.filter_by(
             id=payload['admin_id'], is_platform_admin=True
         ).filter(User.deleted_at.is_(None)).first()
@@ -972,6 +973,11 @@ def update_profile():
     # Update allowed fields
     if 'name' in data:
         user.name = data['name']
+        # A person's name belongs to the person, not to one of their logins
+        # (ADR-001) — it is what the student and teacher records show.
+        from modules.people.service import revise_identity
+
+        revise_identity(user.person, {"full_name": data['name']})
     
     if 'profile_picture_url' in data:
         user.profile_picture_url = normalize_stored_file_value_for_db(data['profile_picture_url'])

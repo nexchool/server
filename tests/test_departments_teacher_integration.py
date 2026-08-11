@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 from flask import g
+from tests.conftest import employ_for
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -59,7 +60,7 @@ def _other_tenant(db_session, suffix):
     other = Tenant(
         id=str(uuid.uuid4()),
         name=f"Other School {suffix}",
-        subdomain=f"other-{suffix}-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{suffix}-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -86,8 +87,9 @@ def _make_teacher(db_session, tenant, department_id, suffix):
         id=str(uuid.uuid4()),
         tenant_id=tenant.id,
         user_id=user.id,
-        employee_id=f"EMP{suffix}",
-        department_id=department_id,
+        # The department belongs to the employment, which is where the
+        # serializer reads it from.
+        staff_id=employ_for(user, department_id=department_id, employee_number=f"EMP{suffix}").id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -453,7 +455,7 @@ def test_update_rejects_reassigning_to_an_inactive_department(ctx, tenant, db_se
     assert result["success"] is False
     assert "inactive" in result["error"]
     db_session.refresh(teacher)
-    assert teacher.department_id == primary["id"], "existing data must not change"
+    assert teacher.staff.department_id == primary["id"], "existing data must not change"
 
 
 def test_update_allows_keeping_an_already_assigned_inactive_department(
@@ -473,7 +475,7 @@ def test_update_allows_keeping_an_already_assigned_inactive_department(
 
     assert result["success"] is True
     db_session.refresh(teacher)
-    assert teacher.department_id == dept["id"]
+    assert teacher.staff.department_id == dept["id"]
 
 
 def test_update_can_still_clear_an_inactive_department(ctx, tenant, db_session, dept_svc):
@@ -487,4 +489,57 @@ def test_update_can_still_clear_an_inactive_department(ctx, tenant, db_session, 
 
     assert result["success"] is True
     db_session.refresh(teacher)
-    assert teacher.department_id is None
+    assert teacher.staff.department_id is None
+
+
+def test_listing_teachers_does_not_query_per_person_or_employment(
+    flask_app, db_session, tenant, dept_svc
+):
+    """to_dict reads the Person and the employment, which a page must not pay
+    for row by row. A 15,000-student trust lists its staff too."""
+    from sqlalchemy import event
+
+    from core.database import db
+    from modules.teachers import services
+
+    science = dept_svc.create_department({"name": "Science"}, tenant.id)["department"]
+    made = 0
+
+    def statements_for(additional_teachers):
+        nonlocal made
+        for i in range(additional_teachers):
+            _make_teacher(db_session, tenant, science["id"], f"np-{made + i}")
+        made += additional_teachers
+
+        counted = []
+
+        def record(conn, cursor, statement, params, context, executemany):
+            probe = statement.lower()
+            # Every relationship to_dict touches, the account included — it is
+            # joined for the email filter but was not being reused for
+            # serialization, which cost a query a row.
+            if (
+                " persons" in probe
+                or " staff" in probe
+                or "staff_employment_periods" in probe
+                or " users" in probe
+            ):
+                counted.append(statement)
+
+        with flask_app.test_request_context("/"):
+            g.tenant_id = tenant.id
+            event.listen(db.engine, "before_cursor_execute", record)
+            try:
+                result = services.list_teachers()
+                assert len(result["items"]) == made
+                assert all(t["name"] for t in result["items"])
+            finally:
+                event.remove(db.engine, "before_cursor_execute", record)
+        return len(counted)
+
+    few = statements_for(2)
+    many = statements_for(6)
+
+    assert many <= few, (
+        f"person/employment query count grew with row count ({few} -> {many}): N+1"
+    )

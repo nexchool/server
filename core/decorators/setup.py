@@ -17,6 +17,28 @@ from core.database import db
 from core.models import Tenant
 
 
+def is_setup_complete(tenant_id: str) -> bool:
+    """Whether this school has finished the setup wizard.
+
+    Single column read, cached on the request so several gates in one request
+    ask the database once. Shared by the REST decorator below and the GraphQL
+    permission of the same name, so the two transports cannot come to
+    different conclusions about when a school may start working.
+    """
+    cached = getattr(g, "_is_setup_complete", None)
+    if cached is not None:
+        return cached
+
+    row = (
+        db.session.query(Tenant.is_setup_complete)
+        .filter(Tenant.id == tenant_id)
+        .first()
+    )
+    complete = bool(row[0]) if row is not None else False
+    g._is_setup_complete = complete
+    return complete
+
+
 def require_setup_complete(fn):
     """Block the route until tenant.is_setup_complete is true.
 
@@ -46,19 +68,7 @@ def require_setup_complete(fn):
                 400,
             )
 
-        # Single column read; cached at the request level so multiple
-        # decorated handlers in the same request don't re-query.
-        is_complete = getattr(g, "_is_setup_complete", None)
-        if is_complete is None:
-            row = (
-                db.session.query(Tenant.is_setup_complete)
-                .filter(Tenant.id == tenant_id)
-                .first()
-            )
-            is_complete = bool(row[0]) if row is not None else False
-            g._is_setup_complete = is_complete
-
-        if not is_complete:
+        if not is_setup_complete(tenant_id):
             return (
                 jsonify(
                     {

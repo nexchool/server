@@ -13,6 +13,8 @@ psycopg2-binary==2.9.11
 PyJWT==2.10.1
 python-dotenv==1.2.1
 SQLAlchemy==2.0.45
+strawberry-graphql==0.323.2
+graphql-core==3.2.11
 typing_extensions==4.15.0
 Werkzeug==3.1.4
 gunicorn==25.1.0

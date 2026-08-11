@@ -11,6 +11,7 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from tests._model_loader import load_all_models  # noqa: E402
+from core.school_time import utc_now
 
 load_all_models()
 
@@ -85,7 +86,7 @@ def test_allocation_is_active_false_when_status_completed():
 def test_allocation_is_active_false_when_soft_deleted():
     """Soft-deleted allocations should not be active."""
     allocation = _build_allocation()
-    allocation.deleted_at = datetime.utcnow()
+    allocation.deleted_at = utc_now()
     assert allocation.is_active is False
 
 
@@ -133,7 +134,7 @@ def test_allocation_soft_delete():
     allocation = _build_allocation()
     assert allocation.deleted_at is None
 
-    deleted_at = datetime.utcnow()
+    deleted_at = utc_now()
     allocation.deleted_at = deleted_at
 
     assert allocation.deleted_at == deleted_at

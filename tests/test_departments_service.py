@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 
 import pytest
+from modules.people.service import employment_status_for_legacy_flag
+from tests.conftest import employ_for
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -173,7 +175,7 @@ def test_list_excludes_other_tenants(db_session, tenant, svc):
     other = Tenant(
         id=str(uuid.uuid4()),
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -241,9 +243,13 @@ def _make_teacher(db_session, tenant, department_id, suffix, status="active"):
         id=str(uuid.uuid4()),
         tenant_id=tenant.id,
         user_id=user.id,
-        employee_id=f"EMP{suffix}",
-        department_id=department_id,
-        status=status,
+        # Department and whether they still work here belong to the
+        # employment, which is what the counts read.
+        staff_id=employ_for(
+            user,
+            department_id=department_id,
+            employment_status=employment_status_for_legacy_flag(status),
+        ).id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -303,7 +309,7 @@ def test_teacher_count_excludes_other_tenants(db_session, tenant, svc):
     other = Tenant(
         id=str(uuid.uuid4()),
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -449,7 +455,7 @@ def test_class_count_excludes_other_tenants(db_session, tenant, svc):
     other = Tenant(
         id=str(uuid.uuid4()),
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )
@@ -516,4 +522,4 @@ def test_delete_clears_department_id_on_inactive_teachers(db_session, tenant, sv
 
     assert result["success"] is True
     db_session.refresh(teacher)
-    assert teacher.department_id is None
+    assert teacher.staff.department_id is None

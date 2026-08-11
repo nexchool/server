@@ -51,6 +51,7 @@ from shared.helpers import (
     success_response,
     validation_error_response,
 )
+from core.school_time import utc_now
 
 
 # ============================================================================
@@ -269,7 +270,7 @@ def delete_hostel(hostel_id: str):
     )
     if hostel is None:
         return not_found_response("Hostel")
-    hostel.deleted_at = datetime.utcnow()
+    hostel.deleted_at = utc_now()
     db.session.commit()
     return success_response(data=None, status_code=204)
 
@@ -469,7 +470,7 @@ def delete_room(room_id: str):
     )
     if room is None:
         return not_found_response("Room")
-    room.deleted_at = datetime.utcnow()
+    room.deleted_at = utc_now()
     db.session.commit()
     return success_response(data=None, status_code=204)
 

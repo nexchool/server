@@ -5,13 +5,14 @@ Business logic for Grade master CRUD. Tenant-scoped, soft-delete aware.
 """
 from shared.safe_error import safe_error
 
-from datetime import datetime
+import re
 from typing import Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from .models import Grade
+from core.school_time import utc_now
 
 
 def _active(query):
@@ -50,6 +51,34 @@ def get_grade(grade_id: str, tenant_id: str) -> Optional[Dict]:
     return g.to_dict() if g else None
 
 
+def _infer_sequence(name: str, tenant_id: str) -> int:
+    """Where a grade sits in the ladder when the caller did not say.
+
+    `sequence` is what orders grades everywhere — their names cannot, because
+    sorted as text "Std 10" comes before "Std 2". It used to default to 0 when
+    absent, which put every such grade *first*; harmless while the only caller
+    was a form that always sent one, and wrong the moment a grade can be
+    created inline while opening a section.
+
+    A school names its grades after the number of the year — "5", "Std 5",
+    "Grade 5" — so the number in the name is the order, and that is what a
+    person means by typing it. A name with no number in it is either
+    pre-primary (LKG, Nursery) or something we have not seen; those go to the
+    end, where they are visible and can be corrected, rather than silently
+    into the middle of the ladder.
+    """
+    digits = re.search(r"\d+", name)
+    if digits:
+        return int(digits.group())
+
+    highest = (
+        db.session.query(db.func.max(Grade.sequence))
+        .filter(Grade.tenant_id == tenant_id, Grade.deleted_at.is_(None))
+        .scalar()
+    )
+    return (highest or 0) + 1
+
+
 def create_grade(data: Dict, tenant_id: str) -> Dict:
     if not tenant_id:
         return {"success": False, "error": "Tenant context is required"}
@@ -58,7 +87,11 @@ def create_grade(data: Dict, tenant_id: str) -> Dict:
     if not name:
         return {"success": False, "error": "name is required"}
 
-    sequence = _coerce_int(data.get("sequence"), default=0)
+    sequence = (
+        _coerce_int(data["sequence"])
+        if data.get("sequence") is not None and data.get("sequence") != ""
+        else _infer_sequence(name, tenant_id)
+    )
 
     try:
         grade = Grade(tenant_id=tenant_id, name=name, sequence=sequence)
@@ -127,7 +160,7 @@ def delete_grade(grade_id: str, tenant_id: str) -> Dict:
         }
 
     try:
-        grade.deleted_at = datetime.utcnow()
+        grade.deleted_at = utc_now()
         db.session.commit()
     except Exception as e:
         db.session.rollback()

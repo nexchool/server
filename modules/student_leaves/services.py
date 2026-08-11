@@ -25,6 +25,8 @@ from modules.academics.calendar.holiday_services import get_holiday_for_date
 from modules.students.models import Student
 from modules.student_leaves.models import StudentLeave, LEAVE_TYPES
 from modules.teachers.models import Teacher, TeacherLeave
+from core.school_time import utc_now
+from core.school_time import school_today
 
 
 class ValidationError(Exception):
@@ -133,7 +135,7 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
     except (ValueError, TypeError):
         raise ValidationError("start_date and end_date must be YYYY-MM-DD")
 
-    today = date.today()
+    today = school_today()
     if start_d < today:
         raise ValidationError("start_date cannot be in the past")
     if end_d < start_d:
@@ -218,7 +220,7 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
     if not _actor_is_authorized_approver(leave, actor_user_id):
         raise AuthorizationError("You are not authorized to approve this request")
 
-    now = datetime.utcnow()
+    now = utc_now()
     if leave.status == "pending_class_teacher":
         if leave.requires_admin_approval:
             leave.status = "pending_admin"
@@ -279,7 +281,7 @@ def reject(leave_id: str, actor_user_id: str, rejection_reason: str) -> StudentL
     leave.status = "rejected"
     leave.rejection_reason = rejection_reason.strip()
     leave.decided_by_id = actor_user_id
-    leave.decided_at = datetime.utcnow()
+    leave.decided_at = utc_now()
     db.session.commit()
 
     if leave.student and getattr(leave.student, "user_id", None):
@@ -306,7 +308,7 @@ def request_cancel(leave_id: str, actor_user_id: str, reason: str) -> StudentLea
     if not _actor_is_owning_student(leave, actor_user_id):
         raise AuthorizationError("Only the student can request cancellation")
 
-    leave.cancel_requested_at = datetime.utcnow()
+    leave.cancel_requested_at = utc_now()
     leave.cancel_requested_reason = (reason or "").strip() or None
     db.session.commit()
 
@@ -344,7 +346,7 @@ def approve_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
 
     leave.status = "cancelled"
     leave.decided_by_id = actor_user_id
-    leave.decided_at = datetime.utcnow()
+    leave.decided_at = utc_now()
     db.session.commit()
 
     if leave.student and getattr(leave.student, "user_id", None):
@@ -407,50 +409,14 @@ def _resolve_primary_class_teacher_id(
 ) -> Optional[str]:
     """Return the (teachers.id) class teacher for a class on a given date.
 
-    Prefers ClassTeacherAssignment (role='primary', active, within effective dates).
-    Falls back to Class.teacher_id (which is a users.id) → resolve to the
-    corresponding teachers.id row.
+    Asked of Teaching Assignment (ADR-014). The old fallback that read the
+    `classes.teacher_id` cache is gone: migration 095 gave every cached class
+    teacher an owner row, so the service's answer is the whole answer.
     """
-    try:
-        from modules.academics.backbone.models import ClassTeacherAssignment
-        rows = (
-            db.session.query(ClassTeacherAssignment)
-            .filter(
-                ClassTeacherAssignment.tenant_id == tenant_id,
-                ClassTeacherAssignment.class_id == class_id,
-                ClassTeacherAssignment.role == "primary",
-                ClassTeacherAssignment.is_active.is_(True),
-                ClassTeacherAssignment.deleted_at.is_(None),
-            )
-            .all()
-        )
-        for r in rows:
-            ef, et = r.effective_from, r.effective_to
-            if ef and on_date < ef:
-                continue
-            if et and on_date > et:
-                continue
-            return r.teacher_id
-    except ImportError:
-        pass
+    from modules.academics.teaching_assignment import class_teacher_of
 
-    # Fallback to legacy classes.teacher_id (a users.id pointer).
-    cls = (
-        db.session.query(Class)
-        .filter(Class.id == class_id, Class.tenant_id == tenant_id)
-        .first()
-    )
-    if cls and getattr(cls, "teacher_id", None):
-        # classes.teacher_id stores a users.id; resolve to teachers.id.
-        from modules.teachers.models import Teacher
-        teacher = (
-            db.session.query(Teacher)
-            .filter(Teacher.tenant_id == tenant_id, Teacher.user_id == cls.teacher_id)
-            .first()
-        )
-        if teacher:
-            return teacher.id
-    return None
+    held = class_teacher_of(class_id, on=on_date)
+    return held.teacher_id if held else None
 
 
 def _assert_attachment_belongs_to(
@@ -704,7 +670,7 @@ def admin_fallback_queue(user):
     surfaced to admins as the fallback approver queue.
     """
     tenant_id = get_tenant_id()
-    today = date.today()
+    today = school_today()
     unavailable_teacher_ids = (
         db.session.query(TeacherLeave.teacher_id)
         .filter(
@@ -733,22 +699,21 @@ def admin_fallback_queue(user):
 def _admin_user_ids_for_tenant(tenant_id: str) -> list:
     """All users with the Admin role for this tenant."""
     try:
-        from modules.rbac.models import UserRole, Role
-        from modules.auth.models import User
-        rows = (
-            db.session.query(User.id)
-            .join(UserRole, UserRole.user_id == User.id)
-            .join(Role, Role.id == UserRole.role_id)
-            .filter(User.tenant_id == tenant_id, Role.name.in_(("Admin", "admin")))
-            .all()
+        from modules.rbac.authority_service import user_ids_holding_profiles
+
+        # Administrators are expected to act on these, so anyone who cannot is
+        # left out rather than asked.
+        return sorted(
+            user_ids_holding_profiles(
+                tenant_id, ("Admin",), must_be_able_to_act=True
+            )
         )
-        return [r[0] for r in rows]
     except Exception:
         return []
 
 
 def _class_teacher_unavailable_today(teacher_id: str, tenant_id: str) -> bool:
-    today = date.today()
+    today = school_today()
     overlap = (
         db.session.query(TeacherLeave)
         .filter(

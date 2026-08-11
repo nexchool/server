@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from .models import Religion
+from core.school_time import utc_now
 
 
 def _active(query):
@@ -111,7 +112,7 @@ def delete_religion(religion_id: str, tenant_id: str) -> Dict:
         return {"success": False, "error": "Religion not found"}
 
     try:
-        religion.deleted_at = datetime.utcnow()
+        religion.deleted_at = utc_now()
         db.session.commit()
         return {"success": True, "message": "Religion deleted"}
     except Exception as e:

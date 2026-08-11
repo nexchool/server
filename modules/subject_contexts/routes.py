@@ -18,9 +18,16 @@ from shared.helpers import (
 from . import services, subject_contexts_bp
 
 
+# Reading which subjects a programme and grade imply is class-subject work, so
+# the read answers to `class_subject.read`; `class_subject.manage` satisfies it
+# by implication. The setup keys stay because whoever is standing the school up
+# reads these lists too. See the same note in modules/mediums/routes.py and
+# debt 33 — without the read key here, a teacher could only be admitted by
+# granting them the school's onboarding permission.
 PERM_READ = "school_setup.read"
 PERM_SETUP_MANAGE = "school_setup.manage"
 PERM_CS = "class_subject.manage"
+PERM_CS_READ = "class_subject.read"
 
 
 def _actor_id():
@@ -32,7 +39,7 @@ def _actor_id():
 @tenant_required
 @auth_required
 @require_feature("class_management")
-@require_any_permission(PERM_READ, PERM_SETUP_MANAGE, PERM_CS)
+@require_any_permission(PERM_READ, PERM_SETUP_MANAGE, PERM_CS, PERM_CS_READ)
 def list_contexts():
     return success_response(
         data=services.list_contexts(
@@ -49,7 +56,7 @@ def list_contexts():
 @tenant_required
 @auth_required
 @require_feature("class_management")
-@require_any_permission(PERM_READ, PERM_SETUP_MANAGE, PERM_CS)
+@require_any_permission(PERM_READ, PERM_SETUP_MANAGE, PERM_CS, PERM_CS_READ)
 def get_context(context_id):
     row = services.get_context(context_id, g.tenant_id)
     if not row:
@@ -154,7 +161,7 @@ def bulk_upsert():
 @tenant_required
 @auth_required
 @require_feature("class_management")
-@require_any_permission(PERM_READ, PERM_SETUP_MANAGE, PERM_CS)
+@require_any_permission(PERM_READ, PERM_SETUP_MANAGE, PERM_CS, PERM_CS_READ)
 def preview():
     programme_id = request.args.get("programme_id")
     grade_id = request.args.get("grade_id")

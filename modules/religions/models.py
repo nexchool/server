@@ -12,6 +12,7 @@ from sqlalchemy import Index, text
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class Religion(TenantBaseModel):
@@ -32,14 +33,14 @@ class Religion(TenantBaseModel):
 
     name = db.Column(db.String(100), nullable=False)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
-    deleted_at = db.Column(db.DateTime, nullable=True, index=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
 
     def to_dict(self):
         return {

@@ -20,12 +20,13 @@ import uuid
 import pytest
 from flask import g
 
-from core.database import db
 from core.decorators.rbac import require_permission
 from core.decorators.setup import require_setup_complete
 from core.models import Tenant, TENANT_STATUS_ACTIVE, BILLING_CYCLE_YEARLY
 from modules.auth.models import User
-from modules.rbac.models import Role, UserRole
+from modules.people.service import employ
+from modules.rbac.authority_service import grant_authority
+from modules.rbac.models import Role
 from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.rbac.services import has_permission, is_subadmin_user
 
@@ -38,24 +39,13 @@ def _new_id(prefix: str = "") -> str:
     return f"{prefix}{uuid.uuid4().hex[:12]}"
 
 
-@pytest.fixture(autouse=True)
-def _disable_rate_limit(flask_app):
-    """5/min login limiter would 429 multiple logins in one test run."""
-    from core.extensions import limiter
-
-    previous = limiter.enabled
-    limiter.enabled = False
-    yield
-    limiter.enabled = previous
-
-
 @pytest.fixture
 def setup_tenant(db_session):
     """An active tenant whose school setup is NOT complete."""
     t = Tenant(
         id=_new_id("t-"),
         name="Test School",
-        subdomain=f"god-{uuid.uuid4().hex[:6]}",
+        subdomain=f"god-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
         is_setup_complete=False,
@@ -71,7 +61,7 @@ def platform_home_tenant(db_session):
     t = Tenant(
         id=_new_id("t-"),
         name="Platform HQ",
-        subdomain=f"hq-{uuid.uuid4().hex[:6]}",
+        subdomain=f"hq-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
         is_setup_complete=True,
@@ -117,8 +107,8 @@ def tenant_admin(db_session, setup_tenant):
     u.set_password(ADMIN_PASSWORD)
     db_session.add(u)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=setup_tenant.id, user_id=u.id, role_id=admin_role.id)
+    grant_authority(
+        employ(setup_tenant.id, u.person_id).id, admin_role.id
     )
     db_session.flush()
     return u
@@ -146,8 +136,8 @@ def sub_admin(db_session, setup_tenant):
     u.set_password(ADMIN_PASSWORD)
     db_session.add(u)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=setup_tenant.id, user_id=u.id, role_id=role.id)
+    grant_authority(
+        employ(setup_tenant.id, u.person_id).id, role.id
     )
     db_session.flush()
     return u
@@ -233,8 +223,8 @@ def test_email_collision_tenant_user_wins(client, db_session, setup_tenant, plat
     collision.set_password(ADMIN_PASSWORD)
     db_session.add(collision)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=setup_tenant.id, user_id=collision.id, role_id=admin_role.id)
+    grant_authority(
+        employ(setup_tenant.id, collision.person_id).id, admin_role.id
     )
     db_session.flush()
 

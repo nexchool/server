@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+from core.school_time import utc_now
 
 
 # ===========================================================================
@@ -291,7 +292,7 @@ def test_occupancy_stats_per_hostel(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[0].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
     alloc_service.create_allocation(
         tenant_id=tenant.id,
@@ -299,7 +300,7 @@ def test_occupancy_stats_per_hostel(
         hostel_id=hostel.id,
         room_id=room.id,
         bed_id=beds[1].id,
-        check_in_at=datetime.utcnow(),
+        check_in_at=utc_now(),
     )
 
     report = ReportService(db_session)
@@ -342,8 +343,8 @@ def test_overdue_alerts_lists_overdue_gatepasses(
         student_id=student.id,
         hostel_id=hostel.id,
         gatepass_type="night_out",
-        departure_datetime=datetime.utcnow() - timedelta(hours=10),
-        expected_return_datetime=datetime.utcnow() - timedelta(hours=2),
+        departure_datetime=utc_now() - timedelta(hours=10),
+        expected_return_datetime=utc_now() - timedelta(hours=2),
         reason="Home",
         parent_phone="9876543210",
     )

@@ -29,15 +29,18 @@ from core.feature_flags import (
     OPTIONAL_FEATURES,
     CORE_FEATURES,
     FEATURE_LABELS,
+    LEGACY_ALIASES,
     default_feature_flags,
     get_tenant_feature_flags,
 )
 from modules.auth.models import User
-from modules.rbac.models import Role, UserRole
+from modules.rbac.models import Role
 from modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noqa: F401 (re-exported)
 from modules.students.models import Student
 from modules.teachers.models import Teacher
 from modules.platform.audit import log_platform_action
+from core.school_time import is_valid_timezone, utc_now
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,7 @@ def _serialize_tenant(tenant: Tenant) -> Dict[str, Any]:
         "discount_end_date": tenant.discount_end_date.isoformat() if tenant.discount_end_date else None,
         "trial_ends_at": tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None,
         "billing_cycle": tenant.billing_cycle,
+        "timezone": tenant.timezone,
         "feature_flags": get_tenant_feature_flags(tenant.id),
         "student_count": student_count,
         "teacher_count": teacher_count,
@@ -120,7 +124,7 @@ def get_dashboard_stats() -> Dict[str, Any]:
     total_teachers = db.session.query(Teacher).count()
 
     revenue_yearly = Decimal("0")
-    today = date.today()
+    today = school_today()
     for t in tenants:
         if t.status != TENANT_STATUS_ACTIVE:
             continue
@@ -228,8 +232,15 @@ def create_tenant(
     db.session.add(user)
     db.session.flush()
 
-    ur = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
-    db.session.add(ur)
+    # The school's administrator works for the school, and authority belongs to
+    # that employment rather than to the login (ADR-013). No designation is
+    # invented: we know they administer the system, not what their job title is.
+    from modules.people.service import employ
+    from modules.rbac.authority_service import grant_authority
+
+    employment = employ(tenant_id, user.person_id)
+    grant_authority(employment.id, admin_role.id)
+
     db.session.commit()
 
     try:
@@ -288,7 +299,7 @@ def suspend_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
     tenant.status = TENANT_STATUS_SUSPENDED
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -304,7 +315,7 @@ def activate_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
     tenant.status = TENANT_STATUS_ACTIVE
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -352,7 +363,7 @@ def update_tenant_pricing(
     ):
         return {"success": False, "error": "discount_start_date must be on or before discount_end_date"}
 
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -501,7 +512,7 @@ def update_tenant_subscription(
             "error": "discount_start_date must be on or before discount_end_date",
         }
 
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -523,9 +534,22 @@ def update_tenant_feature_flags(
     platform_admin_id: str,
     flags: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Replace tenant.feature_flags with the supplied map. Core features
-    can never be disabled — keys for those are silently dropped. Unknown
-    keys are dropped to keep storage clean."""
+    """Apply the supplied switches to a tenant's stored flag map.
+
+    Only keys in OPTIONAL_FEATURES are written. Core features and anything
+    unrecognised in the payload are ignored, so a super-admin cannot switch
+    off the product by posting `{"students": false}`.
+
+    What is *stored* is left alone otherwise — this merges into the existing
+    map rather than replacing it. Two reasons. Keys from retired modules
+    (`library`, `schedule_management`, `holiday_management`) linger there but
+    have no effect: `effective_flags` reads only the keys it knows, and core
+    always wins. And `feature_flags` does double duty as a per-tenant settings
+    bag — `login_variant` is a *string* living in the same column — so pruning
+    everything unrecognised would silently delete a school's login layout.
+
+    That double duty is worth undoing. Until it is, do not add a prune here.
+    """
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
@@ -538,7 +562,7 @@ def update_tenant_feature_flags(
             current[key] = bool(value)
         # Silently ignore CORE_FEATURES and unknown keys.
     tenant.feature_flags = current
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -565,8 +589,14 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
 
-    on_date = on_date or date.today()
-    inactive_statuses = ("inactive", "withdrawn", "graduated", "transferred")
+    on_date = on_date or school_today()
+    # One definition of who the school is billed for. This list used to be
+    # written out here as well, with a comment on the other copy asking that
+    # they be kept in step by hand — which is how `dropped_out` came to be
+    # billable in both.
+    from modules.subscription.usage import INACTIVE_STUDENT_STATUSES
+
+    inactive_statuses = INACTIVE_STUDENT_STATUSES
     active_students = (
         db.session.query(Student)
         .filter(Student.tenant_id == tenant_id)
@@ -612,9 +642,16 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
 
 
 def list_feature_catalog() -> List[Dict[str, Any]]:
-    """Catalog used by the super-admin Features tab to render checkboxes."""
+    """Catalog used by the super-admin Features tab to render checkboxes.
+
+    Legacy aliases are left out: showing "Students" and "Student management"
+    as two separate always-on rows tells the reader there are two things when
+    there is one.
+    """
     items = []
     for key in CORE_FEATURES:
+        if key in LEGACY_ALIASES:
+            continue
         items.append({
             "key": key,
             "label": FEATURE_LABELS.get(key, key),
@@ -636,9 +673,12 @@ def get_school_admin_user_for_tenant(tenant_id: str) -> Optional[User]:
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return None
-    ur = UserRole.query.filter_by(tenant_id=tenant_id, role_id=admin_role.id).first()
-    if not ur:
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    holders = user_ids_holding_profiles(tenant_id, (admin_role.name,))
+    if not holders:
         return None
+    ur = type("_Holder", (), {"user_id": sorted(holders)[0]})()
     return User.query.get(ur.user_id)
 
 
@@ -775,10 +815,18 @@ def update_tenant(
     logo_url: Optional[str] = None,
     tagline: Optional[str] = None,
     board_affiliation: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
+    if timezone is not None:
+        # Refused rather than coerced: a zone the system cannot resolve would
+        # silently fall back to India, and the school would be told its clocks
+        # were set when they were not.
+        if not is_valid_timezone(timezone):
+            return {"success": False, "error": f"Unknown timezone: {timezone}"}
+        tenant.timezone = timezone
     if name is not None:
         tenant.name = name
     if contact_email is not None:
@@ -793,7 +841,7 @@ def update_tenant(
         tenant.tagline = tagline or None
     if board_affiliation is not None:
         tenant.board_affiliation = board_affiliation or None
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -809,7 +857,7 @@ def delete_tenant(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]:
     if not tenant:
         return {"success": False, "error": "Tenant not found"}
     tenant.status = TENANT_STATUS_DELETED
-    tenant.updated_at = datetime.utcnow()
+    tenant.updated_at = utc_now()
     db.session.commit()
     log_platform_action(
         platform_admin_id=platform_admin_id,
@@ -879,7 +927,9 @@ def list_tenant_admins(tenant_id: str) -> Dict[str, Any]:
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return {"success": True, "admins": []}
-    role_user_ids = [ur.user_id for ur in UserRole.query.filter_by(tenant_id=tenant_id, role_id=admin_role.id).all()]
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    role_user_ids = sorted(user_ids_holding_profiles(tenant_id, (admin_role.name,)))
     admins = []
     for uid in role_user_ids:
         user = User.query.get(uid)
@@ -920,8 +970,15 @@ def add_tenant_admin(
     user.email_verified = True
     db.session.add(user)
     db.session.flush()
-    ur = UserRole(tenant_id=tenant_id, user_id=user.id, role_id=admin_role.id)
-    db.session.add(ur)
+    # The school's administrator works for the school, and authority belongs to
+    # that employment rather than to the login (ADR-013). No designation is
+    # invented: we know they administer the system, not what their job title is.
+    from modules.people.service import employ
+    from modules.rbac.authority_service import grant_authority
+
+    employment = employ(tenant_id, user.person_id)
+    grant_authority(employment.id, admin_role.id)
+
     db.session.commit()
     try:
         from modules.notifications.services import notification_dispatcher
@@ -985,21 +1042,21 @@ def remove_tenant_admin(
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return {"success": False, "error": "Admin role not found for tenant"}
-    admin_user_count = UserRole.query.filter_by(
-        tenant_id=tenant_id,
-        role_id=admin_role.id,
-    ).count()
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    admin_user_count = len(user_ids_holding_profiles(tenant_id, (admin_role.name,)))
     if admin_user_count <= 1:
         return {"success": False, "error": "Cannot remove the last admin. A tenant must have at least one admin."}
-    ur = UserRole.query.filter_by(
-        tenant_id=tenant_id,
-        user_id=admin_user_id,
-        role_id=admin_role.id,
-    ).first()
-    if not ur:
+    from modules.people.employment import Staff
+    from modules.rbac.authority_service import authorities_held_by, withdraw_authority
+    from modules.rbac.models import StaffAuthority
+
+    employment = Staff.query.filter_by(tenant_id=tenant_id, person_id=user.person_id).first()
+    if employment is None or not withdraw_authority(employment.id, admin_role.id):
         return {"success": False, "error": "User is not an admin for this tenant"}
-    db.session.delete(ur)
-    remaining_roles = UserRole.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).count()
+
+    # Only an account that administers nothing and is nobody here is removed.
+    remaining_roles = StaffAuthority.query.filter_by(staff_id=employment.id).count()
     has_student = Student.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).first() is not None
     has_teacher = Teacher.query.filter_by(tenant_id=tenant_id, user_id=admin_user_id).first() is not None
     if remaining_roles == 0 and not has_student and not has_teacher:
@@ -1031,15 +1088,15 @@ def update_tenant_admin(
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         return {"success": False, "error": "Admin role not found for tenant"}
-    ur = UserRole.query.filter_by(
-        tenant_id=tenant_id,
-        user_id=admin_user_id,
-        role_id=admin_role.id,
-    ).first()
-    if not ur:
+    from modules.rbac.authority_service import user_ids_holding_profiles
+
+    if admin_user_id not in user_ids_holding_profiles(tenant_id, (admin_role.name,)):
         return {"success": False, "error": "User is not an admin for this tenant"}
     if name is not None:
         user.name = name
+        from modules.people.service import revise_identity
+
+        revise_identity(user.person, {"full_name": name})
     if email is not None:
         if email.strip() == "":
             return {"success": False, "error": "Email cannot be empty"}
@@ -1414,7 +1471,7 @@ def update_platform_settings(updates: Dict[str, Any], platform_admin_id: Optiona
             str_val = str(value).lower() if isinstance(value, bool) else str(value)
             if stored:
                 stored.value = str_val
-                stored.updated_at = datetime.utcnow()
+                stored.updated_at = utc_now()
             else:
                 db.session.add(PlatformSetting(key=key, value=str_val))
     db.session.commit()

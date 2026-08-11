@@ -107,10 +107,18 @@ run_seeds() {
   # on UNIQUE-violation when run twice). It's intentionally left off the
   # auto-run list — invoke it manually for new tenants via `make seed-subjects`
   # below or `python -m scripts.seed_subject_templates` until upserts land.
+  # `seed_rbac` now creates the permission rows AND seeds every active tenant's
+  # roles from the catalogue, which is what it always claimed to do — its role
+  # phase called a tenant-scoped helper from a CLI, so it failed on all four
+  # roles every run and the script still exited 0. That is why the two
+  # module-specific grants (holidays, hostel) used to be listed here: they were
+  # doing the per-tenant work this was supposed to. One line covers all 166 keys
+  # now, and a module adding permissions needs no line at all.
+  #
+  # Additions only, deliberately. Revoking is `scripts.reseed_rbac --reconcile`,
+  # which is not something a container restart should decide.
   seeds="
     scripts.seed_rbac
-    scripts.seed_holiday_permissions
-    scripts.grant_hostel_permissions
   "
 
   for seed in $seeds; do

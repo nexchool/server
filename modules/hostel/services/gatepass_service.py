@@ -30,6 +30,7 @@ from modules.hostel.models import (
     HostelGatepass,
     HostelGatepassAudit,
 )
+from core.school_time import utc_now
 
 
 class GatepassService:
@@ -117,7 +118,7 @@ class GatepassService:
         self._require_transition(gp, HostelGatepass.STATUS_APPROVED)
 
         gp.status = HostelGatepass.STATUS_APPROVED
-        gp.approved_at = datetime.utcnow()
+        gp.approved_at = utc_now()
         gp.approved_by_user_id = actor_user_id
 
         self._log_audit(
@@ -162,7 +163,7 @@ class GatepassService:
         self._require_transition(gp, HostelGatepass.STATUS_ACTIVE)
 
         gp.status = HostelGatepass.STATUS_ACTIVE
-        gp.actual_out_at = datetime.utcnow()
+        gp.actual_out_at = utc_now()
 
         self._log_audit(
             gatepass_id=gp.id,
@@ -181,7 +182,7 @@ class GatepassService:
         self._require_transition(gp, HostelGatepass.STATUS_CLOSED)
 
         gp.status = HostelGatepass.STATUS_CLOSED
-        gp.actual_in_at = datetime.utcnow()
+        gp.actual_in_at = utc_now()
 
         self._log_audit(
             gatepass_id=gp.id,
@@ -242,7 +243,7 @@ class GatepassService:
 
         The Celery beat task uses this to find candidates for mark_overdue.
         """
-        cutoff = datetime.utcnow() - timedelta(minutes=grace_period_minutes)
+        cutoff = utc_now() - timedelta(minutes=grace_period_minutes)
         return (
             self.session.query(HostelGatepass)
             .filter(
@@ -272,7 +273,7 @@ class GatepassService:
         have a record. `channels` is a list like ['in_app', 'push'].
         """
         gp = self._get_or_raise(gatepass_id)
-        gp.parent_consent_notified_at = datetime.utcnow()
+        gp.parent_consent_notified_at = utc_now()
         gp.parent_notification_type = ",".join(channels)
         self.session.flush()
         return gp

@@ -25,6 +25,7 @@ from modules.academics.backbone.models import AcademicTerm
 
 from . import services
 from .holidays import DAY_NAMES, Holiday
+from core.school_time import utc_now
 
 try:  # WeasyPrint needs system libs; degrade cleanly when they're missing.
     from weasyprint import HTML
@@ -117,7 +118,7 @@ def build_export_payload(cal) -> dict:
     return {
         "title": f"Academic Calendar — {year_label}",
         "year_label": year_label,
-        "generated_at": datetime.utcnow().strftime("%d %b %Y, %H:%M UTC"),
+        "generated_at": utc_now().strftime("%d %b %Y, %H:%M UTC"),
         "status": cal.status,
         "summary": summary,
         "weekly_holidays": _weekly_lines(cal),
@@ -421,6 +422,6 @@ def export_calendar(cal, fmt: str, sections=None) -> tuple[bytes, str, str]:
     else:
         content = _to_pdf(payload, resolved)
 
-    stamp = datetime.utcnow().strftime("%Y%m%d")
+    stamp = utc_now().strftime("%Y%m%d")
     filename = f"academic-calendar-{_slug(payload['year_label'])}-{stamp}.{_EXT[fmt]}"
     return content, _MIME[fmt], filename

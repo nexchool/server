@@ -1,9 +1,9 @@
 from core.database import db
 from core.models import TenantBaseModel
-from datetime import datetime
 import uuid
 
 from sqlalchemy import CheckConstraint, Index, text
+from core.school_time import utc_now
 
 
 class Class(TenantBaseModel):
@@ -79,14 +79,81 @@ class Class(TenantBaseModel):
     start_date = db.Column(db.Date, nullable=True)  # e.g. 2025-06-01
     end_date = db.Column(db.Date, nullable=True)     # e.g. 2026-03-31
 
-    # Class Teacher (User with Teacher role)
-    teacher_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
+    # Class-teacher CACHE (ADR-014): the owner is class_teacher_assignments;
+    # nothing decides from this column. Keys on the teacher since migration
+    # 095 — a class teacher is a teacher, not a login (they may have none).
+    teacher_id = db.Column(
+        db.String(36),
+        db.ForeignKey("teachers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Where this section went when it was merged into another, and when.
+    # A merged section is never deleted: its attendance, its marks and its
+    # reports stay attached to it, because they happened there. What changes
+    # is that nothing new is placed into it (see section_merge.py).
+    merged_into_class_id = db.Column(
+        db.String(36),
+        db.ForeignKey("classes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    merged_on = db.Column(db.Date, nullable=True)
+
+    # Who decided, and why. A merge moves every child in the section and
+    # retires a room a school has been teaching in — the kind of thing someone
+    # asks about a term later. `merged_on` alone answers "when" and leaves the
+    # two questions that actually get asked. Nullable because sections merged
+    # before migration 104 have no answer, and inventing one would be worse
+    # than admitting it is not recorded.
+    merged_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    merge_reason = db.Column(db.Text, nullable=True)
+
+    # `remote_side` because this points at another row of this same table:
+    # without it SQLAlchemy cannot tell which end of the self-reference is the
+    # parent, and treats the merge as one-to-many the wrong way round.
+    merged_into = db.relationship(
+        "Class",
+        remote_side="Class.id",
+        foreign_keys=[merged_into_class_id],
+        lazy="joined",
+    )
+    merged_by = db.relationship("User", foreign_keys=[merged_by_user_id])
+
+    @property
+    def is_merged_away(self) -> bool:
+        """True when this section's future was moved elsewhere."""
+        return self.merged_into_class_id is not None
+
+    @property
+    def display_name(self) -> str | None:
+        """What a school calls this class — "5 A", "Nursery B".
+
+        The grade first, because that is what names it; `name` only where
+        there is no grade, and the legacy standard number only where there is
+        neither. The section follows when there is one.
+
+        One rule, on the thing itself, because every screen needs it and
+        `name` is nullable: it is empty for every class the structured form
+        creates, and each caller that composed its own label got it wrong —
+        pages titled "— A", pickers offering a dozen options all reading "-A",
+        a subject catalogue naming every class "A".
+        """
+        label = (
+            (self.grade.name if self.grade else None)
+            or self.name
+            or (f"Grade {self.grade_level}" if self.grade_level is not None else None)
+        )
+        return " ".join(part for part in (label, self.section) if part) or None
 
     # DEPRECATED: free-text standard number. Use grade_id instead.
     grade_level = db.Column(db.SmallInteger, nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         # Structural identity: a section is unique within a
@@ -113,7 +180,7 @@ class Class(TenantBaseModel):
     )
 
     # Relationships
-    teacher = db.relationship('User', foreign_keys=[teacher_id], backref=db.backref('assigned_classes', lazy=True))
+    teacher = db.relationship('Teacher', foreign_keys=[teacher_id])
     academic_year_ref = db.relationship(
         "AcademicYear",
         foreign_keys=[academic_year_id],
@@ -152,6 +219,11 @@ class Class(TenantBaseModel):
         return {
             "id": self.id,
             "name": self.name,
+            # What a school calls this class. `name` is a nullable legacy
+            # label, so a client composing "`${name} - ${section}`" printed
+            # "null - A" on every row; the rule lives on the model and both
+            # transports carry its answer.
+            "display_name": self.display_name,
             "section": self.section,
             "stream": self.stream,
             "grade_level": self.grade_level,
@@ -170,8 +242,14 @@ class Class(TenantBaseModel):
             "academic_year_id": self.academic_year_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "end_date": self.end_date.isoformat() if self.end_date else None,
+            # teacher_id is a teachers.id since migration 095 — the same id
+            # every teacher picker and assignment endpoint already speaks.
             "teacher_id": self.teacher_id,
-            "teacher_name": self.teacher.name if self.teacher else None,
+            "teacher_name": (
+                self.teacher.staff.person.full_name
+                if self.teacher and self.teacher.staff and self.teacher.staff.person
+                else None
+            ),
             "created_at": self.created_at.isoformat(),
         }
 
@@ -179,72 +257,6 @@ class Class(TenantBaseModel):
         label = self.name or (self.grade.name if self.grade else "?")
         year = self.academic_year_ref.name if self.academic_year_ref else None
         return f"<Class {label}-{self.section} ({year})>"
-
-
-class ClassTeacher(TenantBaseModel):
-    """
-    Class-Teacher Junction Table
-
-    Maps teachers to classes they teach. A teacher can be assigned to multiple classes,
-    and a class can have multiple teachers (for different subjects). Scoped by tenant.
-
-    Subject can be specified via:
-    - subject_id: FK to subjects table (preferred)
-    - subject: legacy string (backward compatibility)
-    """
-    __tablename__ = "class_teachers"
-
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    class_id = db.Column(db.String(36), db.ForeignKey("classes.id"), nullable=False)
-    teacher_id = db.Column(db.String(36), db.ForeignKey("teachers.id"), nullable=False)
-    subject = db.Column(db.String(100), nullable=True)  # Legacy: free-text subject name
-    subject_id = db.Column(
-        db.String(36),
-        db.ForeignKey("subjects.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    is_class_teacher = db.Column(db.Boolean, default=False)
-
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-
-    __table_args__ = (
-        db.UniqueConstraint(
-            "class_id", "teacher_id", "tenant_id",
-            name="uq_class_teacher_tenant",
-        ),
-    )
-
-    # Relationships
-    class_ref = db.relationship('Class', backref=db.backref('class_teachers', lazy=True))
-    teacher = db.relationship('Teacher', backref=db.backref('class_assignments', lazy=True))
-    subject_ref = db.relationship("Subject", foreign_keys=[subject_id], lazy=True)
-
-    def save(self):
-        db.session.add(self)
-        db.session.commit()
-
-    def to_dict(self):
-        subject_name = None
-        if self.subject_id and self.subject_ref:
-            subject_name = self.subject_ref.name
-        elif self.subject:
-            subject_name = self.subject
-        return {
-            "id": self.id,
-            "class_id": self.class_id,
-            "teacher_id": self.teacher_id,
-            "teacher_name": self.teacher.user.name if self.teacher and self.teacher.user else None,
-            "teacher_employee_id": self.teacher.employee_id if self.teacher else None,
-            "subject": self.subject,
-            "subject_id": self.subject_id,
-            "subject_name": subject_name,
-            "is_class_teacher": self.is_class_teacher,
-            "created_at": self.created_at.isoformat(),
-        }
-
-    def __repr__(self):
-        return f"<ClassTeacher class={self.class_id} teacher={self.teacher_id}>"
 
 
 class ClassSubject(TenantBaseModel):
@@ -287,7 +299,7 @@ class ClassSubject(TenantBaseModel):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=text("now()"),
-        onupdate=datetime.utcnow,
+        onupdate=utc_now,
     )
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
@@ -323,8 +335,8 @@ class SubjectLoad(TenantBaseModel):
     subject_id = db.Column(db.String(36), db.ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
     weekly_periods = db.Column(db.Integer, nullable=False, default=1)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     class_ref = db.relationship(
         "Class",

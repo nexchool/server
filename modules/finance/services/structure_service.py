@@ -5,7 +5,6 @@ from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -96,6 +95,9 @@ def list_available_classes_for_structure(
         {
             "id": c.id,
             "name": c.name,
+            # `name` is nullable; a picker composing its own label from it
+            # offered a list of "null-A". One rule, on the model.
+            "display_name": c.display_name,
             "section": c.section,
         }
         for c in classes

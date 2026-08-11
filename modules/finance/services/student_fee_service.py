@@ -29,6 +29,7 @@ from modules.students.models import Student
 from modules.auth.models import User
 from modules.classes.models import Class
 from modules.audit.services import log_finance_action
+from core.school_time import school_today
 
 
 def get_finance_summary(
@@ -168,7 +169,7 @@ def student_fee_summary(student_id: str) -> Dict:
             .scalar()
         )
         if earliest_due:
-            days_until_due = (earliest_due - date.today()).days
+            days_until_due = (earliest_due - school_today()).days
 
     return {
         "total_outstanding": total_outstanding,

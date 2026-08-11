@@ -10,6 +10,7 @@ import uuid
 
 from core.database import db
 from core.models import TenantBaseModel
+from core.school_time import utc_now
 
 
 class FeeInvoice(TenantBaseModel):
@@ -57,12 +58,12 @@ class FeeInvoice(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime,
+        db.DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
     student = db.relationship(
@@ -184,7 +185,7 @@ class FeePayment(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     student = db.relationship(
         "Student",
@@ -237,7 +238,7 @@ class FeeReceipt(TenantBaseModel):
         unique=True,
     )
     receipt_number = db.Column(db.String(50), nullable=False, index=True)
-    generated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    generated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     pdf_url = db.Column(db.Text, nullable=True)
 
     def to_dict(self):

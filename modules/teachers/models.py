@@ -1,8 +1,8 @@
 from shared.s3_utils import profile_picture_public_url
 from core.database import db
 from core.models import TenantBaseModel
-from datetime import datetime
 import uuid
+from core.school_time import utc_now
 
 LEAVE_TYPES = ["casual", "sick", "emergency", "unpaid", "other"]
 
@@ -60,42 +60,45 @@ class Teacher(TenantBaseModel):
     """
     __tablename__ = "teachers"
     __table_args__ = (
-        db.UniqueConstraint("employee_id", "tenant_id", name="uq_teachers_employee_id_tenant"),
         db.UniqueConstraint("user_id", "tenant_id", name="uq_teachers_user_id_tenant"),
     )
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # Link to Auth User (One-to-One)
-    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    # The account behind this teacher, when the school has issued one.
+    # Optional (ADR-003): a teacher exists without a login; migration 094.
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
 
-    # Professional Info
-    employee_id = db.Column(db.String(20), nullable=False, index=True)
-    designation = db.Column(db.String(100), nullable=True)        # e.g. "Senior Teacher", "HOD"
-    department_id = db.Column(
+    # Teaching is an academic participation of an employed person (ADR-005).
+    # Employment itself lives on Staff; the employment columns below are read
+    # from there once their last reader moves, and are then dropped.
+    staff_id = db.Column(
         db.String(36),
-        db.ForeignKey("departments.id", ondelete="RESTRICT"),
-        nullable=True,
+        db.ForeignKey("staff.id", ondelete="RESTRICT"),
+        nullable=False,
         index=True,
     )
+    # Declared from this side so People can see that an employment teaches
+    # without importing Academic (ADR-005, and the dependency order).
+    staff = db.relationship(
+        "Staff",
+        foreign_keys=[staff_id],
+        backref=db.backref("teaching_participations", lazy=True),
+    )
+
+    # What this person is qualified to teach. Employment — their employee
+    # number, designation, department, joining date and whether they still work
+    # here — belongs to Staff (ADR-005) and was dropped from here in migration
+    # 090.
     qualification = db.Column(db.String(200), nullable=True)      # e.g. "M.Ed", "Ph.D"
     specialization = db.Column(db.String(200), nullable=True)     # e.g. "Algebra", "Organic Chemistry"
     experience_years = db.Column(db.Integer, nullable=True)
 
-    # Personal Info
-    phone = db.Column(db.String(20), nullable=True)
-    address = db.Column(db.Text, nullable=True)
-    date_of_joining = db.Column(db.Date, nullable=True)
-
-    # Status
-    status = db.Column(db.String(20), nullable=False, default='active')  # active / inactive
-
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     user = db.relationship('User', backref=db.backref('teacher_profile', uselist=False))
-    department_ref = db.relationship("Department", foreign_keys=[department_id])
 
     def save(self):
         db.session.add(self)
@@ -106,30 +109,46 @@ class Teacher(TenantBaseModel):
         db.session.commit()
 
     def to_dict(self, include_subjects: bool = False, include_profile_picture: bool = True):
+        """Serialize for API response.
+
+        The keys are v1's and stay v1's — three clients read them. What changed
+        is where the answers come from: who this person is comes from their
+        Person, and what they do for the school comes from their employment.
+        The columns on this table are the same facts left over from before
+        People existed, and they are dropped once nothing reads them (ADR-005).
+        """
+        employment = self.staff
+        person = employment.person if employment else None
+        department = employment.department if employment else None
+
         data = {
             "id": self.id,
             "user_id": self.user_id,
-            "name": self.user.name if self.user else None,
+            "name": person.full_name if person else None,
             "email": self.user.email if self.user else None,
             "profile_picture": (
                 profile_picture_public_url(self.user.profile_picture_url)
                 if self.user and include_profile_picture
                 else None
             ),
-            "employee_id": self.employee_id,
-            "designation": self.designation,
-            "department_id": self.department_id,
+            "employee_id": employment.employee_number if employment else None,
+            "designation": employment.designation if employment else None,
+            "department_id": employment.department_id if employment else None,
             # Legacy key: the Expo client reads `department` as a plain string
             # (client/modules/teachers/screens/TeacherDetailScreen.tsx). Keep
             # emitting it until the mobile app ships a department picker.
-            "department": self.department_ref.name if self.department_ref else None,
+            "department": department.name if department else None,
             "qualification": self.qualification,
             "specialization": self.specialization,
             "experience_years": self.experience_years,
-            "phone": self.phone,
-            "address": self.address,
-            "date_of_joining": self.date_of_joining.isoformat() if self.date_of_joining else None,
-            "status": self.status,
+            "phone": person.phone_number if person else None,
+            "address": person.address if person else None,
+            "date_of_joining": (
+                employment.joined_on.isoformat()
+                if employment and employment.joined_on
+                else None
+            ),
+            "status": "active" if employment and employment.is_employed else "inactive",
             "created_at": self.created_at.isoformat(),
         }
         if include_subjects:
@@ -160,7 +179,7 @@ class TeacherSubject(TenantBaseModel):
     teacher_id = db.Column(db.String(36), db.ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True)
     subject_id = db.Column(db.String(36), db.ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("subject_expertise", lazy=True, passive_deletes=True))
     subject = db.relationship("Subject", backref=db.backref("assigned_teachers", lazy=True))
@@ -203,7 +222,7 @@ class TeacherAvailability(TenantBaseModel):
     period_number = db.Column(db.Integer, nullable=False)
     available = db.Column(db.Boolean, nullable=False, default=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("availability_slots", lazy=True, passive_deletes=True))
 
@@ -252,8 +271,8 @@ class TeacherLeave(TenantBaseModel):
     working_days = db.Column(db.Float, nullable=True)       # working (non-holiday) days in the leave period
     academic_year = db.Column(db.String(10), nullable=True)  # e.g. "2025-26", for balance tracking
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("leaves", lazy=True, passive_deletes=True))
 
@@ -269,8 +288,20 @@ class TeacherLeave(TenantBaseModel):
         return {
             "id": self.id,
             "teacher_id": self.teacher_id,
-            "teacher_name": self.teacher.user.name if self.teacher and self.teacher.user else None,
-            "teacher_employee_id": self.teacher.employee_id if self.teacher else None,
+            # The name lives on the Person, reached through the employment
+            # (ADR-001/ADR-005). Reading it off the login left every
+            # account-less teacher nameless in the leave queue — and a teacher
+            # need not have a login since migration 094. Register item 15.
+            "teacher_name": (
+                self.teacher.staff.person.full_name
+                if self.teacher and self.teacher.staff and self.teacher.staff.person
+                else None
+            ),
+            "teacher_employee_id": (
+                self.teacher.staff.employee_number
+                if self.teacher and self.teacher.staff
+                else None
+            ),
             "teacher_profile_picture": profile_picture_public_url(self.teacher.user.profile_picture_url)
             if self.teacher and self.teacher.user
             else None,
@@ -303,8 +334,8 @@ class TeacherWorkloadRule(TenantBaseModel):
     max_periods_per_day = db.Column(db.Integer, nullable=False, default=6)
     max_periods_per_week = db.Column(db.Integer, nullable=False, default=30)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     teacher = db.relationship("Teacher", backref=db.backref("workload_rule", uselist=False, lazy=True, passive_deletes=True))
 
@@ -352,8 +383,8 @@ class LeavePolicy(TenantBaseModel):
     allow_negative = db.Column(db.Boolean, nullable=False, default=False)
     requires_reason = db.Column(db.Boolean, nullable=False, default=False)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     def save(self):
         db.session.add(self)
@@ -402,10 +433,10 @@ class TeacherLeaveBalance(TenantBaseModel):
     carried_forward_days = db.Column(db.Integer, nullable=False, default=0)
     notes = db.Column(db.Text, nullable=True)
     last_adjusted_by = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    last_adjusted_at = db.Column(db.DateTime, nullable=True)
+    last_adjusted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     teacher = db.relationship(
         "Teacher", backref=db.backref("leave_balances", lazy=True, passive_deletes=True)

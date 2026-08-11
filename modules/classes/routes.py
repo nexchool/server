@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from flask import g, request, Response
 from modules.classes import classes_bp
 from core.decorators import (
@@ -26,6 +25,7 @@ from core.branch_scope import (
 )
 from . import services
 from .class_schemas import validate_class_payload
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,69 @@ def _parse_int_param(raw, default=None, minimum=None, maximum=None):
     return val
 
 
+@classes_bp.route('/', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('class_management')
+@require_permission(PERM_READ)
+def get_classes():
+    """Filterable, searchable, sortable, paginated list of classes.
+
+    ⚠️ **Kept for the Expo client only** — admin-web reads the `classes` field
+    on GraphQL, and the two must not drift, which is why both go through
+    `services.get_all_classes` and its one query builder.
+
+    `client/modules/classes/services/classService.ts` and
+    `client/modules/finance/services/classService.ts` both call this. Delete
+    it with the Expo release that moves them, not before: it was deleted once
+    on the strength of a grep that searched `client/src`, a directory this
+    repo does not have.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
+    """
+    filters, err = _list_filters_from_request()
+    if err:
+        return err
+
+    result = services.get_all_classes(
+        page=_parse_int_param(request.args.get('page'), default=None, minimum=1),
+        per_page=_parse_int_param(
+            request.args.get('per_page'), default=None, minimum=1,
+            maximum=services.MAX_PER_PAGE,
+        ),
+        **filters,
+    )
+    return success_response(data=result)
+
+
+@classes_bp.route('/<class_id>', methods=['GET'])
+@tenant_required
+@auth_required
+@require_feature('class_management')
+@require_permission(PERM_READ)
+def get_class(class_id):
+    """One class with its students and teachers.
+
+    ⚠️ **Kept for the Expo client only** (`classService.getClassDetail`) —
+    admin-web reads the `class` field on GraphQL. Both read
+    `services.class_detail`, so there is one reader; only the shape differs,
+    and this one exists to keep a shipped app's keys.
+    """
+    detail = services.class_detail(class_id)
+    if detail is None:
+        return not_found_response('Class')
+    return success_response(data=services.legacy_detail_payload(detail))
+
+
 def _list_filters_from_request():
-    """Shared filter/search/sort parsing for the list and export endpoints.
+    """Filter/search/sort parsing for the class list and the CSV export.
 
     Returns (kwargs, error_response). `error_response` is non-None when a param
     failed validation and the caller should return it as-is.
+
+    Branch scope is not checked here: the service refuses a unit outside the
+    caller's branches however it is reached, which is what lets the same rule
+    hold for the GraphQL reads that replaced this endpoint's siblings.
     """
     search_field = request.args.get('search_field', 'all')
     if search_field not in services.SEARCH_FIELDS:
@@ -73,16 +131,9 @@ def _list_filters_from_request():
     if sort_dir not in ('asc', 'desc'):
         return None, validation_error_response({'sort_dir': "must be 'asc' or 'desc'"})
 
-    school_unit_id = request.args.get('school_unit_id') or None
-    # Branch scope: a restricted sub-admin may not query a unit outside their
-    # branches (403). No-op for unrestricted users. The service applies the
-    # branch backstop filter regardless of this param.
-    if school_unit_id:
-        assert_unit_allowed(school_unit_id)
-
     return dict(
         academic_year_id=request.args.get('academic_year_id') or None,
-        school_unit_id=school_unit_id,
+        school_unit_id=request.args.get('school_unit_id') or None,
         programme_id=request.args.get('programme_id') or None,
         grade_id=request.args.get('grade_id') or None,
         department_id=request.args.get('department_id') or None,
@@ -91,65 +142,6 @@ def _list_filters_from_request():
         sort_by=sort_by,
         sort_dir=sort_dir,
     ), None
-
-
-@classes_bp.route('/', methods=['GET'])
-@tenant_required
-@auth_required
-@require_feature('class_management')
-@require_permission(PERM_READ)
-def get_classes():
-    """Filterable, searchable, sortable, paginated list of classes.
-
-    Returns an envelope: { items, total, page, per_page, total_pages }.
-    Omitting `page`/`per_page` returns every matching row (total_pages = 1),
-    which is what the structured class pickers rely on.
-
-    Query params:
-        academic_year_id, school_unit_id, programme_id, grade_id, department_id,
-        search, search_field, sort_by, sort_dir, page, per_page
-    """
-    filters, err = _list_filters_from_request()
-    if err:
-        return err
-
-    result = services.get_all_classes(
-        page=_parse_int_param(request.args.get('page'), default=None, minimum=1),
-        per_page=_parse_int_param(
-            request.args.get('per_page'), default=None, minimum=1,
-            maximum=services.MAX_PER_PAGE,
-        ),
-        **filters,
-    )
-    return success_response(data=result)
-
-
-@classes_bp.route('/stats', methods=['GET'])
-@tenant_required
-@auth_required
-@require_feature('class_management')
-@require_permission(PERM_READ)
-def get_classes_stats():
-    """Aggregate totals for the classes overview header.
-
-    Honours the same structural filters as the list endpoint so the header
-    always describes the list beneath it.
-
-    Query params: academic_year_id, school_unit_id, programme_id, grade_id,
-        department_id
-    """
-    school_unit_id = request.args.get('school_unit_id') or None
-    if school_unit_id:
-        assert_unit_allowed(school_unit_id)
-
-    stats = services.get_classes_stats(
-        academic_year_id=request.args.get('academic_year_id') or None,
-        school_unit_id=school_unit_id,
-        programme_id=request.args.get('programme_id') or None,
-        grade_id=request.args.get('grade_id') or None,
-        department_id=request.args.get('department_id') or None,
-    )
-    return success_response(data=stats)
 
 
 @classes_bp.route('/export', methods=['GET'])
@@ -192,7 +184,7 @@ def export_classes():
     for item in result.get('items', []):
         writer.writerow(['' if item.get(k) is None else item.get(k) for k, _ in columns])
 
-    filename = f"classes_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    filename = f"classes_{utc_now().strftime('%Y%m%d')}.csv"
     return Response(
         buf.getvalue(),
         mimetype='text/csv',
@@ -227,18 +219,38 @@ def create_class():
     if school_unit_id:
         assert_unit_allowed(school_unit_id)
 
+    # What this section is called, when anything calls it anything.
+    #
+    # `name` is a nullable legacy label; a section is named by its grade and
+    # letter, which `Class.display_name` composes. Three ways in, in order of
+    # how much they know:
+    #
+    #   grade_id     — the structured form. The grade record holds the name, so
+    #                  leave `name` empty and let the label be composed.
+    #   grade_level  — the older integer form, which can only say "Grade 7".
+    #   name         — no grade at all, so the caller has to say something.
+    #
+    # Only the last requires a name. Demanding one whenever `grade_level` was
+    # absent — as this did — refused every section the structured form creates,
+    # which is why admin-web could not open one.
     grade_raw = data.get('grade_level')
+    grade_id = data.get('grade_id') or None
     if grade_raw is not None and grade_raw != '':
         try:
             gl = int(grade_raw)
         except (TypeError, ValueError):
             return validation_error_response({'message': 'grade_level must be an integer'})
         display_name = f'Grade {gl}'
+    elif grade_id:
+        gl = None
+        display_name = data.get('name') or ''
     else:
         gl = None
         display_name = data.get('name')
         if not display_name or not str(display_name).strip():
-            return validation_error_response({'message': 'name is required unless grade_level is set'})
+            return validation_error_response(
+                {'message': 'name is required unless the section has a grade'}
+            )
 
     result = services.create_class(
         name=str(display_name).strip(),
@@ -355,20 +367,6 @@ def copy_classes_across_years():
         return error_response("CopyError", result.get("error", "Copy failed"), 400)
     payload = {k: v for k, v in result.items() if k != "success"}
     return success_response(data=payload, message="Classes copied", status_code=201)
-
-
-@classes_bp.route('/<class_id>', methods=['GET'])
-@tenant_required
-@auth_required
-@require_feature('class_management')
-@require_permission(PERM_READ)
-def get_class(class_id):
-    """Get class details with students and teachers."""
-    assert_class_allowed(class_id)  # branch scope (no-op if unrestricted)
-    cls = services.get_class_detail(class_id)
-    if cls:
-        return success_response(data=cls)
-    return not_found_response('Class')
 
 
 @classes_bp.route('/<class_id>', methods=['PUT'])

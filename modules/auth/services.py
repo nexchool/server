@@ -5,7 +5,7 @@ Business logic for authentication, JWT token management, and sessions.
 """
 
 import jwt
-from datetime import datetime, timedelta
+from datetime import timedelta
 import os
 from typing import Optional, Tuple, Dict, List
 
@@ -15,6 +15,7 @@ from .models import User, Session
 from core.database import db
 from core.models import Tenant
 from core.models import TENANT_STATUS_ACTIVE
+from core.school_time import utc_now
 
 
 # JWT Configuration
@@ -43,8 +44,8 @@ def generate_access_token(user: User, access_minutes: Optional[int] = None) -> s
         "email": user.email,
         "is_platform_admin": bool(getattr(user, "is_platform_admin", False)),
         "type": "access",
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(minutes=minutes),
+        "iat": utc_now(),
+        "exp": utc_now() + timedelta(minutes=minutes),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -68,27 +69,11 @@ def generate_refresh_token(user: User) -> str:
     payload = {
         "sub": str(user.id),
         "type": "refresh",
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(days=JWT_REFRESH_DAYS),
+        "iat": utc_now(),
+        "exp": utc_now() + timedelta(days=JWT_REFRESH_DAYS),
     }
 
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-
-def generate_token_pair(user: User) -> Dict[str, str]:
-    """
-    Generate both access and refresh tokens for a user.
-    
-    Args:
-        user: User object
-        
-    Returns:
-        Dictionary with 'access_token' and 'refresh_token'
-    """
-    return {
-        'access_token': generate_access_token(user),
-        'refresh_token': generate_refresh_token(user)
-    }
 
 
 # ==================== JWT Token Validation ====================
@@ -157,14 +142,14 @@ def refresh_access_token(refresh_token: str, request: Request = None) -> Optiona
         revoked=False
     ).first()
 
-    if not session or session.refresh_token_expires_at < datetime.utcnow():
+    if not session or session.refresh_token_expires_at < utc_now():
         return None
 
     # Generate new access token
     new_access_token = generate_access_token(session.user)
 
     # Update session metadata
-    session.last_accessed_at = datetime.utcnow()
+    session.last_accessed_at = utc_now()
     if request:
         session.ip_address = request.remote_addr
         session.user_agent = request.headers.get("User-Agent")
@@ -195,7 +180,7 @@ def create_session(user: User, request: Request = None) -> Session:
         user_id=user.id,
         tenant_id=user.tenant_id,
         refresh_token=refresh_token,
-        refresh_token_expires_at=datetime.utcnow() + timedelta(days=JWT_REFRESH_DAYS)
+        refresh_token_expires_at=utc_now() + timedelta(days=JWT_REFRESH_DAYS)
     )
 
     # Add device metadata if request provided
@@ -206,24 +191,6 @@ def create_session(user: User, request: Request = None) -> Session:
     
     session.save()
     return session
-
-
-def revoke_session(session_id: str) -> bool:
-    """
-    Revoke a specific session.
-    
-    Args:
-        session_id: Session ID to revoke
-        
-    Returns:
-        True if session was revoked, False if not found
-    """
-    session = Session.query.get(session_id)
-    if not session:
-        return False
-    
-    session.revoke()
-    return True
 
 
 def revoke_all_user_sessions(user_id: str) -> int:
@@ -243,27 +210,6 @@ def revoke_all_user_sessions(user_id: str) -> int:
         session.revoke()
         count += 1
     
-    return count
-
-
-def cleanup_expired_sessions():
-    """
-    Clean up expired sessions from the database.
-    Should be run periodically (e.g., via cron job).
-    
-    Returns:
-        Number of sessions deleted
-    """
-    expired_sessions = Session.query.filter(
-        Session.refresh_token_expires_at < datetime.utcnow()
-    ).all()
-    
-    count = len(expired_sessions)
-    
-    for session in expired_sessions:
-        db.session.delete(session)
-    
-    db.session.commit()
     return count
 
 
@@ -360,46 +306,6 @@ def find_users_by_email_password(
         if tenant and tenant.status == TENANT_STATUS_ACTIVE:
             matches.append((u, tenant))
     return matches
-
-
-def login_user(
-    email: str,
-    password: str,
-    request: Request = None,
-    tenant_id: Optional[str] = None,
-) -> Optional[Tuple[User, Dict[str, str]]]:
-    """
-    Complete login flow: authenticate user and create session.
-    
-    Args:
-        email: User email
-        password: Plain text password
-        request: Flask request object
-        tenant_id: Tenant ID (from g.tenant_id in multi-tenant)
-        
-    Returns:
-        Tuple of (User, tokens_dict) if successful, None otherwise
-        tokens_dict contains 'access_token' and 'refresh_token'
-    """
-    # Authenticate user (tenant-scoped)
-    user = authenticate_user(email, password, tenant_id=tenant_id)
-    if not user:
-        return None
-
-    # Update last login
-    user.last_login_at = datetime.utcnow()
-    user.save()
-
-    # Create session and generate tokens
-    access_token = generate_access_token(user)
-    session = create_session(user, request)
-    
-    tokens = {
-        'access_token': access_token,
-        'refresh_token': session.refresh_token
-    }
-    
-    return user, tokens
 
 
 def logout_user(refresh_token: str) -> bool:

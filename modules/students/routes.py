@@ -1,3 +1,5 @@
+from datetime import date as _date
+
 from flask import request, g, Response
 from werkzeug.utils import secure_filename
 from modules.students import students_bp
@@ -28,6 +30,7 @@ from core.branch_scope import (
 from . import services
 from .document_schemas import validate_document_type
 from .student_schemas import validate_student_payload
+from core.school_time import utc_now
 
 # Permissions
 PERM_CREATE = 'student.create'
@@ -68,130 +71,6 @@ def _parse_bool_param(raw):
         return False
     return None
 
-
-def _parse_int_param(raw, default=None, minimum=None, maximum=None):
-    if raw is None or raw == '':
-        return default
-    try:
-        val = int(raw)
-    except (TypeError, ValueError):
-        return default
-    if minimum is not None and val < minimum:
-        val = minimum
-    if maximum is not None and val > maximum:
-        val = maximum
-    return val
-
-
-@students_bp.route('/', methods=['GET'], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature('student_management')
-def list_students():
-    """
-    Paginated, filterable, sortable list of students.
-
-    Returns an envelope: { items, total, page, per_page, total_pages }.
-    """
-    user_id = g.current_user.id
-    from modules.rbac.services import has_permission
-
-    # Filters
-    class_id = request.args.get('class_id')
-    class_ids_param = request.args.get('class_ids')
-    class_ids = (
-        [c.strip() for c in class_ids_param.split(',') if c.strip()]
-        if class_ids_param
-        else None
-    )
-    academic_year_id = request.args.get('academic_year_id')
-    gender = request.args.get('gender')
-    student_status = request.args.get('student_status')
-    is_transport_opted = _parse_bool_param(request.args.get('is_transport_opted'))
-    admission_date_from = request.args.get('admission_date_from')
-    admission_date_to = request.args.get('admission_date_to')
-
-    # Search
-    search = request.args.get('search')
-    search_field = request.args.get('search_field', 'all')
-    if search_field not in services.SEARCH_FIELDS:
-        return validation_error_response({
-            'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
-        })
-
-    # Sorting
-    sort_by = request.args.get('sort_by', 'admission_number')
-    sort_dir = request.args.get('sort_dir', 'asc')
-    if sort_by not in services.SORTABLE_COLUMNS:
-        return validation_error_response({
-            'sort_by': f"must be one of: {', '.join(sorted(services.SORTABLE_COLUMNS))}"
-        })
-    if sort_dir not in ('asc', 'desc'):
-        return validation_error_response({'sort_dir': "must be 'asc' or 'desc'"})
-
-    # Pagination
-    page = _parse_int_param(request.args.get('page'), default=None, minimum=1)
-    per_page = _parse_int_param(
-        request.args.get('per_page'), default=None, minimum=1, maximum=100
-    )
-
-    include_transport_summary = request.args.get('include_transport_summary', '').lower() in _TRUTHY
-
-    # Multi-school filters (resolved through the student's current class).
-    school_unit_id = request.args.get('school_unit_id') or None
-    programme_id = request.args.get('programme_id') or None
-    grade_id = request.args.get('grade_id') or None
-
-    # Branch scope: reject client class/unit filters outside a restricted
-    # sub-admin's branches (403). No-op for unrestricted users. The service
-    # applies the branch backstop filter regardless of these params.
-    if school_unit_id:
-        assert_unit_allowed(school_unit_id)
-    if class_id:
-        assert_class_allowed(class_id)
-    if class_ids:
-        for cid in class_ids:
-            assert_class_allowed(cid)
-
-    common_kwargs = dict(
-        academic_year_id=academic_year_id,
-        search=search,
-        search_field=search_field,
-        gender=gender,
-        student_status=student_status,
-        is_transport_opted=is_transport_opted,
-        admission_date_from=admission_date_from,
-        admission_date_to=admission_date_to,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        page=page,
-        per_page=per_page,
-        include_transport_summary=include_transport_summary,
-        school_unit_id=school_unit_id,
-        programme_id=programme_id,
-        grade_id=grade_id,
-    )
-
-    if has_permission(user_id, PERM_READ_ALL):
-        result = services.list_students(
-            class_id=class_id if not class_ids else None,
-            class_ids=class_ids,
-            **common_kwargs,
-        )
-        return success_response(data=result)
-
-    if has_permission(user_id, PERM_READ_CLASS):
-        from modules.attendance.services import get_teacher_class_ids
-        teacher_class_ids = get_teacher_class_ids(user_id)
-        result = services.list_students(
-            class_id=class_id if not class_ids else None,
-            class_ids=class_ids,
-            _restrict_class_ids=teacher_class_ids,
-            **common_kwargs,
-        )
-        return success_response(data=result)
-
-    return unauthorized_response()
 
 @students_bp.route('/', methods=['POST'], strict_slashes=False)
 @tenant_required
@@ -649,35 +528,218 @@ def bulk_update_student_status():
     )
 
 
-@students_bp.route('/export', methods=['GET'], strict_slashes=False)
+# ---------------------------------------------------------------------------
+# Admission — asking to join, and the school's answer
+# ---------------------------------------------------------------------------
+
+def _parse_occurred_on(raw):
+    """A school records these after the fact — a decision taken last week."""
+    if not raw:
+        return None, None
+    try:
+        return _date.fromisoformat(str(raw)), None
+    except ValueError:
+        return None, validation_error_response(
+            {'occurred_on': 'must be an ISO date (YYYY-MM-DD)'}
+        )
+
+
+@students_bp.route('/admissions', methods=['POST'], strict_slashes=False)
 @tenant_required
 @auth_required
 @require_feature('student_management')
-@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
-def export_students():
-    """
-    Export the filtered student list as CSV. Accepts the same filter/search
-    query params as the list endpoint (pagination is ignored — all matching
-    rows are returned).
-    """
-    import csv
-    from io import StringIO
-    from datetime import datetime
-    from modules.rbac.services import has_permission
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_CREATE)
+def submit_admission_application():
+    """Record an application. Creates no student — approval does that."""
+    from . import admission_service
 
-    user_id = g.current_user.id
+    try:
+        result = admission_service.submit_application(request.get_json() or {})
+    except ValueError:
+        return validation_error_response({'date_of_birth': 'must be an ISO date (YYYY-MM-DD)'})
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application submitted', status_code=201)
 
-    # Reuse the list filters (no pagination -> all rows).
-    class_id = request.args.get('class_id')
+
+@students_bp.route('/admissions', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_MANAGE, PERM_CREATE)
+def list_admission_applications():
+    """Applications, decided ones included — the history the canon asks for."""
+    from . import admission_service
+
+    result = admission_service.list_applications(
+        status=request.args.get('status'),
+        academic_year_id=request.args.get('academic_year_id'),
+        search=request.args.get('search'),
+        page=request.args.get('page', 1, type=int),
+        per_page=request.args.get('per_page', 20, type=int),
+    )
+    return success_response(data=result)
+
+
+@students_bp.route('/admissions/<application_id>', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_MANAGE, PERM_CREATE)
+def get_admission_application(application_id):
+    from . import admission_service
+
+    result = admission_service.get_application(application_id)
+    if not result.get('success'):
+        return not_found_response('Application')
+    return success_response(data=result['application'])
+
+
+@students_bp.route('/admissions/<application_id>/review', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_UPDATE)
+def review_admission_application(application_id):
+    """The school has started checking this application."""
+    from . import admission_service
+
+    result = admission_service.start_review(application_id)
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application under review')
+
+
+@students_bp.route('/admissions/<application_id>/approve', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_setup_complete
+@require_active_subscription
+@require_permission(PERM_CREATE)
+def approve_admission_application(application_id):
+    """Say yes: the applicant becomes a student. Body: { class_id?, reason? }"""
+    from . import admission_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('decided_on'))
+    if err:
+        return err
+
+    result = admission_service.approve(
+        application_id,
+        class_id=(data.get('class_id') or None),
+        reason=(data.get('reason') or None),
+        decided_on=occurred_on,
+        decided_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(
+        data={
+            'application': result['application'],
+            'student': result['student'],
+            'credentials': result.get('credentials'),
+        },
+        message='Applicant admitted',
+        status_code=201,
+    )
+
+
+@students_bp.route('/admissions/<application_id>/reject', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_UPDATE)
+def reject_admission_application(application_id):
+    """The school declines. Body: { reason?, decided_on? }"""
+    from . import admission_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('decided_on'))
+    if err:
+        return err
+
+    result = admission_service.reject(
+        application_id,
+        reason=(data.get('reason') or None),
+        decided_on=occurred_on,
+        decided_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application rejected')
+
+
+@students_bp.route('/admissions/<application_id>/withdraw', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_UPDATE)
+def withdraw_admission_application(application_id):
+    """The family withdraws. Body: { reason?, decided_on? }"""
+    from . import admission_service
+
+    data = request.get_json() or {}
+    occurred_on, err = _parse_occurred_on(data.get('decided_on'))
+    if err:
+        return err
+
+    result = admission_service.withdraw(
+        application_id,
+        reason=(data.get('reason') or None),
+        decided_on=occurred_on,
+        decided_by_user_id=g.current_user.id,
+    )
+    if not result.get('success'):
+        return error_response('AdmissionError', result.get('error', 'Failed'), 400)
+    return success_response(data=result['application'], message='Application withdrawn')
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle — the things that happen to a student, as workflows
+#
+# The acts themselves (withdraw, graduate, re-enroll, transfer to a section,
+# transfer out) are GraphQL mutations — see `modules/students/resolvers.py`.
+# Reading a student's history is still here because nothing reads it over
+# GraphQL yet. A business operation lives on exactly one transport.
+# ---------------------------------------------------------------------------
+
+@students_bp.route('/<student_id>/timeline', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS, PERM_MANAGE)
+def student_timeline_route(student_id):
+    """The student's history, oldest first."""
+    from . import lifecycle_service
+
+    assert_student_allowed(student_id)
+    events = lifecycle_service.timeline_for(student_id)
+    return success_response(data=[event.to_dict() for event in events])
+
+
+def _list_arguments_from_request(*, paginate):
+    """Filter/search/sort parsing shared by the student list and its export.
+
+    Returns (kwargs, error_response); `error_response` is non-None when a
+    param failed validation. Branch scope is asserted here — naming a class or
+    a campus outside a restricted sub-admin's branches is a refusal, not an
+    empty page.
+    """
     class_ids_param = request.args.get('class_ids')
     class_ids = (
         [c.strip() for c in class_ids_param.split(',') if c.strip()]
         if class_ids_param
         else None
     )
+    class_id = request.args.get('class_id')
+
     search_field = request.args.get('search_field', 'all')
     if search_field not in services.SEARCH_FIELDS:
-        return validation_error_response({
+        return None, validation_error_response({
             'search_field': f"must be one of: {', '.join(sorted(services.SEARCH_FIELDS))}"
         })
     sort_by = request.args.get('sort_by', 'admission_number')
@@ -696,7 +758,9 @@ def export_students():
         for cid in class_ids:
             assert_class_allowed(cid)
 
-    common_kwargs = dict(
+    return dict(
+        class_id=class_id if not class_ids else None,
+        class_ids=class_ids,
         academic_year_id=request.args.get('academic_year_id'),
         search=request.args.get('search'),
         search_field=search_field,
@@ -707,29 +771,106 @@ def export_students():
         admission_date_to=request.args.get('admission_date_to'),
         sort_by=sort_by,
         sort_dir=sort_dir,
-        page=None,
-        per_page=None,
+        page=(
+            _parse_int_param(request.args.get('page'), default=None, minimum=1)
+            if paginate else None
+        ),
+        per_page=(
+            _parse_int_param(
+                request.args.get('per_page'), default=None, minimum=1, maximum=100
+            )
+            if paginate else None
+        ),
         school_unit_id=school_unit_id,
         programme_id=request.args.get('programme_id') or None,
         grade_id=request.args.get('grade_id') or None,
-    )
+    ), None
 
+
+def _listed_students(*, paginate):
+    """The students this caller may see, with the filters they asked for.
+
+    A head teacher holds `student.read.all` and reads the school; a class
+    teacher holds `student.read.class` and reads their own classes. Both reach
+    the same list — what differs is how much of it, which is this function's
+    job rather than the guard's.
+
+    Returns (envelope, error_response).
+    """
+    from modules.rbac.services import has_permission
+
+    kwargs, err = _list_arguments_from_request(paginate=paginate)
+    if err:
+        return None, err
+
+    user_id = g.current_user.id
     if has_permission(user_id, PERM_READ_ALL):
-        result = services.list_students(
-            class_id=class_id if not class_ids else None,
-            class_ids=class_ids,
-            **common_kwargs,
-        )
-    elif has_permission(user_id, PERM_READ_CLASS):
+        return services.list_students(**kwargs), None
+    if has_permission(user_id, PERM_READ_CLASS):
         from modules.attendance.services import get_teacher_class_ids
-        result = services.list_students(
-            class_id=class_id if not class_ids else None,
-            class_ids=class_ids,
-            _restrict_class_ids=get_teacher_class_ids(user_id),
-            **common_kwargs,
-        )
-    else:
-        return unauthorized_response()
+
+        return services.list_students(
+            _restrict_class_ids=get_teacher_class_ids(user_id), **kwargs
+        ), None
+    return None, unauthorized_response()
+
+
+def _parse_int_param(raw, default=None, minimum=None, maximum=None):
+    if raw is None or raw == '':
+        return default
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and val < minimum:
+        val = minimum
+    if maximum is not None and val > maximum:
+        val = maximum
+    return val
+
+
+@students_bp.route('/', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
+def list_students():
+    """Paginated, filterable, sortable list of students.
+
+    ⚠️ **Kept for the Expo client only** (`client/modules/students/services/
+    studentService.ts`). admin-web reads the `students` field on GraphQL, and
+    both go through `_student_list_query`, so the two cannot drift.
+
+    This route was deleted in 92ed1cf on the claim that "nothing calls
+    `GET /api/students/` any more" — the mobile app did, and had done all
+    along. Delete it with the Expo release that moves the app, not before.
+
+    Returns an envelope: { items, total, page, per_page, total_pages }.
+    """
+    listed, err = _listed_students(paginate=True)
+    if err:
+        return err
+    return success_response(data=listed)
+
+
+@students_bp.route('/export', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_any_permission(PERM_READ_ALL, PERM_READ_CLASS)
+def export_students():
+    """
+    Export the filtered student list as CSV. Accepts the same filter/search
+    query params as the list endpoint (pagination is ignored — all matching
+    rows are returned).
+    """
+    import csv
+    from io import StringIO
+
+    listed, err = _listed_students(paginate=False)
+    if err:
+        return err
+    result = listed
 
     columns = [
         ('admission_number', 'Admission Number'),
@@ -751,7 +892,7 @@ def export_students():
         writer.writerow(['' if item.get(k) is None else item.get(k) for k, _ in columns])
 
     csv_text = buf.getvalue()
-    filename = f"students_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    filename = f"students_{utc_now().strftime('%Y%m%d')}.csv"
     return Response(
         csv_text,
         mimetype='text/csv',
@@ -1037,6 +1178,9 @@ def update_student(student_id):
     
     result = services.update_student(
         student_id,
+        # The household as the form submitted it, whole. Absent means the
+        # client did not edit the family; an empty list means it emptied it.
+        family=data.get('family'),
         name=data.get('name'),
         roll_number=data.get('roll_number'),
         date_of_birth=data.get('date_of_birth'),

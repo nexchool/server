@@ -36,6 +36,7 @@ from modules.finance.enums import (
     normalize_payment_method,
 )
 from modules.audit.services import log_finance_action
+from core.school_time import school_today
 
 
 def list_recent_payments(limit: int = 10) -> List[Dict[str, Any]]:
@@ -93,7 +94,7 @@ def recalculate_student_fee_status(student_fee: StudentFee) -> None:
 
     total = Decimal(str(student_fee.total_amount or 0))
     paid = Decimal(str(student_fee.paid_amount or 0))
-    is_overdue = student_fee.due_date and student_fee.due_date < date.today()
+    is_overdue = student_fee.due_date and student_fee.due_date < school_today()
 
     if paid >= total and total > 0:
         student_fee.status = StudentFeeStatus.paid.value

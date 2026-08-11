@@ -31,6 +31,7 @@ if str(SERVER_DIR) not in sys.path:
 
 import uuid
 from datetime import datetime
+from core.school_time import utc_now
 
 
 def _make_user(db_session, tenant, *, email, deleted_at=None):
@@ -55,7 +56,7 @@ def test_soft_deleted_user_not_returned_by_get_user_by_email(db_session, tenant)
     from modules.auth.models import User
 
     email = f"deleted-{uuid.uuid4().hex[:8]}@test.school"
-    _make_user(db_session, tenant, email=email, deleted_at=datetime.utcnow())
+    _make_user(db_session, tenant, email=email, deleted_at=utc_now())
 
     found = User.get_user_by_email(email, tenant_id=tenant.id)
     assert found is None
@@ -79,7 +80,7 @@ def test_soft_deleted_user_not_matched_by_cross_tenant_search(db_session, tenant
     from modules.auth.services import find_users_by_email_password
 
     email = f"xdel-{uuid.uuid4().hex[:8]}@test.school"
-    user = _make_user(db_session, tenant, email=email, deleted_at=datetime.utcnow())
+    user = _make_user(db_session, tenant, email=email, deleted_at=utc_now())
     user.set_password("secret123")
     db_session.flush()
 
@@ -98,7 +99,7 @@ def test_include_deleted_returns_soft_deleted_user(db_session, tenant):
     from modules.auth.models import User
 
     email = f"reuse-{uuid.uuid4().hex[:8]}@test.school"
-    _make_user(db_session, tenant, email=email, deleted_at=datetime.utcnow())
+    _make_user(db_session, tenant, email=email, deleted_at=utc_now())
 
     assert User.get_user_by_email(email, tenant_id=tenant.id) is None
     found = User.get_user_by_email(email, tenant_id=tenant.id, include_deleted=True)
@@ -117,7 +118,7 @@ def test_register_with_soft_deleted_email_returns_clean_duplicate(db_session, te
     from modules.auth import routes
 
     email = f"sdreg-{uuid.uuid4().hex[:8]}@test.school"
-    _make_user(db_session, tenant, email=email, deleted_at=datetime.utcnow())
+    _make_user(db_session, tenant, email=email, deleted_at=utc_now())
     db_session.flush()
 
     captured = {}

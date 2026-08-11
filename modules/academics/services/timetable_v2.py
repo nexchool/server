@@ -21,6 +21,7 @@ from modules.classes.models import ClassSubject
 
 from .bell_schedules import get_academic_settings, get_schedule
 from .common import get_class_for_tenant
+from core.school_time import school_today
 
 
 def _serialize_version(v: TimetableVersion) -> Dict[str, Any]:
@@ -987,12 +988,17 @@ def generate_draft(
         v.bell_schedule_id = bell_id
 
     # --- Run the scheduler ------------------------------------------------
+    # The class teacher is asked of Teaching Assignment (ADR-014), not read
+    # off the classes.teacher_id cache — nothing decides from a cache.
+    from modules.academics.teaching_assignment import class_teacher_of
+
+    responsible = class_teacher_of(class_id)
     gen = _run_generator(
         tenant_id,
         class_id,
         bell_schedule_id=bell_id,
         working_days=working_days,
-        class_teacher_user_id=str(cls.teacher_id) if cls.teacher_id else None,
+        class_teacher_id=responsible.teacher_id if responsible else None,
         exclude_class_id=class_id,
         seed=data.get("seed"),
         max_attempts=int(data.get("max_attempts") or 40),
@@ -1061,7 +1067,7 @@ def get_today_schedule(
     """Return the active timetable for ``class_id`` on ``on_date`` with
     teacher availability overlayed onto each entry.
 
-    Defaults to today (``date.today()``).  If the day is not a working
+    Defaults to today at the school (``school_today()``).  If the day is not a working
     day or no active timetable exists, ``items`` is an empty list.
     """
     from .timetable_generator import overlay_daily_schedule
@@ -1071,7 +1077,7 @@ def get_today_schedule(
         return {"success": False, "error": "Class not found"}
     assert_class_allowed(class_id)  # branch scope: in-branch class only (no-op if unrestricted)
 
-    d = on_date or date.today()
+    d = on_date or school_today()
     # ISO 1=Mon … 7=Sun (matches _working_weekdays / TimetableEntry.day_of_week)
     iso_day = d.isoweekday()
 

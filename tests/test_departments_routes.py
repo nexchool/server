@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from tests.conftest import employ_for, grant_profile_to
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -37,7 +38,7 @@ def auth_headers(db_session, tenant):
     """
     from modules.auth.models import User
     from modules.auth.services import generate_access_token
-    from modules.rbac.models import Permission, Role, UserRole
+    from modules.rbac.models import Permission, Role
     from modules.rbac.role_seeder import seed_roles_for_tenant
 
     for name, description in (
@@ -61,10 +62,7 @@ def auth_headers(db_session, tenant):
     user.set_password("Password123")
     db_session.add(user)
     db_session.flush()
-    db_session.add(
-        UserRole(tenant_id=tenant.id, user_id=user.id, role_id=admin_role.id)
-    )
-    db_session.flush()
+    grant_profile_to(user, admin_role.id)
 
     token = generate_access_token(user)
     return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant.id}
@@ -81,7 +79,7 @@ def read_only_headers(db_session, tenant):
     """
     from modules.auth.models import User
     from modules.auth.services import generate_access_token
-    from modules.rbac.models import Permission, Role, RolePermission, UserRole
+    from modules.rbac.models import Permission, Role, RolePermission
 
     perm = Permission.query.filter_by(name="department.read").first()
     if not perm:
@@ -111,8 +109,7 @@ def read_only_headers(db_session, tenant):
     user.set_password("Password123")
     db_session.add(user)
     db_session.flush()
-    db_session.add(UserRole(tenant_id=tenant.id, user_id=user.id, role_id=role.id))
-    db_session.flush()
+    grant_profile_to(user, role.id)
 
     token = generate_access_token(user)
     return {"Authorization": f"Bearer {token}", "X-Tenant-ID": tenant.id}
@@ -208,8 +205,7 @@ def test_delete_blocked_while_teacher_assigned_returns_409(client, db_session, a
     teacher = Teacher(
         tenant_id=tenant.id,
         user_id=teacher_user.id,
-        employee_id=f"T-{uuid.uuid4().hex[:6]}",
-        department_id=created["id"],
+        staff_id=employ_for(teacher_user, department_id=created["id"], employee_number=f"T-{uuid.uuid4().hex[:6]}").id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -277,19 +273,22 @@ def test_delete_with_read_only_permission_returns_403(client, auth_headers, read
     assert response.status_code == 403
 
 
-def test_list_returns_403_when_class_management_feature_disabled(client, auth_headers, tenant):
-    # No existing route test in this codebase exercises require_feature at
-    # the HTTP layer (checked: no sibling module's route tests assert a
-    # feature-disabled 403), so this test goes straight to the fixture the
-    # decorator itself reads — Tenant.feature_flags — rather than inventing
-    # a borrowed pattern. See core/feature_flags.py: missing keys default to
-    # enabled, so flipping the key explicitly is the only way to disable it.
+def test_departments_are_not_something_a_school_can_be_sold_without(
+    client, auth_headers, tenant
+):
+    """This used to assert the opposite, and the opposite was the bug.
+
+    `class_management` was a switch a super-admin could throw, and throwing it
+    took away departments, grades, programmes, mediums, subjects and branches —
+    everything a class is made of. That is not a module a school declines; it
+    is the school. It is core now, and stays reachable however the flag map is
+    written.
+    """
     tenant.feature_flags = {"class_management": False}
 
     response = client.get("/api/departments", headers=auth_headers)
 
-    assert response.status_code == 403
-    assert response.get_json()["error"] == "FeatureDisabled"
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

@@ -20,13 +20,24 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.database import db
 from core.models import TenantUsage
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
 
-# Mirror modules.platform.services.calculate_tenant_billing so
-# active_students_count agrees with what the bill is computed against.
-INACTIVE_STUDENT_STATUSES = ("inactive", "withdrawn", "graduated", "transferred")
+# Who the school is NOT billed for. The single definition — the billing
+# calculation in modules/platform/services.py imports this rather than
+# keeping its own copy, so the usage count and the invoice cannot disagree.
+INACTIVE_STUDENT_STATUSES = (
+    "inactive",
+    "withdrawn",
+    "graduated",
+    "transferred",
+    # A student who dropped out is not being taught, so the school is not
+    # billed for them. They were counted as active until now because this
+    # list was written before `dropped_out` existed.
+    "dropped_out",
+)
 
 
 def _count_active_students(tenant_id: str) -> int:
@@ -67,12 +78,12 @@ def recompute_tenant_usage(tenant_id: str, *, commit: bool = True) -> Optional[i
                 id=str(uuid.uuid4()),
                 tenant_id=tenant_id,
                 active_students_count=count,
-                last_updated_at=datetime.utcnow(),
+                last_updated_at=utc_now(),
             )
             db.session.add(row)
         else:
             row.active_students_count = count
-            row.last_updated_at = datetime.utcnow()
+            row.last_updated_at = utc_now()
 
         if commit:
             db.session.commit()

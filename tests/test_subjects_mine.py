@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from tests.conftest import employ_for, grant_profile_to
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 if str(SERVER_DIR) not in sys.path:
@@ -48,7 +49,7 @@ def _make_user(db_session, tenant, *, name: str):
 
 def _grant_permission(db_session, tenant, user, permission_name: str):
     """Create a role with `permission_name` and assign it to `user`."""
-    from modules.rbac.models import Role, Permission, RolePermission, UserRole
+    from modules.rbac.models import Role, Permission, RolePermission
 
     perm = Permission.query.filter_by(name=permission_name).first()
     if perm is None:
@@ -64,10 +65,7 @@ def _grant_permission(db_session, tenant, user, permission_name: str):
             id=_nid("rp-"), tenant_id=tenant.id, role_id=role.id, permission_id=perm.id
         )
     )
-    db_session.add(
-        UserRole(id=_nid("ur-"), tenant_id=tenant.id, user_id=user.id, role_id=role.id)
-    )
-    db_session.flush()
+    grant_profile_to(user, role.id)
 
 
 def _make_academic_year(db_session, tenant):
@@ -141,7 +139,7 @@ def _make_teacher(db_session, tenant, user):
         id=_nid("t-"),
         tenant_id=tenant.id,
         user_id=user.id,
-        employee_id=f"EMP-{uuid.uuid4().hex[:6]}",
+        staff_id=employ_for(user, employee_number=f"EMP-{uuid.uuid4().hex[:6]}").id,
     )
     db_session.add(t)
     db_session.flush()
@@ -241,7 +239,10 @@ def test_teacher_sees_only_taught_subjects(db_session, tenant):
     classes = result[0]["classes"]
     assert len(classes) == 1
     assert classes[0]["class_id"] == klass.id
-    assert classes[0]["class_name"] == "Grade 9"
+    # The section is part of the name now: a teacher taking a subject in both
+    # 9-A and 9-B saw two rows that both said "Grade 9". One rule for what a
+    # class is called lives on `Class.display_name`.
+    assert classes[0]["class_name"] == "Grade 9 A"
     teachers = classes[0]["teachers"]
     assert any(t["teacher_id"] == teacher.id for t in teachers)
     assert teachers[0]["teacher_name"] == "Tina Teacher"
@@ -303,7 +304,7 @@ def test_no_cross_tenant_leakage(db_session, tenant):
     other = Tenant(
         id=_nid("t-"),
         name="Other School",
-        subdomain=f"other-{uuid.uuid4().hex[:6]}",
+        subdomain=f"other-{uuid.uuid4().hex}",
         status=TENANT_STATUS_ACTIVE,
         billing_cycle=BILLING_CYCLE_YEARLY,
     )

@@ -96,7 +96,11 @@ class Config:
     CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] if _cors_env else ['*']
     CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
     CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain']
-    CORS_EXPOSE_HEADERS = ['X-New-Access-Token']
+    # A browser can only read response headers named here. X-Feature-Stamp has
+    # to be on the list or admin-web, served from a different origin than the
+    # API in production, silently never notices a module being switched off —
+    # while working fine locally behind nginx.
+    CORS_EXPOSE_HEADERS = ['X-New-Access-Token', 'X-Feature-Stamp']
     CORS_SUPPORTS_CREDENTIALS = True
 
     # Rate limiting (storage URL optional; default in-memory)
@@ -106,6 +110,16 @@ class Config:
     # Pagination
     DEFAULT_PAGE_SIZE = 20
     MAX_PAGE_SIZE = 100
+
+    # GraphQL — one endpoint accepting client-composed queries, so the limits
+    # below bound the work a single request can ask for. Introspection and the
+    # IDE are development conveniences; ProductionConfig turns both off.
+    GRAPHQL_IDE_ENABLED = _get_bool_env('GRAPHQL_IDE_ENABLED', True)
+    GRAPHQL_INTROSPECTION_ENABLED = _get_bool_env('GRAPHQL_INTROSPECTION_ENABLED', True)
+    GRAPHQL_MAX_DEPTH = int(os.getenv('GRAPHQL_MAX_DEPTH', 12))
+    GRAPHQL_MAX_TOKENS = int(os.getenv('GRAPHQL_MAX_TOKENS', 2000))
+    GRAPHQL_MAX_ALIASES = int(os.getenv('GRAPHQL_MAX_ALIASES', 25))
+    GRAPHQL_RATE_LIMIT = os.getenv('GRAPHQL_RATE_LIMIT', '120 per minute')
 
     # Max upload size (bytes). Bounds streamed uploads (announcement attachments, docs)
     # so a single request can't grow unbounded. Keep in sync with nginx client_max_body_size.
@@ -154,6 +168,10 @@ class ProductionConfig(Config):
 
     DEBUG = False
     TESTING = False
+
+    # The schema is not public documentation, and the IDE has no place in prod.
+    GRAPHQL_IDE_ENABLED = _get_bool_env('GRAPHQL_IDE_ENABLED', False)
+    GRAPHQL_INTROSPECTION_ENABLED = _get_bool_env('GRAPHQL_INTROSPECTION_ENABLED', False)
 
     # Production must have these set
     BACKEND_URL = os.getenv('BACKEND_URL')  # Must be set in production

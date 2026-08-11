@@ -33,6 +33,8 @@ from .models import (
 from modules.subjects.models import Subject
 from modules.academics.calendar.holiday_services import get_working_days_info_for_range
 from modules.notifications.realtime_pub import InboxRealtimeEvent, publish_inbox_event
+from core.school_time import utc_now
+from core.school_time import school_today
 
 _log = logging.getLogger(__name__)
 
@@ -56,7 +58,7 @@ def _notify_leave_managers(
             create_recipients,
             send_notification as enqueue_dispatch,
         )
-        from modules.notifications.enums import NotificationChannel, NotificationType
+        from modules.notifications.enums import NotificationChannel
 
         user_ids = get_leave_manager_user_ids(tenant_id)
         if not user_ids:
@@ -295,7 +297,7 @@ def get_current_academic_year() -> str:
     Return current academic year string using April–March cycle.
     e.g. Apr 2025 – Mar 2026 → "2025-26"
     """
-    today = date.today()
+    today = school_today()
     if today.month >= 4:
         return f"{today.year}-{str(today.year + 1)[2:]}"
     return f"{today.year - 1}-{str(today.year)[2:]}"
@@ -481,7 +483,7 @@ def adjust_teacher_leave_balance(
         if notes:
             balance.notes = notes
         balance.last_adjusted_by = adjusted_by_user_id
-        balance.last_adjusted_at = datetime.utcnow()
+        balance.last_adjusted_at = utc_now()
 
         policy = _get_or_create_policy(tenant_id, leave_type)
         db.session.commit()
@@ -527,7 +529,7 @@ def create_leave(
         if ed < sd:
             return {"success": False, "error": "end_date must be >= start_date"}
 
-        if sd < date.today():
+        if sd < school_today():
             return {"success": False, "error": "Cannot apply for leave with a past start date"}
 
         # -- Leave type validation --
@@ -646,9 +648,24 @@ def create_leave(
 
 
 def list_leaves(teacher_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
-    """List leave requests. Optionally filter by teacher or status."""
+    """List leave requests. Optionally filter by teacher or status.
+
+    The eager loads follow what `TeacherLeave.to_dict` reads: the requester's
+    name through Staff → Person, and their login only for the photograph.
+    Without them a school's leave queue costs three queries per row.
+    """
+    from sqlalchemy.orm import joinedload
+
+    from modules.people.employment import Staff
+    from modules.teachers.models import Teacher
+
     tenant_id = get_tenant_id()
-    query = TeacherLeave.query.filter_by(tenant_id=tenant_id)
+    query = TeacherLeave.query.options(
+        joinedload(TeacherLeave.teacher)
+        .joinedload(Teacher.staff)
+        .joinedload(Staff.person),
+        joinedload(TeacherLeave.teacher).joinedload(Teacher.user),
+    ).filter_by(tenant_id=tenant_id)
     if teacher_id:
         query = query.filter_by(teacher_id=teacher_id)
     if status:

@@ -140,12 +140,31 @@ SUBADMIN_MODULES: Dict[str, dict] = {
         },
     },
     # ---- Coarse: read + manage (manage intentionally includes delete) ----
+    # A class sits in a campus, on a programme, at a grade — so reading or
+    # managing classes means reading those three. Without them the classes
+    # screen renders with every filter empty, and the add-a-section form opens
+    # with an empty campus, programme and grade and can never be completed:
+    # authorization correct, screen a dead end.
+    #
+    # Levels here are absolute, not additive (see `students` above, which
+    # repeats its view permission under edit), so both carry the structural
+    # reads.
     "classes": {
         "label": "Classes",
         "levels": [LEVEL_VIEW, LEVEL_MANAGE],
         "perms": {
-            LEVEL_VIEW: ["class.read"],
-            LEVEL_MANAGE: ["class.manage"],
+            LEVEL_VIEW: [
+                "class.read",
+                "school_unit.read",
+                "programme.read",
+                "grade.read",
+            ],
+            LEVEL_MANAGE: [
+                "class.manage",
+                "school_unit.read",
+                "programme.read",
+                "grade.read",
+            ],
         },
         "toggles": {},
     },

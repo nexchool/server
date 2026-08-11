@@ -5,8 +5,8 @@ from sqlalchemy import text
 
 from core.database import db
 from core.models import TenantBaseModel
-from datetime import datetime
 import uuid
+from core.school_time import utc_now
 
 
 # Document type labels for API responses
@@ -64,9 +64,9 @@ class StudentDocument(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = db.Column(
-        db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        db.DateTime, nullable=False, default=utc_now, onupdate=utc_now
     )
 
     student = db.relationship(
@@ -117,9 +117,26 @@ class Student(TenantBaseModel):
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # Link to Auth User (One-to-One)
-    # The User record handles email, password, name, profile pic
-    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    # The account behind this student, when the school has issued one.
+    # Optional (ADR-003): a student exists without a login; migration 094.
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
+
+    # The human this student relationship belongs to (ADR-001). Nullable until
+    # the People backfill has run; the identity columns below move to Person and
+    # are dropped in a later cleanup migration.
+    person_id = db.Column(
+        db.String(36),
+        db.ForeignKey("persons.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    # Declared from this side so People can see that a person studies here
+    # without importing this module.
+    person = db.relationship(
+        "Person",
+        foreign_keys=[person_id],
+        backref=db.backref("student_relationships", lazy=True),
+    )
 
     # Academic Info
     admission_number = db.Column(db.String(20), nullable=False, index=True)
@@ -135,11 +152,9 @@ class Student(TenantBaseModel):
     # Current Class Assignment
     class_id = db.Column(db.String(36), db.ForeignKey('classes.id'), nullable=True)
     
-    # Personal Info
-    date_of_birth = db.Column(db.Date, nullable=True)
-    gender = db.Column(db.String(10), nullable=True)
-    phone = db.Column(db.String(20), nullable=True)
-    address = db.Column(db.Text, nullable=True)
+    # Personal identity — date of birth, gender, phone, address and Aadhaar —
+    # belongs to the Person (ADR-001) and was dropped from here in migration
+    # 090. The family columns below stay until the household read moves.
 
     # ---------------------------------------------------------------------
     # Extended profile fields (all optional; backward compatible)
@@ -171,7 +186,6 @@ class Student(TenantBaseModel):
     guardian_aadhar_number = db.Column(db.String(20), nullable=True)
 
     # Identity / Demographic
-    aadhar_number = db.Column(db.String(20), nullable=True)
     apaar_id = db.Column(db.String(50), nullable=True)
     emis_number = db.Column(db.String(50), nullable=True)
     udise_student_id = db.Column(db.String(50), nullable=True)
@@ -228,8 +242,8 @@ class Student(TenantBaseModel):
     guardian_phone = db.Column(db.String(20), nullable=True)
     guardian_email = db.Column(db.String(120), nullable=True)
     
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     # Access user fields via student.user.email etc.
@@ -254,18 +268,31 @@ class Student(TenantBaseModel):
     def _class_display_name(self):
         """Class label for payloads. Class.name is a legacy nullable display
         column — grade-based classes (post multi-school migration) carry their
-        label on grade.name, so coalesce before joining with the section."""
+        label on grade.name, so coalesce before joining with the section.
+
+        **The hyphen is load-bearing — do not switch this to
+        `Class.display_name`.** That property joins with a space ("3 A"), and
+        the shipped Expo student list takes this string apart again:
+        `splitClassName` in `client/modules/students/components/StudentListItem.tsx`
+        reads up to the last "-" as the grade and the rest as the section. With a
+        space it finds no separator, and the section disappears from every row.
+
+        So the same student is labelled "3 A" on their dashboard and "3-A" on
+        their record, and that stays until the mobile client stops parsing it —
+        the same gate as debts 25, 31 and 2b. Registered as debt 41.
+        """
         c = self.current_class
         if not c:
             return None
         label = c.name or (c.grade.name if c.grade else None)
         return "-".join(p for p in (label, c.section) if p) or None
 
-    def to_dict(self, include_profile_picture: bool = True):
+    def to_dict(self, include_profile_picture: bool = True,
+                include_family: bool = True):
         return {
             "id": self.id,
             "user_id": self.user_id,
-            "name": self.user.name if self.user else None,
+            "name": self.person.full_name if self.person else None,
             "email": self.user.email if self.user else None,
             # `profile_picture` resolves to a presigned S3 URL, which is
             # expensive to generate in bulk. Skip it on list endpoints.
@@ -286,10 +313,19 @@ class Student(TenantBaseModel):
                 if self.current_class and self.current_class.programme
                 else None
             ),
-            "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
-            "gender": self.gender,
-            "phone": self.phone,
-            "address": self.address,
+            # Who this student is comes from their Person (ADR-001). The
+            # columns below are the same facts left over from before People
+            # existed, and are dropped once nothing reads them. The family
+            # fields further down still read these columns — see the migration
+            # debt register for why they are cut over with the client, not here.
+            "date_of_birth": (
+                self.person.date_of_birth.isoformat()
+                if self.person and self.person.date_of_birth
+                else None
+            ),
+            "gender": self.person.gender if self.person else None,
+            "phone": self.person.phone_number if self.person else None,
+            "address": self.person.address if self.person else None,
             "guardian_name": self.guardian_name,
             "guardian_relationship": self.guardian_relationship,
             "guardian_phone": self.guardian_phone,
@@ -319,7 +355,7 @@ class Student(TenantBaseModel):
             "guardian_occupation": self.guardian_occupation,
             "guardian_aadhar_number": self.guardian_aadhar_number,
 
-            "aadhar_number": self.aadhar_number,
+            "aadhar_number": self.person.aadhaar_number if self.person else None,
             "apaar_id": self.apaar_id,
             "emis_number": self.emis_number,
             "udise_student_id": self.udise_student_id,
@@ -359,8 +395,33 @@ class Student(TenantBaseModel):
             "student_status": self.student_status,
             "academic_result": self.academic_result,
             "is_transport_opted": bool(self.is_transport_opted),
+            # The household as it actually is (ADR-002): every responsible
+            # adult, each with their relationship, and which one the school
+            # calls. The flat father_/mother_/guardian_ keys above say the same
+            # thing in v1's shape and stay until the mobile client moves.
+            "family": self._household() if include_family else None,
             "created_at": self.created_at.isoformat()
         }
+
+    def _household(self):
+        """The household, read through relationships the caller must have
+        loaded. A list endpoint asks for this per row otherwise, which is four
+        queries a student — see the guard in test_students_list_queries.
+        """
+        from modules.people.relationships import household_of
+
+        return [
+            {
+                "person_id": member.person_id,
+                "name": member.person.full_name,
+                "relationship": member.relationship,
+                "phone": member.person.phone_number,
+                "email": member.person.email,
+                "occupation": member.person.occupation,
+                "is_primary_contact": member.is_primary_contact,
+            }
+            for member in household_of(self.person)
+        ]
 
     def __repr__(self):
         return f"<Student {self.admission_number}>"
@@ -393,7 +454,7 @@ class StudentPromotionBatch(TenantBaseModel):
         nullable=True,
         index=True,
     )
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
 
     def to_dict(self):
         return {
@@ -405,3 +466,215 @@ class StudentPromotionBatch(TenantBaseModel):
             "created_by_user_id": self.created_by_user_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# Business events in a student's life, in the canon's vocabulary
+# (docs/architecture/business-events.md). Two domains write these: Student
+# Management owns admission, withdrawal and return; Academic owns placement,
+# transfer, promotion and graduation. The timeline is one list because a
+# school reads a student's history as one story.
+EVENT_ADMITTED = "StudentAdmitted"
+EVENT_ENROLLED = "AcademicEnrollmentCreated"
+EVENT_SECTION_TRANSFERRED = "SectionTransferred"
+EVENT_PROMOTED = "PromotionCompleted"
+EVENT_WITHDRAWN = "StudentWithdrawn"
+EVENT_RE_ENROLLED = "StudentReEnrolled"
+EVENT_TRANSFERRED_OUT = "StudentTransferredOut"
+EVENT_GRADUATED = "StudentGraduated"
+
+
+class StudentLifecycleEvent(TenantBaseModel):
+    """A milestone in one student's time at the school.
+
+    Written because the records cannot answer these questions on their own.
+    Enrollments say where a student sat and when it ended; they do not say
+    whether the year ended in a graduation, a withdrawal or a family moving
+    town — and until now the only trace of a status change was that
+    `students.updated_at` moved.
+
+    The alternative was a column per outcome on `students` — withdrawn_on,
+    withdrawal_reason, graduated_on — which is how a table stops describing
+    a student and starts describing a workflow.
+
+    Rows are never edited. A correction is a new event; the school's history
+    is what happened, including what was recorded and later reconsidered.
+    """
+
+    __tablename__ = "student_lifecycle_events"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    student_id = db.Column(
+        db.String(36),
+        db.ForeignKey("students.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event = db.Column(db.String(40), nullable=False)
+    # The date the school would put on it, which is not always today: a
+    # withdrawal is often recorded after the family has already gone.
+    occurred_on = db.Column(db.Date, nullable=False)
+    academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    reason = db.Column(db.Text, nullable=True)
+    # Whatever the workflow knows that a later reader would want: the class
+    # left, the grade completed, the batch a promotion belonged to.
+    details = db.Column(db.JSON, nullable=True)
+    recorded_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "event": self.event,
+            "occurred_on": self.occurred_on.isoformat() if self.occurred_on else None,
+            "academic_year_id": self.academic_year_id,
+            "reason": self.reason,
+            "details": self.details,
+            "recorded_by_user_id": self.recorded_by_user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<StudentLifecycleEvent {self.event} student={self.student_id}>"
+
+
+# Where an application can be in a school's process. `submitted` and
+# `under_review` precede any decision; the last three are decisions, and
+# `rejected` / `withdrawn` differ by who made it — the school declines, a
+# family changes its mind. Both keep the record.
+ADMISSION_SUBMITTED = "submitted"
+ADMISSION_UNDER_REVIEW = "under_review"
+ADMISSION_APPROVED = "approved"
+ADMISSION_REJECTED = "rejected"
+ADMISSION_WITHDRAWN = "withdrawn"
+
+ADMISSION_STATUSES = (
+    ADMISSION_SUBMITTED,
+    ADMISSION_UNDER_REVIEW,
+    ADMISSION_APPROVED,
+    ADMISSION_REJECTED,
+    ADMISSION_WITHDRAWN,
+)
+ADMISSION_OPEN_STATUSES = frozenset({ADMISSION_SUBMITTED, ADMISSION_UNDER_REVIEW})
+
+
+class AdmissionApplication(TenantBaseModel):
+    """Someone asking to join the school, before they are a student of it.
+
+    A school turns away more applicants than it admits, and it has to be able
+    to say later who applied, what was decided and why — including for the
+    child who never arrived. That is the whole reason this is not a Student
+    row with a `prospective` status: an application that is rejected must
+    leave a record, and a Student relationship that never existed must not.
+
+    Approval is what creates the student (`admission_service.approve`). Until
+    then no Person, no admission number, no place in a class — an applicant
+    is not half a student.
+    """
+
+    __tablename__ = "admission_applications"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Who is applying. Held as plain values, not a Person: creating one for
+    # every enquiry would fill the school's records with people who never
+    # joined, and ADR-010 is clear that a duplicate person costs more to
+    # undo than it saves.
+    applicant_name = db.Column(db.String(120), nullable=False)
+    date_of_birth = db.Column(db.Date, nullable=True)
+    gender = db.Column(db.String(20), nullable=True)
+    phone = db.Column(db.String(20), nullable=True)
+    email = db.Column(db.String(120), nullable=True)
+    address = db.Column(db.Text, nullable=True)
+
+    # The adult the school will deal with. Required because admission cannot
+    # complete without them, and an application that could never be approved
+    # is not worth accepting.
+    guardian_name = db.Column(db.String(120), nullable=False)
+    guardian_relationship = db.Column(db.String(50), nullable=False)
+    guardian_phone = db.Column(db.String(20), nullable=False)
+    guardian_email = db.Column(db.String(120), nullable=True)
+
+    # What they are applying for. The class is a wish at this stage; where the
+    # student actually sits is Academic Enrollment's decision, after approval.
+    academic_year_id = db.Column(
+        db.String(36),
+        db.ForeignKey("academic_years.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    desired_class_id = db.Column(
+        db.String(36),
+        db.ForeignKey("classes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    status = db.Column(
+        db.String(20), nullable=False, default=ADMISSION_SUBMITTED, index=True
+    )
+    submitted_on = db.Column(db.Date, nullable=False)
+    decided_on = db.Column(db.Date, nullable=True)
+    # Why it ended the way it did — the sentence a school would give a family.
+    decision_reason = db.Column(db.Text, nullable=True)
+    decided_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    notes = db.Column(db.Text, nullable=True)
+
+    # Set only on approval: the student this application became.
+    student_id = db.Column(
+        db.String(36),
+        db.ForeignKey("students.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    @property
+    def is_open(self) -> bool:
+        """Still awaiting a decision."""
+        return self.status in ADMISSION_OPEN_STATUSES
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "applicant_name": self.applicant_name,
+            "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
+            "gender": self.gender,
+            "phone": self.phone,
+            "email": self.email,
+            "address": self.address,
+            "guardian_name": self.guardian_name,
+            "guardian_relationship": self.guardian_relationship,
+            "guardian_phone": self.guardian_phone,
+            "guardian_email": self.guardian_email,
+            "academic_year_id": self.academic_year_id,
+            "desired_class_id": self.desired_class_id,
+            "status": self.status,
+            "is_open": self.is_open,
+            "submitted_on": self.submitted_on.isoformat() if self.submitted_on else None,
+            "decided_on": self.decided_on.isoformat() if self.decided_on else None,
+            "decision_reason": self.decision_reason,
+            "decided_by_user_id": self.decided_by_user_id,
+            "notes": self.notes,
+            "student_id": self.student_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f"<AdmissionApplication {self.applicant_name} {self.status}>"

@@ -16,6 +16,8 @@ from __future__ import annotations
 import uuid
 
 import pytest
+
+from tests.conftest import employ_for, grant_profile_to
 from flask import g
 
 
@@ -57,9 +59,9 @@ def class_with_teacher(db_session, tenant, academic_year):
     Returns an object with attributes:
         .id, .class_teacher_id (teachers.id), .teacher_row (Teacher row)
 
-    NOTE: the convenience pointer is `.teacher_row`, NOT `.teacher` — `Class.teacher`
-    is a real ORM relationship to User (backref `assigned_classes`), so assigning a
-    Teacher to it breaks the backref cascade.
+    NOTE: the convenience pointer is `.teacher_row`, NOT `.teacher` —
+    `Class.teacher` is the real ORM relationship (to Teacher, since
+    migration 095).
     """
     from modules.auth.models import User
     from modules.teachers.models import Teacher
@@ -76,11 +78,12 @@ def class_with_teacher(db_session, tenant, academic_year):
     db_session.add(teacher_user)
     db_session.flush()
 
+    staff = employ_for(teacher_user)
     teacher = Teacher(
         id=_new_id("teacher-"),
         tenant_id=tenant.id,
         user_id=teacher_user.id,
-        employee_id=f"T-{uuid.uuid4().hex[:6]}",
+        staff_id=staff.id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -90,7 +93,7 @@ def class_with_teacher(db_session, tenant, academic_year):
         tenant_id=tenant.id,
         section="A",
         academic_year_id=academic_year.id,
-        teacher_id=teacher_user.id,  # legacy pointer; resolves via Teacher.user_id
+        teacher_id=teacher.id,  # the cache names the teacher (migration 095)
     )
     db_session.add(cls)
     db_session.flush()
@@ -139,11 +142,12 @@ def other_teacher_user(db_session, tenant):
     )
     db_session.add(user)
     db_session.flush()
+    staff = employ_for(user)
     teacher = Teacher(
         id=_new_id("teacher-o-"),
         tenant_id=tenant.id,
         user_id=user.id,
-        employee_id=f"OT-{uuid.uuid4().hex[:6]}",
+        staff_id=staff.id,
     )
     db_session.add(teacher)
     db_session.flush()
@@ -154,7 +158,7 @@ def other_teacher_user(db_session, tenant):
 def admin_user(db_session, tenant):
     """A user with student.leave.approve.all permission (and read.all for completeness)."""
     from modules.auth.models import User
-    from modules.rbac.models import Role, Permission, RolePermission, UserRole
+    from modules.rbac.models import Role, Permission, RolePermission
 
     user = User(
         id=_new_id("u-a-"),
@@ -198,15 +202,9 @@ def admin_user(db_session, tenant):
             permission_id=perm.id,
         )
     )
-    db_session.add(
-        UserRole(
-            id=_new_id("ur-"),
-            tenant_id=tenant.id,
-            user_id=user.id,
-            role_id=role.id,
-        )
-    )
     db_session.flush()
+
+    grant_profile_to(user, role.id)
     return user
 
 
