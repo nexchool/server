@@ -28,6 +28,7 @@ from core.branch_scope import (
     get_allowed_unit_ids,
 )
 from . import services
+from modules.documents import rest as document_rest
 from .student_schemas import validate_student_payload
 from core.school_time import utc_now
 
@@ -1107,3 +1108,66 @@ def delete_student(student_id):
     if result['success']:
         return success_response(message='Student deleted successfully')
     return error_response('DeleteError', result['error'], 400)
+
+# ---------------------------------------------------------------------------
+# Documents — bytes only. Listing, the type catalogue and deletion are GraphQL
+# (ADR-015); what is left here is a multipart upload and an authenticated
+# download, which are infrastructure.
+# ---------------------------------------------------------------------------
+
+
+
+
+@students_bp.route('/<student_id>/documents', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_MANAGE)
+def upload_student_document(student_id):
+    """Upload a document for a student. multipart/form-data: file, document_type."""
+    person_id = services.person_id_for_student(student_id)
+    if not person_id:
+        return not_found_response('Student')
+
+    # Branch scope: a restricted sub-admin cannot file against a student outside
+    # their branches. No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
+    body, status = document_rest.upload_for_person(person_id)
+    return body, status
+
+
+@students_bp.route(
+    '/<student_id>/documents/<document_id>/file',
+    methods=['GET'],
+    strict_slashes=False,
+)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+def get_student_document_file(student_id, document_id):
+    """Stream a document's bytes. Not a shareable URL — needs the usual headers."""
+    from modules.rbac.services import has_permission
+
+    student = services.get_student_by_id(student_id)
+    if not student:
+        return not_found_response('Student')
+
+    assert_student_allowed(student_id)
+
+    user_id = g.current_user.id
+    allowed = False
+    if has_permission(user_id, PERM_READ_ALL):
+        allowed = True
+    elif has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
+        allowed = True
+    elif has_permission(user_id, PERM_READ_CLASS):
+        from modules.attendance.services import get_teacher_class_ids
+        if student.get("class_id") in get_teacher_class_ids(user_id):
+            allowed = True
+    if not allowed:
+        return unauthorized_response()
+
+    return document_rest.stream_document(
+        services.person_id_for_student(student_id), document_id
+    )

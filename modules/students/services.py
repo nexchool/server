@@ -1706,3 +1706,15 @@ def get_student_row(student_id: str):
         .filter_by(id=student_id)
         .first()
     )
+
+
+def person_id_for_student(student_id: str) -> Optional[str]:
+    """The human this student is, or None when there is no such student here.
+
+    Read off the model rather than `get_student_by_id`: the serialized student
+    does not carry its own person_id, and widening it to suit one caller would
+    put an internal key in every client's payload.
+    """
+    return (
+        db.session.query(Student.person_id).filter(Student.id == student_id).scalar()
+    )

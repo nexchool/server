@@ -820,3 +820,15 @@ def delete_teacher(teacher_id: str) -> Dict:
     except Exception as e:
         db.session.rollback()
         return {'success': False, 'error': safe_error(e, "Failed to delete teacher")}
+
+
+def person_id_for_teacher(teacher_id: str) -> Optional[str]:
+    """The human this teacher is, reached through their employment (ADR-005)."""
+    from modules.people.employment import Staff
+
+    return (
+        db.session.query(Staff.person_id)
+        .join(Teacher, Teacher.staff_id == Staff.id)
+        .filter(Teacher.id == teacher_id)
+        .scalar()
+    )
