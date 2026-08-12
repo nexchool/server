@@ -65,10 +65,13 @@ def create_app(config_name=None):
     register_blueprints(app)
 
     # The People domain's business surface is GraphQL; import its models so they
-    # register with SQLAlchemy regardless of which transports are mounted. Its
-    # only REST routes carry document bytes, which is infrastructure (ADR-015).
+    # register with SQLAlchemy regardless of which transports are mounted.
     import modules.people.models  # noqa: F401
-    import modules.people.documents  # noqa: F401
+
+    # The document store serves every domain, so its models register here rather
+    # than with whichever domain happens to be loaded. Importing modules.people
+    # above is what registers the "person" owner kind with it (ADR-015).
+    import modules.documents.models  # noqa: F401
 
     # Registers the rule that an account belongs to a person. Imported here
     # rather than left to whichever module happens to load first, because a

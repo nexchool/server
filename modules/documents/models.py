@@ -1,12 +1,10 @@
-"""Documents a school holds about a person.
+"""The document store's tables.
 
-A document belongs to the human, not to the studentship or the employment that
-prompted collecting it (ADR-015). The student profile and the teacher profile
-are two views of one person's papers, so someone who is both a parent and a
-teacher hands over their Aadhar once.
-
-The type vocabulary lives in `document_catalog.py` and is seeded into
-`document_types`; rows here reference it by code.
+One table serves every domain. A document names its owner as
+`(owner_kind, owner_id)` rather than through a per-domain foreign key, which is
+what lets the examination module store answer sheets without a migration
+(ADR-015). `registry.resolve_tenant` stands in for the integrity the database
+cannot enforce across a polymorphic reference.
 """
 
 from __future__ import annotations
@@ -27,25 +25,28 @@ def _new_id() -> str:
 
 
 class DocumentType(db.Model):
-    """A kind of document a school collects, seeded from the catalogue.
+    """A kind of document some owner kind collects, seeded from a catalogue.
 
     Not tenant-scoped: the vocabulary is the platform's, shared by every school.
-    A school that needs a type nobody has needed yet gets a catalogue line and a
-    reseed rather than a migration (ADR-015).
+    A school needing a type nobody has needed yet gets a catalogue line and a
+    reseed rather than a migration.
     """
 
     __tablename__ = "document_types"
 
     code = db.Column(db.String(64), primary_key=True)
+    # Which owner kind this type belongs to. 'aadhar_card' is a person's;
+    # 'answer_sheet' will be an exam submission's. Scoping by kind is what stops
+    # one vocabulary from becoming a junk drawer as domains are added.
+    owner_kind = db.Column(db.String(40), nullable=False, index=True)
     label = db.Column(db.Text, nullable=False)
-    # Which kinds of profile offer this type. Held as JSON and filtered in
-    # Python: the catalogue is a dozen rows, so an index would cost more to
-    # maintain than the scan it saves.
+    # Sub-groups within the owner kind. JSON and filtered in Python: the
+    # catalogue is dozens of rows, so an index costs more than the scan saves.
     contexts = db.Column(db.JSON, nullable=False)
     sequence = db.Column(db.Integer, nullable=False, default=100)
     description = db.Column(db.Text, nullable=False, default="")
-    # Retiring a type must not orphan the documents already filed under it, so
-    # a withdrawn type stops being offered rather than being deleted.
+    # Retiring a type must not orphan documents already filed under it, so a
+    # withdrawn type stops being offered rather than being deleted.
     is_active = db.Column(db.Boolean, nullable=False, default=True)
 
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_now)
@@ -56,6 +57,7 @@ class DocumentType(db.Model):
     def to_dict(self) -> dict:
         return {
             "code": self.code,
+            "owner_kind": self.owner_kind,
             "label": self.label,
             "contexts": list(self.contexts or []),
             "sequence": self.sequence,
@@ -63,28 +65,22 @@ class DocumentType(db.Model):
         }
 
 
-class PersonDocument(TenantBaseModel):
-    """A file a school holds about a person. Bytes in S3, this row is the record."""
+class Document(TenantBaseModel):
+    """A file a school holds. Bytes in S3, this row is the record."""
 
-    __tablename__ = "person_documents"
+    __tablename__ = "documents"
 
     id = db.Column(db.String(36), primary_key=True, default=_new_id)
-    person_id = db.Column(
-        db.String(36),
-        db.ForeignKey("persons.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    owner_kind = db.Column(db.String(40), nullable=False)
+    owner_id = db.Column(db.String(36), nullable=False)
     document_type_code = db.Column(
         db.String(64),
         db.ForeignKey("document_types.code", ondelete="RESTRICT"),
         nullable=False,
-        index=True,
     )
     original_filename = db.Column(db.String(255), nullable=False)
-    # The S3 object key. v1 carried a second `file_url` column beside it that
-    # every serializer returned as None; it is not reproduced here.
-    s3_object_key = db.Column(db.String(500), nullable=False, unique=True)
+    # The S3 object key, tenant-scoped by `storage.build_key`.
+    storage_key = db.Column(db.String(500), nullable=False, unique=True)
     mime_type = db.Column(db.String(100), nullable=False)
     file_size_bytes = db.Column(db.Integer, nullable=False)
     # The acting account, as `PersonMerge.merged_by_user_id` records it. An
@@ -102,25 +98,32 @@ class PersonDocument(TenantBaseModel):
         db.DateTime(timezone=True), nullable=False, default=_now, onupdate=_now
     )
 
-    person = db.relationship(
-        "Person",
-        backref=db.backref("documents", lazy="selectin"),
-        passive_deletes=True,
-    )
     document_type = db.relationship("DocumentType", lazy="joined")
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id])
+
+    __table_args__ = (
+        # Every read is "what does this owner hold", and the completeness signal
+        # counts distinct types within exactly that set.
+        db.Index("idx_documents_owner", "owner_kind", "owner_id"),
+        db.Index(
+            "idx_documents_owner_type", "owner_kind", "owner_id", "document_type_code"
+        ),
+    )
 
     def to_dict(self) -> dict:
         """Serialize for a transport. Never exposes a direct S3 URL."""
         return {
             "id": self.id,
-            "person_id": self.person_id,
+            "owner_kind": self.owner_kind,
+            "owner_id": self.owner_id,
             "document_type": self.document_type_code,
             "document_type_label": (
-                self.document_type.label if self.document_type else self.document_type_code
+                self.document_type.label
+                if self.document_type
+                else self.document_type_code
             ),
             "original_filename": self.original_filename,
-            "view_url": f"/api/people/{self.person_id}/documents/{self.id}/file",
+            "view_url": f"/api/documents/{self.id}/file",
             "mime_type": self.mime_type,
             "file_size_bytes": self.file_size_bytes,
             "uploaded_by": (
