@@ -104,6 +104,9 @@ exchange for a model where a person who is both a parent and a teacher uploads
 their Aadhar once. A copy of the table would have been faster today and would
 have been the thing the next rebuild had to undo.
 
-`uploaded_by` records a person rather than an account, so the trail survives
-an account being removed — consistent with migration `094_login_is_optional`,
-where holding a relationship stopped requiring the ability to sign in.
+`uploaded_by` records the acting **account**, matching `PersonMerge.
+merged_by_user_id` (`modules/people/models.py:141`), which v2 itself
+established for the same question. `094_login_is_optional` removed the login
+requirement from *subjects* — a student need not be able to sign in — not from
+*actors*, who by definition did sign in to act. Recording a person here would
+answer a different question from the one an audit trail asks.

@@ -4,6 +4,7 @@ Owns Person, the Staff relationship, Family and family participation. Other
 domains reference these concepts; none of them redefine or duplicate identity.
 """
 
+from .documents import DocumentType, PersonDocument
 from .employment import Staff, StaffEmploymentPeriod
 from .models import Family, FamilyMember, Person
 
@@ -16,4 +17,6 @@ __all__ = [
     "FamilyMember",
     "Staff",
     "StaffEmploymentPeriod",
+    "DocumentType",
+    "PersonDocument",
 ]
