@@ -81,7 +81,8 @@ def init_db(app):
         from modules.auth.models import User, Session
         from modules.rbac.models import Role, Permission, RolePermission
         from modules.sub_admins.models import UserSchoolUnit  # noqa: F401
-        from modules.students.models import Student, StudentDocument, StudentPromotionBatch
+        from modules.students.models import Student, StudentPromotionBatch
+        from modules.documents.models import Document  # noqa: F401
         from modules.student_leaves.models import StudentLeave  # noqa: F401
         from modules.announcements.models import (  # noqa: F401
             Announcement,

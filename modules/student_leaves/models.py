@@ -45,7 +45,7 @@ class StudentLeave(TenantBaseModel):
     reason = db.Column(db.Text, nullable=False)
     attachment_document_id = db.Column(
         db.String(36),
-        db.ForeignKey("student_documents.id", ondelete="SET NULL"),
+        db.ForeignKey("documents.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -68,7 +68,7 @@ class StudentLeave(TenantBaseModel):
     student = db.relationship("Student", foreign_keys=[student_id])
     class_ref = db.relationship("Class", foreign_keys=[class_id])
     class_teacher = db.relationship("Teacher", foreign_keys=[class_teacher_id])
-    attachment = db.relationship("StudentDocument", foreign_keys=[attachment_document_id])
+    attachment = db.relationship("Document", foreign_keys=[attachment_document_id])
     decided_by = db.relationship("User", foreign_keys=[decided_by_id])
 
     def to_dict(self):
