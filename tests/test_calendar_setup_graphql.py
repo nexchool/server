@@ -355,8 +355,14 @@ query D($calendarId: ID!) {
 }
 """
 
-EVENTS = "query E($yearId: ID!) { calendarEvents(academicYearId: $yearId) { name eventType startDate } }"
-WINDOWS = "query W($yearId: ID!) { examWindows(academicYearId: $yearId) { name examType startDate } }"
+EVENTS = (
+    "query E($yearId: ID!) { calendarEvents(academicYearId: $yearId) "
+    "{ name eventType eventDate status appliesTo } }"
+)
+WINDOWS = (
+    "query W($yearId: ID!) { examWindows(academicYearId: $yearId) "
+    "{ name examType status startDate endDate durationDays applicableClassIds description } }"
+)
 TERMS = "query T($yearId: ID) { academicTerms(academicYearId: $yearId) { name sequence startDate isActive } }"
 
 
@@ -463,6 +469,78 @@ def test_the_exam_windows(client, db_session, tenant, year):
 
     assert "errors" not in body, body
     assert isinstance(body["data"]["examWindows"], list)
+
+
+def test_an_exam_window_says_which_classes_sit_it(client, db_session, tenant, year):
+    """The count of classes is what the calendar prints next to a window, so
+    the field has to arrive — and arrive as a list even when it is empty."""
+    from modules.academics.calendar.models import ExamWindow
+
+    db_session.add(
+        ExamWindow(
+            id=_new_id("exam-"), tenant_id=tenant.id, academic_year_id=year.id,
+            name="Mid Term", exam_type="mid_term", status="active",
+            start_date=date(2026, 9, 1), end_date=date(2026, 9, 8),
+            applicable_class_ids=["class-a", "class-b"], description="Half-yearly",
+        )
+    )
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, WINDOWS, yearId=year.id)
+
+    assert "errors" not in body, body
+    window = body["data"]["examWindows"][0]
+    assert window["applicableClassIds"] == ["class-a", "class-b"]
+    assert window["status"] == "active"
+    assert window["durationDays"] == 8
+    assert window["description"] == "Half-yearly"
+
+
+def test_a_window_the_whole_school_sits_carries_an_empty_list_not_null(
+    client, db_session, tenant, year
+):
+    """Null here is what broke the calendar page: the client counts this."""
+    from modules.academics.calendar.models import ExamWindow
+
+    db_session.add(
+        ExamWindow(
+            id=_new_id("exam-"), tenant_id=tenant.id, academic_year_id=year.id,
+            name="Final", exam_type="final", status="active",
+            start_date=date(2027, 3, 1), end_date=date(2027, 3, 10),
+            applicable_class_ids=None,
+        )
+    )
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, WINDOWS, yearId=year.id)
+
+    assert body["data"]["examWindows"][0]["applicableClassIds"] == []
+
+
+def test_an_event_happens_on_its_own_date(client, db_session, tenant, year):
+    """An event has one date. The schema used to offer a start and an end that
+    the model never filled, so every event read back undated."""
+    from modules.academics.calendar.models import SchoolEvent
+
+    db_session.add(
+        SchoolEvent(
+            id=_new_id("evt-"), tenant_id=tenant.id, academic_year_id=year.id,
+            name="Sports Day", event_type="activity", status="active",
+            event_date=date(2026, 12, 12), applies_to="entire_school",
+        )
+    )
+    db_session.flush()
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    body = _ask(client, tenant, token, EVENTS, yearId=year.id)
+
+    assert "errors" not in body, body
+    event = body["data"]["calendarEvents"][0]
+    assert event["eventDate"] == "2026-12-12"
+    assert event["status"] == "active"
+    assert event["appliesTo"] == "entire_school"
 
 
 def test_reading_the_calendar_document_needs_the_calendar_authority(

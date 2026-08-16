@@ -22,6 +22,14 @@ def _date(value) -> Optional[datetime.date]:
     return datetime.date.fromisoformat(str(value)[:10])
 
 
+def _datetime(value) -> Optional[datetime.datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value
+    return datetime.datetime.fromisoformat(str(value))
+
+
 @strawberry.type(
     description=(
         "A day, or a run of days, the school is closed. A recurring one has "
@@ -237,10 +245,14 @@ class SchoolEvent:
     name: str
     event_type: Optional[str] = None
     description: Optional[str] = None
-    start_date: Optional[datetime.date] = None
-    end_date: Optional[datetime.date] = None
-    is_holiday: bool = False
+    # An event happens on one day. It has no start/end pair — the fields that
+    # once claimed otherwise were never populated by the model.
+    event_date: Optional[datetime.date] = None
+    status: str = "active"
+    applies_to: Optional[str] = None
     academic_year_id: Optional[strawberry.ID] = None
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
 
 
 @strawberry.type(description="A stretch of days given over to examinations.")
@@ -248,9 +260,17 @@ class ExamWindow:
     id: strawberry.ID
     name: str
     exam_type: Optional[str] = None
+    status: str = "active"
     start_date: Optional[datetime.date] = None
     end_date: Optional[datetime.date] = None
+    duration_days: int = 0
+    # Empty means the window applies to every class, which is why this is a
+    # list and never null — a client counts it to label the window.
+    applicable_class_ids: List[strawberry.ID] = strawberry.field(default_factory=list)
+    description: Optional[str] = None
     academic_year_id: Optional[strawberry.ID] = None
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
 
 
 @strawberry.type(
@@ -380,12 +400,14 @@ def event_to_graphql(row: dict) -> SchoolEvent:
         name=row["name"],
         event_type=row.get("event_type"),
         description=row.get("description"),
-        start_date=_date(row.get("start_date")),
-        end_date=_date(row.get("end_date")),
-        is_holiday=bool(row.get("is_holiday")),
+        event_date=_date(row.get("event_date")),
+        status=row.get("status") or "active",
+        applies_to=row.get("applies_to"),
         academic_year_id=(
             strawberry.ID(row["academic_year_id"]) if row.get("academic_year_id") else None
         ),
+        created_at=_datetime(row.get("created_at")),
+        updated_at=_datetime(row.get("updated_at")),
     )
 
 
@@ -394,11 +416,19 @@ def exam_window_to_graphql(row: dict) -> ExamWindow:
         id=strawberry.ID(row["id"]),
         name=row["name"],
         exam_type=row.get("exam_type"),
+        status=row.get("status") or "active",
         start_date=_date(row.get("start_date")),
         end_date=_date(row.get("end_date")),
+        duration_days=row.get("duration_days") or 0,
+        applicable_class_ids=[
+            strawberry.ID(cid) for cid in (row.get("applicable_class_ids") or [])
+        ],
+        description=row.get("description"),
         academic_year_id=(
             strawberry.ID(row["academic_year_id"]) if row.get("academic_year_id") else None
         ),
+        created_at=_datetime(row.get("created_at")),
+        updated_at=_datetime(row.get("updated_at")),
     )
 
 
