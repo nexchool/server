@@ -76,6 +76,35 @@ def test_a_school_that_was_asked_gets_what_it_asked_for():
     assert effective_flags({FEATURE: False})[FEATURE] is False
 
 
+def test_migration_120_removed_the_stale_key_that_defeated_the_default():
+    """The bug this nearly shipped with, kept as a test because it was real.
+
+    Migration 043 wrote `examinations: true` into every tenant's flag map
+    years before the module existed — the key was in the feature list of the
+    day and never pruned. A stored value beats a default, so on the deploy
+    that introduced the module every one of those tenants would have switched
+    it on. Production had exactly this, and it was found by looking rather
+    than by any test.
+
+    Migration 120 deletes the key. What this pins is the half that is code:
+    once the key is gone the default governs, and a real answer still wins.
+    """
+    stale = {
+        "attendance": True,
+        "library": True,        # retired module, still in the bag
+        "examinations": True,   # what 043 wrote
+    }
+    assert effective_flags(stale)[FEATURE] is True, (
+        "with the stale key present the module is on — this is the bug, and "
+        "why the repair had to be a migration rather than a code change"
+    )
+
+    repaired = {k: v for k, v in stale.items() if k != FEATURE}
+    assert effective_flags(repaired)[FEATURE] is False
+    # And a super-admin who later turns it on is still obeyed.
+    assert effective_flags({**repaired, FEATURE: True})[FEATURE] is True
+
+
 def test_the_stored_answer_is_what_the_tenant_lookup_reports(db_session, tenant):
     assert is_feature_enabled(tenant.id, FEATURE) is False
 
