@@ -37,7 +37,11 @@ from modules.school_units.models import SchoolUnit
 from modules.subject_contexts.models import SubjectContext
 from modules.subjects.models import Subject
 
-from .bulk_generator_service import bulk_generate_classes, _parse_stream_section
+from .bulk_generator_service import (
+    bulk_generate_classes,
+    _parse_stream_section,
+    _stream_index,
+)
 from .services import get_status_payload, run_complete_setup
 
 logger = logging.getLogger(__name__)
@@ -343,13 +347,19 @@ def _ensure_subject(tenant_id, row):
 
 
 def _ensure_subject_context(
-    tenant_id, programme_id, grade_id, subject_id, offered, sort_order=0
+    tenant_id, programme_id, grade_id, subject_id, offered, sort_order=0,
+    stream_id=None,
 ):
     """Upsert one SubjectContext (offering of a subject for a programme x grade).
 
     `offered` is a config offering line; it may carry `type`, `role`,
     `short_code`, `weekly`, and `sort_order`. `sort_order` defaults to the
     caller-supplied position when the offering omits it.
+
+    `stream_id` is the track this offering belongs to, or None for one every
+    stream at this (programme, grade) shares. It is part of the natural key:
+    Grade 11 Science and Grade 11 Commerce both teach Mathematics, and those
+    are two offerings, not one seen twice.
     """
     ctx = (
         SubjectContext.query.filter_by(
@@ -357,6 +367,7 @@ def _ensure_subject_context(
             programme_id=programme_id,
             grade_id=grade_id,
             subject_id=subject_id,
+            stream_id=stream_id,
         )
         .filter(SubjectContext.deleted_at.is_(None))
         .first()
@@ -369,6 +380,7 @@ def _ensure_subject_context(
         programme_id=programme_id,
         grade_id=grade_id,
         subject_id=subject_id,
+        stream_id=stream_id,
         type=offered.get("type", "mandatory"),
         role=offered.get("role"),
         short_code=offered.get("short_code"),
@@ -414,14 +426,24 @@ def apply_subject_contexts_to_classes(tenant_id, academic_year_id) -> dict:
         .filter(SubjectContext.deleted_at.is_(None))
         .all()
     )
+    # Keyed by (programme, grade, stream). A class takes the offerings that name
+    # its own stream plus the stream-agnostic ones — Grade 11 Science gets
+    # Physics and English, and not Accountancy.
     ctx_by_pair: dict[tuple, list] = {}
     for ctx in contexts:
-        ctx_by_pair.setdefault((ctx.programme_id, ctx.grade_id), []).append(ctx)
+        ctx_by_pair.setdefault(
+            (ctx.programme_id, ctx.grade_id, ctx.stream_id), []
+        ).append(ctx)
 
     created = 0
     skipped = 0
     for c in classes:
-        for ctx in ctx_by_pair.get((c.programme_id, c.grade_id), []):
+        offered = list(ctx_by_pair.get((c.programme_id, c.grade_id, None), []))
+        if c.stream_id is not None:
+            offered += ctx_by_pair.get(
+                (c.programme_id, c.grade_id, c.stream_id), []
+            )
+        for ctx in offered:
             if (c.id, ctx.subject_id) in existing_pairs:
                 skipped += 1
                 continue
@@ -446,6 +468,16 @@ def apply_subject_contexts_to_classes(tenant_id, academic_year_id) -> dict:
 # --------------------------------------------------------------------------- #
 # Orchestrator
 # --------------------------------------------------------------------------- #
+def _stream_ids_by_name(tenant_id: str) -> dict:
+    """Stream name -> id for this school. Streams are tenant-scoped rows."""
+    from modules.streams.models import Stream
+
+    return {
+        s.name: s.id
+        for s in Stream.query.filter_by(tenant_id=tenant_id).all()
+    }
+
+
 def _subject_defaults(config: dict) -> dict:
     """Map subject code -> default {role, short_code} declared in subjects[]."""
     return {
@@ -512,14 +544,22 @@ def seed_school(tenant_id, config, dry_run=False, complete=True) -> dict:
         subj_by_code[row["code"]] = subj
 
     defaults = _subject_defaults(config)
+    stream_ids = _stream_ids_by_name(tenant_id)
     for off in config.get("offerings", []):
         prog = prog_by_code[off["programme"]]
         grade = grade_by_name[str(off["grade"])]
+        stream_name = off.get("stream")
+        if stream_name and stream_name not in stream_ids:
+            raise SeedValidationError(
+                [f"offering names stream '{stream_name}', which this school "
+                 f"does not have"]
+            )
+        stream_id = stream_ids.get(stream_name) if stream_name else None
         for idx, s in enumerate(off.get("subjects", []), start=1):
             subj = subj_by_code[s["code"]]
             _ensure_subject_context(
                 tenant_id, prog.id, grade.id, subj.id, _merge_offering(s, defaults),
-                sort_order=idx,
+                sort_order=idx, stream_id=stream_id,
             )
 
     db.session.commit()
@@ -699,22 +739,38 @@ def preview_seed(tenant_id, config, active_subdomain=None) -> dict:
     ex_classes = set()
     if year_id:
         ex_classes = {
-            (c.school_unit_id, c.programme_id, c.grade_id, c.section, c.stream)
+            (c.school_unit_id, c.programme_id, c.grade_id, c.section, c.stream_id)
             for c in Class.query.filter_by(
                 tenant_id=tenant_id, academic_year_id=year_id
             ).all()
         }
     cls_items, cls_new, cls_total = [], 0, 0
+    # `ex_classes` is keyed on stream_id, so the preview has to resolve a
+    # section prefix to the same row the generator would (migration 107).
+    # Read only if a section actually names a stream — a plain-letter sheet
+    # should not pay for a catalogue it never consults.
+    _stream_cache: Dict[str, Any] = {}
+
+    def _streams() -> Dict[str, Any]:
+        if "index" not in _stream_cache:
+            _stream_cache["index"] = _stream_index(tenant_id)
+        return _stream_cache["index"]
+
     for cl in config.get("classes", []):
         uid = ex_units.get(cl["unit"])
         pid = ex_progs.get(cl["programme"])
         gid = ex_grades.get(str(cl["grade"]))
         for sec_raw in cl.get("sections", []):
             cls_total += 1
-            stream, section = _parse_stream_section(str(sec_raw).strip())
+            raw_section = str(sec_raw).strip()
+            if "-" in raw_section:
+                stream, section = _parse_stream_section(raw_section, _streams())
+            else:
+                stream, section = None, raw_section
+            stream_id = stream.id if stream is not None else None
             exists = bool(
                 year_id and uid and pid and gid
-                and (uid, pid, gid, section, stream) in ex_classes
+                and (uid, pid, gid, section, stream_id) in ex_classes
             )
             if not exists:
                 cls_new += 1

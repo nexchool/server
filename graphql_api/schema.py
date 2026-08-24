@@ -60,6 +60,12 @@ def _build_query_type() -> type:
     from modules.auth.resolvers import IdentityQuery
     from modules.classes.resolvers import ClassesQuery
     from modules.documents.resolvers import DocumentQuery
+    from modules.examinations.resolvers import (
+        CorrectionQuery,
+        ExaminationQuery,
+        MarksQuery,
+        ResultQuery,
+    )
     from modules.people.resolvers import PeopleQuery
     from modules.school_setup.resolvers import SchoolSetupQuery
     from modules.students.resolvers import StudentQuery
@@ -75,6 +81,10 @@ def _build_query_type() -> type:
         AcademicsQuery,
         ClassesQuery,
         DocumentQuery,
+        ExaminationQuery,
+        MarksQuery,
+        CorrectionQuery,
+        ResultQuery,
         CalendarQuery,
         SchoolSetupQuery,
         TimetableQuery,
@@ -99,6 +109,12 @@ def _build_mutation_type() -> type:
     from modules.attendance.resolvers import AttendanceMutation
     from modules.classes.resolvers import ClassesMutation
     from modules.documents.resolvers import DocumentMutation
+    from modules.examinations.resolvers import (
+        CorrectionMutation,
+        ExaminationMutation,
+        MarksMutation,
+        ResultMutation,
+    )
     from modules.people.resolvers import PeopleMutation
     from modules.students.resolvers import StudentMutation
 
@@ -109,6 +125,10 @@ def _build_mutation_type() -> type:
         AttendanceMutation,
         ClassesMutation,
         DocumentMutation,
+        ExaminationMutation,
+        MarksMutation,
+        CorrectionMutation,
+        ResultMutation,
         StructureMutation,
     ):
         pass

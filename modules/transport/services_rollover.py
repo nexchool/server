@@ -25,7 +25,10 @@ from typing import Any, Dict, List, Optional
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
-from modules.academics.backbone.models import StudentClassEnrollment
+from modules.academics.backbone.models import (
+    ENROLLMENT_TYPE_PRIMARY,
+    StudentClassEnrollment,
+)
 
 from .models import TransportEnrollment, TransportFeePlan
 from core.school_time import school_today
@@ -111,6 +114,7 @@ def rollover_transport(
                     StudentClassEnrollment.tenant_id == tenant_id,
                     StudentClassEnrollment.academic_year_id == to_year_id,
                     StudentClassEnrollment.is_current.is_(True),
+                    StudentClassEnrollment.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
                     StudentClassEnrollment.student_id.in_(student_ids),
                 ).all()
                 promoted_student_ids = {r.student_id for r in rows}

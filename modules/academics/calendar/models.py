@@ -94,9 +94,17 @@ class AcademicCalendar(TenantBaseModel):
 
     __tablename__ = "academic_calendars"
     __table_args__ = (
+        # One calendar per cycle. With a single cycle per year — every school
+        # until it opens a second — this is the rule it always had.
         db.UniqueConstraint(
-            "tenant_id", "academic_year_id",
-            name="uq_academic_calendars_tenant_year",
+            "tenant_id", "academic_cycle_id",
+            name="uq_academic_calendars_tenant_cycle",
+        ),
+        db.ForeignKeyConstraint(
+            ["academic_year_id", "academic_cycle_id"],
+            ["academic_cycles.academic_year_id", "academic_cycles.id"],
+            name="fk_academic_calendars_academic_cycle",
+            ondelete="RESTRICT",
         ),
     )
 
@@ -107,6 +115,9 @@ class AcademicCalendar(TenantBaseModel):
         nullable=False,
         index=True,
     )
+    # The cycle whose holidays and working days this calendar describes.
+    # Tied to academic_year_id by a composite FK (migration 112).
+    academic_cycle_id = db.Column(db.String(36), nullable=False, index=True)
     status = db.Column(
         db.String(20), nullable=False, default="draft", server_default=text("'draft'")
     )

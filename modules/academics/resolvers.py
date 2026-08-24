@@ -27,6 +27,7 @@ from graphql_api.permissions import (
 )
 
 from modules.academics.calendar.graphql.types import AcademicTerm
+from modules.academics.cycles.graphql_types import AcademicCycle as AcademicCycleType
 
 from .graphql.types import (
     AcademicYear,
@@ -178,6 +179,28 @@ class AcademicsQuery:
         return academic_years_to_graphql(
             services.list_academic_years(active_only=active_only)
         )
+
+    @strawberry.field(
+        # Guarded like `academicYears` and for the same reason: a class picker
+        # and a calendar both need to know which cycles exist. Which period the
+        # school runs in is context, not a privilege.
+        permission_classes=[IsAuthenticated, RequiresTenant],
+        description=(
+            "The dated periods this academic year is operated in. One for an "
+            "ordinary school; several for a trust running two boards on "
+            "different calendars, or a vacation batch."
+        ),
+    )
+    def academic_cycles(
+        self, info: strawberry.Info, academic_year_id: strawberry.ID
+    ) -> List["AcademicCycleType"]:
+        from modules.academics.cycles.graphql_types import cycle_to_graphql
+        from modules.academics.cycles.services import cycles_for_year
+
+        return [
+            cycle_to_graphql(row)
+            for row in cycles_for_year(str(academic_year_id), info.context.tenant_id)
+        ]
 
     @strawberry.field(
         permission_classes=[

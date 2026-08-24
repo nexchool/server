@@ -74,23 +74,40 @@ class AcademicSettings(TenantBaseModel):
 
 
 class AcademicTerm(TenantBaseModel):
+    """A named dated subdivision of an academic cycle.
+
+    Term 1, Semester 2, a preliminary window. Owned by the cycle since
+    migration 112: a trust whose GSEB and CBSE programmes run on different
+    dates needs different terms for each, which a year-scoped term could not
+    express.
+    """
+
     __tablename__ = "academic_terms"
     __table_args__ = (
+        # Named within its cycle, not across the year (migration 113): a
+        # trust running two boards has a "Term 1" in each. Identical to the
+        # old rule for a school with one cycle.
         Index(
-            "uq_academic_terms_year_name",
+            "uq_academic_terms_cycle_name",
             "tenant_id",
-            "academic_year_id",
+            "academic_cycle_id",
             "name",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
         Index(
-            "uq_academic_terms_year_code",
+            "uq_academic_terms_cycle_code",
             "tenant_id",
-            "academic_year_id",
+            "academic_cycle_id",
             "code",
             unique=True,
             postgresql_where=text("code IS NOT NULL AND deleted_at IS NULL"),
+        ),
+        db.ForeignKeyConstraint(
+            ["academic_year_id", "academic_cycle_id"],
+            ["academic_cycles.academic_year_id", "academic_cycles.id"],
+            name="fk_academic_terms_academic_cycle",
+            ondelete="RESTRICT",
         ),
     )
 
@@ -101,6 +118,9 @@ class AcademicTerm(TenantBaseModel):
         nullable=False,
         index=True,
     )
+    # The cycle this term subdivides. Tied to academic_year_id by a
+    # composite FK (migration 112).
+    academic_cycle_id = db.Column(db.String(36), nullable=False, index=True)
     name = db.Column(db.String(100), nullable=False)
     code = db.Column(db.String(32), nullable=True)
     sequence = db.Column(db.SmallInteger, nullable=False, default=1)
@@ -274,8 +294,22 @@ class ClassTeacherAssignment(TenantBaseModel):
     teacher = db.relationship("Teacher", foreign_keys=[teacher_id])
 
 
+# A student's academic placement — the one `students.class_id` mirrors.
+ENROLLMENT_TYPE_PRIMARY = "primary"
+# Anything else they also attend: a vacation batch, coaching, a remedial or
+# weekend programme. Holds no cache and does not participate in promotion.
+ENROLLMENT_TYPE_ADDITIONAL = "additional"
+ENROLLMENT_TYPES = (ENROLLMENT_TYPE_PRIMARY, ENROLLMENT_TYPE_ADDITIONAL)
+
+
 class StudentClassEnrollment(TenantBaseModel):
-    """Enrollment history; is_current marks the active row for reporting."""
+    """Enrollment history; is_current marks the active row for reporting.
+
+    `enrollment_type` separates a student's class from everything else they
+    attend. The uniqueness rule below is about the *primary* one only: a school
+    may run a vacation batch and a coaching programme alongside the regular
+    year, and a child in all three has three current enrollments and one class.
+    """
 
     __tablename__ = "student_class_enrollments"
     __table_args__ = (
@@ -285,7 +319,15 @@ class StudentClassEnrollment(TenantBaseModel):
             "student_id",
             "academic_year_id",
             unique=True,
-            postgresql_where=text("is_current = true"),
+            postgresql_where=text(
+                "is_current = true AND enrollment_type = 'primary'"
+            ),
+        ),
+        Index("idx_sce_type", "tenant_id", "student_id", "enrollment_type"),
+        Index("idx_sce_class_roll_number", "tenant_id", "class_id", "roll_number"),
+        CheckConstraint(
+            "enrollment_type IN ('primary', 'additional')",
+            name="ck_sce_enrollment_type",
         ),
     )
 
@@ -308,7 +350,17 @@ class StudentClassEnrollment(TenantBaseModel):
         nullable=False,
         index=True,
     )
+    # The student's position in this section, for this year. `students.
+    # roll_number` caches the primary enrollment's value; this one is the
+    # record, and it is what a reprinted marksheet must read.
+    roll_number = db.Column(db.Integer, nullable=True)
     enrollment_status = db.Column(db.String(20), nullable=False, default="active")
+    enrollment_type = db.Column(
+        db.String(20),
+        nullable=False,
+        default=ENROLLMENT_TYPE_PRIMARY,
+        server_default=text("'primary'"),
+    )
     is_current = db.Column(db.Boolean, nullable=False, default=True)
     started_on = db.Column(db.Date, nullable=True)
     ended_on = db.Column(db.Date, nullable=True)

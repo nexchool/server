@@ -74,6 +74,18 @@ def _validate_medium(tenant_id: str, medium_id: Optional[str]) -> Optional[str]:
     return None if m else f"medium_id {medium_id} not found"
 
 
+def _validate_stream(tenant_id: str, stream_id: Optional[str]) -> Optional[str]:
+    """A context may only name a stream its own school defined."""
+    if not stream_id:
+        return None
+    from modules.streams.models import Stream
+
+    row = Stream.query.filter_by(id=stream_id, tenant_id=tenant_id).first()
+    if not row or row.deleted_at is not None:
+        return "stream_id not found for this tenant"
+    return None
+
+
 def _coerce_periods(value: Any) -> Tuple[Optional[int], Optional[str]]:
     if value is None:
         return 5, None
@@ -107,12 +119,25 @@ def _validate_role(value: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
+_ANY_STREAM = object()
+
+
 def list_contexts(
     tenant_id: str,
     programme_id: Optional[str] = None,
     grade_id: Optional[str] = None,
     include_inactive: bool = False,
+    stream_id: Any = _ANY_STREAM,
 ) -> List[Dict[str, Any]]:
+    """Subject offerings, optionally narrowed to what one stream studies.
+
+    `stream_id` is deliberately three-valued. Omitted means "every offering,
+    whatever stream it names" — the listing an administrator reads. Passing a
+    stream (or None for a section with no stream) means "what this section
+    actually studies", which is the general offerings **plus** that stream's
+    own. A Science section studies English (stream NULL) and Physics
+    (stream Science); asking for equality alone would drop the English.
+    """
     q = SubjectContext.query.filter(
         SubjectContext.tenant_id == tenant_id,
         SubjectContext.deleted_at.is_(None),
@@ -121,6 +146,16 @@ def list_contexts(
         q = q.filter(SubjectContext.programme_id == programme_id)
     if grade_id:
         q = q.filter(SubjectContext.grade_id == grade_id)
+    if stream_id is not _ANY_STREAM:
+        if stream_id is None:
+            q = q.filter(SubjectContext.stream_id.is_(None))
+        else:
+            q = q.filter(
+                db.or_(
+                    SubjectContext.stream_id.is_(None),
+                    SubjectContext.stream_id == stream_id,
+                )
+            )
     if not include_inactive:
         q = q.filter(SubjectContext.is_active.is_(True))
     rows = q.order_by(
@@ -165,6 +200,11 @@ def _build_context(
     if err:
         return None, err
 
+    stream_id = payload.get("stream_id") or None
+    err = _validate_stream(tenant_id, stream_id)
+    if err:
+        return None, err
+
     role = payload.get("role") or None
     err = _validate_role(role)
     if err:
@@ -204,6 +244,7 @@ def _build_context(
             type=type_,
             role=role,
             medium_id=medium_id,
+            stream_id=stream_id,
             variant_of_context_id=variant_of,
             elective_group_key=(payload.get("elective_group_key") or "").strip()
             or None,

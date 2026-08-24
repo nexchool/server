@@ -16,7 +16,10 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
-from modules.academics.backbone.models import StudentClassEnrollment
+from modules.academics.backbone.models import (
+    ENROLLMENT_TYPE_PRIMARY,
+    StudentClassEnrollment,
+)
 from modules.classes.models import Class
 from modules.students.models import EVENT_GRADUATED, Student, StudentPromotionBatch
 from modules.students.lifecycle_service import STATUS_GRADUATED, record_event
@@ -267,6 +270,7 @@ def analyze_promotion(
                 StudentClassEnrollment.student_id.in_(eligible_student_ids),
                 StudentClassEnrollment.academic_year_id == to_year_id,
                 StudentClassEnrollment.is_current.is_(True),
+                StudentClassEnrollment.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
             ).count()
         )
 

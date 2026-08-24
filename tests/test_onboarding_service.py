@@ -325,3 +325,117 @@ def test_extended_subject_appears_exactly_once_in_the_subjects_list():
     )
     result = derive_config(cfg, resolver=_fake_resolver)
     assert [s["code"] for s in result["subjects"]].count("GUJ") == 1
+
+
+# --------------------------------------------------------------------------- #
+# Streams
+#
+# A board prescribes a different curriculum per stream at Std 11-12. The
+# resolver has always accepted a stream; until migration 119 nothing passed one,
+# so Science and Commerce derived the same subjects and the schema could not
+# have held them apart anyway.
+# --------------------------------------------------------------------------- #
+
+def _streamed_resolver(board_code, programme_code, grades, stream=None):
+    """Std 11 by stream: everyone takes English, only Science takes Physics,
+    and Mathematics is taken by Science and Commerce but not Arts."""
+    per_stream = {
+        "Science": ["ENG", "MATH", "PHY"],
+        "Commerce": ["ENG", "MATH", "ACC"],
+        "Arts": ["ENG", "HIST"],
+        None: ["ENG"],
+    }
+    codes = per_stream[stream]
+    return {
+        "subjects": [{"code": c, "name": c.title(), "role": None} for c in codes],
+        "offerings": [
+            {
+                "programme": programme_code,
+                "grade": str(g),
+                "subjects": [
+                    {"code": c, "weekly": 4, "type": "mandatory", "exam_code": None}
+                    for c in codes
+                ],
+            }
+            for g in grades
+        ],
+    }
+
+
+def _streamed_config():
+    return _config(
+        grades=[{"name": "11", "sequence": 11}],
+        classes=[
+            {"unit": "MN", "programme": "GSEB-GUJ", "grade": "11",
+             "sections": ["Sci-A", "Com-A", "Arts-A"]}
+        ],
+    )
+
+
+def test_each_stream_at_a_grade_derives_its_own_curriculum():
+    from modules.school_setup.onboarding_service import derive_config
+
+    result = derive_config(_streamed_config(), resolver=_streamed_resolver)
+
+    by_stream = {o.get("stream"): {s["code"] for s in o["subjects"]}
+                 for o in result["offerings"]}
+    assert by_stream["Science"] == {"ENG", "MATH", "PHY"}
+    assert by_stream["Commerce"] == {"ENG", "MATH", "ACC"}
+    assert by_stream["Arts"] == {"ENG", "HIST"}
+
+
+def test_a_subject_two_streams_share_is_offered_to_each_of_them():
+    """Mathematics at Std 11 is one subject and two offerings. Collapsing it to
+    one is what put Mathematics in front of an Arts section."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    result = derive_config(_streamed_config(), resolver=_streamed_resolver)
+
+    maths = [o.get("stream") for o in result["offerings"]
+             if any(s["code"] == "MATH" for s in o["subjects"])]
+    assert sorted(maths) == ["Commerce", "Science"]
+    assert len([s for s in result["subjects"] if s["code"] == "MATH"]) == 1
+
+
+def test_a_school_running_no_streams_derives_exactly_one_offering_per_grade():
+    """The stream-agnostic path is the one every primary school takes."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    result = derive_config(_config(), resolver=_fake_resolver)
+
+    assert all(o.get("stream") is None for o in result["offerings"])
+    assert sorted(o["grade"] for o in result["offerings"]) == ["1", "2"]
+
+
+def test_only_the_streams_the_school_actually_runs_are_derived():
+    """The board prescribes four tracks; a school that opens two gets two."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    config = _config(
+        grades=[{"name": "11", "sequence": 11}],
+        classes=[
+            {"unit": "MN", "programme": "GSEB-GUJ", "grade": "11",
+             "sections": ["Sci-A", "Com-A"]}
+        ],
+    )
+
+    result = derive_config(config, resolver=_streamed_resolver)
+
+    assert {o.get("stream") for o in result["offerings"]} == {"Science", "Commerce"}
+
+
+def test_an_extra_subject_reaches_every_stream_at_its_grade():
+    """An off-catalogue subject names no stream, so it is taught to all of them."""
+    from modules.school_setup.onboarding_service import derive_config
+
+    config = _streamed_config()
+    config["extra_subjects"] = [
+        {"code": "YOGA", "name": "Yoga", "programme": "GSEB-GUJ",
+         "grades": ["11"], "weekly": 1, "type": "mandatory"}
+    ]
+
+    result = derive_config(config, resolver=_streamed_resolver)
+
+    carrying = {o.get("stream") for o in result["offerings"]
+                if any(s["code"] == "YOGA" for s in o["subjects"])}
+    assert carrying == {"Science", "Commerce", "Arts"}

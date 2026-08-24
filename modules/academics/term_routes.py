@@ -81,26 +81,39 @@ def _validate_term_dates(
     start: date,
     end: date,
     exclude_id: Optional[str] = None,
+    academic_cycle_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Return an error message when the term falls outside its academic year
-    or overlaps a sibling term, else None."""
-    from modules.academics.academic_year.models import AcademicYear
+    """Return an error message when the term falls outside its cycle or
+    overlaps a sibling term in that cycle, else None.
 
-    year = AcademicYear.query.filter(
-        AcademicYear.id == academic_year_id,
-        AcademicYear.tenant_id == tenant_id,
+    Both checks are cycle-scoped, and both have to be. Two cycles under one
+    year overlap by design — a vacation batch runs inside the main year — so a
+    year-wide overlap test would refuse CBSE's Term 1 for clashing with
+    GSEB's, and a year-wide bounds test would refuse a vacation term for
+    sitting outside dates it was never meant to sit inside.
+    """
+    from modules.academics.cycles.models import AcademicCycle
+    from modules.academics.cycles.services import resolve_cycle_id
+
+    try:
+        cycle_id = resolve_cycle_id(academic_year_id, tenant_id, academic_cycle_id)
+    except ValueError as exc:
+        return str(exc)
+
+    cycle = AcademicCycle.query.filter(
+        AcademicCycle.id == cycle_id, AcademicCycle.tenant_id == tenant_id
     ).first()
-    if not year:
-        return "Academic year not found."
-    if start < year.start_date or end > year.end_date:
+    if not cycle:
+        return "Academic cycle not found."
+    if start < cycle.start_date or end > cycle.end_date:
         return (
-            f"Term dates must fall within the academic year "
-            f"({year.start_date} – {year.end_date})."
+            f"Term dates must fall within '{cycle.name}' "
+            f"({cycle.start_date} – {cycle.end_date})."
         )
 
     overlap_q = AcademicTerm.query.filter(
         AcademicTerm.tenant_id == tenant_id,
-        AcademicTerm.academic_year_id == academic_year_id,
+        AcademicTerm.academic_cycle_id == cycle_id,
         AcademicTerm.deleted_at.is_(None),
         AcademicTerm.start_date <= end,
         AcademicTerm.end_date >= start,
@@ -151,7 +164,11 @@ def create_academic_term():
     if end < start:
         return validation_error_response({"message": "end_date must be on or after start_date"})
 
-    date_error = _validate_term_dates(g.tenant_id, academic_year_id, start, end)
+    academic_cycle_id = _clean(data.get("academic_cycle_id"))
+    date_error = _validate_term_dates(
+        g.tenant_id, academic_year_id, start, end,
+        academic_cycle_id=academic_cycle_id,
+    )
     if date_error:
         return validation_error_response({"message": date_error})
 
@@ -162,9 +179,14 @@ def create_academic_term():
         return validation_error_response({"message": "sequence must be an integer"})
 
     try:
+        from modules.academics.cycles.services import resolve_cycle_id
+
         term = AcademicTerm(
             tenant_id=g.tenant_id,
             academic_year_id=academic_year_id,
+            academic_cycle_id=resolve_cycle_id(
+                academic_year_id, g.tenant_id, academic_cycle_id
+            ),
             name=name,
             code=_clean(data.get("code")),
             sequence=sequence,
@@ -269,6 +291,7 @@ def update_academic_term(term_id):
     date_error = _validate_term_dates(
         g.tenant_id, term.academic_year_id, term.start_date, term.end_date,
         exclude_id=term_id,
+        academic_cycle_id=term.academic_cycle_id,
     )
     if date_error:
         return validation_error_response({"message": date_error})

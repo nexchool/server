@@ -36,6 +36,7 @@ from core.feature_flags import (
 from modules.auth.models import User
 from modules.rbac.models import Role
 from modules.rbac.role_seeder import DEFAULT_ROLES, seed_roles_for_tenant  # noqa: F401 (re-exported)
+from modules.streams.services import seed_default_streams
 from modules.students.models import Student
 from modules.teachers.models import Teacher
 from modules.platform.audit import log_platform_action
@@ -215,6 +216,10 @@ def create_tenant(
     tenant_id = tenant.id
 
     seed_roles_for_tenant(tenant_id)
+    # The common academic tracks, so a school that opens Grade 11 finds them
+    # already there. Migration 107 does the same for tenants that existed
+    # before streams became a table.
+    seed_default_streams(tenant_id)
     admin_role = Role.query.filter_by(name="Admin", tenant_id=tenant_id).first()
     if not admin_role:
         db.session.rollback()

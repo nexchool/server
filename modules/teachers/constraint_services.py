@@ -293,14 +293,49 @@ def delete_availability(availability_id: str) -> Dict:
 # ---------------------------------------------------------------------------
 
 def get_current_academic_year() -> str:
-    """
-    Return current academic year string using April–March cycle.
-    e.g. Apr 2025 – Mar 2026 → "2025-26"
+    """The label leave balances are filed under, e.g. "2025-26".
+
+    This used to assume every school runs April to March, in Python, with no
+    way to configure it: a June-to-April school filed April's balances under
+    the year that had not started yet, and nothing could correct it.
+
+    The **boundary** now comes from the tenant's own academic year — whichever
+    one contains today — while the **format** is unchanged. That distinction
+    matters: `leave_balances.academic_year` is a string in a unique key, so
+    returning `AcademicYear.name` instead would orphan every balance a school
+    already holds. Only the year the label is derived *from* changes.
+
+    Falls back to April–March when no academic year covers today, which is what
+    a tenant with no years configured has always got.
     """
     today = school_today()
-    if today.month >= 4:
-        return f"{today.year}-{str(today.year + 1)[2:]}"
-    return f"{today.year - 1}-{str(today.year)[2:]}"
+
+    start_year = None
+    try:
+        from flask import g
+
+        from modules.academics.academic_year.models import AcademicYear
+
+        tenant_id = getattr(g, "tenant_id", None)
+        if tenant_id:
+            covering = (
+                AcademicYear.query.filter(
+                    AcademicYear.tenant_id == tenant_id,
+                    AcademicYear.start_date <= today,
+                    AcademicYear.end_date >= today,
+                )
+                .order_by(AcademicYear.start_date.desc())
+                .first()
+            )
+            if covering is not None:
+                start_year = covering.start_date.year
+    except Exception:  # pragma: no cover - never break a leave read on this
+        start_year = None
+
+    if start_year is None:
+        start_year = today.year if today.month >= 4 else today.year - 1
+
+    return f"{start_year}-{str(start_year + 1)[2:]}"
 
 
 # ---------------------------------------------------------------------------

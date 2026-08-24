@@ -95,6 +95,7 @@ def test_only_things_a_school_can_be_without_are_switchable():
         "hostel",
         "notifications",
         "academic_calendar",
+        "examinations",
     }
 
 

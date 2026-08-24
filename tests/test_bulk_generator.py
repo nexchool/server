@@ -10,37 +10,68 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 
+
+# A stream is a row now, not a string, so the parser is given the tenant's
+# catalogue instead of consulting a hardcoded map (migration 107).
+class _FakeStream:
+    def __init__(self, name, code, sid=None):
+        self.name = name
+        self.code = code
+        self.id = sid or f"st-{name.lower()}"
+
+
+_SEEDED = [
+    _FakeStream("Science", "SCI"),
+    _FakeStream("Commerce", "COM"),
+    _FakeStream("Arts", "ART"),
+    _FakeStream("Vocational", "VOC"),
+]
+
+
+def _streams_index():
+    index = {}
+    for stream in _SEEDED:
+        if stream.code:
+            index[stream.code.lower()] = stream
+        index[stream.name.lower()] = stream
+    return index
+
+
 # ── _parse_stream_section ──────────────────────────────────────────────
 
 def test_parse_stream_section_plain_letter():
     from modules.school_setup.bulk_generator_service import _parse_stream_section
-    assert _parse_stream_section("A") == (None, "A")
+    assert _parse_stream_section("A", _streams_index()) == (None, "A")
 
 
 def test_parse_stream_section_science():
     from modules.school_setup.bulk_generator_service import _parse_stream_section
-    assert _parse_stream_section("Sci-A") == ("Science", "A")
+    found, label = _parse_stream_section("Sci-A", _streams_index())
+    assert (found.name, label) == ("Science", "A")
 
 
 def test_parse_stream_section_commerce():
     from modules.school_setup.bulk_generator_service import _parse_stream_section
-    assert _parse_stream_section("Com-B") == ("Commerce", "B")
+    found, label = _parse_stream_section("Com-B", _streams_index())
+    assert (found.name, label) == ("Commerce", "B")
 
 
 def test_parse_stream_section_arts():
     from modules.school_setup.bulk_generator_service import _parse_stream_section
-    assert _parse_stream_section("Arts-A") == ("Arts", "A")
+    found, label = _parse_stream_section("Arts-A", _streams_index())
+    assert (found.name, label) == ("Arts", "A")
 
 
 def test_parse_stream_section_vocational():
     from modules.school_setup.bulk_generator_service import _parse_stream_section
-    assert _parse_stream_section("Voc-A") == ("Vocational", "A")
+    found, label = _parse_stream_section("Voc-A", _streams_index())
+    assert (found.name, label) == ("Vocational", "A")
 
 
 def test_parse_stream_section_unknown_prefix_falls_through():
     from modules.school_setup.bulk_generator_service import _parse_stream_section
     # Unknown prefix is treated as plain section text
-    assert _parse_stream_section("Xyz-A") == (None, "Xyz-A")
+    assert _parse_stream_section("Xyz-A", _streams_index()) == (None, "Xyz-A")
 
 
 # ── bulk_generate_classes input validation ────────────────────────────
@@ -260,27 +291,31 @@ def test_bulk_generate_rejects_invalid_grade_id(monkeypatch):
 
 # ── unknown stream defensive branch ────────────────────────────────────
 
-def test_bulk_generate_rejects_unknown_stream(monkeypatch):
-    """If _parse_stream_section returns a stream not in VALID_STREAMS, error out (lines 87-92)."""
+def test_bulk_generate_treats_an_unknown_prefix_as_part_of_the_section(monkeypatch):
+    """No stream matches "Extra-", so the whole string is the section label.
+
+    This used to be an error naming the four tracks we shipped. A school may
+    now define its own, so the parser cannot know what is "unknown" — and a
+    section a school calls "Extra-A" is a section, not a mistake.
+    """
     from modules.school_setup import bulk_generator_service as bgs
 
     monkeypatch.setattr(bgs, "AcademicYear", _fake_year_model(exists=True))
     monkeypatch.setattr(bgs, "_validate_fk", lambda *a, **k: True)
     monkeypatch.setattr(bgs, "Class", _fake_class_model(existing_row=None))
-    # Force the parser to return an invalid stream label
-    monkeypatch.setattr(bgs, "_parse_stream_section", lambda raw: ("Bogus", "A"))
+    monkeypatch.setattr(bgs, "list_streams", lambda tenant_id: _SEEDED)
 
-    fake_session = MagicMock()
-    monkeypatch.setattr(bgs.db, "session", fake_session)
+    monkeypatch.setattr(bgs.db, "session", MagicMock())
 
     result = bgs.bulk_generate_classes("tenant-1", {
         "academic_year_id": "y1",
-        "cells": [{"grade_id": "g", "school_unit_id": "u", "programme_id": "p", "sections": ["A"]}],
+        "cells": [{"grade_id": "g", "school_unit_id": "u", "programme_id": "p",
+                   "sections": ["Extra-A"]}],
     })
 
-    # No classes created — only an error
-    assert result["success"] is False
-    assert any("Unknown stream prefix" in e["error"] for e in result["errors"])
+    assert result["success"] is True
+    assert result["created"][0]["section"] == "Extra-A"
+    assert result["created"][0]["stream"] is None
 
 
 # ── stream filter branch (line 105) ────────────────────────────────────
@@ -292,6 +327,7 @@ def test_bulk_generate_with_stream_uses_stream_filter(monkeypatch):
     monkeypatch.setattr(bgs, "AcademicYear", _fake_year_model(exists=True))
     monkeypatch.setattr(bgs, "_validate_fk", lambda *a, **k: True)
     monkeypatch.setattr(bgs, "Class", _fake_class_model(existing_row=None))
+    monkeypatch.setattr(bgs, "list_streams", lambda tenant_id: _SEEDED)
 
     fake_session = MagicMock()
     monkeypatch.setattr(bgs.db, "session", fake_session)

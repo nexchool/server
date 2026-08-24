@@ -26,16 +26,25 @@ from modules.academics.academic_year.models import AcademicYear
 from modules.classes.models import Class
 from modules.grades.models import Grade
 from modules.school_units.models import SchoolUnit
+from modules.streams.services import list_streams
 
 logger = logging.getLogger(__name__)
 
-VALID_STREAMS = frozenset(("Science", "Commerce", "Arts", "Vocational"))
-_STREAM_PREFIX_MAP = {
-    "Sci": "Science",
-    "Com": "Commerce",
-    "Arts": "Arts",
-    "Voc": "Vocational",
-}
+def _stream_index(tenant_id: str) -> Dict[str, Any]:
+    """Prefix → Stream for this tenant, keyed by both code and name.
+
+    Replaces a hardcoded {"Sci": "Science", …} map. A school that defines
+    "Humanities" with code "HUM" can write "HUM-A" and it resolves, which is
+    the whole point of the streams table (migration 107). The four seeded
+    codes (SCI/COM/ART/VOC) and names still match the prefixes schools already
+    type, so existing sheets keep working.
+    """
+    index: Dict[str, Any] = {}
+    for stream in list_streams(tenant_id):
+        if stream.code:
+            index[stream.code.strip().lower()] = stream
+        index[stream.name.strip().lower()] = stream
+    return index
 
 
 def bulk_generate_classes(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -49,6 +58,16 @@ def bulk_generate_classes(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, 
 
     if not AcademicYear.query.filter_by(id=academic_year_id, tenant_id=tenant_id).first():
         return {"success": False, "error": "Invalid academic_year_id for this tenant"}
+
+    # Read once for the whole sheet, and only if a section actually names a
+    # stream — most sheets are plain letters and should not pay for a catalogue
+    # they never consult.
+    _cached: Dict[str, Any] = {}
+
+    def streams() -> Dict[str, Any]:
+        if "index" not in _cached:
+            _cached["index"] = _stream_index(tenant_id)
+        return _cached["index"]
 
     created: List[Dict] = []
     skipped: List[Dict] = []
@@ -82,14 +101,10 @@ def bulk_generate_classes(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, 
             if not section_raw:
                 continue
 
-            stream, section_label = _parse_stream_section(section_raw)
-            if stream is not None and stream not in VALID_STREAMS:
-                errors.append({
-                    "cell": cell_index,
-                    "section": section_raw,
-                    "error": f"Unknown stream prefix '{section_raw}'. Use Sci-, Com-, Arts-, Voc- or plain section letter.",
-                })
-                continue
+            if "-" in section_raw:
+                stream, section_label = _parse_stream_section(section_raw, streams())
+            else:
+                stream, section_label = None, section_raw
 
             exists_q = Class.query.filter(
                 Class.tenant_id == tenant_id,
@@ -100,12 +115,16 @@ def bulk_generate_classes(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, 
                 Class.section == section_label,
             )
             if stream is None:
-                exists_q = exists_q.filter(Class.stream.is_(None))
+                exists_q = exists_q.filter(Class.stream_id.is_(None))
             else:
-                exists_q = exists_q.filter(Class.stream == stream)
+                exists_q = exists_q.filter(Class.stream_id == stream.id)
 
             if exists_q.first():
-                skipped.append(_cell_summary(grade_id, school_unit_id, programme_id, section_label, stream))
+                skipped.append(
+                    _cell_summary(
+                        grade_id, school_unit_id, programme_id, section_label, stream
+                    )
+                )
                 continue
 
             new_class = Class(
@@ -115,10 +134,14 @@ def bulk_generate_classes(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, 
                 programme_id=programme_id,
                 grade_id=grade_id,
                 section=section_label,
-                stream=stream,
+                stream_id=stream.id if stream else None,
             )
             db.session.add(new_class)
-            created.append(_cell_summary(grade_id, school_unit_id, programme_id, section_label, stream))
+            created.append(
+                _cell_summary(
+                    grade_id, school_unit_id, programme_id, section_label, stream
+                )
+            )
 
     if errors and not created and not skipped:
         return {"success": False, "errors": errors}
@@ -144,11 +167,13 @@ def bulk_generate_classes(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, 
     }
 
 
-def _parse_stream_section(raw: str) -> Tuple[Optional[str], str]:
-    """'Sci-A' -> ('Science', 'A'),  'A' -> (None, 'A')."""
+def _parse_stream_section(raw: str, streams: Dict[str, Any]) -> Tuple[Optional[Any], str]:
+    """'Sci-A' -> (<Stream Science>, 'A'),  'A' -> (None, 'A')."""
     parts = raw.split("-", 1)
-    if len(parts) == 2 and parts[0] in _STREAM_PREFIX_MAP:
-        return _STREAM_PREFIX_MAP[parts[0]], parts[1]
+    if len(parts) == 2:
+        found = streams.get(parts[0].strip().lower())
+        if found is not None:
+            return found, parts[1]
     return None, raw
 
 
@@ -165,5 +190,7 @@ def _cell_summary(grade_id, unit_id, programme_id, section, stream):
         "school_unit_id": unit_id,
         "programme_id": programme_id,
         "section": section,
-        "stream": stream,
+        # The name, as this payload has always carried it.
+        "stream": stream.name if stream is not None else None,
+        "stream_id": stream.id if stream is not None else None,
     }

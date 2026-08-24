@@ -89,6 +89,18 @@ def create_app(config_name=None):
     # depends on import order is not a guarantee.
     import modules.rbac.authority_service  # noqa: F401
 
+    # A class, term or calendar that names an academic year also names the
+    # cycle inside it. Derived centrally because ten writers and many fixtures
+    # build these rows, and the column is NOT NULL.
+    from modules.academics.cycles.consistency import register_cycle_consistency
+    _register_cycle_consistency = register_cycle_consistency
+    _register_cycle_consistency()
+
+    # Question papers and answer sheets are filed in the shared document
+    # store, which serves any domain that registers an owner kind (ADR-018).
+    from modules.examinations.documents import register_examination_document_kinds
+    register_examination_document_kinds()
+
     # Mount the GraphQL endpoint (/api/graphql)
     from graphql_api import register_graphql
     register_graphql(app)
@@ -163,6 +175,7 @@ def register_blueprints(app: Flask):
     from modules.rbac import rbac_bp
     from modules.users import users_bp
     from modules.classes import classes_bp
+    from modules.examinations import examinations_bp
     from modules.students import students_bp
     from modules.teachers import teachers_bp
     from modules.attendance import attendance_bp
@@ -199,6 +212,7 @@ def register_blueprints(app: Flask):
     from modules.sub_admins import sub_admins_bp
 
     # Register blueprints with URL prefixes
+    app.register_blueprint(examinations_bp, url_prefix='/api/examinations')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(platform_bp, url_prefix='/api/platform')
     app.register_blueprint(rbac_bp, url_prefix='/api/rbac')

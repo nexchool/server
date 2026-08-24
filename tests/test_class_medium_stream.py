@@ -3,7 +3,7 @@
 Pure-Python / mock-based — no DB, no Flask app context required.
 
 Covers:
-  1. create_class persists medium_id and stream
+  1. create_class persists medium_id and the resolved stream_id
   2. update_class updates stream to a new value
   3. update_class clears stream when explicitly passed empty string
 """
@@ -50,6 +50,12 @@ def test_create_class_persists_medium_id_and_stream(monkeypatch):
 
     monkeypatch.setattr(services, "Class", fake_class_cls)
     monkeypatch.setattr(services, "get_tenant_id", lambda: "t1")
+    monkeypatch.setattr(
+        services, "resolve_stream_id", lambda v: f"stream-{v.lower()}" if v else None
+    )
+    monkeypatch.setattr(
+        services, "resolve_cycle_id", lambda year, tenant, cycle=None: "cycle-1"
+    )
 
     # Stub _resolve_class_teacher_id to be a no-op
     monkeypatch.setattr(services, "_resolve_class_teacher_id", lambda tid, tid2: None)
@@ -64,7 +70,8 @@ def test_create_class_persists_medium_id_and_stream(monkeypatch):
 
     assert result.get("success") is True, f"Expected success, got: {result}"
     assert created_kwargs.get("medium_id") == "med-english"
-    assert created_kwargs.get("stream") == "Science"
+    # The caller still says "Science"; the class stores the stream it resolved to.
+    assert created_kwargs.get("stream_id") == "stream-science"
 
 
 def test_update_class_updates_stream(monkeypatch):
@@ -94,11 +101,17 @@ def test_update_class_updates_stream(monkeypatch):
 
     monkeypatch.setattr(services, "Class", fake_class_cls)
     monkeypatch.setattr(services, "get_tenant_id", lambda: "t1")
+    monkeypatch.setattr(
+        services, "resolve_stream_id", lambda v: f"stream-{v.lower()}" if v else None
+    )
+    monkeypatch.setattr(
+        services, "resolve_cycle_id", lambda year, tenant, cycle=None: "cycle-1"
+    )
 
     result = services.update_class("cls-2", stream="Science")
 
     assert result.get("success") is True, f"Expected success, got: {result}"
-    assert fake_cls.stream == "Science"
+    assert fake_cls.stream_id == "stream-science"
 
 
 def test_update_class_clears_stream_on_empty_string(monkeypatch):
@@ -127,8 +140,14 @@ def test_update_class_clears_stream_on_empty_string(monkeypatch):
 
     monkeypatch.setattr(services, "Class", fake_class_cls)
     monkeypatch.setattr(services, "get_tenant_id", lambda: "t1")
+    monkeypatch.setattr(
+        services, "resolve_stream_id", lambda v: f"stream-{v.lower()}" if v else None
+    )
+    monkeypatch.setattr(
+        services, "resolve_cycle_id", lambda year, tenant, cycle=None: "cycle-1"
+    )
 
     result = services.update_class("cls-3", stream="")
 
     assert result.get("success") is True, f"Expected success, got: {result}"
-    assert fake_cls.stream is None
+    assert fake_cls.stream_id is None

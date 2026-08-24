@@ -11,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from core.feature_flags import (
+    DEFAULT_OFF_FEATURES,
     CORE_FEATURES,
     OPTIONAL_FEATURES,
     default_feature_flags,
@@ -47,7 +48,9 @@ _MISSING = object()
 def test_default_feature_flags_includes_all_optional():
     flags = default_feature_flags()
     assert set(flags.keys()) == set(OPTIONAL_FEATURES)
-    assert all(v is True for v in flags.values())
+    assert all(
+        flags[key] is (key not in DEFAULT_OFF_FEATURES) for key in OPTIONAL_FEATURES
+    )
 
 
 def test_default_feature_flags_excludes_core():
@@ -59,13 +62,19 @@ def test_default_feature_flags_excludes_core():
 # --- DB-backed (via fake) ---
 
 def test_get_tenant_feature_flags_treats_missing_as_enabled(monkeypatch):
+    """A school does not lose a module because nobody stored an answer for it.
+
+    The exception is DEFAULT_OFF_FEATURES, which has never been switched on
+    for anybody — there is nothing to lose, and defaulting those to enabled
+    would hand every school a module on the deploy that introduced it.
+    """
     _install_fake_tenant(monkeypatch, {"attendance": False})
     flags = get_tenant_feature_flags("t1")
     assert flags["attendance"] is False
     for key in OPTIONAL_FEATURES:
         if key == "attendance":
             continue
-        assert flags[key] is True
+        assert flags[key] is (key not in DEFAULT_OFF_FEATURES)
     for key in CORE_FEATURES:
         assert flags[key] is True
 
@@ -73,14 +82,18 @@ def test_get_tenant_feature_flags_treats_missing_as_enabled(monkeypatch):
 def test_get_tenant_feature_flags_handles_missing_tenant(monkeypatch):
     _install_fake_tenant(monkeypatch, _MISSING)
     flags = get_tenant_feature_flags("missing")
-    assert all(flags[k] is True for k in OPTIONAL_FEATURES)
+    assert all(
+        flags[k] is (k not in DEFAULT_OFF_FEATURES) for k in OPTIONAL_FEATURES
+    )
     assert all(flags[k] is True for k in CORE_FEATURES)
 
 
 def test_get_tenant_feature_flags_handles_non_dict_storage(monkeypatch):
     _install_fake_tenant(monkeypatch, None)
     flags = get_tenant_feature_flags("t1")
-    assert all(flags[k] is True for k in OPTIONAL_FEATURES)
+    assert all(
+        flags[k] is (k not in DEFAULT_OFF_FEATURES) for k in OPTIONAL_FEATURES
+    )
 
 
 def test_get_tenant_enabled_features_returns_only_truthy(monkeypatch):

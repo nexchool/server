@@ -57,6 +57,19 @@ class SubjectContext(TenantBaseModel):
         db.ForeignKey("mediums.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Which track this offering belongs to. NULL means it applies to every
+    # stream at this (programme, grade) — which is every context that existed
+    # before migration 108, and every context in a school with no streams.
+    #
+    # This is what lets Grade 11 Science offer Physics and Grade 11 Commerce
+    # offer Accountancy. Without it both resolve to the same subject set, and
+    # so would their examinations.
+    stream_id = db.Column(
+        db.String(36),
+        db.ForeignKey("streams.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     variant_of_context_id = db.Column(
         db.String(36),
         db.ForeignKey("subject_contexts.id", ondelete="SET NULL"),
@@ -112,6 +125,7 @@ class SubjectContext(TenantBaseModel):
             "type": self.type,
             "role": self.role,
             "medium_id": self.medium_id,
+            "stream_id": self.stream_id,
             "variant_of_context_id": self.variant_of_context_id,
             "elective_group_key": self.elective_group_key,
             "default_weekly_periods": self.default_weekly_periods,

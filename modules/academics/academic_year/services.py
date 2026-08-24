@@ -7,6 +7,10 @@ from typing import Dict, List, Optional
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.academics.academic_year.models import AcademicYear
+from modules.academics.cycles.services import (
+    default_cycle_for_year,
+    ensure_default_cycle,
+)
 from modules.audit.services import log_finance_action
 
 
@@ -180,6 +184,10 @@ def create_academic_year(
             is_active=is_active,
         )
         db.session.add(ay)
+        db.session.flush()
+        # A year comes with the period it runs in, so an administrator making
+        # an ordinary year never has to learn that cycles exist.
+        ensure_default_cycle(ay)
         db.session.commit()
 
         log_finance_action(
@@ -251,11 +259,33 @@ def update_academic_year(
                 "overlap_year": overlap.to_dict(),
             }
 
+        previous_start, previous_end = ay.start_date, ay.end_date
+
         ay.name = new_name
         ay.start_date = new_start
         ay.end_date = new_end
         if is_active is not None:
             ay.is_active = is_active
+
+        # The main cycle was created from this year and carries its span. If it
+        # still agrees with what the year said a moment ago, move it too —
+        # otherwise correcting a year's dates would silently leave the period
+        # the school actually operates in pointing at the old ones, and the
+        # calendar would go on counting working days over a span nobody chose.
+        #
+        # A cycle that has been edited away from the year is left alone: the
+        # school has said something more specific than the year, and that is
+        # the answer to keep.
+        main = default_cycle_for_year(ay.id, tenant_id)
+        if (
+            main is not None
+            and main.start_date == previous_start
+            and main.end_date == previous_end
+        ):
+            main.start_date = new_start
+            main.end_date = new_end
+            if main.name == ay.name or main.name == new_name:
+                main.name = new_name
 
         db.session.commit()
         log_finance_action(

@@ -26,6 +26,7 @@ from .student_schemas import (
 )
 from .class_enrollment_service import (
     assign_student_to_class,
+    set_primary_roll_number,
     student_matches_academic_year_filter,
     student_matches_class_filter,
     student_matches_any_class_filter,
@@ -1072,7 +1073,10 @@ def update_student(
             
         # Update Student fields (only if provided)
         if roll_number is not None:
-            student.roll_number = roll_number
+            # The enrollment owns the number; the student column is its cache.
+            # Assigning here directly would leave the placement — and every
+            # historical record read from it — saying something else.
+            set_primary_roll_number(student.id, tenant_id, roll_number)
         if date_of_birth is not None:
             student.date_of_birth = datetime.strptime(date_of_birth, '%Y-%m-%d').date()
         if gender is not None:

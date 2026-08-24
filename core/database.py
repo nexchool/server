@@ -90,7 +90,19 @@ def init_db(app):
             AnnouncementAttachment,
         )
         from modules.academics.academic_year.models import AcademicYear
+        from modules.academics.cycles.models import AcademicCycle  # noqa: F401
+        from modules.examinations.models import (  # noqa: F401
+            ExamMark,
+            ExamPaper,
+            ExamResult,
+            ExamType,
+            Examination,
+            ExaminationLifecycleEvent,
+            GradingBand,
+            GradingScheme,
+        )
         from modules.subjects.models import Subject
+        from modules.streams.models import Stream  # noqa: F401
         from modules.departments.models import Department  # noqa: F401
         from modules.teachers.models import Teacher
         from modules.classes.models import Class, ClassSubject

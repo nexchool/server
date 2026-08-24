@@ -24,6 +24,7 @@ write slice rather than this one.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Optional
 
 import strawberry
@@ -31,6 +32,7 @@ import strawberry
 from graphql_api.errors import ConflictError, NotFoundError, ValidationError
 from graphql_api.permissions import IsAuthenticated, RequiresTenant, requires, requires_any
 
+from modules.academics.cycles.graphql_types import AcademicCycle as AcademicCycleType
 from .graphql.types import (
     Campus,
     Grade,
@@ -210,8 +212,93 @@ def _changes(payload) -> dict:
     }
 
 
+@strawberry.input
+class AcademicCycleInput:
+    academic_year_id: strawberry.ID
+    name: str
+    start_date: dt.date
+    end_date: dt.date
+    cycle_kind: str = "main"
+
+
+@strawberry.input
+class AcademicCycleChanges:
+    name: Optional[str] = strawberry.UNSET
+    start_date: Optional[dt.date] = strawberry.UNSET
+    end_date: Optional[dt.date] = strawberry.UNSET
+    cycle_kind: Optional[str] = strawberry.UNSET
+
+
 @strawberry.type
 class StructureMutation:
+    # ---------------------------------------------------------- academic cycles
+    #
+    # Guarded on `class.manage`, the key the academic-year routes already
+    # carry: a cycle is the period a year runs in, and whoever may open a year
+    # may say when it runs.
+    @strawberry.mutation(
+        permission_classes=_guard("class.manage"),
+        description=(
+            "Open a dated period inside an academic year — a second board's "
+            "calendar, a vacation batch, a coaching programme."
+        ),
+    )
+    def add_academic_cycle(
+        self, info: strawberry.Info, input: AcademicCycleInput
+    ) -> AcademicCycleType:
+        from modules.academics.cycles.graphql_types import cycle_to_graphql
+        from modules.academics.cycles import services
+
+        return _completed(
+            services.create_cycle(
+                info.context.tenant_id,
+                str(input.academic_year_id),
+                input.name,
+                input.start_date,
+                input.end_date,
+                input.cycle_kind,
+            ),
+            "academic_cycle",
+            cycle_to_graphql,
+        )
+
+    @strawberry.mutation(
+        permission_classes=_guard("class.manage"),
+        description="Correct a cycle's name, dates or kind.",
+    )
+    def update_academic_cycle(
+        self, info: strawberry.Info, id: strawberry.ID, changes: AcademicCycleChanges
+    ) -> AcademicCycleType:
+        from modules.academics.cycles.graphql_types import cycle_to_graphql
+        from modules.academics.cycles import services
+
+        return _completed(
+            services.update_cycle(
+                str(id), info.context.tenant_id, _changes(changes)
+            ),
+            "academic_cycle",
+            cycle_to_graphql,
+        )
+
+    @strawberry.mutation(
+        permission_classes=_guard("class.manage"),
+        description=(
+            "Retire a cycle. Refused while any class, term or calendar still "
+            "operates in it."
+        ),
+    )
+    def archive_academic_cycle(
+        self, info: strawberry.Info, id: strawberry.ID
+    ) -> AcademicCycleType:
+        from modules.academics.cycles.graphql_types import cycle_to_graphql
+        from modules.academics.cycles import services
+
+        return _completed(
+            services.archive_cycle(str(id), info.context.tenant_id),
+            "academic_cycle",
+            cycle_to_graphql,
+        )
+
     # ---------------------------------------------------------------- campuses
     @strawberry.mutation(
         permission_classes=_guard(PERM_CAMPUS_MANAGE),
