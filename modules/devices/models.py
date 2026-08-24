@@ -38,7 +38,12 @@ class DeviceToken(TenantBaseModel):
         onupdate=utc_now,
     )
 
-    user = db.relationship("User", backref=db.backref("device_tokens", lazy=True))
+    # Same reason as `notification_recipients`: NOT NULL column, ON DELETE
+    # CASCADE in the database, so the ORM must not try to blank it first.
+    user = db.relationship(
+        "User",
+        backref=db.backref("device_tokens", lazy=True, passive_deletes=True),
+    )
 
     def to_dict(self):
         return {
