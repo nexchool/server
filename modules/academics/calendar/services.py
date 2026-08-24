@@ -74,6 +74,34 @@ def _get_year(academic_year_id: str) -> AcademicYear:
     return year
 
 
+def calendar_span(cal: AcademicCalendar) -> Tuple[date, date]:
+    """The dates a calendar actually covers — its **cycle's**, not its year's.
+
+    A calendar belongs to a cycle (migration 112), and a cycle is when the
+    school is open. Using the year's dates here made a 40-day vacation batch
+    materialise working days across all twelve months, and counted a whole
+    year's holidays against it.
+
+    For a school with one cycle these are the same dates: the main cycle is
+    created from the year and carries its span. Nothing changes for them.
+
+    The *contents* — holidays, events, exam windows — are still keyed on the
+    academic year, so cycles under one year share them. That is a narrower
+    limitation, recorded rather than silently widened here.
+    """
+    from modules.academics.cycles.models import AcademicCycle
+
+    cycle = AcademicCycle.query.filter(
+        AcademicCycle.id == cal.academic_cycle_id,
+        AcademicCycle.tenant_id == g.tenant_id,
+    ).first()
+    if cycle is None:
+        raise CalendarValidationError(
+            {"academic_cycle_id": "The calendar's academic cycle is missing."}
+        )
+    return cycle.start_date, cycle.end_date
+
+
 def get_calendar(calendar_id: str) -> Optional[AcademicCalendar]:
     return AcademicCalendar.query.filter(
         AcademicCalendar.id == calendar_id,
@@ -82,21 +110,47 @@ def get_calendar(calendar_id: str) -> Optional[AcademicCalendar]:
 
 
 def get_calendar_for_year(academic_year_id: str) -> Optional[AcademicCalendar]:
+    """The calendar for a year. Ambiguous once a year runs several cycles —
+    use `get_calendar_for_cycle` there."""
     return AcademicCalendar.query.filter(
         AcademicCalendar.academic_year_id == academic_year_id,
         AcademicCalendar.tenant_id == g.tenant_id,
     ).first()
 
 
-def get_or_create_calendar(academic_year_id: str) -> AcademicCalendar:
-    """Return the calendar row for a year, creating a draft if none exists."""
+def get_calendar_for_cycle(academic_cycle_id: str) -> Optional[AcademicCalendar]:
+    return AcademicCalendar.query.filter(
+        AcademicCalendar.academic_cycle_id == academic_cycle_id,
+        AcademicCalendar.tenant_id == g.tenant_id,
+    ).first()
+
+
+def get_or_create_calendar(
+    academic_year_id: str, academic_cycle_id: Optional[str] = None
+) -> AcademicCalendar:
+    """Return the calendar for a cycle, creating a draft if none exists.
+
+    The cycle is optional and normally omitted: a year has one until a school
+    opens a second, and the wizard should not ask about a concept the school
+    does not have. Once a year runs several, one must be named — a holiday
+    calendar silently attached to the wrong cycle would give a board the wrong
+    working days for a term.
+    """
+    from modules.academics.cycles.services import resolve_cycle_id
+
     _get_year(academic_year_id)
-    cal = get_calendar_for_year(academic_year_id)
+    try:
+        cycle_id = resolve_cycle_id(academic_year_id, g.tenant_id, academic_cycle_id)
+    except ValueError as exc:
+        raise CalendarValidationError({"academic_cycle_id": str(exc)})
+
+    cal = get_calendar_for_cycle(cycle_id)
     if cal:
         return cal
     cal = AcademicCalendar(
         tenant_id=g.tenant_id,
         academic_year_id=academic_year_id,
+        academic_cycle_id=cycle_id,
         status="draft",
         current_step=1,
         weekly_holidays_config=default_weekly_holidays_config(),
@@ -582,13 +636,16 @@ def _collect_day_sets(
     cfg = cal.weekly_config
     weekly_days = set(cfg["days"])
 
+    # The span the school is actually open for — the cycle's, not the year's.
+    span_start, span_end = calendar_span(cal)
+
     weekly_off: Set[date] = {
-        d for d in _iter_dates(year.start_date, year.end_date) if d.weekday() in weekly_days
+        d for d in _iter_dates(span_start, span_end) if d.weekday() in weekly_days
     }
     if cfg["second_saturday"]:
-        weekly_off.update(_nth_saturdays_in_range(year.start_date, year.end_date, 2))
+        weekly_off.update(_nth_saturdays_in_range(span_start, span_end, 2))
     if cfg["fourth_saturday"]:
-        weekly_off.update(_nth_saturdays_in_range(year.start_date, year.end_date, 4))
+        weekly_off.update(_nth_saturdays_in_range(span_start, span_end, 4))
 
     holidays = Holiday.query.filter(
         Holiday.tenant_id == g.tenant_id,
@@ -605,24 +662,24 @@ def _collect_day_sets(
         # Materialized 2nd/4th-Saturday rows are weekly offs, not public holidays.
         if h.holiday_type == "weekly_off":
             for d in _iter_dates(h.start_date, end):
-                if year.start_date <= d <= year.end_date:
+                if span_start <= d <= span_end:
                     weekly_off.add(d)
             continue
         info = {"id": h.id, "name": h.name, "holiday_type": h.holiday_type}
         for d in _iter_dates(h.start_date, end):
-            if year.start_date <= d <= year.end_date:
+            if span_start <= d <= span_end:
                 target.setdefault(d, []).append(info)
 
     exam_dates: Set[date] = set()
     for w in list_exam_windows(year.id, active_only=True):
         for d in _iter_dates(w.start_date, w.end_date):
-            if year.start_date <= d <= year.end_date:
+            if span_start <= d <= span_end:
                 exam_dates.add(d)
 
     event_dates: Set[date] = {
         e.event_date
         for e in list_school_events(year.id, active_only=True)
-        if year.start_date <= e.event_date <= year.end_date
+        if span_start <= e.event_date <= span_end
     }
 
     return weekly_off, holiday_map, vacation_map, exam_dates, event_dates
@@ -634,7 +691,8 @@ def compute_summary(cal: AcademicCalendar) -> Dict[str, Any]:
     year = _get_year(cal.academic_year_id)
     weekly_off, holiday_map, vacation_map, exam_dates, _ = _collect_day_sets(year, cal)
 
-    total_days = (year.end_date - year.start_date).days + 1
+    span_start, span_end = calendar_span(cal)
+    total_days = (span_end - span_start).days + 1
     holiday_dates = set(holiday_map.keys())
     vacation_dates = set(vacation_map.keys())
     non_working = weekly_off | holiday_dates | vacation_dates
@@ -694,7 +752,8 @@ def get_days_feed(cal: AcademicCalendar) -> List[Dict[str, Any]]:
         semester_ends[term.end_date] = term.name
 
     feed: List[Dict[str, Any]] = []
-    for d in _iter_dates(year.start_date, year.end_date):
+    feed_start, feed_end = calendar_span(cal)
+    for d in _iter_dates(feed_start, feed_end):
         if d in vacation_map:
             day_type = "vacation"
         elif d in holiday_map:
@@ -789,7 +848,8 @@ def _materialize_nth_saturdays(year: AcademicYear, cal: AcademicCalendar) -> Non
     ):
         if not cfg[flag]:
             continue
-        for d in _nth_saturdays_in_range(year.start_date, year.end_date, nth):
+        sat_start, sat_end = calendar_span(cal)
+        for d in _nth_saturdays_in_range(sat_start, sat_end, nth):
             db.session.add(
                 Holiday(
                     tenant_id=g.tenant_id,

@@ -125,6 +125,16 @@ def test_the_only_orm_hooks_enforce_consistency():
         # and the one that forgets is the one that leaves a suspended
         # employee able to act.
         ("modules/rbac/authority_service.py", "after_flush"),
+        # A class, term or calendar that names an academic year also names the
+        # cycle inside it, and `academic_cycle_id` is NOT NULL. While a year
+        # has one main cycle — every year until a school opens a second — the
+        # value is derivable from the year alone, so filling it in is
+        # consistency rather than workflow: nothing is decided and no business
+        # event happens. Opening a cycle is `ensure_default_cycle`, which a
+        # reader can find. Ten production writers and several dozen fixtures
+        # build these rows; the one that forgets is the one that fails at
+        # insert.
+        ("modules/academics/cycles/consistency.py", "before_flush"),
     }
 
     found = set()

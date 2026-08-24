@@ -82,7 +82,10 @@ def create_calendar_draft():
             {"academic_year_id": "academic_year_id is required."}
         )
     try:
-        cal = services.get_or_create_calendar(academic_year_id)
+        cal = services.get_or_create_calendar(
+            academic_year_id,
+            (data.get("academic_cycle_id") or "").strip() or None,
+        )
     except CalendarValidationError as e:
         return validation_error_response(e.errors)
     return success_response(

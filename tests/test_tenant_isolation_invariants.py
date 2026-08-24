@@ -54,6 +54,17 @@ SCOPED_MODELS = [
     ("modules.people.employment", "StaffLifecycleEvent"),
     ("modules.students.models", "StudentLifecycleEvent"),
     ("modules.students.models", "AdmissionApplication"),
+    ("modules.streams.models", "Stream"),
+    ("modules.students.elections", "StudentSubjectElection"),
+    ("modules.academics.cycles.models", "AcademicCycle"),
+    ("modules.examinations.models", "ExamType"),
+    ("modules.examinations.models", "Examination"),
+    ("modules.examinations.models", "ExamPaper"),
+    ("modules.examinations.models", "ExamMark"),
+    ("modules.examinations.models", "ExamResult"),
+    ("modules.examinations.models", "GradingScheme"),
+    ("modules.examinations.models", "GradingBand"),
+    ("modules.examinations.models", "ExaminationLifecycleEvent"),
 ]
 
 

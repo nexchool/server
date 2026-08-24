@@ -391,13 +391,14 @@ def test_school_units_list_unrestricted_sees_all(flask_app, db_session, tenant, 
 
 
 # ---------------------------------------------------------------------------
-# Student documents — cross-branch PII leak (GET/POST/file/DELETE)
+# Reaching a student at all — cross-branch PII leak
 # ---------------------------------------------------------------------------
-# All four document routes gate on the same assert_student_allowed(student_id)
-# guard. A restricted unit-A admin hitting a unit-B student -> BranchForbidden;
-# hitting a unit-A student -> no raise.
+# These covered the four student document routes, which moved to the document
+# store in 106 (ADR-015). They still hold: every student-scoped route runs this
+# same guard. The document surface needs its own branch coverage on its own
+# route; this is not it.
 
-def test_student_documents_unit_b_forbidden_for_restricted(
+def test_reaching_unit_b_student_forbidden_for_restricted(
     flask_app, db_session, tenant, students, restricted_user
 ):
     _student_a, student_b, _classless = students
@@ -409,7 +410,7 @@ def test_student_documents_unit_b_forbidden_for_restricted(
             assert_student_allowed(student_b.id)
 
 
-def test_student_documents_unit_a_ok_for_restricted(
+def test_reaching_unit_a_student_ok_for_restricted(
     flask_app, db_session, tenant, students, restricted_user
 ):
     student_a, _student_b, _classless = students
@@ -419,7 +420,7 @@ def test_student_documents_unit_a_ok_for_restricted(
         assert_student_allowed(student_a.id)  # no raise
 
 
-def test_student_documents_unrestricted_no_op(
+def test_reaching_any_student_ok_for_unrestricted(
     flask_app, db_session, tenant, students, unrestricted_user
 ):
     student_a, student_b, _classless = students

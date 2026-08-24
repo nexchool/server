@@ -422,15 +422,27 @@ def _resolve_primary_class_teacher_id(
 def _assert_attachment_belongs_to(
     tenant_id: str, student_id: str, document_id: str
 ) -> None:
-    from modules.students.models import StudentDocument
+    from modules.documents.models import Document
+    from modules.people.document_catalog import OWNER_KIND
+    from modules.students.models import Student
+
+    # A document belongs to the human, not the studentship (ADR-015), so the
+    # question "is this the student's document" is asked of the person behind
+    # the student.
+    person_id = (
+        db.session.query(Student.person_id).filter(Student.id == student_id).scalar()
+    )
     doc = (
-        db.session.query(StudentDocument)
+        db.session.query(Document)
         .filter(
-            StudentDocument.id == document_id,
-            StudentDocument.tenant_id == tenant_id,
-            StudentDocument.student_id == student_id,
+            Document.id == document_id,
+            Document.tenant_id == tenant_id,
+            Document.owner_kind == OWNER_KIND,
+            Document.owner_id == person_id,
         )
         .first()
+        if person_id
+        else None
     )
     if not doc:
         raise ValidationError(

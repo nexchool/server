@@ -1,6 +1,7 @@
 """Two columns are caches. They must never become a second answer.
 
 `students.class_id` mirrors the current academic enrollment.
+`students.roll_number` mirrors that same enrollment's roll number.
 `classes.teacher_id` mirrors the current class-teacher assignment.
 
 Both are allowed (ADR-014): they make a listing fast, and a listing that has to
@@ -22,6 +23,7 @@ import pytest
 from flask import g
 
 from modules.academics.backbone.models import (
+    ENROLLMENT_TYPE_PRIMARY,
     ClassTeacherAssignment,
     StudentClassEnrollment,
 )
@@ -107,8 +109,17 @@ def _teacher(db_session, tenant):
 
 
 def _current_enrollment(student):
+    """The student's academic placement — the one the cache mirrors.
+
+    A child may also be enrolled in a vacation batch or a coaching programme
+    (migration 109). Those are `additional` and deliberately own no cache, so
+    the sweep below has to ask for the primary one or it would compare
+    `students.class_id` against whichever row came back first.
+    """
     return StudentClassEnrollment.query.filter_by(
-        student_id=student.id, is_current=True
+        student_id=student.id,
+        is_current=True,
+        enrollment_type=ENROLLMENT_TYPE_PRIMARY,
     ).first()
 
 
@@ -259,3 +270,42 @@ def test_removing_a_class_teacher_clears_the_cache(ctx, tenant, db_session, clas
 
     assert _responsible_for(first) is None
     assert first.teacher_id is None
+
+
+# ---------------------------------------------------------------------------
+# students.roll_number follows the primary enrollment
+# ---------------------------------------------------------------------------
+
+def test_the_roll_number_cache_agrees_with_the_placement(
+    ctx, tenant, db_session, classes, academic_year
+):
+    """Migration 110 made the enrollment the record and left the column a cache.
+
+    Stated over every student the file created, in the same shape as the
+    class_id sweep above — a future path that numbers a student without
+    telling the placement fails here.
+    """
+    from modules.students.class_enrollment_service import (
+        assign_student_to_class,
+        set_primary_roll_number,
+    )
+
+    first, second = classes
+    for index, target in enumerate((first, second), start=1):
+        student = _student(db_session, tenant, academic_year)
+        assign_student_to_class(student.id, target.id, academic_year.id, commit=False)
+        set_primary_roll_number(student.id, tenant.id, index)
+    db_session.flush()
+
+    disagreeing = []
+    for student in Student.query.filter_by(tenant_id=tenant.id).all():
+        placement = _current_enrollment(student)
+        if placement is None:
+            continue
+        if placement.roll_number != student.roll_number:
+            disagreeing.append(student.id)
+
+    assert not disagreeing, (
+        "students.roll_number disagrees with the primary enrollment for "
+        f"{disagreeing}. The enrollment is the record; the column mirrors it."
+    )

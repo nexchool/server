@@ -591,11 +591,13 @@ def test_calendar_not_visible_across_tenants(db_session, tenant, year, flask_app
 def test_term_dates_validated_against_year_and_siblings(db_session, tenant, year, request_ctx):
     from modules.academics.term_routes import _validate_term_dates
 
-    # Outside the year.
+    # Outside the period the year runs in. The message names the cycle since
+    # migration 112 — for a one-cycle school that cycle carries the year's own
+    # name and dates, so the rule is unchanged and only the wording moved.
     err = _validate_term_dates(
         tenant.id, year.id, date(2026, 5, 20), date(2026, 6, 10)
     )
-    assert err and "within the academic year" in err
+    assert err and "must fall within" in err
 
     _add_term(db_session, tenant, year, "Term 1", "2026-06-01", "2026-06-15")
 

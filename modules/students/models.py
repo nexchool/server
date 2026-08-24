@@ -1,5 +1,3 @@
-import enum
-
 from shared.s3_utils import profile_picture_public_url
 from sqlalchemy import text
 
@@ -7,99 +5,6 @@ from core.database import db
 from core.models import TenantBaseModel
 import uuid
 from core.school_time import utc_now
-
-
-# Document type labels for API responses
-DOCUMENT_TYPE_LABELS = {
-    "aadhar_card": "Aadhar Card",
-    "birth_certificate": "Birth Certificate",
-    "leaving_certificate": "Leaving Certificate",
-    "transfer_certificate": "Transfer Certificate",
-    "passport": "Passport",
-    "other": "Other",
-}
-
-
-class DocumentType(enum.Enum):
-    """Document types for student documents."""
-
-    AADHAR_CARD = "aadhar_card"
-    BIRTH_CERTIFICATE = "birth_certificate"
-    LEAVING_CERTIFICATE = "leaving_certificate"
-    TRANSFER_CERTIFICATE = "transfer_certificate"
-    PASSPORT = "passport"
-    OTHER = "other"
-
-
-class StudentDocument(TenantBaseModel):
-    """
-    Student document model for storing PDF/image documents.
-
-    Files are uploaded to AWS S3; this model stores metadata (the object key).
-    Scoped by tenant. Extends TenantBaseModel (tenant_id).
-    """
-
-    __tablename__ = "student_documents"
-
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    student_id = db.Column(
-        db.String(36),
-        db.ForeignKey("students.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    document_type = db.Column(
-        db.Enum(DocumentType, values_callable=lambda x: [e.value for e in x]),
-        nullable=False,
-    )
-    original_filename = db.Column(db.String(255), nullable=False)
-    # S3 object key / resolvable URL for the stored file.
-    file_url = db.Column(db.Text, nullable=False)
-    s3_object_key = db.Column(db.String(500), nullable=False, unique=True)
-    mime_type = db.Column(db.String(100), nullable=False)
-    file_size_bytes = db.Column(db.Integer, nullable=False)
-    uploaded_by_user_id = db.Column(
-        db.String(36),
-        db.ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
-    updated_at = db.Column(
-        db.DateTime, nullable=False, default=utc_now, onupdate=utc_now
-    )
-
-    student = db.relationship(
-        "Student",
-        backref=db.backref("documents", lazy=True),
-        passive_deletes=True,
-    )
-    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id])
-
-    def to_dict(self):
-        """Serialize for API response. Do not expose direct S3 URLs — use view_url with auth."""
-        return {
-            "id": self.id,
-            "student_id": self.student_id,
-            "document_type": self.document_type.value if self.document_type else None,
-            "document_type_label": DOCUMENT_TYPE_LABELS.get(
-                self.document_type.value, self.document_type.value
-            )
-            if self.document_type
-            else None,
-            "original_filename": self.original_filename,
-            "file_url": None,
-            "view_url": f"/api/students/{self.student_id}/documents/{self.id}/file",
-            "mime_type": self.mime_type,
-            "file_size_bytes": self.file_size_bytes,
-            "uploaded_by": {
-                "id": self.uploaded_by.id,
-                "name": self.uploaded_by.name or "",
-            }
-            if self.uploaded_by
-            else None,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
 
 
 class Student(TenantBaseModel):

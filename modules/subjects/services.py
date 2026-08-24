@@ -601,7 +601,9 @@ def _subjects_for_teacher(tenant_id: str, teacher_id: str) -> List[Dict]:
     return _subjects_for_class_subject_rows(tenant_id, class_subjects)
 
 
-def _subjects_for_student(tenant_id: str, class_id: str) -> List[Dict]:
+def _subjects_for_student(
+    tenant_id: str, class_id: str, enrollment_id: Optional[str] = None
+) -> List[Dict]:
     from modules.classes.models import ClassSubject
 
     if not class_id:
@@ -612,6 +614,20 @@ def _subjects_for_student(tenant_id: str, class_id: str) -> List[Dict]:
         .filter(ClassSubject.class_id == class_id)
         .all()
     )
+
+    # A student studies what their class offers, minus what they dropped or
+    # were excused from, plus the electives they chose. `effective_class_subjects`
+    # is the one place that rule lives — this reads it rather than repeating it,
+    # which is what stops the timetable, attendance and examinations each
+    # arriving at a slightly different subject list.
+    if enrollment_id:
+        from modules.students.election_service import effective_class_subjects
+
+        allowed = {
+            cs.id for cs in effective_class_subjects(enrollment_id, tenant_id)
+        }
+        class_subjects = [cs for cs in class_subjects if cs.id in allowed]
+
     return _subjects_for_class_subject_rows(tenant_id, class_subjects)
 
 
@@ -643,6 +659,21 @@ def get_subjects_for_user(tenant_id: str, user) -> List[Dict]:
 
     student = student_for_user(user.id, tenant_id)
     if student is not None:
-        return _subjects_for_student(tenant_id, student.class_id)
+        from modules.academics.backbone.models import (
+            ENROLLMENT_TYPE_PRIMARY,
+            StudentClassEnrollment,
+        )
+
+        placement = StudentClassEnrollment.query.filter_by(
+            tenant_id=tenant_id,
+            student_id=student.id,
+            is_current=True,
+            enrollment_type=ENROLLMENT_TYPE_PRIMARY,
+        ).first()
+        return _subjects_for_student(
+            tenant_id,
+            student.class_id,
+            enrollment_id=placement.id if placement else None,
+        )
 
     return []

@@ -53,7 +53,8 @@ from modules.people.models import Family, FamilyMember, Person
 from modules.people.service import employ
 from modules.rbac.models import Role
 from modules.schedule.models import ScheduleOverride
-from modules.students.models import Student, StudentDocument
+from modules.students.models import Student
+from modules.documents.models import Document
 from modules.subjects.models import Subject
 from modules.teachers.models import Teacher
 
@@ -114,7 +115,9 @@ def _clear_tenant_academic_data(tenant_id: str) -> None:
     FeeInvoiceItem.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
     FeeInvoice.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
 
-    StudentDocument.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
+    # Documents belong to the person now (ADR-015), so this clears every
+    # document the school holds rather than only a student's.
+    Document.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)
 
     # students.class_id → classes.id (RESTRICT): remove students before classes
     Student.query.filter_by(tenant_id=tenant_id).delete(synchronize_session=False)

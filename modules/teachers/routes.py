@@ -18,6 +18,7 @@ from shared.helpers import (
     forbidden_response,
 )
 from . import services
+from modules.documents import rest as document_rest
 from .teacher_schemas import validate_teacher_payload
 
 # Permissions
@@ -25,6 +26,9 @@ PERM_CREATE = 'teacher.create'
 PERM_READ = 'teacher.read'
 PERM_UPDATE = 'teacher.update'
 PERM_DELETE = 'teacher.delete'
+# Filing a teacher's papers is managing the teacher, and mirrors what the
+# student side asks for. Already in the RBAC catalogue.
+PERM_MANAGE = 'teacher.manage'
 
 
 def _parse_int_param(raw, default=None, minimum=None, maximum=None):
@@ -424,3 +428,42 @@ def teacher_employment_timeline(teacher_id):
         return err
     events = separation.employment_timeline(staff_id)
     return success_response(data=[event.to_dict() for event in events])
+
+
+# ---------------------------------------------------------------------------
+# Documents — bytes only. Listing, the type catalogue and deletion are GraphQL
+# (ADR-015); what is left here is a multipart upload and an authenticated
+# download, which are infrastructure.
+# ---------------------------------------------------------------------------
+
+@teachers_bp.route('/<teacher_id>/documents', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_MANAGE)
+def upload_teacher_document(teacher_id):
+    """Upload a document for a teacher. multipart/form-data: file, document_type."""
+    person_id = services.person_id_for_teacher(teacher_id)
+    if not person_id:
+        return not_found_response('Teacher')
+
+    body, status = document_rest.upload_for_person(person_id)
+    return body, status
+
+
+@teachers_bp.route(
+    '/<teacher_id>/documents/<document_id>/file',
+    methods=['GET'],
+    strict_slashes=False,
+)
+@tenant_required
+@auth_required
+@require_feature('teacher_management')
+@require_permission(PERM_READ)
+def get_teacher_document_file(teacher_id, document_id):
+    """Stream a document's bytes. Not a shareable URL — needs the usual headers."""
+    person_id = services.person_id_for_teacher(teacher_id)
+    if not person_id:
+        return not_found_response('Teacher')
+
+    return document_rest.stream_document(person_id, document_id)

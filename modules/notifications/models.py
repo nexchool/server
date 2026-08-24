@@ -104,7 +104,17 @@ class NotificationRecipient(db.Model):
     created_at = db.Column(db.DateTime(), nullable=False, default=utc_now)
 
     notification = db.relationship("Notification", back_populates="recipients")
-    user = db.relationship("User", backref=db.backref("notification_recipient_rows", lazy=True))
+    # `passive_deletes` is what makes deleting an account possible. The column
+    # is NOT NULL and the FK is ON DELETE CASCADE, so the database already
+    # removes these rows — but without this the ORM tries to de-associate the
+    # collection first, which is `UPDATE … SET user_id = NULL` against a NOT
+    # NULL column and fails the whole delete.
+    user = db.relationship(
+        "User",
+        backref=db.backref(
+            "notification_recipient_rows", lazy=True, passive_deletes=True
+        ),
+    )
 
     def to_dict(self):
         return {

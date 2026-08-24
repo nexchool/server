@@ -1,13 +1,23 @@
 # =============================================================================
-# Nexchool Demo School — LOCAL test tenant (`default`)
+# Nexchool Demo Trust — LOCAL test tenant (`default`)
 #
-# Single campus running three programmes side by side (the "two boards on one
-# campus" case from the scale contract): GSEB Gujarati medium, GSEB English
-# medium, and a CBSE English wing. Grades 1-12 in the catalogue; classes are
-# created only for the cells listed below, including two Grade 11 stream cells.
+# A two-campus trust, which is the shape the scale contract is written for and
+# the one a single-campus fixture cannot exercise:
 #
-# Subjects and offerings are DERIVED from each programme's `template_board_code`
-# (subject_template_groups) and must NOT be declared here.
+#   Main Campus   — GSEB Gujarati medium and GSEB English medium side by side.
+#                   The established wing: pre-primary through Std 12, both
+#                   mediums running parallel sections of the same grades.
+#   North Campus  — a newer CBSE English wing, pre-primary through Std 12.
+#
+# Std 11-12 run streams: Science, Commerce and Arts on the Gujarati wing and at
+# North, Science and Commerce on the smaller English-medium wing. Streams are
+# written as a section prefix ("Sci-A"); bulk_generate_classes resolves the
+# prefix against the tenant's `streams` rows.
+#
+# Pre-primary (Nursery/LKG/UKG) has no board syllabus anywhere in India, so
+# those grades take their whole curriculum from `extra_subjects` below. Std 1-12
+# subjects are DERIVED from each programme's `template_board_code` and must NOT
+# be declared here.
 # =============================================================================
 
 tenant:
@@ -24,7 +34,8 @@ terms:
   - { name: "Term 2", start: 2026-11-01, end: 2027-03-31 }
 
 units:
-  - { code: "MAIN", name: "Nexchool Demo School" }
+  - { code: "MAIN",  name: "Nexchool Demo School — Main Campus" }
+  - { code: "NORTH", name: "Nexchool Demo School — North Campus" }
 
 programmes:
   - { code: "GSEB-GUJ", name: "GSEB Gujarati Medium", board: "GSEB", medium: "Gujarati", template_board_code: "gseb_gujarati" }
@@ -32,38 +43,88 @@ programmes:
   - { code: "CBSE-ENG", name: "CBSE English Medium",  board: "CBSE", medium: "English",  template_board_code: "cbse" }
 
 grades:
-  - { name: "1",  sequence: 1 }
-  - { name: "2",  sequence: 2 }
-  - { name: "3",  sequence: 3 }
-  - { name: "4",  sequence: 4 }
-  - { name: "5",  sequence: 5 }
-  - { name: "6",  sequence: 6 }
-  - { name: "7",  sequence: 7 }
-  - { name: "8",  sequence: 8 }
-  - { name: "9",  sequence: 9 }
-  - { name: "10", sequence: 10 }
-  - { name: "11", sequence: 11 }
-  - { name: "12", sequence: 12 }
+  - { name: "Nursery", sequence: 1 }
+  - { name: "LKG",     sequence: 2 }
+  - { name: "UKG",     sequence: 3 }
+  - { name: "1",  sequence: 4 }
+  - { name: "2",  sequence: 5 }
+  - { name: "3",  sequence: 6 }
+  - { name: "4",  sequence: 7 }
+  - { name: "5",  sequence: 8 }
+  - { name: "6",  sequence: 9 }
+  - { name: "7",  sequence: 10 }
+  - { name: "8",  sequence: 11 }
+  - { name: "9",  sequence: 12 }
+  - { name: "10", sequence: 13 }
+  - { name: "11", sequence: 14 }
+  - { name: "12", sequence: 15 }
 
-# 12 class cells for Std 1-10.
-#
-# No Std 11-12 cells: streams are not supported end to end yet. Every Std 11-12
-# subject_template_item carries a stream, but onboarding_service.derive_config
-# always calls resolve_template with stream=None, so no offering resolves. The
-# root cause is one layer down -- subject_contexts has no stream column (its
-# unique key is programme+grade+subject+medium+role), so a Science and a
-# Commerce class in the same programme+grade cannot carry different offerings.
+# Pre-primary curriculum. Codes that exist in a board template (GUJ, ENG, MATH,
+# PE) are reused deliberately: the same subject taught earlier, not a second
+# row for the same thing. ACT/ART are the school's own.
+extra_subjects:
+  # GSEB Gujarati medium
+  - { code: "GUJ",  name: "Gujarati",            programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 6, type: mandatory }
+  - { code: "ENG",  name: "English",             programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 3, type: mandatory }
+  - { code: "MATH", name: "Mathematics",         programme: "GSEB-GUJ", grades: ["LKG", "UKG"],            weekly: 5, type: mandatory }
+  - { code: "ACT",  name: "Activity & Readiness", programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 5, type: mandatory, role: co_curricular }
+  - { code: "ART",  name: "Art Education",      programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 3, type: mandatory, role: co_curricular }
+  - { code: "PE",   name: "Physical Education",  programme: "GSEB-GUJ", grades: ["Nursery", "LKG", "UKG"], weekly: 3, type: mandatory }
+  # CBSE English medium (North Campus)
+  - { code: "ENG",  name: "English",             programme: "CBSE-ENG", grades: ["Nursery", "LKG", "UKG"], weekly: 6, type: mandatory }
+  - { code: "MATH", name: "Mathematics",         programme: "CBSE-ENG", grades: ["LKG", "UKG"],            weekly: 5, type: mandatory }
+  - { code: "ACT",  name: "Activity & Readiness", programme: "CBSE-ENG", grades: ["Nursery", "LKG", "UKG"], weekly: 5, type: mandatory, role: co_curricular }
+  - { code: "ART",  name: "Art Education",      programme: "CBSE-ENG", grades: ["Nursery", "LKG", "UKG"], weekly: 3, type: mandatory, role: co_curricular }
+  - { code: "PE",   name: "Physical Education",  programme: "CBSE-ENG", grades: ["Nursery", "LKG", "UKG"], weekly: 3, type: mandatory }
+
+# 65 sections in all — roughly 31 students each at the 2,000 the trust enrols.
 classes:
-  # GSEB Gujarati medium — the older, larger wing
+  # ── Main Campus · GSEB Gujarati medium — the established wing, two sections
+  #    at every grade.
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "Nursery", sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "LKG",     sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "UKG",     sections: [A, B] }
   - { unit: "MAIN", programme: "GSEB-GUJ", grade: "1",  sections: [A, B] }
   - { unit: "MAIN", programme: "GSEB-GUJ", grade: "2",  sections: [A, B] }
-  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "3",  sections: [A] }
-  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "4",  sections: [A] }
-  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "5",  sections: [A] }
-  # GSEB English medium — parallel sections, same campus
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "3",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "4",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "5",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "6",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "7",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "8",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "9",  sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "10", sections: [A, B] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "11", sections: ["Sci-A", "Com-A", "Arts-A"] }
+  - { unit: "MAIN", programme: "GSEB-GUJ", grade: "12", sections: ["Sci-A", "Com-A", "Arts-A"] }
+
+  # ── Main Campus · GSEB English medium — parallel single sections on the same
+  #    campus. This is the "two boards, two mediums, one campus" case.
   - { unit: "MAIN", programme: "GSEB-ENG", grade: "1",  sections: [A] }
   - { unit: "MAIN", programme: "GSEB-ENG", grade: "2",  sections: [A] }
   - { unit: "MAIN", programme: "GSEB-ENG", grade: "3",  sections: [A] }
-  # CBSE English wing — upper grades
-  - { unit: "MAIN", programme: "CBSE-ENG", grade: "9",  sections: [A] }
-  - { unit: "MAIN", programme: "CBSE-ENG", grade: "10", sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "4",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "5",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "6",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "7",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "8",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "9",  sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "10", sections: [A] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "11", sections: ["Sci-A", "Com-A"] }
+  - { unit: "MAIN", programme: "GSEB-ENG", grade: "12", sections: ["Sci-A", "Com-A"] }
+
+  # ── North Campus · CBSE English medium — the newer campus, single sections.
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "Nursery", sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "LKG",     sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "UKG",     sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "1",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "2",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "3",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "4",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "5",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "6",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "7",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "8",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "9",  sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "10", sections: [A] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "11", sections: ["Sci-A", "Com-A", "Arts-A"] }
+  - { unit: "NORTH", programme: "CBSE-ENG", grade: "12", sections: ["Sci-A", "Com-A", "Arts-A"] }

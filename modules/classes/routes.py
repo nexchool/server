@@ -266,6 +266,8 @@ def create_class():
         medium_id=data.get('medium_id') or None,
         stream=data.get('stream') or None,
         department_id=data.get('department_id') or None,
+        # Omitted by a school with one cycle; the service resolves it.
+        academic_cycle_id=data.get('academic_cycle_id') or None,
     )
 
     if result['success']:

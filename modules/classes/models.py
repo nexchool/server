@@ -28,11 +28,14 @@ class Class(TenantBaseModel):
     # Optional display label, e.g. "Grade 10" or "10 - CBSE English". Identity now lives on the FKs below.
     name = db.Column(db.String(50), nullable=True)
     section = db.Column(db.String(10), nullable=False)  # e.g. "A"
-    stream = db.Column(
-        db.String(32),
+    # The academic track this section follows. NULL for Grades 1-10, which have
+    # none. Was free text guarded by a CHECK naming four tracks; a school's own
+    # vocabulary is data now (migration 107).
+    stream_id = db.Column(
+        db.String(36),
+        db.ForeignKey("streams.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
-        comment="Grade 11-12 stream: Science, Commerce, Arts, Vocational. NULL for Grade 1-10.",
     )
     academic_year_id = db.Column(
         db.String(36),
@@ -40,6 +43,11 @@ class Class(TenantBaseModel):
         nullable=False,
         index=True,
     )
+    # When this section actually runs. A composite FK (migration 112) ties it
+    # to `academic_year_id`, so the cycle a class names always belongs to the
+    # year it names — the year column is a retained denormalisation that the
+    # database will not let drift.
+    academic_cycle_id = db.Column(db.String(36), nullable=False, index=True)
 
     # Multi-school structure — kept nullable in Phase 1 so existing class
     # creation paths keep working until services are migrated. Tighten to
@@ -157,25 +165,49 @@ class Class(TenantBaseModel):
 
     __table_args__ = (
         # Structural identity: a section is unique within a
-        # (tenant, school_unit, programme, grade, academic_year).
-        db.UniqueConstraint(
+        # (tenant, school_unit, programme, grade, academic_year) — and within a
+        # stream where one is named, so Grade 11 Science A and Grade 11
+        # Commerce A can both exist.
+        #
+        # Two partial indexes rather than one over a nullable column: Postgres
+        # treats every NULL as distinct, so a single index including stream_id
+        # would stop protecting the streamless sections that are most of them.
+        Index(
+            "uq_classes_identity_no_stream",
             "tenant_id",
             "school_unit_id",
             "programme_id",
             "grade_id",
             "section",
             "academic_year_id",
-            name="uq_classes_unit_programme_grade_section_year",
+            unique=True,
+            postgresql_where=text("stream_id IS NULL"),
+        ),
+        Index(
+            "uq_classes_identity_with_stream",
+            "tenant_id",
+            "school_unit_id",
+            "programme_id",
+            "grade_id",
+            "section",
+            "academic_year_id",
+            "stream_id",
+            unique=True,
+            postgresql_where=text("stream_id IS NOT NULL"),
         ),
         # One teacher can only be class teacher of one class per tenant.
         db.UniqueConstraint(
             "teacher_id", "tenant_id",
             name="uq_classes_teacher_id_tenant",
         ),
-        db.CheckConstraint(
-            "stream IS NULL OR stream IN "
-            "('Science', 'Commerce', 'Arts', 'Vocational')",
-            name="ck_classes_stream",
+        # The cycle a class names must belong to the year it names. Declared
+        # here as well as in migration 112 so SQLAlchemy knows the dependency
+        # and inserts a cycle before the class that references it.
+        db.ForeignKeyConstraint(
+            ["academic_year_id", "academic_cycle_id"],
+            ["academic_cycles.academic_year_id", "academic_cycles.id"],
+            name="fk_classes_academic_cycle",
+            ondelete="RESTRICT",
         ),
     )
 
@@ -210,6 +242,7 @@ class Class(TenantBaseModel):
         lazy=True,
     )
     department_ref = db.relationship("Department", foreign_keys=[department_id])
+    stream_ref = db.relationship("Stream", foreign_keys=[stream_id], lazy="joined")
 
     def save(self):
         db.session.add(self)
@@ -225,7 +258,11 @@ class Class(TenantBaseModel):
             # transports carry its answer.
             "display_name": self.display_name,
             "section": self.section,
-            "stream": self.stream,
+            # `stream` keeps emitting the name it always did, so admin-web and
+            # the shipped Expo build read exactly what they read before the
+            # column became a relationship (migration 107).
+            "stream": self.stream_ref.name if self.stream_ref else None,
+            "stream_id": self.stream_id,
             "grade_level": self.grade_level,
             "school_unit_id": self.school_unit_id,
             "school_unit_name": self.school_unit.name if self.school_unit else None,

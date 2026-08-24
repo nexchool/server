@@ -14,6 +14,8 @@ from modules.academics.backbone.models import (
     ClassTeacherAssignment,
 )
 from .models import Class, ClassSubject
+from modules.streams.services import resolve_stream_id
+from modules.academics.cycles.services import resolve_cycle_id
 from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
@@ -107,8 +109,15 @@ def create_class(
     medium_id: Optional[str] = None,
     stream: Optional[str] = None,
     department_id: Optional[str] = None,
+    academic_cycle_id: Optional[str] = None,
 ) -> Dict:
-    """Create a new class (tenant-scoped). academic_year_id is required."""
+    """Create a new class (tenant-scoped). academic_year_id is required.
+
+    `academic_cycle_id` is optional and normally omitted: a year has one cycle
+    until a school opens a second, and the caller should not have to know the
+    concept exists. Naming one is how a trust puts a section in its vacation
+    batch or its coaching programme.
+    """
     logger.warning(
         "[create_class] called: name=%r, section=%r, academic_year_id=%r, teacher_id=%r, start_date=%r, end_date=%r, grade_id=%r, programme_id=%r, school_unit_id=%r",
         name, section, academic_year_id, teacher_id, start_date, end_date, grade_id, programme_id, school_unit_id,
@@ -158,7 +167,23 @@ def create_class(
         # programme or campus. A trust running two mediums on one campus has
         # exactly that, and so does the demo school: Grade 1 A exists twice,
         # once GSEB Gujarati and once GSEB English.
+        # Accepts an id or the name the clients have always sent.
+        try:
+            resolved_stream_id = resolve_stream_id(stream)
+        except ValueError as exc:
+            return {'success': False, 'error': str(exc)}
+
+        try:
+            resolved_cycle_id = resolve_cycle_id(
+                academic_year_id, tenant_id, academic_cycle_id
+            )
+        except ValueError as exc:
+            return {'success': False, 'error': str(exc)}
+
         logger.warning("[create_class] checking for duplicate")
+        # Stream is part of identity: Grade 11 Science A and Grade 11 Commerce A
+        # are different sections. Without it here the second one is refused by
+        # the application even though the database would accept it.
         existing = Class.query.filter_by(
             tenant_id=tenant_id,
             school_unit_id=school_unit_id,
@@ -166,6 +191,7 @@ def create_class(
             grade_id=grade_id,
             section=section.strip(),
             academic_year_id=academic_year_id,
+            stream_id=resolved_stream_id,
         ).first()
         if existing:
             logger.warning("create_class: FAILED - duplicate found, existing id=%r", existing.id if existing else None)
@@ -191,7 +217,8 @@ def create_class(
             programme_id=programme_id or None,
             school_unit_id=school_unit_id or None,
             medium_id=medium_id or None,
-            stream=stream or None,
+            stream_id=resolved_stream_id,
+            academic_cycle_id=resolved_cycle_id,
             department_id=resolved_department_id,
         )
         logger.warning("[create_class] saving to database")
@@ -936,7 +963,11 @@ def update_class(
         if medium_id is not None:
             cls.medium_id = medium_id or None
         if stream is not None:
-            cls.stream = stream if stream else None
+            # Accepts an id or the name the clients have always sent.
+            try:
+                cls.stream_id = resolve_stream_id(stream)
+            except ValueError as exc:
+                return {'success': False, 'error': str(exc)}
         if department_id is not _MISSING:
             cls.department_id = resolved_department_id
 

@@ -151,13 +151,26 @@ def test_ensure_year_deactivates_other_active_years(monkeypatch):
 
 # --- apply_subject_contexts_to_classes -------------------------------------
 
-def _ctx(programme_id, grade_id, subject_id, weekly, type_="mandatory"):
+def _ctx(programme_id, grade_id, subject_id, weekly, type_="mandatory",
+         stream_id=None):
     c = MagicMock()
     c.programme_id = programme_id
     c.grade_id = grade_id
     c.subject_id = subject_id
     c.default_weekly_periods = weekly
     c.type = type_
+    # Set explicitly, and that matters: offerings are now keyed by
+    # (programme, grade, stream), and a MagicMock left to invent its own
+    # `stream_id` files the row under a key nothing can look up — the class
+    # finds neither the stream-agnostic bucket nor its own.
+    c.stream_id = stream_id
+    return c
+
+
+def _class(id_, programme_id, grade_id, stream_id=None):
+    """A section. `stream_id=None` is one that runs no stream — most of them."""
+    c = MagicMock(id=id_, programme_id=programme_id, grade_id=grade_id)
+    c.stream_id = stream_id
     return c
 
 
@@ -192,7 +205,7 @@ def _wire_apply(monkeypatch, classes, existing_cs, contexts):
 
 
 def test_apply_contexts_creates_one_class_subject_per_context(monkeypatch):
-    c1 = MagicMock(id="c1", programme_id="p1", grade_id="g1")
+    c1 = _class("c1", "p1", "g1")
     contexts = [_ctx("p1", "g1", "s1", 6), _ctx("p1", "g1", "s2", 5, "elective")]
     svc, session = _wire_apply(monkeypatch, [c1], [], contexts)
 
@@ -204,7 +217,7 @@ def test_apply_contexts_creates_one_class_subject_per_context(monkeypatch):
 
 
 def test_apply_contexts_skips_existing_active_pairs(monkeypatch):
-    c1 = MagicMock(id="c1", programme_id="p1", grade_id="g1")
+    c1 = _class("c1", "p1", "g1")
     existing = MagicMock(class_id="c1", subject_id="s1")
     contexts = [_ctx("p1", "g1", "s1", 6)]
     svc, session = _wire_apply(monkeypatch, [c1], [existing], contexts)
@@ -227,7 +240,7 @@ def test_apply_contexts_dedups_same_subject_within_one_run(monkeypatch):
     # Two contexts for one class point at the SAME subject (e.g. duplicate
     # offering lines). Only one ClassSubject must be created; the second is
     # skipped via the in-call existing_pairs guard.
-    c1 = MagicMock(id="c1", programme_id="p1", grade_id="g1")
+    c1 = _class("c1", "p1", "g1")
     contexts = [_ctx("p1", "g1", "s1", 6), _ctx("p1", "g1", "s1", 4)]
     svc, session = _wire_apply(monkeypatch, [c1], [], contexts)
 
@@ -235,6 +248,45 @@ def test_apply_contexts_dedups_same_subject_within_one_run(monkeypatch):
 
     assert result == {"created": 1, "skipped": 1}
     assert session.add.call_count == 1
+
+
+def test_apply_contexts_gives_a_stream_its_own_subjects_and_the_shared_ones(
+    monkeypatch,
+):
+    """What migration 119 is for: Mathematics is taught in Science and in
+    Commerce but not in Arts, so it cannot be one stream-agnostic row. A
+    section takes the offerings naming its stream *plus* the ones naming
+    none — and none of another stream's."""
+    science = _class("c1", "p1", "g1", stream_id="st-science")
+    contexts = [
+        _ctx("p1", "g1", "english", 5),                          # every stream
+        _ctx("p1", "g1", "physics", 6, stream_id="st-science"),
+        _ctx("p1", "g1", "accounts", 6, stream_id="st-commerce"),
+    ]
+    svc, session = _wire_apply(monkeypatch, [science], [], contexts)
+
+    result = svc.apply_subject_contexts_to_classes("t1", "ay1")
+
+    assert result == {"created": 2, "skipped": 0}
+    created = {c.kwargs["subject_id"] for c in svc.ClassSubject.call_args_list}
+    assert created == {"english", "physics"}
+
+
+def test_apply_contexts_gives_a_streamless_class_only_the_shared_subjects(
+    monkeypatch,
+):
+    """A school with no streams keeps exactly what it had before."""
+    plain = _class("c1", "p1", "g1")
+    contexts = [
+        _ctx("p1", "g1", "english", 5),
+        _ctx("p1", "g1", "physics", 6, stream_id="st-science"),
+    ]
+    svc, session = _wire_apply(monkeypatch, [plain], [], contexts)
+
+    assert svc.apply_subject_contexts_to_classes("t1", "ay1") == {
+        "created": 1, "skipped": 0,
+    }
+    assert svc.ClassSubject.call_args_list[0].kwargs["subject_id"] == "english"
 
 
 # --- seed_school orchestrator ----------------------------------------------

@@ -103,9 +103,15 @@ Update C
 | AttendanceRecorded | Participation was recorded for a session | Attendance |
 | AttendanceCorrected | A recorded attendance was amended | Attendance |
 | AttendanceLocked | Attendance became part of the permanent record | Attendance |
+| ExaminationScheduled | An assessment event was given its papers and dates | Examination |
+| ExaminationCancelled | A scheduled assessment will not be held | Examination |
+| MarksEntryOpened | The school began recording what students scored | Examination |
+| MarksLocked | A paper's register was closed; changing it now needs a correction | Examination |
+| MarksCorrected | A closed mark was changed by an approved correction | Examination |
+| ResultsPublished | An examination's results became the school's word | Examination |
+| ResultsRevised | A published result was corrected; the previous version is kept | Examination |
 | LeaveApproved | Staff leave was granted | Staff Management |
 | FeeCollected | A payment was received | Finance |
-| ResultsPublished | Assessment outcomes were released | Examination |
 
 ---
 

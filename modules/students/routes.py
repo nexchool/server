@@ -28,7 +28,7 @@ from core.branch_scope import (
     get_allowed_unit_ids,
 )
 from . import services
-from .document_schemas import validate_document_type
+from modules.documents import rest as document_rest
 from .student_schemas import validate_student_payload
 from core.school_time import utc_now
 
@@ -902,177 +902,6 @@ def export_students():
 
 # --- Document routes: more specific paths, register before /<student_id> ---
 
-@students_bp.route('/<student_id>/documents', methods=['GET'], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature('student_management')
-def list_student_documents(student_id):
-    """List all documents for a student. Uses same permission logic as get_student."""
-    user_id = g.current_user.id
-    from modules.rbac.services import has_permission
-
-    student = services.get_student_by_id(student_id)
-    if not student:
-        return not_found_response('Student')
-
-    # Branch scope: a restricted sub-admin cannot reach a student's documents
-    # outside their branches (403). No-op for unrestricted users.
-    assert_student_allowed(student_id)
-
-    # RBAC: same as get_student
-    if has_permission(user_id, PERM_READ_ALL):
-        result = services.list_student_documents(student_id)
-        if not result.get("success"):
-            return not_found_response("Student")
-        return success_response(data=result["documents"])
-    if has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
-        result = services.list_student_documents(student_id)
-        if not result.get("success"):
-            return not_found_response("Student")
-        return success_response(data=result["documents"])
-    if has_permission(user_id, PERM_READ_CLASS):
-        from modules.attendance.services import get_teacher_class_ids
-        teacher_class_ids = get_teacher_class_ids(user_id)
-        if student.get("class_id") in teacher_class_ids:
-            result = services.list_student_documents(student_id)
-            if not result.get("success"):
-                return not_found_response("Student")
-            return success_response(data=result["documents"])
-
-    return unauthorized_response()
-
-
-@students_bp.route('/<student_id>/documents', methods=['POST'], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature('student_management')
-@require_permission(PERM_MANAGE)
-def create_student_document(student_id):
-    """Upload a document for a student. multipart/form-data: file, document_type."""
-    student = services.get_student_by_id(student_id)
-    if not student:
-        return not_found_response('Student')
-
-    # Branch scope: a restricted sub-admin cannot upload to a student outside
-    # their branches (403). No-op for unrestricted users.
-    assert_student_allowed(student_id)
-
-    file = request.files.get('file') or request.files.get('document')
-    document_type_str = request.form.get('document_type')
-
-    if not file or file.filename == '':
-        return error_response('ValidationError', 'File is required', 400)
-    err = validate_document_type(document_type_str)
-    if err:
-        return error_response('ValidationError', err, 400)
-
-    # Normalize to enum value (lowercase) so DB receives "aadhar_card" not "AADHAR_CARD"
-    document_type_normalized = document_type_str.strip().lower()
-
-    result = services.create_student_document(
-        student_id=student_id,
-        file_obj=file,
-        filename=file.filename or "document",
-        document_type=document_type_normalized,
-        user_id=g.current_user.id,
-    )
-    if result['success']:
-        return success_response(
-            data=result['document'],
-            message='Document uploaded successfully',
-            status_code=201,
-        )
-    # Map service error_code to API contract
-    err_code = result.get('error_code', 'ValidationError')
-    err_msg = result.get('error', 'Upload failed')
-    if err_code == 'FileTooLarge':
-        return error_response('FileTooLarge', err_msg, 400)
-    if err_code == 'UnsupportedFileType':
-        return error_response('UnsupportedFileType', err_msg, 400)
-    if err_code == 'StorageError':
-        return error_response('StorageError', err_msg, 503)
-    return error_response(err_code, err_msg, 400)
-
-
-@students_bp.route(
-    '/<student_id>/documents/<document_id>/file',
-    methods=['GET'],
-    strict_slashes=False,
-)
-@tenant_required
-@auth_required
-@require_feature('student_management')
-def get_student_document_file(student_id, document_id):
-    """
-    Stream document bytes from S3. Requires same read access as listing documents.
-    Not a shareable URL — must send Authorization (and tenant) like other API calls.
-    """
-    user_id = g.current_user.id
-    from modules.rbac.services import has_permission
-
-    student = services.get_student_by_id(student_id)
-    if not student:
-        return not_found_response('Student')
-
-    # Branch scope: a restricted sub-admin cannot download a student's document
-    # file outside their branches (403). No-op for unrestricted users.
-    assert_student_allowed(student_id)
-
-    allowed = False
-    if has_permission(user_id, PERM_READ_ALL):
-        allowed = True
-    elif has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
-        allowed = True
-    elif has_permission(user_id, PERM_READ_CLASS):
-        from modules.attendance.services import get_teacher_class_ids
-        teacher_class_ids = get_teacher_class_ids(user_id)
-        if student.get("class_id") in teacher_class_ids:
-            allowed = True
-
-    if not allowed:
-        return unauthorized_response()
-
-    result = services.get_student_document_file_content(document_id, student_id)
-    if not result.get("success"):
-        return not_found_response('Document')
-
-    data = result["data"]
-    mime = result["mime_type"]
-    filename = result["filename"]
-    safe = secure_filename(filename) or "document"
-
-    return Response(
-        data,
-        mimetype=mime,
-        headers={
-            "Content-Disposition": f'inline; filename="{safe}"',
-            "Cache-Control": "private, no-store, max-age=0",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
-
-
-@students_bp.route('/<student_id>/documents/<document_id>', methods=['DELETE'], strict_slashes=False)
-@tenant_required
-@auth_required
-@require_feature('student_management')
-@require_permission(PERM_MANAGE)
-def delete_student_document(student_id, document_id):
-    """Delete a document for a student."""
-    student = services.get_student_by_id(student_id)
-    if not student:
-        return not_found_response('Student')
-
-    # Branch scope: a restricted sub-admin cannot delete a document of a student
-    # outside their branches (403). No-op for unrestricted users.
-    assert_student_allowed(student_id)
-
-    result = services.delete_student_document(document_id, student_id)
-    if result.get('success'):
-        return success_response(message='Document deleted successfully')
-    return not_found_response('Document')
-
-
 @students_bp.route('/<student_id>', methods=['GET'])
 @tenant_required
 @auth_required
@@ -1279,3 +1108,66 @@ def delete_student(student_id):
     if result['success']:
         return success_response(message='Student deleted successfully')
     return error_response('DeleteError', result['error'], 400)
+
+# ---------------------------------------------------------------------------
+# Documents — bytes only. Listing, the type catalogue and deletion are GraphQL
+# (ADR-015); what is left here is a multipart upload and an authenticated
+# download, which are infrastructure.
+# ---------------------------------------------------------------------------
+
+
+
+
+@students_bp.route('/<student_id>/documents', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+@require_permission(PERM_MANAGE)
+def upload_student_document(student_id):
+    """Upload a document for a student. multipart/form-data: file, document_type."""
+    person_id = services.person_id_for_student(student_id)
+    if not person_id:
+        return not_found_response('Student')
+
+    # Branch scope: a restricted sub-admin cannot file against a student outside
+    # their branches. No-op for unrestricted users.
+    assert_student_allowed(student_id)
+
+    body, status = document_rest.upload_for_person(person_id)
+    return body, status
+
+
+@students_bp.route(
+    '/<student_id>/documents/<document_id>/file',
+    methods=['GET'],
+    strict_slashes=False,
+)
+@tenant_required
+@auth_required
+@require_feature('student_management')
+def get_student_document_file(student_id, document_id):
+    """Stream a document's bytes. Not a shareable URL — needs the usual headers."""
+    from modules.rbac.services import has_permission
+
+    student = services.get_student_by_id(student_id)
+    if not student:
+        return not_found_response('Student')
+
+    assert_student_allowed(student_id)
+
+    user_id = g.current_user.id
+    allowed = False
+    if has_permission(user_id, PERM_READ_ALL):
+        allowed = True
+    elif has_permission(user_id, PERM_READ_SELF) and student.get("user_id") == user_id:
+        allowed = True
+    elif has_permission(user_id, PERM_READ_CLASS):
+        from modules.attendance.services import get_teacher_class_ids
+        if student.get("class_id") in get_teacher_class_ids(user_id):
+            allowed = True
+    if not allowed:
+        return unauthorized_response()
+
+    return document_rest.stream_document(
+        services.person_id_for_student(student_id), document_id
+    )

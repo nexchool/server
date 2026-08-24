@@ -81,7 +81,8 @@ def init_db(app):
         from modules.auth.models import User, Session
         from modules.rbac.models import Role, Permission, RolePermission
         from modules.sub_admins.models import UserSchoolUnit  # noqa: F401
-        from modules.students.models import Student, StudentDocument, StudentPromotionBatch
+        from modules.students.models import Student, StudentPromotionBatch
+        from modules.documents.models import Document  # noqa: F401
         from modules.student_leaves.models import StudentLeave  # noqa: F401
         from modules.announcements.models import (  # noqa: F401
             Announcement,
@@ -89,7 +90,19 @@ def init_db(app):
             AnnouncementAttachment,
         )
         from modules.academics.academic_year.models import AcademicYear
+        from modules.academics.cycles.models import AcademicCycle  # noqa: F401
+        from modules.examinations.models import (  # noqa: F401
+            ExamMark,
+            ExamPaper,
+            ExamResult,
+            ExamType,
+            Examination,
+            ExaminationLifecycleEvent,
+            GradingBand,
+            GradingScheme,
+        )
         from modules.subjects.models import Subject
+        from modules.streams.models import Stream  # noqa: F401
         from modules.departments.models import Department  # noqa: F401
         from modules.teachers.models import Teacher
         from modules.classes.models import Class, ClassSubject

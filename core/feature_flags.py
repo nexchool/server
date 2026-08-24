@@ -4,7 +4,7 @@ Per-tenant feature flags.
 Replaces the old plan-based feature gating. Each tenant has its own
 `feature_flags` JSON map of `{ feature_key: bool }`. Missing keys default
 to enabled (so a freshly-created tenant gets everything until super-admin
-opts out).
+opts out) — with the single exception of DEFAULT_OFF_FEATURES below.
 
 The split is a business one, not a technical one.
 
@@ -63,7 +63,25 @@ OPTIONAL_FEATURES: List[str] = [
     # Terms, events, exam windows and holidays. Holidays are managed inside
     # the calendar in the UI and were a separate flag by accident.
     "academic_calendar",
+    # Scheduling examinations, entering marks, computing and publishing
+    # results, and issuing marksheets. A school that reports only on internal
+    # assessment, or whose board runs its own examination system, does not
+    # use this — and see DEFAULT_OFF_FEATURES for why it starts off.
+    "examinations",
 ]
+
+# The one place where a missing key means *off*.
+#
+# `effective_flags` defaults a missing optional key to on, and that rule is
+# right for the reason it was written: a tenant created before a flag existed
+# was already using the module, and inventing "off" would take away something
+# the school relies on. A module that has never been released has nothing to
+# take away, so the same rule points the other way — it would switch the
+# module on for every school on the deploy that introduces it, which is a
+# product decision no one made.
+#
+# A key leaves this set once the module is deliberately rolled out.
+DEFAULT_OFF_FEATURES: set = {"examinations"}
 
 ALL_FEATURE_KEYS: List[str] = CORE_FEATURES + OPTIONAL_FEATURES
 
@@ -95,12 +113,13 @@ FEATURE_LABELS: Dict[str, str] = {
     "hostel": "Hostel & boarding",
     "notifications": "Announcements & notifications",
     "academic_calendar": "Academic calendar & holidays",
+    "examinations": "Examinations, results & marksheets",
 }
 
 
 def default_feature_flags() -> Dict[str, bool]:
-    """All optional features ON by default for new tenants."""
-    return {key: True for key in OPTIONAL_FEATURES}
+    """Optional features for a new tenant: on, except DEFAULT_OFF_FEATURES."""
+    return {key: key not in DEFAULT_OFF_FEATURES for key in OPTIONAL_FEATURES}
 
 
 def effective_flags(stored: object) -> Dict[str, bool]:
@@ -108,13 +127,15 @@ def effective_flags(stored: object) -> Dict[str, bool]:
 
     Core features are always on. Optional features take their stored value and
     default to on when absent, so a tenant created before a feature existed
-    gets it rather than silently losing it.
+    gets it rather than silently losing it — except for DEFAULT_OFF_FEATURES,
+    where absent means the school has never had the module and turning it on
+    unasked would be the surprise.
     """
     flags: Dict[str, bool] = {key: True for key in CORE_FEATURES}
     values = stored if isinstance(stored, dict) else {}
     for key in OPTIONAL_FEATURES:
         val = values.get(key)
-        flags[key] = True if val is None else bool(val)
+        flags[key] = key not in DEFAULT_OFF_FEATURES if val is None else bool(val)
     return flags
 
 
@@ -154,7 +175,8 @@ def is_feature_enabled(tenant_id: str, feature_key: str) -> bool:
         return True
     if feature_key not in OPTIONAL_FEATURES:
         return True
-    return get_tenant_feature_flags(tenant_id).get(feature_key, True)
+    flags = get_tenant_feature_flags(tenant_id)
+    return flags.get(feature_key, feature_key not in DEFAULT_OFF_FEATURES)
 
 
 def require_feature(feature_key: str):

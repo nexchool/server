@@ -1,0 +1,99 @@
+{# One examination's marksheet, rendered from a frozen result snapshot.
+
+   Every value here comes from the render model; the template performs no
+   lookup and no arithmetic, so what it prints is what was computed and
+   published. A superseded version prints as superseded rather than being
+   silently withheld — a parent holding an old copy should be able to tell. #}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Marksheet</title>
+  <style>
+    body { font-family: sans-serif; font-size: 12px; color: #111; }
+    h1 { font-size: 18px; margin: 0; }
+    .muted { color: #555; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #999; padding: 5px 6px; text-align: left; }
+    th { background: #eee; }
+    .num { text-align: right; }
+    .totals td { font-weight: bold; }
+    .banner { border: 1px solid #999; padding: 6px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>{{ school.school_name }}</h1>
+  <p class="muted">
+    {{ school.school_address }}
+    {% if school.school_phone %} · {{ school.school_phone }}{% endif %}
+  </p>
+
+  <h2>{{ examination.name }} — Marksheet</h2>
+  <p>
+    <strong>{{ student.full_name or student.id }}</strong>
+    {% if student.admission_number %}
+      · Admission no. {{ student.admission_number }}
+    {% endif %}
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Subject</th><th>Component</th><th>Status</th>
+        <th class="num">Marks</th><th class="num">Out of</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for paper in papers %}
+      <tr>
+        <td>{{ paper.subject_id or paper.class_subject_id }}</td>
+        <td>{{ paper.component_label or "—" }}</td>
+        {# The five states stay five: a mark is printed only where one exists. #}
+        <td>{{ paper.status }}</td>
+        <td class="num">
+          {% if paper.marks is not none %}{{ paper.marks }}{% else %}—{% endif %}
+        </td>
+        <td class="num">
+          {% if paper.included_in_total %}{{ paper.max_marks }}{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      <tr class="totals">
+        <td colspan="3">Total</td>
+        <td class="num">{{ aggregate.total_obtained }}</td>
+        <td class="num">{{ aggregate.total_max }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Percentage:
+    <strong>
+      {% if aggregate.percentage is not none %}{{ aggregate.percentage }}%
+      {% else %}—{% endif %}
+    </strong>
+    {% if grading.grade_label %} · Grade: <strong>{{ grading.grade_label }}</strong>{% endif %}
+    {% if grading.grade_point is not none %} · Grade point: {{ grading.grade_point }}{% endif %}
+    {% if outcome.is_pass is not none %}
+      · Result: <strong>{{ "PASS" if outcome.is_pass else "FAIL" }}</strong>
+    {% endif %}
+  </p>
+
+  {% if not outcome.complete %}
+    <p class="banner">Some papers had no mark recorded when this was issued.</p>
+  {% endif %}
+
+  {% if result.is_superseded %}
+    <p class="banner">
+      This is version {{ result.version }} of this result, which has since been
+      revised. A later version is the school's current statement.
+    </p>
+  {% endif %}
+
+  <p class="muted">
+    Version {{ result.version }}
+    {% if result.published_at %} · issued {{ result.published_at[:10] }}{% endif %}
+    {% if result.revision_reason %} · {{ result.revision_reason }}{% endif %}
+  </p>
+</body>
+</html>

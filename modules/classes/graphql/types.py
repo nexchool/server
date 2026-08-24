@@ -288,7 +288,7 @@ def _class_fields(node_type, cls, *, student_count, teacher_count, status):
         id=strawberry.ID(cls.id),
         name=cls.name,
         section=cls.section,
-        stream=cls.stream,
+        stream=cls.stream_ref.name if cls.stream_ref else None,
         grade_level=cls.grade_level,
         display_name=cls.display_name,
         academic_year_id=_id(cls.academic_year_id),

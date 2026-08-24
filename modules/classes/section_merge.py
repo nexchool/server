@@ -125,7 +125,10 @@ def _students_currently_in(tenant_id: str, class_id: str):
     Read from the enrollment rather than `students.class_id`, since the
     enrollment is the owner and the column is its cache (ADR-014).
     """
-    from modules.academics.backbone.models import StudentClassEnrollment
+    from modules.academics.backbone.models import (
+        ENROLLMENT_TYPE_PRIMARY,
+        StudentClassEnrollment,
+    )
     from modules.students.models import Student
 
     return (
@@ -136,6 +139,7 @@ def _students_currently_in(tenant_id: str, class_id: str):
             Student.tenant_id == tenant_id,
             StudentClassEnrollment.class_id == class_id,
             StudentClassEnrollment.is_current.is_(True),
+            StudentClassEnrollment.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
         )
         .all()
     )

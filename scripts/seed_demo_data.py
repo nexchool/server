@@ -91,12 +91,82 @@ def class_label(cls) -> str:
 
 # Academic divisions (NOT subject groupings) — see .claude/memory/modules/
 # school_structure.md. Each covers a grade band.
+# Bands are keyed on a grade's `sequence`, not its name. This school runs
+# Nursery/LKG/UKG at sequences 1-3, so Std 1 is sequence 4 and Std 12 is 15.
 DEPARTMENTS = [
-    ("Primary", "PRI", "Std 1 to 5", 1, (1, 5)),
-    ("Middle School", "MID", "Std 6 to 8", 2, (6, 8)),
-    ("Secondary", "SEC", "Std 9 to 10", 3, (9, 10)),
-    ("Higher Secondary", "HSC", "Std 11 to 12", 4, (11, 12)),
+    ("Pre-Primary", "PRE", "Nursery to UKG", 1, (1, 3)),
+    ("Primary", "PRI", "Std 1 to 5", 2, (4, 8)),
+    ("Middle School", "MID", "Std 6 to 8", 3, (9, 11)),
+    ("Secondary", "SEC", "Std 9 to 10", 4, (12, 13)),
+    ("Higher Secondary", "HSC", "Std 11 to 12", 5, (14, 15)),
 ]
+
+# Every class needs its own primary teacher, and a school needs more teachers
+# than it has classes. The hand-written roster below covers a small school; a
+# trust running 65 sections is topped up to these totals per band.
+TEACHERS_PER_BAND = {"PRE": 12, "PRI": 26, "MID": 16, "SEC": 11, "HSC": 22}
+
+# Subjects a generated teacher of each band is qualified for. Real codes only —
+# an expertise entry for a subject the school does not teach is never read.
+BAND_SUBJECTS = {
+    "PRE": [["ACT", "ART"], ["GUJ", "ACT"], ["ENG", "ART"], ["MATH", "ACT"]],
+    "PRI": [["GUJ", "EVS"], ["ENG", "EVS"], ["MATH", "EVS"], ["HIN", "GUJ"],
+            ["PE", "ART"]],
+    "MID": [["MATH", "SCI"], ["ENG", "SS"], ["GUJ", "SS"], ["SCI", "MATH"],
+            ["HIN", "SAN"]],
+    "SEC": [["MATH", "SCI"], ["ENG", "SS"], ["SCI", "MATH"], ["GUJ", "HIN"],
+            ["SS", "ENG"]],
+    "HSC": [["PHY", "MATH"], ["CHEM", "PHY"], ["BIO", "CHEM"], ["ACC", "BST"],
+            ["ECO", "STAT"], ["HIST", "POL"], ["ENG", "PSY"], ["GEO", "SOC"]],
+}
+
+BAND_DESIGNATIONS = ["Teacher", "Senior Teacher", "Assistant Teacher"]
+BAND_QUALIFICATIONS = ["B.Ed", "M.Ed", "M.A, B.Ed", "M.Sc, B.Ed", "B.A, B.Ed"]
+
+
+def _extend_roster(base: list, rng) -> list:
+    """Top the hand-written roster up to a staffing level this school needs.
+
+    Returns `base` plus generated specs in the same 8-tuple shape, so every
+    downstream `zip(teachers, roster)` stays aligned.
+    """
+    roster = list(base)
+    have = {}
+    for spec in base:
+        have[spec[1]] = have.get(spec[1], 0) + 1
+
+    # A teacher's login is derived from their name, so two teachers sharing one
+    # would share an account. Middle initials keep them apart, as they do on a
+    # real staff list.
+    used_names = {spec[0] for spec in base}
+
+    def _unique_name(first: str, surname: str) -> str:
+        candidate = f"{first} {surname}"
+        for initial in "ABCDEFGHIJKLMNOPRSTVY":
+            if candidate not in used_names:
+                break
+            candidate = f"{first} {initial} {surname}"
+        used_names.add(candidate)
+        return candidate
+
+    for band, target in TEACHERS_PER_BAND.items():
+        subject_sets = BAND_SUBJECTS[band]
+        for n in range(target - have.get(band, 0)):
+            is_woman = rng.random() < 0.6
+            first = rng.choice(GIRL_NAMES if is_woman else BOY_NAMES)
+            surname = rng.choice(SURNAMES)
+            subjects = subject_sets[n % len(subject_sets)]
+            roster.append((
+                _unique_name(first, surname),
+                band,
+                rng.choice(BAND_DESIGNATIONS),
+                rng.choice(BAND_QUALIFICATIONS),
+                f"{subjects[0].title()} Teaching",
+                rng.randint(2, 24),
+                subjects,
+                "active",
+            ))
+    return roster
 
 # (name, dept_code, designation, qualification, specialization, experience,
 #  [subject codes they can teach], status)
@@ -199,8 +269,9 @@ def stage_teachers(ctx: Ctx) -> None:
     pw_hash = generate_password_hash(TEACHER_PASSWORD)
 
     teachers: list[Teacher] = []
+    roster = _extend_roster(TEACHERS, rng)
     for idx, (name, dept_code, designation, qual, spec, exp, subject_codes, status) in enumerate(
-        TEACHERS, start=1
+        roster, start=1
     ):
         employee_id = f"EMP{idx:03d}"
         teacher = (
@@ -286,7 +357,7 @@ def stage_teachers(ctx: Ctx) -> None:
 
     # -- expertise index: subject code -> teachers who can teach it -----------
     by_subject: dict[str, list[Teacher]] = {}
-    for teacher, (_n, _d, _des, _q, _s, _e, subject_codes, status) in zip(teachers, TEACHERS):
+    for teacher, (_n, _d, _des, _q, _s, _e, subject_codes, status) in zip(teachers, roster):
         if status != "active":
             continue
         for code in subject_codes:
@@ -296,18 +367,30 @@ def stage_teachers(ctx: Ctx) -> None:
     # One primary class teacher per class, drawn from the matching department so
     # a Std 3 class is owned by a Primary teacher, not a Secondary specialist.
     active_by_dept: dict[str, list[Teacher]] = {}
-    for teacher, (_n, dept_code, _des, _q, _s, _e, _sc, status) in zip(teachers, TEACHERS):
+    for teacher, (_n, dept_code, _des, _q, _s, _e, _sc, status) in zip(teachers, roster):
         if status == "active":
             active_by_dept.setdefault(dept_code, []).append(teacher)
 
     used: set[str] = set()
-    ordered = sorted(ctx.classes, key=lambda c: (grade_seq(c), c.section))
+    # A total order. Grade+section alone ties whenever two campuses or two
+    # programmes run the same section letter, and the tie broke differently on
+    # each run — so a re-run handed a class to a teacher who already owned
+    # another one, which `uq_classes_teacher_id_tenant` refuses.
+    ordered = sorted(
+        ctx.classes,
+        key=lambda c: (grade_seq(c), c.school_unit_id or "", c.programme.code, c.section),
+    )
     primary_of: dict[str, Teacher] = {}
     for cls in ordered:
         dept_code = band_for.get(grade_seq(cls), "PRI")
         pool = [t for t in active_by_dept.get(dept_code, []) if t.id not in used]
         if not pool:  # band exhausted — fall back to any unused active teacher
-            pool = [t for t in teachers if t.id not in used and t.status == "active"]
+            # Employment lives on Staff (ADR-005); a Teacher has no status of
+            # its own. Only a currently employed teacher can own a class.
+            pool = [
+                t for t in teachers
+                if t.id not in used and t.staff is not None and t.staff.is_employed
+            ]
         owner = pool[0]
         used.add(owner.id)
         primary_of[cls.id] = owner
@@ -327,8 +410,9 @@ def stage_teachers(ctx: Ctx) -> None:
                     is_active=True,
                 )
             )
-        # legacy pointer still read by older APIs
-        cls.teacher_id = owner.user_id
+        # Legacy pointer still read by older APIs. FK points at `teachers`,
+        # so this is the Teacher id -- not the user id it used to hold.
+        cls.teacher_id = owner.id
 
     # An assistant on the two largest wings, so the assistant role is exercised.
     for cls in ordered[:4]:
@@ -418,12 +502,14 @@ def stage_teachers(ctx: Ctx) -> None:
             load_created += 1
 
     # Who is responsible for each class, recorded where that is owned.
+    ct_rows = 0
     for cls in ordered:
         owner = primary_of[cls.id]
         if ClassTeacherAssignment.query.filter_by(
             tenant_id=tid, class_id=cls.id, teacher_id=owner.id, is_active=True
         ).first():
             continue
+        ct_rows += 1
         db.session.add(
             ClassTeacherAssignment(
                 id=str(uuid.uuid4()),
@@ -434,13 +520,14 @@ def stage_teachers(ctx: Ctx) -> None:
                 is_active=True,
             )
         )
-        # The cache follows the owner.
-        cls.teacher_id = owner.user_id
+        # The cache follows the owner. FK points at `teachers`, so this is the
+        # Teacher id -- not the user id it used to hold.
+        cls.teacher_id = owner.id
         db.session.add(cls)
 
     db.session.commit()
     log(f"class_subject_teachers: {cst_created} primary assignments")
-    log(f"class_teachers rows: {len(ct_rows)} · subject_load rows: {load_created}")
+    log(f"class_teachers rows: {ct_rows} · subject_load rows: {load_created}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1011,14 +1098,21 @@ def stage_students(ctx: Ctx) -> None:
         log("students already present — skipping")
         return
 
-    # Junior classes run fuller than the senior CBSE wing.
+    # Section strengths a Gujarat trust of this size actually runs. Primary is
+    # the fullest part of the school; Std 11-12 sections are small because each
+    # stream splits the year group three ways.
+    #
+    # Grade sequence runs 1..15 here: Nursery/LKG/UKG are 1-3, Std 1-12 are
+    # 4-15. Across the 65 sections this school opens it totals about 2,000.
     def strength(cls) -> int:
         seq = grade_seq(cls)
-        if seq <= 2:
-            return rng.randint(24, 28)
-        if seq <= 5:
-            return rng.randint(20, 24)
-        return rng.randint(14, 18)
+        if seq <= 3:                    # pre-primary
+            return rng.randint(26, 34)
+        if seq <= 11:                   # Std 1-8
+            return rng.randint(33, 39)
+        if seq <= 13:                   # Std 9-10
+            return rng.randint(31, 37)
+        return rng.randint(17, 23)      # Std 11-12, split by stream
 
     admission_no = 1
     total = 0

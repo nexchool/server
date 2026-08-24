@@ -64,9 +64,14 @@ def create_app(config_name=None):
     # Register blueprints
     register_blueprints(app)
 
-    # The People domain has no REST surface; import it so its models register
-    # with SQLAlchemy regardless of which transports are mounted.
+    # The People domain's business surface is GraphQL; import its models so they
+    # register with SQLAlchemy regardless of which transports are mounted.
     import modules.people.models  # noqa: F401
+
+    # The document store serves every domain, so its models register here rather
+    # than with whichever domain happens to be loaded. Importing modules.people
+    # above is what registers the "person" owner kind with it (ADR-015).
+    import modules.documents.models  # noqa: F401
 
     # Registers the rule that an account belongs to a person. Imported here
     # rather than left to whichever module happens to load first, because a
@@ -83,6 +88,18 @@ def create_app(config_name=None):
     # holder's cached permissions. Same reason as above: a guarantee that
     # depends on import order is not a guarantee.
     import modules.rbac.authority_service  # noqa: F401
+
+    # A class, term or calendar that names an academic year also names the
+    # cycle inside it. Derived centrally because ten writers and many fixtures
+    # build these rows, and the column is NOT NULL.
+    from modules.academics.cycles.consistency import register_cycle_consistency
+    _register_cycle_consistency = register_cycle_consistency
+    _register_cycle_consistency()
+
+    # Question papers and answer sheets are filed in the shared document
+    # store, which serves any domain that registers an owner kind (ADR-018).
+    from modules.examinations.documents import register_examination_document_kinds
+    register_examination_document_kinds()
 
     # Mount the GraphQL endpoint (/api/graphql)
     from graphql_api import register_graphql
@@ -158,6 +175,7 @@ def register_blueprints(app: Flask):
     from modules.rbac import rbac_bp
     from modules.users import users_bp
     from modules.classes import classes_bp
+    from modules.examinations import examinations_bp
     from modules.students import students_bp
     from modules.teachers import teachers_bp
     from modules.attendance import attendance_bp
@@ -194,6 +212,7 @@ def register_blueprints(app: Flask):
     from modules.sub_admins import sub_admins_bp
 
     # Register blueprints with URL prefixes
+    app.register_blueprint(examinations_bp, url_prefix='/api/examinations')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(platform_bp, url_prefix='/api/platform')
     app.register_blueprint(rbac_bp, url_prefix='/api/rbac')

@@ -18,10 +18,14 @@ from sqlalchemy import select, exists, and_, or_, not_, false
 
 from core.database import db
 from core.tenant import get_tenant_id
-from modules.academics.backbone.models import StudentClassEnrollment
+from modules.academics.backbone.models import (
+    ENROLLMENT_TYPE_ADDITIONAL,
+    ENROLLMENT_TYPE_PRIMARY,
+    StudentClassEnrollment,
+)
 from modules.classes.models import Class
 from modules.students.models import Student
-from core.school_time import utc_now
+from core.school_time import school_today, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +134,7 @@ def _assign_student_to_class_impl(
             student_id=student_id,
             tenant_id=tenant_id,
             is_current=True,
+            enrollment_type=ENROLLMENT_TYPE_PRIMARY,
         )
         .order_by(StudentClassEnrollment.created_at.desc())
         .all()
@@ -156,6 +161,7 @@ def _assign_student_to_class_impl(
             class_id=class_id,
             academic_year_id=academic_year_id,
             promoted_from_id=None,
+            roll_number=student.roll_number,
         )
         db.session.flush()
         return None
@@ -184,12 +190,17 @@ def _assign_student_to_class_impl(
 
     db.session.flush()
 
+    # A new year is a new placement and usually a new roll number, but the
+    # school assigns that when it numbers the section. Carrying the previous
+    # one forward is the best available answer until they do, and it is what
+    # the cache already said.
     _create_enrollment(
         tenant_id=tenant_id,
         student_id=student_id,
         class_id=class_id,
         academic_year_id=academic_year_id,
         promoted_from_id=prev_id,
+        roll_number=student.roll_number,
     )
 
     student.class_id = class_id
@@ -205,6 +216,7 @@ def _close_all_current_enrollments(
         student_id=student_id,
         tenant_id=tenant_id,
         is_current=True,
+        enrollment_type=ENROLLMENT_TYPE_PRIMARY,
     ).all()
     for row in rows:
         row.is_current = False
@@ -219,6 +231,8 @@ def _create_enrollment(
     class_id: str,
     academic_year_id: str,
     promoted_from_id: Optional[str],
+    enrollment_type: str = ENROLLMENT_TYPE_PRIMARY,
+    roll_number: Optional[int] = None,
 ) -> StudentClassEnrollment:
     row = StudentClassEnrollment(
         id=str(uuid.uuid4()),
@@ -227,6 +241,8 @@ def _create_enrollment(
         class_id=class_id,
         academic_year_id=academic_year_id,
         enrollment_status="active",
+        enrollment_type=enrollment_type,
+        roll_number=roll_number,
         is_current=True,
         started_on=None,
         ended_on=None,
@@ -245,6 +261,7 @@ def academic_year_filter_exists(academic_year_id: str):
             sce.tenant_id == Student.tenant_id,
             sce.academic_year_id == academic_year_id,
             sce.is_current.is_(True),
+            sce.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
         )
     )
 
@@ -257,6 +274,7 @@ def any_current_enrollment_exists():
             sce.student_id == Student.id,
             sce.tenant_id == Student.tenant_id,
             sce.is_current.is_(True),
+            sce.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
         )
     )
 
@@ -284,6 +302,7 @@ def student_matches_class_filter(class_id: str):
             sce.tenant_id == Student.tenant_id,
             sce.class_id == class_id,
             sce.is_current.is_(True),
+            sce.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
         )
     )
     return or_(
@@ -302,9 +321,173 @@ def student_matches_any_class_filter(class_ids: List[str]):
             sce.tenant_id == Student.tenant_id,
             sce.class_id.in_(class_ids),
             sce.is_current.is_(True),
+            sce.enrollment_type == ENROLLMENT_TYPE_PRIMARY,
         )
     )
     return or_(
         in_enrollment,
         and_(Student.class_id.in_(class_ids), not_(any_current_enrollment_exists())),
     )
+
+
+# ---------------------------------------------------------------------------
+# Additional enrollments
+# ---------------------------------------------------------------------------
+#
+# A vacation batch, a coaching programme, a remedial or weekend class. Each is
+# a Class like any other — its own campus, teachers, subjects, timetable and
+# attendance — so none of them needs an entity of its own. What they are not is
+# the student's *class*: `students.class_id` keeps naming the academic
+# placement, and nothing here touches it.
+
+
+def enroll_additional(
+    *,
+    tenant_id: str,
+    student_id: str,
+    class_id: str,
+) -> Dict[str, Any]:
+    """Enroll a student in something they attend alongside their class.
+
+    Deliberately not a variant of `assign_student_to_class`: that function's
+    whole job is to keep one placement and one cache in step, and every branch
+    of it would have to learn to do nothing. Refusals are returned rather than
+    raised, matching the placement primitive.
+    """
+    student = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
+    if not student:
+        return {"success": False, "error": "Student not found"}
+
+    cls = Class.query.filter_by(id=class_id, tenant_id=tenant_id).first()
+    if not cls:
+        return {"success": False, "error": "Class not found"}
+    if getattr(cls, "merged_into_class_id", None):
+        return {
+            "success": False,
+            "error": "That section has been merged; use the section it merged into",
+        }
+
+    existing = StudentClassEnrollment.query.filter_by(
+        tenant_id=tenant_id,
+        student_id=student_id,
+        class_id=class_id,
+        is_current=True,
+    ).first()
+    if existing:
+        return {
+            "success": False,
+            "error": "The student is already enrolled in this class",
+        }
+
+    row = _create_enrollment(
+        tenant_id=tenant_id,
+        student_id=student_id,
+        class_id=class_id,
+        academic_year_id=cls.academic_year_id,
+        promoted_from_id=None,
+        enrollment_type=ENROLLMENT_TYPE_ADDITIONAL,
+    )
+    db.session.flush()
+    return {"success": True, "enrollment_id": row.id}
+
+
+def end_additional_enrollment(
+    *,
+    tenant_id: str,
+    enrollment_id: str,
+    ended_on: Optional[datetime.date] = None,
+) -> Dict[str, Any]:
+    """Close one additional enrollment. The primary placement is untouched."""
+    row = StudentClassEnrollment.query.filter_by(
+        id=enrollment_id, tenant_id=tenant_id
+    ).first()
+    if not row:
+        return {"success": False, "error": "Enrollment not found"}
+    if row.enrollment_type != ENROLLMENT_TYPE_ADDITIONAL:
+        return {
+            "success": False,
+            "error": (
+                "That is the student's academic placement. Use the withdraw, "
+                "transfer or graduate workflow instead."
+            ),
+        }
+
+    row.is_current = False
+    row.ended_on = ended_on or school_today()
+    row.enrollment_status = "completed"
+    db.session.flush()
+    return {"success": True}
+
+
+def additional_enrollments(
+    student_id: str, tenant_id: str, *, current_only: bool = True
+) -> List[StudentClassEnrollment]:
+    """Everything this student attends besides their class."""
+    q = StudentClassEnrollment.query.filter_by(
+        tenant_id=tenant_id,
+        student_id=student_id,
+        enrollment_type=ENROLLMENT_TYPE_ADDITIONAL,
+    )
+    if current_only:
+        q = q.filter(StudentClassEnrollment.is_current.is_(True))
+    return q.order_by(StudentClassEnrollment.created_at.desc()).all()
+
+
+def set_primary_roll_number(
+    student_id: str, tenant_id: str, roll_number: Optional[int]
+) -> Dict[str, Any]:
+    """Record a roll number against the student's academic placement.
+
+    The single write path. The enrollment holds the record — that is what a
+    reprinted marksheet for an earlier year reads — and `students.roll_number`
+    mirrors the primary one, exactly as `students.class_id` mirrors the
+    primary placement.
+
+    A student with no primary enrollment yet (admitted, not placed) still gets
+    the cache set, and `_create_enrollment` seeds the enrollment from it when
+    they are placed. Otherwise a roll number typed on the admission form would
+    be silently discarded.
+    """
+    student = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
+    if not student:
+        return {"success": False, "error": "Student not found"}
+
+    placement = StudentClassEnrollment.query.filter_by(
+        student_id=student_id,
+        tenant_id=tenant_id,
+        is_current=True,
+        enrollment_type=ENROLLMENT_TYPE_PRIMARY,
+    ).first()
+    if placement is not None:
+        placement.roll_number = roll_number
+
+    student.roll_number = roll_number
+    db.session.flush()
+    return {"success": True}
+
+
+def set_enrollment_roll_number(
+    enrollment_id: str, tenant_id: str, roll_number: Optional[int]
+) -> Dict[str, Any]:
+    """Number a student within one specific enrollment.
+
+    Used for an additional enrollment — a vacation batch numbers its own
+    register — and deliberately does **not** touch `students.roll_number`,
+    which names the student's position in their class.
+    """
+    row = StudentClassEnrollment.query.filter_by(
+        id=enrollment_id, tenant_id=tenant_id
+    ).first()
+    if not row:
+        return {"success": False, "error": "Enrollment not found"}
+
+    row.roll_number = roll_number
+    if row.enrollment_type == ENROLLMENT_TYPE_PRIMARY and row.is_current:
+        # Keep the cache with its owner.
+        student = Student.query.filter_by(
+            id=row.student_id, tenant_id=tenant_id
+        ).first()
+        if student is not None:
+            student.roll_number = roll_number
+    db.session.flush()
+    return {"success": True}
