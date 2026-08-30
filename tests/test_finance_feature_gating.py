@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from sqlalchemy.orm import configure_mappers
+
 import core.feature_flags as ff_mod
 import modules.finance.services.structure_service as structure_service
 import modules.finance.services.student_fee_service as student_fee_service
+from modules.finance.models import StudentFee as RealStudentFee
 
 
 def test_list_fee_structures_excludes_transport_only_when_transport_off(monkeypatch):
@@ -73,6 +76,9 @@ def test_list_student_fees_excludes_transport_subquery_when_transport_off(monkey
     fake_q.filter_by.return_value = fake_q
     fake_q.join.return_value = fake_q
     fake_q.order_by.return_value = fake_q
+    # The list path eager-loads what it serialises, so the fake has to chain
+    # `.options()` like every other builder method.
+    fake_q.options.return_value = fake_q
     fake_q.all.return_value = []
 
     def _filter(*_args, **_kw):
@@ -83,8 +89,21 @@ def test_list_student_fees_excludes_transport_subquery_when_transport_off(monkey
 
     # Replace StudentFee module-level — `.query` access on a real
     # Flask-SQLAlchemy model needs app context, so we swap the symbol.
+    #
+    # The relationship attributes are the *real* ones: `list_student_fees`
+    # passes them to `selectinload`/`joinedload`, and SQLAlchemy refuses a
+    # MagicMock there. Mocking `.query` is the point of this test; mocking the
+    # mapper is not.
+    # `StudentFee.fee_structure` is a *backref* declared on FeeStructure, so it
+    # does not exist until the mappers are configured. The app does that at
+    # startup; this unit test has to ask.
+    configure_mappers()
+
     fake_student_fee = MagicMock()
     fake_student_fee.query = fake_q
+    fake_student_fee.items = RealStudentFee.items
+    fake_student_fee.student = RealStudentFee.student
+    fake_student_fee.fee_structure = RealStudentFee.fee_structure
     monkeypatch.setattr(student_fee_service, "StudentFee", fake_student_fee)
 
     fake_session = MagicMock()

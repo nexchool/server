@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from sqlalchemy import case, func
+from sqlalchemy.orm import joinedload, selectinload
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -261,6 +262,7 @@ def _build_student_fees_query(
                 Student.admission_number.ilike(f"%{search.strip()}%"),
             )
         )
+
     return query
 
 
@@ -299,16 +301,42 @@ def list_student_fees(
     if page and page_size:
         query = query.limit(page_size).offset((page - 1) * page_size)
 
+    # Everything the loop below touches, fetched with the page instead of per
+    # row. Without these it cost four lazy loads a row — `items`, `student`,
+    # `student.person`, `fee_structure` — so an unpaginated ledger for a
+    # 15,000-student tenant ran to tens of thousands of queries in one request.
+    #
+    # Applied here and not in `_build_student_fees_query`, because that builder
+    # is shared with `count_student_fees`, which reads no relationship at all —
+    # eager loading a COUNT is pure waste.
+    #
+    # `items` is a collection, so it gets its own SELECT (`selectinload`);
+    # joining it would multiply each fee row by its items. The rest are
+    # many-to-one and ride along.
+    query = query.options(
+        selectinload(StudentFee.items),
+        joinedload(StudentFee.student).joinedload(Student.person),
+        joinedload(StudentFee.student).joinedload(Student.user),
+        joinedload(StudentFee.fee_structure),
+    )
+
     fees = query.all()
     result = []
     for sf in fees:
         d = sf.to_dict()
         if include_items:
             d["items"] = [i.to_dict() for i in sf.items]
-        d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
+        # The name is the Person's. `students.user_id` is nullable (migration
+        # 094), so reading it off the login left every account-less child
+        # nameless on the fee ledger — the same defect debt 15 found in the
+        # teacher leave queue. The picture still comes from the account,
+        # because that is the only place one is stored today.
+        person = sf.student.person if sf.student else None
+        account = sf.student.user if sf.student else None
+        d["student_name"] = person.full_name if person else None
         d["student_profile_picture"] = (
-            profile_picture_public_url(sf.student.user.profile_picture_url)
-            if sf.student and sf.student.user
+            profile_picture_public_url(account.profile_picture_url)
+            if account and account.profile_picture_url
             else None
         )
         d["admission_number"] = sf.student.admission_number if sf.student else None
