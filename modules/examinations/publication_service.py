@@ -25,11 +25,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from core.branch_scope import filter_by_student_ids
 from core.database import db
 from core.school_time import utc_now
 
 from .models import EXAM_PUBLISHED, ExamResult, Examination
-from .results_service import current_result, examination_cohort
+from .results_service import current_results, examination_cohort
 from .services import _Refused, _ok, _refuse, _transition, may_become
 
 # Publishing is its own act in the catalogue — "Publish and revise examination
@@ -128,8 +129,9 @@ def publish_results(
     try:
         with db.session.begin_nested():
             published: List[ExamResult] = []
+            results = current_results(examination.id, tenant_id)
             for student_id in cohort:
-                result = current_result(examination.id, student_id, tenant_id)
+                result = results.get(student_id)
                 if result is None:
                     raise _Refused(_refuse(
                         "RESULT_MISSING",
@@ -197,16 +199,16 @@ def published_results(examination_id: str, tenant_id: str) -> List[ExamResult]:
     published is decided by `published_at`, never by which version is being
     worked on.
     """
-    rows = (
+    query = filter_by_student_ids(
         ExamResult.query.filter(
             ExamResult.tenant_id == tenant_id,
             ExamResult.examination_id == examination_id,
             ExamResult.deleted_at.is_(None),
             ExamResult.published_at.isnot(None),
-        )
-        .order_by(ExamResult.student_id, ExamResult.version)
-        .all()
+        ),
+        ExamResult.student_id,
     )
+    rows = query.order_by(ExamResult.student_id, ExamResult.version).all()
     latest: Dict[str, ExamResult] = {}
     for row in rows:
         latest[row.student_id] = row       # ordered by version, so the last wins
@@ -229,8 +231,11 @@ def publication_readiness(examination_id: str, tenant_id: str) -> Dict[str, Any]
 
     blocked: List[Dict[str, Any]] = []
     cohort = examination_cohort(examination, tenant_id)
+    # One query for every student's result, not one per student: this runs on
+    # each load of the results screen, beside the board itself.
+    results = current_results(examination.id, tenant_id)
     for student_id in cohort:
-        result = current_result(examination.id, student_id, tenant_id)
+        result = results.get(student_id)
         if result is None:
             blocked.append({"student_id": student_id, "code": "RESULT_MISSING"})
             continue

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from core.branch_scope import filter_by_exam_mark_ids
 from core.database import db
 from core.school_time import utc_now
 
@@ -363,6 +364,10 @@ def correction_queue(
     from .services import paper_labels
 
     query = ExamMarkCorrection.query.filter_by(tenant_id=tenant_id)
+    # Scoped at the source, not per row: `_paper_of` below refuses a paper out
+    # of branch, so a queue holding another campus's request would raise rather
+    # than simply not show it.
+    query = filter_by_exam_mark_ids(query, ExamMarkCorrection.exam_mark_id)
     if status:
         query = query.filter(ExamMarkCorrection.status == status)
     corrections = query.order_by(ExamMarkCorrection.requested_at.desc()).all()
@@ -451,10 +456,10 @@ def corrections_for_mark(
 
 def pending_corrections(tenant_id: str) -> List[ExamMarkCorrection]:
     """The queue somebody has to work through."""
-    return (
+    query = filter_by_exam_mark_ids(
         ExamMarkCorrection.query.filter_by(
             tenant_id=tenant_id, status=CORRECTION_REQUESTED
-        )
-        .order_by(ExamMarkCorrection.requested_at)
-        .all()
+        ),
+        ExamMarkCorrection.exam_mark_id,
     )
+    return query.order_by(ExamMarkCorrection.requested_at).all()

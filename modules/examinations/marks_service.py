@@ -33,6 +33,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core.branch_scope import assert_exam_paper_allowed
 from core.database import db
 from core.school_time import utc_now
 from modules.academics.backbone.models import StudentClassEnrollment
@@ -338,6 +339,7 @@ def _paper_of(paper_id: str, tenant_id: str):
     ).first()
     if paper is None:
         return None, None, _refuse("PAPER_NOT_FOUND", "Exam paper not found")
+    assert_exam_paper_allowed(paper.id)
     examination = Examination.query.filter(
         Examination.id == paper.examination_id,
         Examination.tenant_id == tenant_id,
@@ -618,6 +620,7 @@ def marking_register(paper_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     paper = ExamPaper.query.filter_by(id=paper_id, tenant_id=tenant_id).first()
     if paper is None:
         return None
+    assert_exam_paper_allowed(paper.id)
 
     examination = Examination.query.filter(
         Examination.id == paper.examination_id,

@@ -31,8 +31,9 @@ copied into the snapshot and never re-read.
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+from core.branch_scope import filter_by_student_ids
 from core.database import db
 from modules.classes.models import ClassSubject
 
@@ -69,6 +70,12 @@ _CONTRIBUTION = {
 }
 
 
+#: "Nobody has looked this up yet" — distinct from `None`, which is the real
+#: answer "this student has no current result row". A batch loads every row
+#: once and passes the value, including the Nones.
+_UNRESOLVED = object()
+
+
 def _decimal(value: Any) -> Optional[Decimal]:
     return None if value is None else Decimal(str(value))
 
@@ -83,16 +90,36 @@ def _number(value: Any) -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 
+def eligibility_index(papers: List[ExamPaper]) -> Dict[str, Set[str]]:
+    """Each paper's cohort, resolved once — `paper_id -> {student_id}`.
+
+    The batch counterpart to `is_eligible`, and the *same* rule: an open paper
+    answers from current enrolment, a locked one from its own register
+    (EX-02A.1). `is_eligible(paper, s)` is `s in paper_cohort(paper)`, so asking
+    per paper instead of per (student, paper) changes the cost and not the
+    answer.
+
+    That distinction is the whole fix. Calculating an examination used to cost
+    a query for every student *times* every paper; a whole-school annual
+    examination ran to millions and could not finish inside the request.
+    """
+    return {paper.id: set(paper_cohort(paper)[0]) for paper in papers}
+
+
 def applicable_papers(
-    examination: Examination, student_id: str, tenant_id: str
+    examination: Examination,
+    student_id: str,
+    tenant_id: str,
+    *,
+    papers: Optional[List[ExamPaper]] = None,
+    eligibility: Optional[Dict[str, Set[str]]] = None,
 ) -> List[ExamPaper]:
     """Which of this examination's papers this student sits.
 
-    Asked per paper through `is_eligible`, which is the EX-02A.1 rule: an open
-    paper answers from current enrollment, a closed one from its own register.
-    Reusing it is what keeps a result computed after promotion from quietly
-    changing — reading today's class membership instead is exactly the bug that
-    slice fixed.
+    The rule is EX-02A.1: an open paper answers from current enrollment, a
+    closed one from its own register. That is what keeps a result computed
+    after promotion from quietly changing — reading today's class membership
+    instead is exactly the bug that slice fixed.
 
     One consequence follows from that and is recorded rather than worked
     around: a **locked** paper with no mark for a student does not count as
@@ -100,23 +127,36 @@ def applicable_papers(
     Nothing recorded who was expected to sit it (debt 51). `not_yet_entered` is
     therefore reachable only for papers still open — which is precisely when it
     is actionable.
+
+    `papers` and `eligibility` let a batch resolve both **once** and hand them
+    in, which is what makes calculating a cohort cost a query per paper rather
+    than per student per paper. Asked about one student with neither, it falls
+    back to `is_eligible`, which loads one row instead of a whole register —
+    still the right trade for a single recalculation.
     """
-    return [
-        paper
-        for paper in papers_for(examination.id, tenant_id)
-        if is_eligible(paper, student_id)
-    ]
+    if papers is None:
+        papers = papers_for(examination.id, tenant_id)
+    if eligibility is not None:
+        return [p for p in papers if student_id in eligibility.get(p.id, ())]
+    return [p for p in papers if is_eligible(p, student_id)]
 
 
-def examination_cohort(examination: Examination, tenant_id: str) -> List[str]:
+def examination_cohort(
+    examination: Examination,
+    tenant_id: str,
+    *,
+    eligibility: Optional[Dict[str, Set[str]]] = None,
+) -> List[str]:
     """Every student any of this examination's papers is about (ADR-016).
 
     Sorted, so a cohort calculation is deterministic and its refusals are
-    reproducible.
+    reproducible. A caller that already built the eligibility index passes it
+    in rather than resolving every register a second time.
     """
-    students: set = set()
-    for paper in papers_for(examination.id, tenant_id):
-        found, _source = paper_cohort(paper)
+    if eligibility is None:
+        eligibility = eligibility_index(papers_for(examination.id, tenant_id))
+    students: Set[str] = set()
+    for found in eligibility.values():
         students.update(found)
     return sorted(students)
 
@@ -369,7 +409,11 @@ def _compute(
 
 
 def _store(
-    examination: Examination, student_id: str, tenant_id: str, computed: Dict[str, Any]
+    examination: Examination,
+    student_id: str,
+    tenant_id: str,
+    computed: Dict[str, Any],
+    existing: Any = _UNRESOLVED,
 ) -> ExamResult:
     """Write the figures onto the student's current result.
 
@@ -383,13 +427,15 @@ def _store(
     before publication with nothing to show for it. `version` stays 1 until
     EX-03B publishes, and a revision after that inserts 2.
     """
-    result = ExamResult.query.filter(
-        ExamResult.tenant_id == tenant_id,
-        ExamResult.examination_id == examination.id,
-        ExamResult.student_id == student_id,
-        ExamResult.is_current.is_(True),
-        ExamResult.deleted_at.is_(None),
-    ).first()
+    if existing is _UNRESOLVED:
+        existing = ExamResult.query.filter(
+            ExamResult.tenant_id == tenant_id,
+            ExamResult.examination_id == examination.id,
+            ExamResult.student_id == student_id,
+            ExamResult.is_current.is_(True),
+            ExamResult.deleted_at.is_(None),
+        ).first()
+    result = existing
 
     if result is None:
         result = ExamResult(
@@ -411,16 +457,32 @@ def _store(
 
 
 def _published_refusal(
-    examination: Examination, student_id: str, tenant_id: str
+    examination: Examination,
+    student_id: str,
+    tenant_id: str,
+    existing: Any = _UNRESOLVED,
 ) -> Optional[Dict[str, Any]]:
-    published = ExamResult.query.filter(
-        ExamResult.tenant_id == tenant_id,
-        ExamResult.examination_id == examination.id,
-        ExamResult.student_id == student_id,
-        ExamResult.is_current.is_(True),
-        ExamResult.deleted_at.is_(None),
-        ExamResult.published_at.isnot(None),
-    ).first()
+    """Refuse to recalculate over what the school has already told a parent.
+
+    `existing` is this student's *current* result row when a batch has already
+    loaded every one of them; the published check is then a field read rather
+    than a query per student.
+    """
+    if existing is _UNRESOLVED:
+        published = ExamResult.query.filter(
+            ExamResult.tenant_id == tenant_id,
+            ExamResult.examination_id == examination.id,
+            ExamResult.student_id == student_id,
+            ExamResult.is_current.is_(True),
+            ExamResult.deleted_at.is_(None),
+            ExamResult.published_at.isnot(None),
+        ).first()
+    else:
+        published = (
+            existing
+            if existing is not None and existing.published_at is not None
+            else None
+        )
     if published is None:
         return None
     return _refuse(
@@ -469,6 +531,26 @@ def _preload(examination: Examination, tenant_id: str):
     return subjects, marks, bands
 
 
+def current_results(examination_id: str, tenant_id: str) -> Dict[str, ExamResult]:
+    """Every student's current result row for this examination, in one query.
+
+    The batch form of `current_result`, same filter — read as stored, never
+    recomputed (ADR-018). A student with no row yet is simply absent from the
+    dict, which `.get` turns into the `None` every caller already expects.
+
+    Serves the three per-student reads that used to scale with the cohort: the
+    published-guard and the row `_store` writes onto while calculating, and the
+    lookup `publication_readiness` and `publish_results` make per student.
+    """
+    rows = ExamResult.query.filter(
+        ExamResult.tenant_id == tenant_id,
+        ExamResult.examination_id == examination_id,
+        ExamResult.is_current.is_(True),
+        ExamResult.deleted_at.is_(None),
+    ).all()
+    return {row.student_id: row for row in rows}
+
+
 def _calculate_one(
     examination: Examination,
     student_id: str,
@@ -476,17 +558,31 @@ def _calculate_one(
     subjects: Dict[str, str],
     marks: Dict[str, Dict[str, ExamMark]],
     bands: List[GradingBand],
+    *,
+    papers: Optional[List[ExamPaper]] = None,
+    eligibility: Optional[Dict[str, Set[str]]] = None,
+    existing: Any = _UNRESOLVED,
 ) -> ExamResult:
-    """Compute and store one student's result. Raises `_Refused`."""
-    refusal = _published_refusal(examination, student_id, tenant_id)
+    """Compute and store one student's result. Raises `_Refused`.
+
+    The keyword arguments are a batch handing over what it already loaded:
+    the paper list, the eligibility index, and this student's current result
+    row. With them this function issues **no reads at all** — which is what
+    makes calculating a cohort cost a fixed number of queries rather than one
+    per student per paper.
+    """
+    refusal = _published_refusal(examination, student_id, tenant_id, existing)
     if refusal:
         raise _Refused(refusal)
 
-    papers = applicable_papers(examination, student_id, tenant_id)
-    computed = _compute(
-        examination, student_id, papers, marks.get(student_id, {}), subjects, bands
+    sat = applicable_papers(
+        examination, student_id, tenant_id,
+        papers=papers, eligibility=eligibility,
     )
-    return _store(examination, student_id, tenant_id, computed)
+    computed = _compute(
+        examination, student_id, sat, marks.get(student_id, {}), subjects, bands
+    )
+    return _store(examination, student_id, tenant_id, computed, existing)
 
 
 def compute_result(
@@ -565,7 +661,15 @@ def calculate_results(
         return _refuse("NOT_FOUND", "Examination not found")
 
     subjects, marks, bands = _preload(examination, tenant_id)
-    cohort = examination_cohort(examination, tenant_id)
+
+    # Everything the cohort shares, resolved once. `eligibility` is the whole
+    # point: it answers "does this student sit this paper" for every pair from
+    # one query per paper, where asking `is_eligible` per student cost one per
+    # pair — `cohort x papers`, which no real examination could finish.
+    papers = papers_for(examination.id, tenant_id)
+    eligibility = eligibility_index(papers)
+    cohort = examination_cohort(examination, tenant_id, eligibility=eligibility)
+    existing = current_results(examination.id, tenant_id)
 
     results: List[ExamResult] = []
     try:
@@ -573,7 +677,10 @@ def calculate_results(
             for student_id in cohort:
                 results.append(
                     _calculate_one(
-                        examination, student_id, tenant_id, subjects, marks, bands
+                        examination, student_id, tenant_id, subjects, marks, bands,
+                        papers=papers,
+                        eligibility=eligibility,
+                        existing=existing.get(student_id),
                     )
                 )
             db.session.flush()
@@ -608,16 +715,16 @@ def current_result(
 
 
 def results_for(examination_id: str, tenant_id: str) -> List[ExamResult]:
-    return (
-        ExamResult.query.filter(
-            ExamResult.tenant_id == tenant_id,
-            ExamResult.examination_id == examination_id,
-            ExamResult.is_current.is_(True),
-            ExamResult.deleted_at.is_(None),
-        )
-        .order_by(ExamResult.student_id)
-        .all()
+    query = ExamResult.query.filter(
+        ExamResult.tenant_id == tenant_id,
+        ExamResult.examination_id == examination_id,
+        ExamResult.is_current.is_(True),
+        ExamResult.deleted_at.is_(None),
     )
+    # A result is a fact about a child, so it is scoped by the child — the same
+    # reasoning fees and hostel allocations already use.
+    query = filter_by_student_ids(query, ExamResult.student_id)
+    return query.order_by(ExamResult.student_id).all()
 
 
 # ---------------------------------------------------------------------------
@@ -651,15 +758,17 @@ def result_board(examination_id: str, tenant_id: str) -> Optional[Dict[str, Any]
 
     cohort = examination_cohort(examination, tenant_id)
     versions: Dict[str, List[ExamResult]] = {}
-    for row in (
+    board_query = filter_by_student_ids(
         ExamResult.query.filter(
             ExamResult.tenant_id == tenant_id,
             ExamResult.examination_id == examination_id,
             ExamResult.deleted_at.is_(None),
-        )
-        .order_by(ExamResult.student_id, ExamResult.version)
-        .all()
-    ):
+        ),
+        ExamResult.student_id,
+    )
+    for row in board_query.order_by(
+        ExamResult.student_id, ExamResult.version
+    ).all():
         versions.setdefault(row.student_id, []).append(row)
 
     student_ids = set(cohort) | set(versions)
