@@ -20,6 +20,24 @@ def _get_bool_env(var_name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _default_pool_size() -> int:
+    """Enough connections for every thread this worker can run at once.
+
+    Gunicorn's `gthread` worker can have all `GUNICORN_THREADS` in a request
+    simultaneously. A thread that cannot check out a connection waits
+    `pool_timeout` and then fails the request, so a pool smaller than the
+    thread count is a guaranteed 500 under load — one with no slow query
+    behind it. Reading the same variable keeps the two in step.
+
+    `max_overflow` adds a little headroom on top for the brief moments a
+    request holds two (a nested transaction, a listener).
+    """
+    threads = os.getenv("GUNICORN_THREADS")
+    if threads and threads.isdigit() and int(threads) > 0:
+        return int(threads)
+    return 16
+
+
 class Config:
     """Base configuration shared across all environments"""
     
@@ -38,11 +56,23 @@ class Config:
     # blocks on a dead socket for the OS TCP timeout (minutes). pre_ping verifies
     # liveness before use; recycle proactively closes connections below idle
     # horizons so they never go stale in the first place.
+    #
+    # **The pool has to be able to serve the threads the worker has.** Every
+    # gthread can be in a request at once, and a request that cannot check out
+    # a connection blocks for `pool_timeout` and then 500s — with no slow query
+    # to blame it on, which makes it a miserable thing to diagnose. Production
+    # ran 24 threads against 15 connections, so nine threads per worker could
+    # not hold one.
+    #
+    # Sized from the same variable gunicorn sizes itself with, so the two
+    # cannot drift apart again. Total connections stay well inside the
+    # instance's budget: 2 workers x (threads + a little headroom), plus
+    # Celery's own pool.
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "280")),
-        "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
-        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
+        "pool_size": int(os.getenv("DB_POOL_SIZE", str(_default_pool_size()))),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "5")),
         "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
         # Kill any single statement exceeding this (ms) so a runaway/locked query frees its
         # connection + worker instead of hanging for minutes. Generous ceiling: catches true

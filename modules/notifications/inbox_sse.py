@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from typing import Any, Dict, Iterator, Tuple
@@ -36,6 +37,79 @@ def _parse_envelope(raw: str) -> Tuple[str, Dict[str, Any]]:
     except (json.JSONDecodeError, TypeError):
         pass
     return "message", {"raw": raw[:500]}
+
+
+# ---------------------------------------------------------------------------
+# Stream capacity
+# ---------------------------------------------------------------------------
+#
+# An SSE response occupies one gunicorn thread for the life of the connection,
+# and admin-web opens one for every signed-in user. Unbounded, that is a cap on
+# *concurrent people* rather than on data: at `GUNICORN_THREADS` connected
+# staff every thread is parked in the loop below and the API stops answering
+# anything — the failure production already hit once and papered over by
+# raising the thread count.
+#
+# So streams get a share of the worker's threads and no more. Past it the route
+# answers 503, which the endpoint already does when Redis is down and the
+# client already handles by falling back to manual refresh. Losing live
+# notifications for some people beats losing the product for everybody.
+#
+# Per process, which is per worker — the accounting does not need to be shared
+# because the threads it protects are not.
+
+_slots_lock = threading.Lock()
+_slots_limit: int = 0
+_slots_in_use: int = 0
+
+
+def default_stream_limit() -> int:
+    """How many of this worker's threads streams may occupy.
+
+    Read from the same variable gunicorn sizes itself with, so the two cannot
+    drift apart: half the threads, leaving the rest for ordinary requests, and
+    never below one so a single-threaded dev box still gets live notifications.
+    """
+    configured = os.getenv("SSE_MAX_CONNECTIONS")
+    if configured and configured.isdigit() and int(configured) > 0:
+        return int(configured)
+    threads = int(os.getenv("GUNICORN_THREADS", "16") or 16)
+    return max(1, threads // 2)
+
+
+def reset_stream_slots(limit: int | None = None) -> None:
+    """Re-arm the accounting. For tests, and for a worker re-forking."""
+    global _slots_limit, _slots_in_use
+    with _slots_lock:
+        _slots_limit = default_stream_limit() if limit is None else limit
+        _slots_in_use = 0
+
+
+def acquire_stream_slot() -> bool:
+    """Take a thread for a stream, or report that this worker is full."""
+    global _slots_in_use, _slots_limit
+    with _slots_lock:
+        if _slots_limit <= 0:
+            # First call in this process: size against the worker's threads.
+            _slots_limit = default_stream_limit()
+        if _slots_in_use >= _slots_limit:
+            return False
+        _slots_in_use += 1
+        return True
+
+
+def release_stream_slot() -> None:
+    """Give the thread back. Never drops below zero — a double release would
+    hand out more streams than the worker has threads to serve them."""
+    global _slots_in_use
+    with _slots_lock:
+        if _slots_in_use > 0:
+            _slots_in_use -= 1
+
+
+def streams_in_use() -> int:
+    with _slots_lock:
+        return _slots_in_use
 
 
 def inbox_sse_events(tenant_id: str, user_id: str) -> Iterator[str]:

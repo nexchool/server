@@ -24,7 +24,16 @@ from modules.notifications.notification_service import (
     create_recipients,
     send_notification as enqueue_dispatch,
 )
-from modules.notifications.inbox_sse import inbox_sse_events
+import logging
+
+from modules.notifications.inbox_sse import (
+    acquire_stream_slot,
+    inbox_sse_events,
+    release_stream_slot,
+    streams_in_use,
+)
+
+logger = logging.getLogger(__name__)
 from modules.notifications.notification_targeting_service import (
     TargetingValidationError,
     collect_user_ids_bulk_merge,
@@ -170,6 +179,25 @@ def notification_inbox_stream():
             503,
         )
 
+    # A stream occupies one gunicorn thread for its whole life, and admin-web
+    # opens one per signed-in user — so unbounded, connected staff alone can
+    # park every thread and the API stops answering anything. Streams get a
+    # share of this worker's threads; past it we refuse, exactly as this route
+    # already does when Redis is down, and the client falls back to manual
+    # refresh. Some people losing live notifications beats everybody losing the
+    # product.
+    if not acquire_stream_slot():
+        logger.warning(
+            "inbox stream refused: worker at capacity (%s in use)",
+            streams_in_use(),
+        )
+        return error_response(
+            "ServiceUnavailable",
+            "Realtime inbox is busy right now. Notifications still work via "
+            "manual refresh.",
+            503,
+        )
+
     # Release the pooled DB connection the auth/tenant decorators checked out.
     # This response streams for the connection's whole lifetime and never touches
     # the ORM again (the generator is Redis-only), so holding the connection open
@@ -181,11 +209,15 @@ def notification_inbox_stream():
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
     }
-    return Response(
+    response = Response(
         stream_with_context(inbox_sse_events(tenant_id, user_id)),
         mimetype="text/event-stream",
         headers=headers,
     )
+    # Give the thread back when the response closes — including when the
+    # generator is never started, which a `finally` inside it would miss.
+    response.call_on_close(release_stream_slot)
+    return response
 
 
 @notifications_bp.route("/<notification_id>/read", methods=["PATCH"])
