@@ -35,6 +35,11 @@ from .models import Attendance
 from core.school_time import school_today
 
 
+#: The documented maximum page size (api-conventions.md). Also the ceiling
+#: applied when a caller asks for no page at all, so this endpoint can never
+#: read a whole term of attendance into memory.
+MAX_ATTENDANCE_PAGE_SIZE = 100
+
 def get_teacher_class_ids(user_id: str) -> List[str]:
     """Class ids this user's teacher may mark attendance for.
 
@@ -592,11 +597,18 @@ def list_attendance_records(
     total = query.count()
     if page is not None or per_page is not None:
         page_v = max(1, int(page or 1))
-        per_page_v = max(1, min(int(per_page or 50), 200))
+        # 100 is the documented maximum (api-conventions). This read 200.
+        per_page_v = max(1, min(int(per_page or 50), MAX_ATTENDANCE_PAGE_SIZE))
         rows = query.limit(per_page_v).offset((page_v - 1) * per_page_v).all()
         total_pages = max(1, (total + per_page_v - 1) // per_page_v)
     else:
-        rows = query.all()
+        # `attendance` is one row per student per class per day — roughly 3.3M
+        # a year at the product's stated scale, and this was the largest
+        # unbounded read in the codebase. Nothing calls it without paging (the
+        # only reference outside this module is a test), so a caller that omits
+        # both parameters gets a first page rather than the table. `total` above
+        # is unaffected, so the envelope still reports the true size.
+        rows = query.limit(MAX_ATTENDANCE_PAGE_SIZE).all()
         page_v = 1
         per_page_v = len(rows) or 0
         total_pages = 1

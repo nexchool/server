@@ -53,8 +53,9 @@ def list_holidays():
         include_recurring (default true), limit, offset
     """
     try:
-        limit = int(request.args.get("limit", 100))
-        offset = int(request.args.get("offset", 0))
+        # Clamped like the `upcoming` sibling below, which always was.
+        limit = max(1, min(int(request.args.get("limit", 100)), 100))
+        offset = max(0, int(request.args.get("offset", 0)))
     except ValueError:
         return validation_error_response("limit and offset must be integers")
 

@@ -575,8 +575,14 @@ def get_all_classes(
     )
 
     if page and per_page:
+        # Clamped here as well as at the route: `get_all_classes` is called
+        # directly by the CSV export and by GraphQL, so the service cannot rely
+        # on a parser it does not own. Unlike `list_students`, this took the
+        # caller's number verbatim.
+        page = max(1, int(page))
+        per_page = max(1, min(int(per_page), MAX_PER_PAGE))
         query = query.limit(per_page).offset((page - 1) * per_page)
-        total_pages = (total + per_page - 1) // per_page if per_page else 1
+        total_pages = (total + per_page - 1) // per_page
     else:
         total_pages = 1
 

@@ -583,18 +583,18 @@ class CorrectionQuery:
         self, info: strawberry.Info, exam_mark_id: strawberry.ID
     ) -> List[MarkCorrectionNode]:
         tenant_id = info.context.tenant_id
-        rows = [
-            row
-            for row in corrections_service.correction_queue(tenant_id, status=None)
-            if row["correction"].exam_mark_id == str(exam_mark_id)
-        ]
+        rows = corrections_service.correction_queue(
+            tenant_id, status=None, exam_mark_id=str(exam_mark_id)
+        )
         return [correction_to_graphql(row) for row in reversed(rows)]
 
 
 def _one_correction(correction_id: str, tenant_id: str) -> MarkCorrectionNode:
     """Re-read through the queue so a mutation answers with the same shape the
     list does, context included."""
-    rows = corrections_service.correction_queue(tenant_id, status=None)
+    rows = corrections_service.correction_queue(
+        tenant_id, status=None, correction_id=correction_id
+    )
     row = next(r for r in rows if r["correction"].id == correction_id)
     return correction_to_graphql(row)
 
