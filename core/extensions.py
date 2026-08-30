@@ -84,8 +84,26 @@ def init_extensions(app):
     # Falls back to in-memory when Redis is not configured (tests, a bare local
     # run) and when it is configured but unreachable — a rate limiter should
     # degrade rather than take the API down with it.
-    redis_url = os.getenv("REDIS_URL", "").strip()
-    if redis_url:
-        app.config.setdefault("RATELIMIT_STORAGE_URI", redis_url)
-        app.config.setdefault("RATELIMIT_IN_MEMORY_FALLBACK_ENABLED", True)
+    _configure_rate_limit_storage(app.config)
     limiter.init_app(app)
+
+
+def _configure_rate_limit_storage(config) -> None:
+    """Choose where the rate limiter keeps its counters.
+
+    `RATELIMIT_STORAGE_URI` is read from the environment first, so the limiter
+    can be given a database of its own rather than sharing the broker's.
+    `.env.prod` has always set `RATELIMIT_STORAGE_URL` — a name Flask-Limiter
+    does not recognise and nothing here ever read — so the separation it
+    described never happened and the counters have been sitting in database 0
+    alongside the queued task messages.
+
+    That matters once eviction is off: a full Redis must not be able to drop a
+    login counter, and it must not be able to drop a queued email either.
+    """
+    explicit = os.getenv("RATELIMIT_STORAGE_URI", "").strip()
+    redis_url = os.getenv("REDIS_URL", "").strip()
+    storage = explicit or redis_url
+    if storage:
+        config.setdefault("RATELIMIT_STORAGE_URI", storage)
+        config.setdefault("RATELIMIT_IN_MEMORY_FALLBACK_ENABLED", True)

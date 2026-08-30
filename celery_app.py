@@ -98,6 +98,16 @@ def make_celery(app):
     celery.conf.task_time_limit = int(os.getenv("CELERY_TASK_TIME_LIMIT", "660"))
     # Long tasks + low concurrency: prefetch one at a time so work spreads evenly across workers.
     celery.conf.worker_prefetch_multiplier = 1
+
+    # Nothing reads a task result. There is no `AsyncResult` in the codebase, no
+    # blocking `.get(timeout=)`, and not one of the dispatch sites assigns what
+    # `.delay()` returns — every task here is fire-and-forget: an email, a
+    # notification fan-out, a PDF. Celery still stored a result for each of them
+    # and kept it for a day, in the same 100 MB Redis the broker depends on.
+    #
+    # That is the largest avoidable pressure on a store where pressure used to
+    # mean a queued message being evicted and the email simply never happening.
+    celery.conf.task_ignore_result = True
     return celery
 
 
