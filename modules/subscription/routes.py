@@ -67,6 +67,11 @@ def _bill_summary(tenant: Tenant, active_students: int):
     }
 
 
+#: What the school owes Nexchool is the school's business, not every
+#: teacher's. Account *standing* stays unguarded — see `state()`.
+PERM_READ_BILLING = "subscription.read"
+
+
 @subscription_bp.route("/state", methods=["GET"], strict_slashes=False)
 @tenant_required
 @auth_required
@@ -77,20 +82,33 @@ def state():
         return error_response("NotFound", "Tenant not found", 404)
 
     sub = get_subscription_state(tenant_id)
-    usage = get_tenant_usage(tenant_id)
-    bill = _bill_summary(tenant, usage.get("active_students_count", 0))
 
-    return success_response(
-        data={
-            "subscription": {
-                "status": sub.get("status"),
-                "allow_writes": sub.get("allow_writes"),
-                "reason": sub.get("reason"),
-                "message": sub.get("message"),
-                "trial_ends_at": sub.get("trial_ends_at"),
-                "billing_cycle": tenant.billing_cycle,
-            },
-            "usage": usage,
-            "billing": bill,
-        }
-    )
+    # Two audiences, one endpoint. **Standing** — is the account live, may it be
+    # written to, is a trial ending — belongs to everybody: the banner that
+    # carries it renders in `DashboardLayout` for every signed-in user, and a
+    # teacher who cannot save attendance deserves to be told why.
+    #
+    # **Commercials** — headcount, price per student, discount, the total the
+    # school owes Nexchool — do not. That was going to every teacher, which is
+    # simply somebody else's contract.
+    payload = {
+        "subscription": {
+            "status": sub.get("status"),
+            "allow_writes": sub.get("allow_writes"),
+            "reason": sub.get("reason"),
+            "message": sub.get("message"),
+            "trial_ends_at": sub.get("trial_ends_at"),
+            "billing_cycle": tenant.billing_cycle,
+        },
+    }
+
+    from modules.rbac.services import has_permission
+
+    if has_permission(g.current_user.id, PERM_READ_BILLING):
+        usage = get_tenant_usage(tenant_id)
+        payload["usage"] = usage
+        payload["billing"] = _bill_summary(
+            tenant, usage.get("active_students_count", 0)
+        )
+
+    return success_response(data=payload)

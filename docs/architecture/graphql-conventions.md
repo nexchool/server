@@ -270,6 +270,48 @@ that offer it.
 
 ---
 
+## 7b. A field taking an `id` must answer "may you touch *this* one"
+
+`permission_classes` answers a different question from the one an `id` asks. It
+says *may this caller read students* — never *may this caller read student
+`s-123`*. A field that stops at the permission has authorized a **kind of
+thing**, not the thing it is about to return.
+
+This has now been the same defect three times, in three modules, and every time
+it arrived the same way: the REST route already narrowed correctly, and the
+GraphQL twin was written from the route's *decorator* rather than from its
+*body*.
+
+- `student(id)` returned any child in the school to any class teacher.
+  `GET /api/students/<id>` had always called `assert_student_allowed()` and then
+  checked the child was in a class that teacher actually teaches.
+- `examinationResults` returned the whole cohort's marks to a holder of
+  `examination.read` — which every pupil holds, because the Student profile is
+  implied by the relationship.
+- The examinations module shipped with no branch scoping at all, so a campus
+  head reached every campus's papers, registers and results.
+
+**So, for every field that takes an id:** load the row, then narrow twice —
+by campus, and by whatever smaller world this caller's permission implies
+(`_class_ceiling` in Students is the reference). Mirror the REST twin's order,
+and read its body to find out what that is.
+
+The two narrowings answer differently on purpose. **Campus refuses** — a
+restricted admin asking outside their branches is a real refusal, not a missing
+row, and `BranchForbidden` is already translated to an authorization error for
+GraphQL by `graphql_api/extensions.py`. **A caller-shaped ceiling reads as
+not-found** — a teacher's school is their own classes, and an id outside them
+should not confirm that the child exists.
+
+A list is the mirror image: it **filters**, it does not refuse. Putting an
+assert inside a shared per-row helper made `correction_queue` raise as soon as
+the queue held one other campus's request, instead of simply not showing it.
+Scope a list at the query; assert on the single thing.
+
+And one read that must stay wide: an aggregate the *calculation* depends on is
+not a screen's read. `papers_for` is deliberately unscoped, because scoping it
+would make a student's frozen result depend on who pressed calculate.
+
 ## 7a. A partial update needs three states, not two
 
 An `update` mutation takes a changes object, and every field the caller omits

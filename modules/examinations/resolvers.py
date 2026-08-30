@@ -686,10 +686,28 @@ class CorrectionMutation:
 # `assessment.manage` itself (ADR-020), so the field requires *both* rather
 # than widening either.
 
-PERM_RESULT_READ = "examination.read"
+PERM_RESULT_READ = "assessment.read.class"
 PERM_RESULT_PUBLISH = "examination.publish"
 
-_RESULT_READS = [*_GATE, requires(PERM_RESULT_READ)]
+# **Two keys, both required** — the guards evaluate in order and short-circuit,
+# so listing them is an AND.
+#
+# `examination.read` says you may know this examination exists. It does *not*
+# say you may read its marks: it is held by the **Student and Parent profiles**
+# (the Student one implied by the relationship, so every pupil holds it
+# automatically), and this field returns every child's name, total, percentage
+# and grade. Under ADR-011 a household shares the pupil's login, so guarding a
+# whole-cohort mark sheet with that key alone showed every parent every child's
+# results.
+#
+# The second key is the tier `markingRegister` already uses. Keeping the first
+# as well preserves the layering an earlier decision made deliberately: running
+# assessment is not, on its own, permission to open an examination.
+_RESULT_READS = [
+    *_GATE,
+    requires(PERM_READ),
+    requires_any(PERM_RESULT_READ, "assessment.read.all", "assessment.manage"),
+]
 _RESULT_WRITES = [*_GATE, requires(PERM_RESULT_PUBLISH)]
 
 

@@ -122,6 +122,17 @@ PERMISSIONS: List[Tuple[str, str]] = [
     ('academics.read', 'View academic summaries and health'),
     ('academics.manage', 'Full academic operations dashboard'),
 
+    # The school-wide overview: headcounts, today's attendance, alerts, the
+    # finance position and transport, in one payload. Its own key because it
+    # crosses every module — a teacher holding `attendance.read` has no
+    # business reading the school's outstanding fees.
+    ('dashboard.read', 'View the school-wide admin dashboard'),
+
+    # What the school pays Nexchool — headcount, rate, discount, total.
+    # Account *standing* (live/suspended/trial) is deliberately not gated:
+    # the banner carrying it renders for every signed-in user.
+    ('subscription.read', 'View the school’s subscription and billing'),
+
     ('course.read', 'View course information'),
     ('course.create', 'Create new courses'),
     ('course.update', 'Update course information'),
@@ -274,6 +285,8 @@ DEFAULT_ROLES: Dict[str, dict] = {
             'class_teacher.manage',
             'academics.read',
             'academics.manage',
+            'dashboard.read',
+            'subscription.read',
             'transport.manage',
             'school_unit.manage',
             'programme.manage',
