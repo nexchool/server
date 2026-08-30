@@ -108,46 +108,15 @@ def test_include_deleted_returns_soft_deleted_user(db_session, tenant):
 
 
 # ---------------------------------------------------------------------------
-# register route: a soft-deleted email is a clean duplicate (400), not a 500
+# The register route's soft-deleted-email test lived here. Public
+# self-registration was removed (2026-08-30) — see
+# tests/test_no_public_self_registration.py for why.
+#
+# The invariant it protected still holds: `(email, tenant_id)` is unique and
+# NOT scoped to `deleted_at`, so every surviving creation path passes
+# include_deleted=True to its own duplicate guard —
+#   teachers/services.py:243 · students/services.py:340 · sub_admins/services.py:494
 # ---------------------------------------------------------------------------
-
-def test_register_with_soft_deleted_email_returns_clean_duplicate(db_session, tenant):
-    """Registering an email owned by a SOFT-DELETED user returns 400 UserExists,
-    not a 500 from the unscoped (email, tenant_id) unique constraint.
-    """
-    from modules.auth import routes
-
-    email = f"sdreg-{uuid.uuid4().hex[:8]}@test.school"
-    _make_user(db_session, tenant, email=email, deleted_at=utc_now())
-    db_session.flush()
-
-    captured = {}
-
-    def fake_error_response(error=None, message=None, status_code=None):
-        captured["error"] = error
-        captured["message"] = message
-        captured["status_code"] = status_code
-        return ({"error": error, "message": message}, status_code)
-
-    def fake_success_response(data=None, message=None, status_code=201):
-        captured["status_code"] = status_code
-        return (MagicMock(), status_code)
-
-    request_json = {"email": email, "password": "pw123456", "tenant_id": tenant.id}
-    fake_request = MagicMock()
-    fake_request.get_json.return_value = request_json
-
-    with (
-        patch.object(routes, "request", fake_request),
-        patch.object(routes, "error_response", fake_error_response),
-        patch.object(routes, "success_response", fake_success_response),
-        patch.object(routes, "resolve_tenant_for_auth", return_value=None),
-        patch.object(routes, "get_tenant_id", return_value=tenant.id),
-    ):
-        routes.register()
-
-    assert captured["status_code"] == 400
-    assert captured["error"] == "UserExists"
 
 
 # ---------------------------------------------------------------------------
