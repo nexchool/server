@@ -8,7 +8,12 @@ from functools import wraps
 
 from flask import jsonify, request
 
-from core.authentication import authenticate_request
+from core.authentication import (
+    PASSWORD_RESET_ERROR,
+    PASSWORD_RESET_MESSAGE,
+    authenticate_request,
+    password_change_is_outstanding,
+)
 
 
 def auth_required(fn):
@@ -48,6 +53,18 @@ def auth_required(fn):
         outcome = authenticate_request()
         if outcome.failed:
             return jsonify({"error": outcome.error}), 401
+
+        # Authenticated, but locked into a password change. 403 and not 401:
+        # the caller *is* signed in, and a 401 would sign the Expo client out
+        # of the very session it needs to set the new password.
+        if password_change_is_outstanding(outcome.user):
+            return (
+                jsonify({
+                    "error": PASSWORD_RESET_ERROR,
+                    "message": PASSWORD_RESET_MESSAGE,
+                }),
+                403,
+            )
 
         response = fn(*args, **kwargs)
 
