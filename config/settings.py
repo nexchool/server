@@ -20,6 +20,22 @@ def _get_bool_env(var_name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+#: Environment names this application knows. `get_config` refuses anything else
+#: rather than falling back to development — see `config/__init__.py`.
+KNOWN_ENVIRONMENTS = ("development", "staging", "production", "testing")
+
+
+def current_environment() -> str:
+    """`FLASK_ENV`, normalised, read the same way by everything that asks.
+
+    Three places used to read it and normalise differently: the config selector
+    not at all, `S3_ENV_PREFIX` with `.lower()`, and `is_production()` with
+    neither. So `FLASK_ENV=Production` could select one configuration while
+    writing uploads under the other's prefix. One reading, one answer.
+    """
+    return (os.getenv("FLASK_ENV") or "development").strip().lower()
+
+
 def _default_pool_size() -> int:
     """Enough connections for every thread this worker can run at once.
 
@@ -164,7 +180,7 @@ class Config:
     AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
     _raw_prefix = os.getenv("S3_ENV_PREFIX", "").strip()
     S3_ENV_PREFIX = _raw_prefix or (
-        "prod" if os.getenv("FLASK_ENV", "development").lower() in ("production", "staging") else "local"
+        "prod" if current_environment() in ("production", "staging") else "local"
     )
 
     # Celery
@@ -233,7 +249,7 @@ class StagingConfig(ProductionConfig):
 
 def is_production():
     """True for production or staging (use production-style URLs and behavior, not local dev)."""
-    return os.getenv("FLASK_ENV", "development") in ("production", "staging")
+    return current_environment() in ("production", "staging")
 
 
 def get_backend_url():
