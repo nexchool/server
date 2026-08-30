@@ -19,7 +19,11 @@ from flask import current_app
 # Filename: keep alphanumerics, dot, dash, underscore; collapse unsafe chars
 _SAFE_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._\-]+")
 
-_DEFAULT_PRESIGNED_EXPIRES = int(os.getenv("S3_PRESIGNED_URL_EXPIRES_SECONDS", "86400"))
+# A presigned URL is an *unauthenticated, replayable* link to a child's photo
+# or document for as long as it lives. A day was long enough to be forwarded,
+# logged and indexed; fifteen minutes is long enough to open the thing you
+# just clicked. Override per-environment if a slow download needs longer.
+_DEFAULT_PRESIGNED_EXPIRES = int(os.getenv("S3_PRESIGNED_URL_EXPIRES_SECONDS", "900"))
 
 
 def _resolve_aws_str(name: str) -> str | None:
