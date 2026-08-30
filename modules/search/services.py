@@ -10,6 +10,12 @@ from core.database import db
 from core.tenant import get_tenant_id
 from modules.people.employment import Staff
 from modules.people.models import Person
+from core.branch_scope import (
+    filter_classes_by_branch,
+    filter_fees_by_branch,
+    filter_students_by_branch,
+    filter_teachers_by_branch,
+)
 from modules.rbac.services import has_permission
 
 
@@ -82,6 +88,7 @@ def _search_students(user, q: str, limit: int) -> List[Dict[str, Any]]:
             return []
         query = query.filter(Student.class_id.in_(own_class_ids))
 
+    query = filter_students_by_branch(query)
     rows = query.limit(limit).all()
     return [
         {
@@ -100,7 +107,7 @@ def _search_teachers(user, q: str, limit: int) -> List[Dict[str, Any]]:
         return []
     from modules.teachers.models import Teacher
 
-    rows = (
+    query = (
         db.session.query(Teacher, Person)
         .join(Staff, Staff.id == Teacher.staff_id)
         .join(Person, Person.id == Staff.person_id)
@@ -111,9 +118,8 @@ def _search_teachers(user, q: str, limit: int) -> List[Dict[str, Any]]:
                 Staff.employee_number.ilike(_like(q)),
             ),
         )
-        .limit(limit)
-        .all()
     )
+    rows = filter_teachers_by_branch(query).limit(limit).all()
     return [
         {
             "id": teacher.id,
@@ -130,15 +136,14 @@ def _search_classes(user, q: str, limit: int) -> List[Dict[str, Any]]:
         return []
     from modules.classes.models import Class
 
-    rows = (
+    query = (
         db.session.query(Class)
         .filter(
             Class.tenant_id == tenant_id,
             or_(Class.name.ilike(_like(q)), Class.section.ilike(_like(q))),
         )
-        .limit(limit)
-        .all()
     )
+    rows = filter_classes_by_branch(query).limit(limit).all()
     return [{"id": c.id, "name": c.name, "section": c.section} for c in rows]
 
 
@@ -149,7 +154,7 @@ def _search_fees(user, q: str, limit: int) -> List[Dict[str, Any]]:
     from modules.fees.models import FeeInvoice
     from modules.students.models import Student
 
-    rows = (
+    query = (
         db.session.query(FeeInvoice, Person)
         .join(Student, Student.id == FeeInvoice.student_id)
         .join(Person, Person.id == Student.person_id)
@@ -160,9 +165,8 @@ def _search_fees(user, q: str, limit: int) -> List[Dict[str, Any]]:
                 Person.full_name.ilike(_like(q)),
             ),
         )
-        .limit(limit)
-        .all()
     )
+    rows = filter_fees_by_branch(query, FeeInvoice.student_id).limit(limit).all()
     return [
         {
             "id": inv.id,
@@ -171,5 +175,5 @@ def _search_fees(user, q: str, limit: int) -> List[Dict[str, Any]]:
             "total_amount": float(inv.total_amount) if inv.total_amount is not None else None,
             "status": inv.status,
         }
-        for inv, u in rows
+        for inv, person in rows
     ]
