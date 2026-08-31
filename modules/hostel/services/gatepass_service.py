@@ -26,6 +26,8 @@ from typing import Optional
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from core.branch_scope import filter_by_student_ids
+
 from modules.hostel.models import (
     HostelGatepass,
     HostelGatepassAudit,
@@ -212,6 +214,23 @@ class GatepassService:
     # Queries
     # ------------------------------------------------------------------
 
+    def get_gatepass(
+        self, gatepass_id: str, *, tenant_id: str
+    ) -> Optional[HostelGatepass]:
+        """One gatepass, or None if it is not this caller's to read.
+
+        Branch-filtered rather than refused: raising would confirm the gatepass
+        exists, and for someone with no authority over the child it belongs to,
+        "not found" is the honest answer. Reading one by id must not be the way
+        around the list being scoped.
+        """
+        query = self.session.query(HostelGatepass).filter(
+            HostelGatepass.id == gatepass_id,
+            HostelGatepass.tenant_id == tenant_id,
+            HostelGatepass.deleted_at.is_(None),
+        )
+        return filter_by_student_ids(query, HostelGatepass.student_id).first()
+
     def list_gatepasses(
         self,
         *,
@@ -234,6 +253,13 @@ class GatepassService:
             query = query.filter(HostelGatepass.status == status)
         if gatepass_type is not None:
             query = query.filter(HostelGatepass.type == gatepass_type)
+
+        # Whether a child may leave the hostel is a fact about the child, the
+        # same as which bed they sleep in — so a campus-restricted warden sees
+        # their own campus's gatepasses. Hostels carry no school_unit_id (they
+        # are tenant-wide), which makes the student the only anchor.
+        query = filter_by_student_ids(query, HostelGatepass.student_id)
+
         return query.order_by(HostelGatepass.requested_at.desc()).all()
 
     def find_overdue_gatepasses(
@@ -241,20 +267,23 @@ class GatepassService:
     ) -> list[HostelGatepass]:
         """Return ACTIVE gatepasses whose expected return is past grace period.
 
-        The Celery beat task uses this to find candidates for mark_overdue.
+        Two callers with deliberately different reach:
+
+        * the Celery beat task, which finds candidates for mark_overdue and
+          must see every campus — it runs outside a request, where branch scope
+          resolves to UNRESTRICTED, so the sweep is unaffected;
+        * the warden's alert screen, where a campus-restricted user must see
+          only their own campus's children.
         """
         cutoff = utc_now() - timedelta(minutes=grace_period_minutes)
-        return (
-            self.session.query(HostelGatepass)
-            .filter(
-                and_(
-                    HostelGatepass.status == HostelGatepass.STATUS_ACTIVE,
-                    HostelGatepass.expected_return_datetime < cutoff,
-                    HostelGatepass.deleted_at.is_(None),
-                )
+        query = self.session.query(HostelGatepass).filter(
+            and_(
+                HostelGatepass.status == HostelGatepass.STATUS_ACTIVE,
+                HostelGatepass.expected_return_datetime < cutoff,
+                HostelGatepass.deleted_at.is_(None),
             )
-            .all()
         )
+        return filter_by_student_ids(query, HostelGatepass.student_id).all()
 
     # ------------------------------------------------------------------
     # Notifications recording (informational only in v1)

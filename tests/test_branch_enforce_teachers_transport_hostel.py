@@ -161,6 +161,11 @@ def unrestricted(db_session, tenant):
 def _as(flask_app, tenant, user):
     ctx = flask_app.test_request_context("/")
     ctx.push()
+    # `g` lives on the app context, which `test_request_context` may reuse, so
+    # a scope resolved for a previous user would otherwise answer for this one.
+    # A real request gets a fresh app context and cannot hit this.
+    g.pop("_branch_scope_allowed_unit_ids", None)
+    g.pop("_branch_scope_allowed_class_ids", None)
     g.tenant_id = tenant.id
     g.current_user = user
     return ctx
@@ -335,3 +340,250 @@ def test_a_campus_head_sees_only_their_campus_boarders(
         ctx.pop()
 
     assert visible == {ours.id}
+
+
+# ---------------------------------------------------------------------------
+# Hostel — gatepasses and visitors
+#
+# Phase 21 scoped *allocations* (which bed a child sleeps in) and stopped
+# there. A gatepass and a visitor log are facts about the same child, carry
+# the same `student_id`, and were left unscoped — so a head of one campus
+# reads every campus's gatepasses, including each child's parent phone
+# number, and every visitor who has ever signed in for a child they have no
+# authority over.
+#
+# Hostels themselves have no `school_unit_id` — they are tenant-wide — so the
+# student is the only anchor, which is exactly what `list_allocations` uses.
+# ---------------------------------------------------------------------------
+
+def _hostel(db_session, tenant):
+    from modules.hostel.models import Hostel
+
+    suffix = uuid.uuid4().hex[:6]
+    hostel = Hostel(tenant_id=tenant.id, name=f"Hostel {suffix}", capacity=50)
+    db_session.add(hostel)
+    db_session.flush()
+    return hostel
+
+
+def _gatepass(db_session, tenant, student, hostel, *, status="pending",
+              expected_return=None):
+    from modules.hostel.models import HostelGatepass
+
+    gatepass = HostelGatepass(
+        tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+        type="day_out", status=status,
+        departure_datetime=datetime(2026, 9, 1, 9, 0),
+        expected_return_datetime=expected_return or datetime(2026, 9, 1, 18, 0),
+        parent_phone="9800000000",
+    )
+    db_session.add(gatepass)
+    db_session.flush()
+    return gatepass
+
+
+def _visitor_log(db_session, tenant, student, hostel):
+    from modules.hostel.models import HostelVisitor, HostelVisitorLog
+
+    suffix = uuid.uuid4().hex[:8]
+    visitor = HostelVisitor(
+        tenant_id=tenant.id, phone=f"98{suffix[:8]}", name=f"Visitor {suffix}",
+        relation_type="father",
+    )
+    db_session.add(visitor)
+    db_session.flush()
+    log = HostelVisitorLog(
+        tenant_id=tenant.id, visitor_id=visitor.id, student_id=student.id,
+        hostel_id=hostel.id, check_in_at=datetime(2026, 9, 1, 11, 0),
+    )
+    db_session.add(log)
+    db_session.flush()
+    return log
+
+
+@pytest.fixture
+def two_campus_boarders(db_session, tenant, classes, academic_year):
+    """One boarder on each campus, sharing a tenant-wide hostel."""
+    class_a, class_b = classes
+    return {
+        "hostel": _hostel(db_session, tenant),
+        "ours": _make_student(db_session, tenant, class_a.id, academic_year.id),
+        "theirs": _make_student(db_session, tenant, class_b.id, academic_year.id),
+    }
+
+
+def test_a_campus_head_sees_only_their_campus_gatepasses(
+    flask_app, db_session, tenant, two_campus_boarders, restricted_to_campus_a
+):
+    from modules.hostel.services.gatepass_service import GatepassService
+
+    hostel = two_campus_boarders["hostel"]
+    ours = _gatepass(db_session, tenant, two_campus_boarders["ours"], hostel)
+    _gatepass(db_session, tenant, two_campus_boarders["theirs"], hostel)
+
+    ctx = _as(flask_app, tenant, restricted_to_campus_a)
+    try:
+        visible = {
+            gp.id
+            for gp in GatepassService(db_session).list_gatepasses(tenant_id=tenant.id)
+        }
+    finally:
+        ctx.pop()
+
+    assert visible == {ours.id}
+
+
+def test_the_trust_administrator_still_sees_every_gatepass(
+    flask_app, db_session, tenant, two_campus_boarders, unrestricted
+):
+    """No UserSchoolUnit rows means unrestricted — every existing admin."""
+    hostel = two_campus_boarders["hostel"]
+    ours = _gatepass(db_session, tenant, two_campus_boarders["ours"], hostel)
+    theirs = _gatepass(db_session, tenant, two_campus_boarders["theirs"], hostel)
+
+    from modules.hostel.services.gatepass_service import GatepassService
+
+    ctx = _as(flask_app, tenant, unrestricted)
+    try:
+        visible = {
+            gp.id
+            for gp in GatepassService(db_session).list_gatepasses(tenant_id=tenant.id)
+        }
+    finally:
+        ctx.pop()
+
+    assert {ours.id, theirs.id} <= visible
+
+
+def test_a_campus_head_sees_only_their_campus_overdue_alerts(
+    flask_app, db_session, tenant, two_campus_boarders, restricted_to_campus_a
+):
+    """The warden's alert list — a child who has not come back.
+
+    Note this is `ReportService.overdue_alerts`, not the similarly named
+    `GatepassService.find_overdue_gatepasses`. The two are easy to confuse:
+    the latter finds ACTIVE gatepasses that are past due so the beat task can
+    mark them, and no route reaches it. This one reads rows already marked
+    OVERDUE, and is what the screen calls.
+    """
+    from modules.hostel.services.report_service import ReportService
+
+    hostel = two_campus_boarders["hostel"]
+    ours = _gatepass(db_session, tenant, two_campus_boarders["ours"], hostel,
+                     status="overdue")
+    _gatepass(db_session, tenant, two_campus_boarders["theirs"], hostel,
+              status="overdue")
+
+    ctx = _as(flask_app, tenant, restricted_to_campus_a)
+    try:
+        visible = {
+            gp.id
+            for gp in ReportService(db_session).overdue_alerts(tenant_id=tenant.id)
+        }
+    finally:
+        ctx.pop()
+
+    assert visible == {ours.id}
+
+
+def test_a_campus_head_exports_only_their_campus_residents(
+    flask_app, db_session, tenant, classes, academic_year, restricted_to_campus_a
+):
+    """residents.csv is a download, so an unscoped one leaves the building."""
+    from modules.hostel.services.report_service import ReportService
+
+    class_a, class_b = classes
+    ours = _allocate(db_session, tenant,
+                     _make_student(db_session, tenant, class_a.id, academic_year.id),
+                     academic_year)
+    _allocate(db_session, tenant,
+              _make_student(db_session, tenant, class_b.id, academic_year.id),
+              academic_year)
+
+    ctx = _as(flask_app, tenant, restricted_to_campus_a)
+    try:
+        exported = {
+            row["student_id"]
+            for row in ReportService(db_session).residents_csv_rows(
+                tenant_id=tenant.id
+            )
+        }
+    finally:
+        ctx.pop()
+
+    assert exported == {ours.student_id}
+
+
+def test_a_campus_head_sees_only_their_campus_visitor_logs(
+    flask_app, db_session, tenant, two_campus_boarders, restricted_to_campus_a
+):
+    from modules.hostel.services.visitor_service import VisitorService
+
+    hostel = two_campus_boarders["hostel"]
+    ours = _visitor_log(db_session, tenant, two_campus_boarders["ours"], hostel)
+    _visitor_log(db_session, tenant, two_campus_boarders["theirs"], hostel)
+
+    ctx = _as(flask_app, tenant, restricted_to_campus_a)
+    try:
+        visible = {
+            log.id
+            for log in VisitorService(db_session).list_visitor_logs(
+                tenant_id=tenant.id
+            )
+        }
+    finally:
+        ctx.pop()
+
+    assert visible == {ours.id}
+
+
+def test_the_overnight_job_still_sweeps_every_campus(
+    flask_app, db_session, tenant, two_campus_boarders
+):
+    """`mark_overdue_gatepasses_task` runs on a beat schedule, not a request.
+
+    Branch scope reads the current user off the request context, so outside one
+    it resolves to UNRESTRICTED — which is what the sweep needs, since it must
+    mark every campus's gatepasses overdue. Pinned here because scoping this
+    query would otherwise silently stop the job doing its work.
+    """
+    from modules.hostel.services.gatepass_service import GatepassService
+
+    hostel = two_campus_boarders["hostel"]
+    long_ago = datetime(2020, 1, 1, 18, 0)
+    ours = _gatepass(db_session, tenant, two_campus_boarders["ours"], hostel,
+                     status="active", expected_return=long_ago)
+    theirs = _gatepass(db_session, tenant, two_campus_boarders["theirs"], hostel,
+                       status="active", expected_return=long_ago)
+
+    # Deliberately no request context — this is how the beat task calls it.
+    visible = {gp.id for gp in GatepassService(db_session).find_overdue_gatepasses()}
+
+    assert {ours.id, theirs.id} <= visible
+
+
+def test_a_campus_head_cannot_open_another_campus_gatepass(
+    flask_app, db_session, tenant, two_campus_boarders, restricted_to_campus_a
+):
+    """Reading one by id must not be the way around the list being scoped.
+
+    Filtered rather than refused: a 403 would confirm the gatepass exists, and
+    for a single object "not found" is the honest answer to someone with no
+    authority over the child it belongs to.
+    """
+    from modules.hostel.services.gatepass_service import GatepassService
+
+    hostel = two_campus_boarders["hostel"]
+    ours = _gatepass(db_session, tenant, two_campus_boarders["ours"], hostel)
+    theirs = _gatepass(db_session, tenant, two_campus_boarders["theirs"], hostel)
+
+    ctx = _as(flask_app, tenant, restricted_to_campus_a)
+    try:
+        service = GatepassService(db_session)
+        mine = service.get_gatepass(ours.id, tenant_id=tenant.id)
+        other = service.get_gatepass(theirs.id, tenant_id=tenant.id)
+    finally:
+        ctx.pop()
+
+    assert mine is not None and mine.id == ours.id
+    assert other is None

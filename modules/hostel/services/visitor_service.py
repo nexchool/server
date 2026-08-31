@@ -21,6 +21,7 @@ from modules.hostel.models import (
     HostelVisitor,
     HostelVisitorLog,
 )
+from core.branch_scope import filter_by_student_ids
 from core.school_time import utc_now
 
 
@@ -140,6 +141,11 @@ class VisitorService:
             query = query.filter(HostelVisitorLog.check_in_at <= end_date)
         if only_open:
             query = query.filter(HostelVisitorLog.check_out_at.is_(None))
+
+        # Who came to see a child is a fact about that child, so a
+        # campus-restricted warden sees only their own campus's visitors.
+        query = filter_by_student_ids(query, HostelVisitorLog.student_id)
+
         return query.order_by(HostelVisitorLog.check_in_at.desc()).all()
 
     def search_visitors(

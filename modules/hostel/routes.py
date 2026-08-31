@@ -750,16 +750,10 @@ def list_gatepasses():
 @require_any_permission(HOSTEL_GP_READ, HOSTEL_GP_APPROVE, HOSTEL_GP_GATEKEEPER)
 def get_gatepass(gatepass_id: str):
     """GET /api/hostel/gatepasses/:id"""
-    from modules.hostel.models import HostelGatepass, HostelGatepassAudit
+    from modules.hostel.models import HostelGatepassAudit
 
-    gp = (
-        db.session.query(HostelGatepass)
-        .filter(
-            HostelGatepass.id == gatepass_id,
-            HostelGatepass.tenant_id == _tenant_id(),
-            HostelGatepass.deleted_at.is_(None),
-        )
-        .first()
+    gp = GatepassService(db.session).get_gatepass(
+        gatepass_id, tenant_id=_tenant_id()
     )
     if gp is None:
         return not_found_response("Gatepass")
