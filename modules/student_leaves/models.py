@@ -25,6 +25,21 @@ LEAVE_STATUSES = (
 HALF_DAY_VALUES = ("am", "pm")
 
 
+def _student_name(student) -> str | None:
+    """A student's display name, preferring the person over the login.
+
+    `students/models.py` names a student `self.person.full_name`; the account
+    is only a fallback for rows that predate the person-centric model.
+    """
+    if student is None:
+        return None
+    if student.person is not None and student.person.full_name:
+        return student.person.full_name
+    if student.user is not None:
+        return student.user.name
+    return None
+
+
 class StudentLeave(TenantBaseModel):
     """Student leave request — one row per submitted request."""
 
@@ -76,7 +91,10 @@ class StudentLeave(TenantBaseModel):
             "id": self.id,
             "tenant_id": self.tenant_id,
             "student_id": self.student_id,
-            "student_name": self.student.user.name if self.student and self.student.user else None,
+            # The person owns the name, not the login: `students.user_id` is
+            # nullable, and reading it off the account left every child without
+            # one nameless in the approval queue. Same shape as debt 15.
+            "student_name": _student_name(self.student),
             "admission_number": self.student.admission_number if self.student else None,
             "class_id": self.class_id,
             "class_teacher_id": self.class_teacher_id,

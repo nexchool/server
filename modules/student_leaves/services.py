@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List as _List, Optional
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -583,11 +583,77 @@ def _actor_is_owning_student(leave: StudentLeave, actor_user_id: str) -> bool:
 # Query helpers (Task 6)
 # ---------------------------------------------------------------------------
 
-def list_visible_for_user(user, status: Optional[str] = None):
-    """Return leaves visible to ``user`` within their tenant, optionally filtered
-    by ``status``. Scoping follows the read permission held by the user:
-    read.all (admin) → all rows; read.class (teacher) → leaves where the user
-    is the class teacher; read.own (student) → only their own leaves.
+LEAVE_PAGE_SIZE = 25
+LEAVE_MAX_PAGE_SIZE = 100
+
+
+def _positive_int(value, *, default: int, maximum: Optional[int] = None) -> int:
+    """Coerce a query-string number, falling back rather than raising."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    number = max(1, number)
+    return min(number, maximum) if maximum else number
+
+
+def eager_leaves(query):
+    """Load what `StudentLeave.to_dict` reads, instead of a query per row.
+
+    It touches the student, the student's person and login (for the name and
+    admission number) and the deciding user — four lazy loads on every row of
+    an approval queue.
+    """
+    return query.options(
+        selectinload(StudentLeave.student).selectinload(Student.person),
+        selectinload(StudentLeave.student).selectinload(Student.user),
+        selectinload(StudentLeave.decided_by),
+    )
+
+
+def _empty_page() -> dict:
+    return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
+
+
+def _page(query, *, page, per_page) -> dict:
+    """One page of leaves, newest first.
+
+    The id breaks the tie on created_at: a class's leaves are often filed in
+    one sitting, and LIMIT/OFFSET over a partial order serves some rows twice
+    and skips others.
+    """
+    total = query.count()
+    page = _positive_int(page, default=1)
+    per_page = _positive_int(
+        per_page, default=LEAVE_PAGE_SIZE, maximum=LEAVE_MAX_PAGE_SIZE
+    )
+    items = (
+        eager_leaves(query)
+        .order_by(StudentLeave.created_at.desc(), StudentLeave.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+    }
+
+
+def list_visible_for_user(user, status: Optional[str] = None, page=None,
+                          per_page=None) -> dict:
+    """One page of the leaves ``user`` may see, as
+    ``{items, total, page, per_page, total_pages}``.
+
+    Scoping follows the read permission held by the user: read.all (admin) →
+    all rows; read.class (teacher) → leaves where the user is the class
+    teacher; read.own (student) → only their own leaves.
+
+    Paged because of the first of those: for a student this is their own
+    handful of leaves, but an admin sees every leave the school has recorded.
     """
     from modules.rbac.services import has_permission
 
@@ -607,7 +673,7 @@ def list_visible_for_user(user, status: Optional[str] = None):
         if teacher:
             q = q.filter(StudentLeave.class_teacher_id == teacher.id)
         else:
-            return []
+            return _empty_page()
     elif has_permission(user.id, "student.leave.read.own"):
         student = (
             db.session.query(Student)
@@ -617,11 +683,11 @@ def list_visible_for_user(user, status: Optional[str] = None):
         if student:
             q = q.filter(StudentLeave.student_id == student.id)
         else:
-            return []
+            return _empty_page()
     else:
-        return []
+        return _empty_page()
 
-    return q.order_by(StudentLeave.created_at.desc()).all()
+    return _page(q, page=page, per_page=per_page)
 
 
 def get_for_user(leave_id: str, user) -> StudentLeave:
@@ -662,7 +728,7 @@ def teacher_queue(user):
     )
     if not teacher:
         return []
-    return (
+    return eager_leaves(
         db.session.query(StudentLeave)
         .filter(
             StudentLeave.tenant_id == tenant_id,
