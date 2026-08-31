@@ -105,6 +105,21 @@ def _serialize_list_item(n: Notification, user_id: str) -> dict:
     return data
 
 
+def _paging_arg(raw, *, default: int, minimum: int, maximum: int | None = None) -> int:
+    """Read a paging number off the query string without raising.
+
+    A bare `int(raw)` turns `?limit=abc` — the caller's malformed input — into
+    an unhandled ValueError, which reaches them as a 500 and lands in the logs
+    looking like a server fault.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    value = max(minimum, value)
+    return min(value, maximum) if maximum is not None else value
+
+
 @notifications_bp.route("", methods=["GET"])
 @tenant_required
 @auth_required
@@ -125,8 +140,8 @@ def list_notifications():
         return error_response("AuthError", "User not found", 401)
 
     unread_only = request.args.get("unread_only", "false").lower() == "true"
-    limit = min(max(int(request.args.get("limit", 20) or 20), 1), 100)
-    offset = max(int(request.args.get("offset", 0) or 0), 0)
+    limit = _paging_arg(request.args.get("limit"), default=20, minimum=1, maximum=100)
+    offset = _paging_arg(request.args.get("offset"), default=0, minimum=0)
 
     base = _notifications_scope_query(tenant_id, user_id, unread_only)
     total = int(base.count() or 0)

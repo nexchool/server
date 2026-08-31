@@ -10,6 +10,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import case, func
+from sqlalchemy.orm import selectinload
+
 from core.database import db
 from core.tenant import get_tenant_id
 from core.branch_scope import (
@@ -165,15 +168,107 @@ def create_invoice(
         return {"success": False, "error": safe_error(e)}
 
 
+INVOICE_PAGE_SIZE = 25
+INVOICE_MAX_PAGE_SIZE = 100
+
+# Neither of these is a stored status. "Pending" is three at once, and
+# "overdue" is derived from the due date — the mobile screen worked both out
+# per row in the browser, which stops being possible once the list is paged.
+UNSETTLED_STATUSES = ("unpaid", "partial", "draft")
+OWING_STATUSES = ("unpaid", "partial")
+
+
+def _positive_int(value, *, default: int, maximum: Optional[int] = None) -> int:
+    """Coerce a query-string number, falling back rather than raising."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    number = max(1, number)
+    return min(number, maximum) if maximum else number
+
+
+def _apply_status(query, status: Optional[str]):
+    """Translate the screen's filter into SQL."""
+    if not status:
+        return query
+    if status == "pending":
+        return query.filter(FeeInvoice.status.in_(UNSETTLED_STATUSES))
+    if status == "overdue":
+        return query.filter(
+            FeeInvoice.status.in_(OWING_STATUSES),
+            FeeInvoice.due_date < school_today(),
+        )
+    return query.filter(FeeInvoice.status == status)
+
+
+def _paid_by_invoice_subquery():
+    """How much has been received against each invoice.
+
+    Aggregated in its own subquery rather than joined into the main one: a
+    plain join to `fee_payments` multiplies an invoice by its payments, which
+    would double-count a part-paid invoice in the outstanding total.
+    """
+    return (
+        db.session.query(
+            FeePayment.invoice_id.label("invoice_id"),
+            func.coalesce(func.sum(FeePayment.amount), 0).label("paid"),
+        )
+        .group_by(FeePayment.invoice_id)
+        .subquery()
+    )
+
+
+def _summarise(query) -> Dict[str, Any]:
+    """What is owed across the whole filtered set, and when it is next due.
+
+    This is money on a screen, so it has to describe every matching invoice
+    and not the page in hand. Cancelled invoices are not owed, and a fully
+    settled one owes nothing.
+    """
+    paid = _paid_by_invoice_subquery()
+    owed = FeeInvoice.total_amount - func.coalesce(paid.c.paid, 0)
+
+    owing = (
+        query.outerjoin(paid, paid.c.invoice_id == FeeInvoice.id)
+        .filter(FeeInvoice.status != "cancelled")
+        .with_entities(
+            func.coalesce(func.sum(func.greatest(owed, 0)), 0),
+            func.min(
+                case((owed > 0, FeeInvoice.due_date), else_=None)
+            ),
+        )
+        .one()
+    )
+    total_outstanding, next_due = owing
+    return {
+        "total_outstanding": float(total_outstanding or 0),
+        "next_due_date": next_due.isoformat() if next_due else None,
+    }
+
+
 def list_invoices(
     student_id: Optional[str] = None,
     status: Optional[str] = None,
     academic_year: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """List invoices with optional filters."""
+    page=None,
+    per_page=None,
+) -> Dict[str, Any]:
+    """One page of invoices, plus what is owed across the whole filtered set.
+
+    Returns ``{items, total, page, per_page, total_pages, summary}``.
+
+    The summary is a SQL aggregate over every matching invoice, not over
+    `items`: the screen shows an amount outstanding and a next due date, and
+    computing those from a page would put a wrong number of rupees in front of
+    whoever is looking.
+    """
     tenant_id = get_tenant_id()
     if not tenant_id:
-        return []
+        return {
+            "items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1,
+            "summary": {"total_outstanding": 0.0, "next_due_date": None},
+        }
 
     # Branch scope: if a specific student is requested, assert access first;
     # then restrict the whole list to the caller's allowed-branch students.
@@ -184,14 +279,37 @@ def list_invoices(
     query = filter_fees_by_branch(query, FeeInvoice.student_id)
     if student_id:
         query = query.filter_by(student_id=student_id)
-    if status:
-        query = query.filter_by(status=status)
+    query = _apply_status(query, status)
     if academic_year:
         query = query.filter_by(academic_year=academic_year)
-    query = query.order_by(FeeInvoice.created_at.desc())
 
-    invoices = query.all()
-    return [inv.to_dict() for inv in invoices]
+    total = query.count()
+    summary = _summarise(query)
+
+    page = _positive_int(page, default=1)
+    per_page = _positive_int(
+        per_page, default=INVOICE_PAGE_SIZE, maximum=INVOICE_MAX_PAGE_SIZE
+    )
+
+    invoices = (
+        # `to_dict` sums `self.payments`; without this that is a query per row.
+        query.options(selectinload(FeeInvoice.payments))
+        # A batch of invoices is generated in one run, so created_at ties and
+        # is not on its own a total order for LIMIT/OFFSET.
+        .order_by(FeeInvoice.created_at.desc(), FeeInvoice.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+
+    return {
+        "items": [inv.to_dict() for inv in invoices],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "summary": summary,
+    }
 
 
 def get_invoice(invoice_id: str) -> Optional[Dict[str, Any]]:

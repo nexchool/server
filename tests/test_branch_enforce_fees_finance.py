@@ -317,7 +317,7 @@ def test_fees_invoice_list_restricted_sees_only_unit_a(
         g.tenant_id = tenant.id
         g.current_user = restricted_user
         result = invoice_service.list_invoices()
-        ids = {r["id"] for r in result}
+        ids = {r["id"] for r in result["items"]}
         assert inv_a.id in ids
         assert inv_b.id not in ids  # unit B excluded
         assert inv_c.id not in ids  # classless excluded
@@ -330,7 +330,7 @@ def test_fees_invoice_list_unrestricted_sees_all(
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = unrestricted_user
-        ids = {r["id"] for r in invoice_service.list_invoices()}
+        ids = {r["id"] for r in invoice_service.list_invoices()["items"]}
         assert {inv_a.id, inv_b.id, inv_c.id} <= ids
 
 
@@ -829,7 +829,7 @@ def test_unrestricted_counts_unchanged(
     with flask_app.test_request_context("/"):
         g.tenant_id = tenant.id
         g.current_user = unrestricted_user
-        assert len({r["id"] for r in invoice_service.list_invoices()}) >= 3
+        assert len({r["id"] for r in invoice_service.list_invoices()["items"]}) >= 3
         assert len({r["id"] for r in student_fee_service.list_student_fees()}) >= 3
         struct_ids = {s["id"] for s in structure_service.list_fee_structures()}
         assert {fs_a.id, fs_b.id, fs_t.id} <= struct_ids
