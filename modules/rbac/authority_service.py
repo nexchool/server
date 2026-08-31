@@ -405,3 +405,12 @@ def _a_change_of_standing_forgets_cached_authority(session, flush_context) -> No
             standing = db.inspect(instance).attrs.employment_status.history
             if standing.has_changes():
                 _forget_cached_permissions_for(instance)
+
+        # An employment that is *removed* takes its authority with it just as
+        # surely as one that is suspended, and this watched only `dirty`. The
+        # cached set derived from it then outlived the row it described until
+        # the TTL expired. No status check here: there is no status to change
+        # on a row that is going away.
+        for instance in session.deleted:
+            if isinstance(instance, Staff):
+                _forget_cached_permissions_for(instance)

@@ -13,6 +13,7 @@ from core.tenant import get_tenant_id
 from modules.auth.models import User
 from shared.s3_utils import normalize_stored_file_value_for_db, profile_picture_public_url
 from shared.utils import paginate_query
+from modules.rbac.services import invalidate_user_permissions
 
 
 def list_users(
@@ -170,6 +171,13 @@ def delete_user(user_id: str) -> Dict:
         
         # Delete user (cascade will handle sessions)
         db.session.delete(user)
+        # The cached permission set is keyed by account id and would otherwise
+        # sit there for its full TTL, describing somebody who no longer exists.
+        # Not an authorization hole — authentication refuses a missing account
+        # first — but a derived value outliving its source stops being harmless
+        # the moment anything new reads it. Queued, so it applies on the commit
+        # below rather than before it.
+        invalidate_user_permissions(user_id)
         db.session.commit()
         
         return {
