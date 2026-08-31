@@ -42,6 +42,7 @@ from modules.hostel.permissions import (
 )
 from modules.hostel.services import (
     AllocationService,
+    FacilityService,
     GatepassService,
     ReportService,
     VisitorService,
@@ -329,7 +330,9 @@ def delete_hostel(hostel_id: str):
             status_code=409,
         )
 
-    hostel.deleted_at = utc_now()
+    FacilityService(db.session).retire_hostel(
+        tenant_id=_tenant_id(), hostel=hostel
+    )
     db.session.commit()
     return success_response(data=None, status_code=204)
 
@@ -538,7 +541,7 @@ def delete_room(room_id: str):
             status_code=409,
         )
 
-    room.deleted_at = utc_now()
+    FacilityService(db.session).retire_room(tenant_id=_tenant_id(), room=room)
     db.session.commit()
     return success_response(data=None, status_code=204)
 
@@ -623,7 +626,11 @@ def update_bed(bed_id: str):
 @require_feature("hostel")
 @require_permission(HOSTEL_MANAGE)
 def delete_bed(bed_id: str):
-    """DELETE /api/hostel/beds/:id — sets status=removed (no soft delete column)."""
+    """DELETE /api/hostel/beds/:id — retires the bed.
+
+    Sets both status=removed and deleted_at: readers disagree about which one
+    means "gone", so only setting one leaves the bed visible to the other.
+    """
     bed = (
         db.session.query(HostelBed)
         .filter(
@@ -642,7 +649,7 @@ def delete_bed(bed_id: str):
             status_code=409,
         )
 
-    bed.status = "removed"
+    FacilityService(db.session).retire_bed(bed=bed)
     db.session.commit()
     return success_response(data=None, status_code=204)
 
