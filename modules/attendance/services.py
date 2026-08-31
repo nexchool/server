@@ -12,6 +12,7 @@ from shared.safe_error import safe_error
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from core.database import db
@@ -501,17 +502,21 @@ def get_my_classes(user_id: str) -> List[Dict]:
 
     classes = Class.query.filter(Class.id.in_(class_ids)).order_by(Class.name, Class.section).all()
 
-    result = []
-    for cls in classes:
-        student_count = Student.query.filter_by(class_id=cls.id).count()
-        result.append(
-            {
-                **cls.to_dict(),
-                "student_count": student_count,
-            }
-        )
+    # One grouped count for all of them rather than one per class: this is the
+    # screen a teacher opens to take a register, so it is paid several times a
+    # day. A class with nobody in it is absent from the result, hence the
+    # default of zero.
+    roll = dict(
+        db.session.query(Student.class_id, func.count(Student.id))
+        .filter(Student.class_id.in_(class_ids))
+        .group_by(Student.class_id)
+        .all()
+    )
 
-    return result
+    return [
+        {**cls.to_dict(), "student_count": roll.get(cls.id, 0)}
+        for cls in classes
+    ]
 
 
 def _parse_iso_date(value: Optional[str]) -> Optional[date]:
