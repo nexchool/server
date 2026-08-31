@@ -16,8 +16,9 @@ from shared.safe_error import safe_error
 
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
+from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session as OrmSession, joinedload
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -46,17 +47,98 @@ def get_user_permissions(user_id: str) -> List[str]:
     )
 
 
-def invalidate_user_permissions(user_id: str) -> None:
-    """Drop one user's cached permission set (after that user's roles change)."""
+#: Queued on the Session, flushed when it commits. See `_defer_or_drop`.
+_PENDING_INVALIDATIONS = "_pending_permission_invalidations"
+
+#: Stands for "every user" in the queue, so a whole-cache drop defers too.
+_ALL_USERS = object()
+
+
+def _orm_session():
+    """The real Session behind Flask-SQLAlchemy's scoped proxy.
+
+    `scoped_session` does not proxy `in_transaction`, and the queue has to live
+    on the Session that will actually emit the commit event.
+    """
+    from core.database import db
+
+    return db.session()
+
+
+def _defer_or_drop(target) -> None:
+    """Forget a cached permission set — once the current transaction commits.
+
+    **Ordering is the whole point.** Clearing the cache before the commit opens
+    a window: the row still reads as it did, so a concurrent request for that
+    user misses, reloads the *old* permissions from the committed database, and
+    caches them again — now for the full TTL, with the revocation already
+    applied underneath. A withdrawn authority or a suspension keeps working for
+    two minutes.
+
+    This was previously true or not depending on which route reached it:
+    `sub_admins` commits and then invalidates, `rbac` invalidated first and
+    said so in a comment ("TTL backstops any race"), and the employment
+    listener fired on `after_flush`, which is also before the commit. Deferring
+    here makes all of them safe without seventeen call sites having to know.
+
+    Outside a transaction there is nothing to wait for, so it drops now.
+    """
+    session = _orm_session()
+    if session.in_transaction():
+        session.info.setdefault(_PENDING_INVALIDATIONS, set()).add(target)
+        return
+    _drop_now(target)
+
+
+def _drop_now(target) -> None:
     from core import cache
-    cache.delete(cache.key("perms", user_id))
+
+    if target is _ALL_USERS:
+        cache.delete_pattern(cache.key("perms", "*"))
+    else:
+        cache.delete(cache.key("perms", target))
+
+
+def flush_pending_permission_invalidations(session) -> None:
+    """Apply everything queued against this session. Called on commit."""
+    pending = session.info.pop(_PENDING_INVALIDATIONS, None)
+    if not pending:
+        return
+    # One pattern delete covers every individual key, so prefer it.
+    if _ALL_USERS in pending:
+        _drop_now(_ALL_USERS)
+        return
+    for target in pending:
+        _drop_now(target)
+
+
+def discard_pending_permission_invalidations(session) -> None:
+    """Throw the queue away. Called on rollback — nothing changed."""
+    session.info.pop(_PENDING_INVALIDATIONS, None)
+
+
+@event.listens_for(OrmSession, "after_commit")
+def _flush_permission_invalidations_on_commit(session) -> None:
+    flush_pending_permission_invalidations(session)
+
+
+@event.listens_for(OrmSession, "after_rollback")
+def _discard_permission_invalidations_on_rollback(session) -> None:
+    discard_pending_permission_invalidations(session)
+
+
+def invalidate_user_permissions(user_id: str) -> None:
+    """Drop one user's cached permission set (after that user's roles change).
+
+    Takes effect when the surrounding transaction commits — see `_defer_or_drop`.
+    """
+    _defer_or_drop(user_id)
 
 
 def invalidate_all_permissions() -> None:
     """Drop every cached permission set — for role/permission-definition changes
     that affect many users at once (rare, admin-initiated)."""
-    from core import cache
-    cache.delete_pattern(cache.key("perms", "*"))
+    _defer_or_drop(_ALL_USERS)
 
 
 def _load_user_permissions_from_db(user_id: str) -> List[str]:
