@@ -320,3 +320,78 @@ def test_the_cost_does_not_grow_with_the_number_of_classes(
     assert large == small, (
         f"{small} queries for 2 classes, {large} for 20"
     )
+
+
+# ---------------------------------------------------------------------------
+# The transport panel computes the same two numbers, and had the same two bugs
+# ---------------------------------------------------------------------------
+
+def _transport(tenant):
+    return dashboard._transport(tenant.id)
+
+
+def test_the_transport_panel_counts_inactive_routes(ctx, db_session, tenant, year):
+    live = _route(db_session, tenant, status="active")
+    retired = _route(db_session, tenant, status="inactive")
+    bus = _bus(db_session, tenant, capacity=100)
+    _enrol(db_session, tenant, year, bus, live)
+    _enrol(db_session, tenant, year, bus, retired)
+
+    assert _transport(tenant)["students_on_inactive_routes"] == 1
+
+
+def test_the_transport_panel_counts_buses_near_capacity(
+    ctx, db_session, tenant, year
+):
+    live = _route(db_session, tenant, status="active")
+    full = _bus(db_session, tenant, capacity=10)
+    roomy = _bus(db_session, tenant, capacity=10)
+    for _ in range(9):
+        _enrol(db_session, tenant, year, full, live)
+    for _ in range(2):
+        _enrol(db_session, tenant, year, roomy, live)
+
+    assert _transport(tenant)["buses_near_capacity"] == 1
+
+
+def test_the_transport_panel_still_reports_its_totals(ctx, db_session, tenant, year):
+    live = _route(db_session, tenant, status="active")
+    running = _bus(db_session, tenant, capacity=10)
+    _bus(db_session, tenant, capacity=10, status="retired")
+    _enrol(db_session, tenant, year, running, live)
+
+    panel = _transport(tenant)
+
+    assert panel["total_buses"] == 2
+    assert panel["active_buses"] == 1
+    assert panel["students_on_transport"] == 1
+
+
+def test_the_transport_panel_cost_does_not_grow_with_the_fleet(
+    ctx, db_session, tenant, year
+):
+    seen: list[str] = []
+
+    def record(conn, cursor, statement, params, context, executemany):
+        seen.append(statement)
+
+    live = _route(db_session, tenant, status="active")
+
+    def measure():
+        seen.clear()
+        event.listen(db.engine, "before_cursor_execute", record)
+        try:
+            dashboard._transport(tenant.id)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record)
+        return len(seen)
+
+    for _ in range(2):
+        _enrol(db_session, tenant, year, _bus(db_session, tenant), live)
+    small = measure()
+
+    for _ in range(18):
+        _enrol(db_session, tenant, year, _bus(db_session, tenant), live)
+    large = measure()
+
+    assert large == small, f"{small} queries for 2 buses, {large} for 20"
