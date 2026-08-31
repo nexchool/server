@@ -338,3 +338,100 @@ def test_an_empty_visitor_search_is_not_a_filter(ctx, db_session, tenant, hostel
     )
 
     assert {r.id for r in result["items"]} == {log.id}
+
+
+# ---------------------------------------------------------------------------
+# Searching the residents list
+# ---------------------------------------------------------------------------
+
+def test_residents_are_searched_on_the_server(ctx, db_session, tenant, hostel, room):
+    """The mobile residents screen filtered the rows it happened to hold.
+
+    Once the list pages, that only searches the first page — so the search has
+    to run in SQL over the same fields the screen shows.
+    """
+    from modules.hostel.models import HostelAllocation, HostelBed
+    from modules.auth.models import User
+    from modules.people.models import Person
+
+    def _boarder(name, admission):
+        # Short suffix: `_student` prefixes and salts it, and
+        # `students.admission_number` is varchar(20).
+        student = _student(db_session, tenant, "r")
+        db_session.get(Person, student.person_id).full_name = name
+        db_session.get(User, student.user_id).name = name
+        student.admission_number = admission
+        bed = HostelBed(tenant_id=tenant.id, room_id=room.id,
+                        bed_number=f"B-{uuid.uuid4().hex[:6]}")
+        db_session.add(bed)
+        db_session.flush()
+        allocation = HostelAllocation(
+            tenant_id=tenant.id, hostel_id=hostel.id, room_id=room.id,
+            bed_id=bed.id, student_id=student.id,
+            check_in_at=datetime(2026, 6, 1), status="active",
+        )
+        db_session.add(allocation)
+        db_session.flush()
+        return allocation
+
+    wanted = _boarder("Ananya Rao", "ADM-ROAR1")
+    _boarder("Vikram Nair", "ADM-OTHER1")
+
+    by_name = AllocationService(db_session).list_allocations(
+        tenant_id=tenant.id, search="ananya"
+    )
+    by_admission = AllocationService(db_session).list_allocations(
+        tenant_id=tenant.id, search="ADM-ROAR1"
+    )
+
+    assert {a.id for a in by_name["items"]} == {wanted.id}
+    assert {a.id for a in by_admission["items"]} == {wanted.id}
+
+
+def test_resident_search_survives_a_child_with_no_login(
+    ctx, db_session, tenant, hostel, room
+):
+    from modules.hostel.models import HostelAllocation, HostelBed
+    from modules.people.models import Person
+    from modules.students.models import Student
+
+    person = Person(id=f"pe-{uuid.uuid4().hex[:12]}", tenant_id=tenant.id,
+                    full_name="Accountless Boarder")
+    db_session.add(person)
+    db_session.flush()
+    student = Student(id=f"s-{uuid.uuid4().hex[:12]}", tenant_id=tenant.id,
+                      user_id=None, person_id=person.id,
+                      admission_number="ADM-nologin9")
+    db_session.add(student)
+    db_session.flush()
+    bed = HostelBed(tenant_id=tenant.id, room_id=room.id,
+                    bed_number=f"B-{uuid.uuid4().hex[:6]}")
+    db_session.add(bed)
+    db_session.flush()
+    allocation = HostelAllocation(
+        tenant_id=tenant.id, hostel_id=hostel.id, room_id=room.id,
+        bed_id=bed.id, student_id=student.id,
+        check_in_at=datetime(2026, 6, 1), status="active",
+    )
+    db_session.add(allocation)
+    db_session.flush()
+
+    listed = AllocationService(db_session).list_allocations(tenant_id=tenant.id)
+    searched = AllocationService(db_session).list_allocations(
+        tenant_id=tenant.id, search="ADM-nologin9"
+    )
+
+    assert allocation.id in {a.id for a in listed["items"]}
+    assert {a.id for a in searched["items"]} == {allocation.id}
+
+
+def test_an_empty_resident_search_is_not_a_filter(
+    ctx, db_session, tenant, hostel, room
+):
+    made = _allocations(db_session, tenant, hostel, room, 2)
+
+    result = AllocationService(db_session).list_allocations(
+        tenant_id=tenant.id, search="   "
+    )
+
+    assert {a.id for a in result["items"]} == set(made)

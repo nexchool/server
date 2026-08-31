@@ -127,6 +127,35 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
     return items
 
 
+def _rooms_with_occupancy(tenant_id: str, hostel_id: str) -> list[dict]:
+    """Rooms of a hostel, each carrying how many of its beds are taken.
+
+    The count comes from one grouped query rather than from the allocation
+    rows themselves: the screen used to fetch every active allocation in the
+    hostel and tally them in the browser, which is the wrong shape at 300
+    boarders and silently wrong once that endpoint pages.
+    """
+    rooms = (
+        db.session.query(HostelRoom)
+        .filter(
+            HostelRoom.tenant_id == tenant_id,
+            HostelRoom.hostel_id == hostel_id,
+            HostelRoom.deleted_at.is_(None),
+        )
+        .order_by(HostelRoom.room_number)
+        .all()
+    )
+    occupied = AllocationService(db.session).occupied_counts_by_room(
+        tenant_id=tenant_id, hostel_id=hostel_id
+    )
+    out = []
+    for room in rooms:
+        row = room.to_dict()
+        row["occupied_count"] = occupied.get(room.id, 0)
+        out.append(row)
+    return out
+
+
 def _attach_visitor_info(items: list[dict]) -> list[dict]:
     """Enrich serialized visitor-log rows with ``visitor_name`` +
     ``visitor_phone`` in a single batch query, so the visitor desk sees who is
@@ -315,18 +344,10 @@ def delete_hostel(hostel_id: str):
 @require_feature("hostel")
 @require_any_permission(HOSTEL_READ, HOSTEL_MANAGE)
 def list_rooms(hostel_id: str):
-    """GET /api/hostel/hostels/:id/rooms"""
-    rows = (
-        db.session.query(HostelRoom)
-        .filter(
-            HostelRoom.tenant_id == _tenant_id(),
-            HostelRoom.hostel_id == hostel_id,
-            HostelRoom.deleted_at.is_(None),
-        )
-        .order_by(HostelRoom.room_number)
-        .all()
+    """GET /api/hostel/hostels/:id/rooms — each room with its occupied count."""
+    return success_response(
+        data={"rooms": _rooms_with_occupancy(_tenant_id(), hostel_id)}
     )
-    return success_response(data={"rooms": [r.to_dict() for r in rows]})
 
 
 @hostel_bp.route("/rooms/<string:room_id>", methods=["GET"])
@@ -631,6 +652,7 @@ def list_allocations():
         student_id=request.args.get("student_id") or None,
         status=request.args.get("status") or None,
         academic_year_id=request.args.get("academic_year_id") or None,
+        search=request.args.get("search") or None,
         page=request.args.get("page") or 1,
         per_page=request.args.get("per_page"),
     )

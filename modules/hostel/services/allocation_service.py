@@ -19,10 +19,11 @@ from typing import Optional
 from core.branch_scope import filter_by_student_ids
 from modules.hostel.services.paging import MAX_PAGE_SIZE as ALLOCATION_MAX_PAGE_SIZE
 from modules.hostel.services.paging import paginate
-from sqlalchemy import and_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from modules.hostel.models import (
+    Hostel,
     HostelAllocation,
     HostelBed,
 )
@@ -153,6 +154,7 @@ class AllocationService:
         student_id: Optional[str] = None,
         status: Optional[str] = None,
         academic_year_id: Optional[str] = None,
+        search: Optional[str] = None,
         page=None,
         per_page=None,
     ) -> dict:
@@ -183,6 +185,8 @@ class AllocationService:
         if academic_year_id is not None:
             query = query.filter(HostelAllocation.academic_year_id == academic_year_id)
 
+        query = self._apply_search(query, search)
+
         # The id breaks the tie: a warden admits a batch of boarders in one
         # sitting, so check_in_at alone is not a total order.
         return paginate(
@@ -198,6 +202,71 @@ class AllocationService:
     # ------------------------------------------------------------------
     # Occupancy
     # ------------------------------------------------------------------
+
+    def _apply_search(self, query, search: Optional[str]):
+        """Match the fields the residents list actually shows.
+
+        The mobile screen filtered the rows it happened to be holding, which
+        only searches the first page once the list is paged.
+
+        Both student joins are outer: `students.user_id` is nullable, and an
+        inner join would drop every boarder with no login account the moment
+        anyone typed in the box.
+        """
+        if not search or not search.strip():
+            return query
+
+        from modules.auth.models import User
+        from modules.students.models import Student
+
+        term = search.strip()
+        escaped = (
+            term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+
+        return (
+            query.outerjoin(Student, Student.id == HostelAllocation.student_id)
+            .outerjoin(User, User.id == Student.user_id)
+            .outerjoin(Hostel, Hostel.id == HostelAllocation.hostel_id)
+            .filter(
+                or_(
+                    User.name.ilike(pattern, escape="\\"),
+                    Student.admission_number.ilike(pattern, escape="\\"),
+                    Hostel.name.ilike(pattern, escape="\\"),
+                )
+            )
+        )
+
+    def occupied_counts_by_room(
+        self, *, tenant_id: str, hostel_id: str
+    ) -> dict[str, int]:
+        """How many beds are taken in each room of this hostel, keyed by room id.
+
+        One grouped query, so it stays correct and cheap for a hostel of any
+        size. The screen used to fetch every active allocation and count them
+        in the browser, which sent hundreds of rows to render a handful of
+        numbers — and would have counted only the first page once the
+        allocations endpoint started paging.
+
+        Rooms with nobody in them are absent; callers should default to 0.
+        """
+        rows = (
+            self.session.query(
+                HostelAllocation.room_id, func.count(HostelAllocation.id)
+            )
+            .filter(
+                and_(
+                    HostelAllocation.tenant_id == tenant_id,
+                    HostelAllocation.hostel_id == hostel_id,
+                    HostelAllocation.status == HostelAllocation.STATUS_ACTIVE,
+                    HostelAllocation.deleted_at.is_(None),
+                )
+            )
+            .group_by(HostelAllocation.room_id)
+            .all()
+        )
+        return {room_id: count for room_id, count in rows}
 
     def count_active_residents(self, *, tenant_id: str, hostel_id: str) -> int:
         """How many students are currently allocated to a bed in this hostel.
