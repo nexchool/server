@@ -1760,7 +1760,7 @@ def stage_hostel(ctx: Ctx) -> None:
                         room_id=room.id,
                         bed_number=f"{room.room_number}-{bed_no}",
                         is_allocated=False,
-                        status="available",
+                        status="active",
                     )
                     db.session.add(bed)
                     db.session.flush()
@@ -1784,7 +1784,10 @@ def stage_hostel(ctx: Ctx) -> None:
         room, bed = free_beds.pop()
         bed.is_allocated = True
         bed.allocated_to_student_id = student.id
-        bed.status = "occupied"
+        # Whether a bed is taken is is_allocated. status is the bed's own
+        # lifecycle — active / maintenance / removed — so an occupied bed is
+        # still "active", and writing "occupied" here made every seeded bed
+        # invisible to the readers that filter on status.
         student.is_commuting_from_outstation = True
         student.commute_location = rng.choice(["Rajkot", "Bhavnagar", "Palanpur", "Godhra", "Junagadh"])
         db.session.add(
