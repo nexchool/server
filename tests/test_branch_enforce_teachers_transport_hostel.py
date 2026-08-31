@@ -425,7 +425,9 @@ def test_a_campus_head_sees_only_their_campus_gatepasses(
     try:
         visible = {
             gp.id
-            for gp in GatepassService(db_session).list_gatepasses(tenant_id=tenant.id)
+            for gp in GatepassService(db_session).list_gatepasses(
+                tenant_id=tenant.id
+            )["items"]
         }
     finally:
         ctx.pop()
@@ -447,7 +449,9 @@ def test_the_trust_administrator_still_sees_every_gatepass(
     try:
         visible = {
             gp.id
-            for gp in GatepassService(db_session).list_gatepasses(tenant_id=tenant.id)
+            for gp in GatepassService(db_session).list_gatepasses(
+                tenant_id=tenant.id
+            )["items"]
         }
     finally:
         ctx.pop()

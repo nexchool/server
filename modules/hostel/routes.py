@@ -87,6 +87,7 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
     explicit ``None`` fields so the shape is stable.
     """
     from modules.auth.models import User
+    from modules.people.models import Person
     from modules.students.models import Student
 
     student_ids = {it["student_id"] for it in items if it.get("student_id")}
@@ -96,16 +97,26 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
             it.setdefault("admission_number", None)
         return items
 
+    # Both joins are outer, and the person is the fallback: `students.user_id`
+    # is nullable while `students.person_id` is not, so a child with no login
+    # account has a name here even though they have no `users` row. An inner
+    # join left the board rendering a blank where their name belongs.
     info: dict[str, dict] = {}
     rows = (
-        db.session.query(Student, User)
-        .join(User, Student.user_id == User.id)
+        db.session.query(Student, User, Person)
+        .outerjoin(User, Student.user_id == User.id)
+        .outerjoin(Person, Student.person_id == Person.id)
         .filter(Student.id.in_(student_ids))
         .all()
     )
-    for student, user in rows:
+    for student, user, person in rows:
+        name = None
+        if user is not None:
+            name = user.name or user.email
+        if not name and person is not None:
+            name = person.full_name
         info[student.id] = {
-            "student_name": user.name or user.email,
+            "student_name": name,
             "admission_number": student.admission_number,
         }
 
@@ -729,17 +740,39 @@ def _current_user_id():
 @require_feature("hostel")
 @require_any_permission(HOSTEL_GP_READ, HOSTEL_GP_APPROVE, HOSTEL_GP_GATEKEEPER)
 def list_gatepasses():
-    """GET /api/hostel/gatepasses — filters: status, type, student_id, hostel_id."""
+    """GET /api/hostel/gatepasses — one page of the board's column.
+
+    Filters: status (comma-separated, so one column may merge two), type,
+    student_id, hostel_id, search. Paged with page/per_page, and `oldest=1`
+    for the pending queue, which a warden works from the oldest request.
+    """
     service = GatepassService(db.session)
-    rows = service.list_gatepasses(
+    status = request.args.get("status") or None
+    if status:
+        # "closed,rejected" — the board's last column is two statuses.
+        status = [s for s in (part.strip() for part in status.split(",")) if s]
+
+    result = service.list_gatepasses(
         tenant_id=_tenant_id(),
         hostel_id=request.args.get("hostel_id") or None,
         student_id=request.args.get("student_id") or None,
-        status=request.args.get("status") or None,
+        status=status,
         gatepass_type=request.args.get("type") or None,
+        search=request.args.get("search") or None,
+        page=request.args.get("page"),
+        per_page=request.args.get("per_page"),
+        oldest_first=request.args.get("oldest") in ("1", "true", "yes"),
     )
     return success_response(
-        data={"gatepasses": _attach_student_info([g.to_dict() for g in rows])}
+        data={
+            "gatepasses": _attach_student_info(
+                [g.to_dict() for g in result["items"]]
+            ),
+            "total": result["total"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_pages": result["total_pages"],
+        }
     )
 
 
