@@ -20,6 +20,7 @@ from core.database import db
 from core.decorators import auth_required, require_feature, tenant_required
 from core.decorators.rbac import require_any_permission, require_permission
 from modules.hostel import hostel_bp
+from modules.hostel.hostel_schemas import validate_hostel_payload
 from modules.hostel.models import (
     Hostel,
     HostelAllocation,
@@ -197,9 +198,7 @@ def create_hostel():
     name = (payload.get("name") or "").strip()
     capacity = payload.get("capacity")
 
-    errors = {}
-    if not name:
-        errors["name"] = "Required"
+    errors = validate_hostel_payload(payload) or {}
     if not isinstance(capacity, int) or capacity <= 0:
         errors["capacity"] = "Must be a positive integer"
     if errors:
@@ -239,6 +238,10 @@ def update_hostel(hostel_id: str):
         return not_found_response("Hostel")
 
     payload = request.get_json() or {}
+    errors = validate_hostel_payload(payload, is_update=True)
+    if errors:
+        return validation_error_response(errors)
+
     for field in ("name", "warden_name", "warden_phone", "address", "status"):
         if field in payload:
             setattr(hostel, field, payload[field])
