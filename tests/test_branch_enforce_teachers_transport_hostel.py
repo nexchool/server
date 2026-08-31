@@ -335,7 +335,10 @@ def test_a_campus_head_sees_only_their_campus_boarders(
     ctx = _as(flask_app, tenant, restricted_to_campus_a)
     try:
         service = AllocationService(db_session)
-        visible = {a.id for a in service.list_allocations(tenant_id=tenant.id)}
+        visible = {
+            a.id
+            for a in service.list_allocations(tenant_id=tenant.id)["items"]
+        }
     finally:
         ctx.pop()
 
@@ -533,7 +536,7 @@ def test_a_campus_head_sees_only_their_campus_visitor_logs(
             log.id
             for log in VisitorService(db_session).list_visitor_logs(
                 tenant_id=tenant.id
-            )
+            )["items"]
         }
     finally:
         ctx.pop()
@@ -591,3 +594,32 @@ def test_a_campus_head_cannot_open_another_campus_gatepass(
 
     assert mine is not None and mine.id == ours.id
     assert other is None
+
+
+def test_a_campus_head_sees_only_their_campus_visitors_inside(
+    flask_app, db_session, tenant, two_campus_boarders, restricted_to_campus_a
+):
+    """"Who is in the building right now" is the visitor desk's live view.
+
+    `list_visitor_logs` was scoped but `get_currently_inside` — its sibling,
+    reached by the same route with `?open=1` and counted on the dashboard —
+    was not.
+    """
+    from modules.hostel.services.visitor_service import VisitorService
+
+    hostel = two_campus_boarders["hostel"]
+    ours = _visitor_log(db_session, tenant, two_campus_boarders["ours"], hostel)
+    _visitor_log(db_session, tenant, two_campus_boarders["theirs"], hostel)
+
+    ctx = _as(flask_app, tenant, restricted_to_campus_a)
+    try:
+        visible = {
+            log.id
+            for log in VisitorService(db_session).get_currently_inside(
+                tenant_id=tenant.id
+            )
+        }
+    finally:
+        ctx.pop()
+
+    assert visible == {ours.id}

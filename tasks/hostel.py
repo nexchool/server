@@ -87,7 +87,10 @@ def rollover_academic_year_task(self, new_academic_year_id: str, tenant_id: str)
 
     service = AllocationService(db.session)
 
-    active = service.list_allocations(tenant_id=tenant_id, status="active")
+    # No page: this must close *every* active allocation. A page here would
+    # roll over the first few boarders and silently leave the rest on last
+    # year's beds, while still reporting success.
+    active = service.list_allocations(tenant_id=tenant_id, status="active")["items"]
     closed = 0
     errors = 0
 

@@ -622,16 +622,28 @@ def list_allocations():
     """GET /api/hostel/allocations — filters: hostel_id, room_id, student_id,
     status, academic_year_id."""
     service = AllocationService(db.session)
-    rows = service.list_allocations(
+    # Always paged here, even though the service can return everything — the
+    # unpaged shape exists for the year-end rollover task, not for a screen.
+    result = service.list_allocations(
         tenant_id=_tenant_id(),
         hostel_id=request.args.get("hostel_id") or None,
         room_id=request.args.get("room_id") or None,
         student_id=request.args.get("student_id") or None,
         status=request.args.get("status") or None,
         academic_year_id=request.args.get("academic_year_id") or None,
+        page=request.args.get("page") or 1,
+        per_page=request.args.get("per_page"),
     )
     return success_response(
-        data={"allocations": _attach_student_info([a.to_dict() for a in rows])}
+        data={
+            "allocations": _attach_student_info(
+                [a.to_dict() for a in result["items"]]
+            ),
+            "total": result["total"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_pages": result["total_pages"],
+        }
     )
 
 
@@ -1110,11 +1122,21 @@ def list_visitor_logs():
     service = VisitorService(db.session)
     only_open = request.args.get("open", "").lower() in ("1", "true", "yes")
 
+    page = request.args.get("page") or 1
+    per_page = request.args.get("per_page")
+
     if only_open:
+        # Bounded by however many visitors are in the building right now.
         rows = service.get_currently_inside(
             tenant_id=_tenant_id(),
             hostel_id=request.args.get("hostel_id") or None,
         )
+        meta = {
+            "total": len(rows),
+            "page": 1,
+            "per_page": len(rows),
+            "total_pages": 1,
+        }
     else:
         # Parse optional ISO date range.
         start_date = None
@@ -1129,16 +1151,27 @@ def list_visitor_logs():
         except ValueError as exc:
             return validation_error_response({"date_range": str(exc)})
 
-        rows = service.list_visitor_logs(
+        result = service.list_visitor_logs(
             tenant_id=_tenant_id(),
             hostel_id=request.args.get("hostel_id") or None,
             student_id=request.args.get("student_id") or None,
             visitor_id=request.args.get("visitor_id") or None,
             start_date=start_date,
             end_date=end_date,
+            search=request.args.get("search") or None,
+            page=page,
+            per_page=per_page,
         )
+        rows = result["items"]
+        meta = {k: result[k] for k in ("total", "page", "per_page", "total_pages")}
+
     return success_response(
-        data={"visitor_logs": _attach_visitor_info(_attach_student_info([l.to_dict() for l in rows]))}
+        data={
+            "visitor_logs": _attach_visitor_info(
+                _attach_student_info([l.to_dict() for l in rows])
+            ),
+            **meta,
+        }
     )
 
 

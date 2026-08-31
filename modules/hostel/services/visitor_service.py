@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from modules.hostel.models import (
@@ -22,6 +22,7 @@ from modules.hostel.models import (
     HostelVisitorLog,
 )
 from core.branch_scope import filter_by_student_ids
+from modules.hostel.services.paging import paginate
 from core.school_time import utc_now
 
 
@@ -111,6 +112,11 @@ class VisitorService:
         )
         if hostel_id is not None:
             query = query.filter(HostelVisitorLog.hostel_id == hostel_id)
+
+        # Same rule as the historical list: who came to see a child is a fact
+        # about that child. This is the live desk view and the dashboard count.
+        query = filter_by_student_ids(query, HostelVisitorLog.student_id)
+
         return query.order_by(HostelVisitorLog.check_in_at.desc()).all()
 
     def list_visitor_logs(
@@ -123,8 +129,16 @@ class VisitorService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         only_open: bool = False,
-    ) -> list[HostelVisitorLog]:
-        """Historical search with optional filters; newest first."""
+        search: Optional[str] = None,
+        page=None,
+        per_page=None,
+    ) -> dict:
+        """Historical search as ``{items, total, page, per_page, total_pages}``.
+
+        This one grows for the life of the school — every visit ever recorded —
+        so the route always pages it. Omitting page/per_page still returns
+        everything, for callers that genuinely need the whole set.
+        """
         query = self.session.query(HostelVisitorLog).filter(
             HostelVisitorLog.tenant_id == tenant_id,
             HostelVisitorLog.deleted_at.is_(None),
@@ -146,7 +160,55 @@ class VisitorService:
         # campus-restricted warden sees only their own campus's visitors.
         query = filter_by_student_ids(query, HostelVisitorLog.student_id)
 
-        return query.order_by(HostelVisitorLog.check_in_at.desc()).all()
+        query = self._apply_search(query, search)
+
+        return paginate(
+            query,
+            order_by=(
+                HostelVisitorLog.check_in_at.desc(),
+                HostelVisitorLog.id.desc(),
+            ),
+            page=page,
+            per_page=per_page,
+        )
+
+    def _apply_search(self, query, search: Optional[str]):
+        """Match what someone would actually type into the history box.
+
+        The page filtered in the browser over `student_id` and `visitor_id` —
+        UUIDs nobody can type — and only ever searched the rows already
+        downloaded. This matches the child's name and admission number, the
+        visitor's name and phone, and the stated purpose.
+
+        The student joins are outer: `students.user_id` is nullable, and an
+        inner join would drop every visit to a child with no login account.
+        """
+        if not search or not search.strip():
+            return query
+
+        from modules.auth.models import User
+        from modules.students.models import Student
+
+        term = search.strip()
+        escaped = (
+            term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        pattern = f"%{escaped}%"
+
+        return (
+            query.outerjoin(Student, Student.id == HostelVisitorLog.student_id)
+            .outerjoin(User, User.id == Student.user_id)
+            .outerjoin(HostelVisitor, HostelVisitor.id == HostelVisitorLog.visitor_id)
+            .filter(
+                or_(
+                    User.name.ilike(pattern, escape="\\"),
+                    Student.admission_number.ilike(pattern, escape="\\"),
+                    HostelVisitor.name.ilike(pattern, escape="\\"),
+                    HostelVisitor.phone.ilike(pattern, escape="\\"),
+                    HostelVisitorLog.purpose.ilike(pattern, escape="\\"),
+                )
+            )
+        )
 
     def search_visitors(
         self,

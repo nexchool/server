@@ -270,7 +270,7 @@ def test_list_visitor_logs_filter_by_student(
         purpose="x",
     )
 
-    rows = service.list_visitor_logs(tenant_id=tenant.id, student_id=student.id)
+    rows = service.list_visitor_logs(tenant_id=tenant.id, student_id=student.id)["items"]
     assert {l.id for l in rows} == {log1.id}
 
 

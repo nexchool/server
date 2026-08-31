@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Optional
 
 from core.branch_scope import filter_by_student_ids
+from modules.hostel.services.paging import MAX_PAGE_SIZE as ALLOCATION_MAX_PAGE_SIZE
+from modules.hostel.services.paging import paginate
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -151,8 +153,16 @@ class AllocationService:
         student_id: Optional[str] = None,
         status: Optional[str] = None,
         academic_year_id: Optional[str] = None,
-    ) -> list[HostelAllocation]:
-        """List allocations with optional filters."""
+        page=None,
+        per_page=None,
+    ) -> dict:
+        """Allocations for the tenant as ``{items, total, page, per_page,
+        total_pages}``.
+
+        Omit page/per_page and every matching row comes back — the year-end
+        rollover task closes all of them and must not be handed a page. The
+        route always pages.
+        """
         query = self.session.query(HostelAllocation).filter(
             HostelAllocation.tenant_id == tenant_id,
             HostelAllocation.deleted_at.is_(None),
@@ -173,7 +183,17 @@ class AllocationService:
         if academic_year_id is not None:
             query = query.filter(HostelAllocation.academic_year_id == academic_year_id)
 
-        return query.order_by(HostelAllocation.check_in_at.desc()).all()
+        # The id breaks the tie: a warden admits a batch of boarders in one
+        # sitting, so check_in_at alone is not a total order.
+        return paginate(
+            query,
+            order_by=(
+                HostelAllocation.check_in_at.desc(),
+                HostelAllocation.id.desc(),
+            ),
+            page=page,
+            per_page=per_page,
+        )
 
     # ------------------------------------------------------------------
     # Occupancy
