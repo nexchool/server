@@ -608,28 +608,45 @@ def unassign_fees_for_removed_classes(
         StudentFee.tenant_id == tenant_id,
     ).all()
 
-    removed = 0
-    for sf in student_fees:
-        has_payments = (
-            Payment.query.filter_by(
-                tenant_id=tenant_id,
-                student_fee_id=sf.id,
-                status=PaymentStatus.success.value,
-            ).count()
-            > 0
+    # Set operations rather than four statements per fee. A structure covering
+    # five hundred children was two thousand round trips inside one
+    # transaction, which on a destructive operation is not just slow: the
+    # longer it holds the rows, the likelier a statement timeout leaves the
+    # delete half done.
+    fee_ids = [sf.id for sf in student_fees]
+    if not fee_ids:
+        return {"success": True, "removed_count": 0}
+
+    # A fee with money received against it is never removed — deleting it
+    # would erase the record of that payment.
+    paid_fee_ids = {
+        row[0]
+        for row in db.session.query(Payment.student_fee_id)
+        .filter(
+            Payment.tenant_id == tenant_id,
+            Payment.student_fee_id.in_(fee_ids),
+            Payment.status == PaymentStatus.success.value,
         )
-        if has_payments:
-            continue
-        Payment.query.filter_by(
-            tenant_id=tenant_id, student_fee_id=sf.id
-        ).delete(synchronize_session=False)
-        StudentFeeItem.query.filter_by(
-            tenant_id=tenant_id, student_fee_id=sf.id
-        ).delete(synchronize_session=False)
-        StudentFee.query.filter_by(
-            tenant_id=tenant_id, id=sf.id
-        ).delete(synchronize_session=False)
-        removed += 1
+        .distinct()
+        .all()
+    }
+    removable_ids = [fid for fid in fee_ids if fid not in paid_fee_ids]
+    if not removable_ids:
+        return {"success": True, "removed_count": 0}
+
+    Payment.query.filter(
+        Payment.tenant_id == tenant_id,
+        Payment.student_fee_id.in_(removable_ids),
+    ).delete(synchronize_session=False)
+    StudentFeeItem.query.filter(
+        StudentFeeItem.tenant_id == tenant_id,
+        StudentFeeItem.student_fee_id.in_(removable_ids),
+    ).delete(synchronize_session=False)
+    StudentFee.query.filter(
+        StudentFee.tenant_id == tenant_id,
+        StudentFee.id.in_(removable_ids),
+    ).delete(synchronize_session=False)
+    removed = len(removable_ids)
 
     try:
         db.session.commit()
