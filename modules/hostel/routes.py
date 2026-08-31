@@ -284,6 +284,22 @@ def delete_hostel(hostel_id: str):
     )
     if hostel is None:
         return not_found_response("Hostel")
+
+    # Same rule as delete_bed: a container holding people is not deletable.
+    residents = AllocationService(db.session).count_active_residents(
+        tenant_id=_tenant_id(), hostel_id=hostel_id
+    )
+    if residents:
+        return error_response(
+            error="HostelOccupied",
+            message=(
+                f"Cannot delete a hostel with {residents} "
+                f"{'student' if residents == 1 else 'students'} still allocated. "
+                "Check them out first."
+            ),
+            status_code=409,
+        )
+
     hostel.deleted_at = utc_now()
     db.session.commit()
     return success_response(data=None, status_code=204)

@@ -176,6 +176,32 @@ class AllocationService:
         return query.order_by(HostelAllocation.check_in_at.desc()).all()
 
     # ------------------------------------------------------------------
+    # Occupancy
+    # ------------------------------------------------------------------
+
+    def count_active_residents(self, *, tenant_id: str, hostel_id: str) -> int:
+        """How many students are currently allocated to a bed in this hostel.
+
+        Used to decide whether the hostel can be deleted: nothing downstream
+        filters allocations by their hostel's deleted_at, so removing an
+        occupied hostel would strand its residents in a hostel that no longer
+        exists. "Active" here matches _is_bed_occupied — status plus not
+        soft-deleted.
+        """
+        return (
+            self.session.query(HostelAllocation.id)
+            .filter(
+                and_(
+                    HostelAllocation.tenant_id == tenant_id,
+                    HostelAllocation.hostel_id == hostel_id,
+                    HostelAllocation.status == HostelAllocation.STATUS_ACTIVE,
+                    HostelAllocation.deleted_at.is_(None),
+                )
+            )
+            .count()
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
