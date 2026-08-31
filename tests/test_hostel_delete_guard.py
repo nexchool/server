@@ -1,12 +1,12 @@
-"""A hostel that still holds students must not be deletable.
+"""A hostel or room that still holds students must not be deletable.
 
-DELETE /api/hostel/hostels/:id only stamps deleted_at. Nothing downstream
-filters allocations by their hostel's deleted_at, so deleting an occupied
-hostel would leave its residents allocated to beds in a hostel that no longer
-exists. The route refuses with 409 instead — the same rule delete_bed already
-applies to a single bed.
+DELETE on a hostel or a room only stamps deleted_at. Nothing downstream filters
+allocations by their hostel's or room's deleted_at, so deleting an occupied one
+would leave its residents allocated to beds in a place that no longer exists.
+Both routes refuse with 409 instead — the same rule delete_bed already applies
+to a single bed.
 
-These cover the count the route asks for; the route turns a non-zero count
+These cover the counts the routes ask for; each route turns a non-zero count
 into the 409.
 """
 
@@ -95,3 +95,61 @@ def test_residents_of_another_hostel_do_not_block_this_one(
 
     assert service.count_active_residents(tenant_id=tenant.id, hostel_id=hostel.id) == 1
     assert service.count_active_residents(tenant_id=tenant.id, hostel_id=other.id) == 0
+
+
+# ---- Rooms ---------------------------------------------------------------
+
+
+def test_an_empty_room_has_no_residents(db_session, tenant, hostel, room, beds):
+    service = AllocationService(db_session)
+    assert service.count_active_room_residents(tenant_id=tenant.id, room_id=room.id) == 0
+
+
+def test_an_allocated_student_counts_as_a_room_resident(
+    db_session, tenant, hostel, room, beds, student
+):
+    service = AllocationService(db_session)
+    _allocate(service, tenant=tenant, hostel=hostel, room=room, bed=beds[0], student=student)
+    db_session.flush()
+
+    assert service.count_active_room_residents(tenant_id=tenant.id, room_id=room.id) == 1
+
+
+def test_a_checked_out_student_no_longer_blocks_room_deletion(
+    db_session, tenant, hostel, room, beds, student
+):
+    service = AllocationService(db_session)
+    allocation = _allocate(
+        service, tenant=tenant, hostel=hostel, room=room, bed=beds[0], student=student
+    )
+    db_session.flush()
+    service.checkout_allocation(allocation.id)
+    db_session.flush()
+
+    assert service.count_active_room_residents(tenant_id=tenant.id, room_id=room.id) == 0
+
+
+def test_residents_of_another_room_do_not_block_this_one(
+    db_session, tenant, hostel, room, beds, student
+):
+    """An occupied room must not lock an empty one in the same hostel."""
+    from modules.hostel.models import HostelRoom
+
+    empty = HostelRoom(
+        id="r-empty-1",
+        tenant_id=tenant.id,
+        hostel_id=hostel.id,
+        room_number="102",
+        capacity=4,
+    )
+    db_session.add(empty)
+    db_session.flush()
+
+    service = AllocationService(db_session)
+    _allocate(service, tenant=tenant, hostel=hostel, room=room, bed=beds[0], student=student)
+    db_session.flush()
+
+    assert service.count_active_room_residents(tenant_id=tenant.id, room_id=room.id) == 1
+    assert service.count_active_room_residents(tenant_id=tenant.id, room_id=empty.id) == 0
+    # The hostel-level count still sees the resident either way.
+    assert service.count_active_residents(tenant_id=tenant.id, hostel_id=hostel.id) == 1

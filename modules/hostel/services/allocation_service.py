@@ -274,25 +274,49 @@ class AllocationService:
         Used to decide whether the hostel can be deleted: nothing downstream
         filters allocations by their hostel's deleted_at, so removing an
         occupied hostel would strand its residents in a hostel that no longer
-        exists. "Active" here matches _is_bed_occupied — status plus not
-        soft-deleted.
+        exists.
+        """
+        return self._count_active_allocations(
+            tenant_id=tenant_id,
+            column=HostelAllocation.hostel_id,
+            value=hostel_id,
+        )
+
+    def count_active_room_residents(self, *, tenant_id: str, room_id: str) -> int:
+        """How many students are currently allocated to a bed in this room.
+
+        The room-level twin of count_active_residents, for the same reason:
+        rooms are soft-deleted and nothing filters allocations by their room's
+        deleted_at.
+        """
+        return self._count_active_allocations(
+            tenant_id=tenant_id,
+            column=HostelAllocation.room_id,
+            value=room_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _count_active_allocations(self, *, tenant_id: str, column, value: str) -> int:
+        """Active, non-deleted allocations where ``column`` equals ``value``.
+
+        "Active" matches _is_bed_occupied — status plus not soft-deleted — so
+        the hostel, room and bed guards all agree on who counts as resident.
         """
         return (
             self.session.query(HostelAllocation.id)
             .filter(
                 and_(
                     HostelAllocation.tenant_id == tenant_id,
-                    HostelAllocation.hostel_id == hostel_id,
+                    column == value,
                     HostelAllocation.status == HostelAllocation.STATUS_ACTIVE,
                     HostelAllocation.deleted_at.is_(None),
                 )
             )
             .count()
         )
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _get_bed(self, *, tenant_id: str, bed_id: str) -> Optional[HostelBed]:
         return (
