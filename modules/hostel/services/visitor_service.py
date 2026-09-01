@@ -180,13 +180,16 @@ class VisitorService:
         downloaded. This matches the child's name and admission number, the
         visitor's name and phone, and the stated purpose.
 
-        The student joins are outer: `students.user_id` is nullable, and an
-        inner join would drop every visit to a child with no login account.
+        The name is matched on the person *and* the account: `display_name`
+        resolves from `people.full_name`, so matching only `users.name` would
+        make a child with no login unfindable by the box meant to find them.
+        Every student join is outer for the same reason.
         """
         if not search or not search.strip():
             return query
 
         from modules.auth.models import User
+        from modules.people.models import Person
         from modules.students.models import Student
 
         term = search.strip()
@@ -198,9 +201,11 @@ class VisitorService:
         return (
             query.outerjoin(Student, Student.id == HostelVisitorLog.student_id)
             .outerjoin(User, User.id == Student.user_id)
+            .outerjoin(Person, Person.id == Student.person_id)
             .outerjoin(HostelVisitor, HostelVisitor.id == HostelVisitorLog.visitor_id)
             .filter(
                 or_(
+                    Person.full_name.ilike(pattern, escape="\\"),
                     User.name.ilike(pattern, escape="\\"),
                     Student.admission_number.ilike(pattern, escape="\\"),
                     HostelVisitor.name.ilike(pattern, escape="\\"),

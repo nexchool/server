@@ -209,14 +209,16 @@ class AllocationService:
         The mobile screen filtered the rows it happened to be holding, which
         only searches the first page once the list is paged.
 
-        Both student joins are outer: `students.user_id` is nullable, and an
-        inner join would drop every boarder with no login account the moment
-        anyone typed in the box.
+        The name is matched on the person *and* the account: `display_name`
+        resolves from `people.full_name`, so matching only `users.name` would
+        make a child with no login unfindable by the box meant to find them.
+        Every student join is outer for the same reason.
         """
         if not search or not search.strip():
             return query
 
         from modules.auth.models import User
+        from modules.people.models import Person
         from modules.students.models import Student
 
         term = search.strip()
@@ -228,9 +230,11 @@ class AllocationService:
         return (
             query.outerjoin(Student, Student.id == HostelAllocation.student_id)
             .outerjoin(User, User.id == Student.user_id)
+            .outerjoin(Person, Person.id == Student.person_id)
             .outerjoin(Hostel, Hostel.id == HostelAllocation.hostel_id)
             .filter(
                 or_(
+                    Person.full_name.ilike(pattern, escape="\\"),
                     User.name.ilike(pattern, escape="\\"),
                     Student.admission_number.ilike(pattern, escape="\\"),
                     Hostel.name.ilike(pattern, escape="\\"),

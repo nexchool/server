@@ -22,6 +22,7 @@ import pytest
 from flask import g
 
 from modules.hostel.services.allocation_service import AllocationService
+from modules.hostel.services.gatepass_service import GatepassService
 from modules.hostel.services.visitor_service import VisitorService
 
 
@@ -435,3 +436,101 @@ def test_an_empty_resident_search_is_not_a_filter(
     )
 
     assert {a.id for a in result["items"]} == set(made)
+
+
+# ---------------------------------------------------------------------------
+# Search has to look where the name actually lives
+# ---------------------------------------------------------------------------
+
+def _accountless_child(db_session, tenant, name, admission):
+    """A child with a person and no login — the shape `display_name` exists for."""
+    from modules.people.models import Person
+    from modules.students.models import Student
+
+    suffix = uuid.uuid4().hex[:8]
+    person = Person(id=f"pe-{suffix}", tenant_id=tenant.id, full_name=name)
+    db_session.add(person)
+    db_session.flush()
+    student = Student(id=f"s-{suffix}", tenant_id=tenant.id, user_id=None,
+                      person_id=person.id, admission_number=admission)
+    db_session.add(student)
+    db_session.flush()
+    return student
+
+
+def test_a_boarder_without_a_login_is_findable_by_name(
+    ctx, db_session, tenant, hostel, room
+):
+    """`display_name` reads the person, so search has to as well.
+
+    Matching only `users.name` makes a child who has no account invisible to
+    the box that is meant to find them — the nameless-child bug wearing a
+    different hat.
+    """
+    from modules.hostel.models import HostelAllocation, HostelBed
+
+    child = _accountless_child(db_session, tenant, "Farhan Qureshi", "ADM-fq1")
+    bed = HostelBed(tenant_id=tenant.id, room_id=room.id,
+                    bed_number=f"B-{uuid.uuid4().hex[:6]}")
+    db_session.add(bed)
+    db_session.flush()
+    allocation = HostelAllocation(
+        tenant_id=tenant.id, hostel_id=hostel.id, room_id=room.id,
+        bed_id=bed.id, student_id=child.id,
+        check_in_at=datetime(2026, 6, 1), status="active",
+    )
+    db_session.add(allocation)
+    db_session.flush()
+
+    found = AllocationService(db_session).list_allocations(
+        tenant_id=tenant.id, search="Farhan"
+    )
+
+    assert {a.id for a in found["items"]} == {allocation.id}
+
+
+def test_a_gatepass_for_a_child_without_a_login_is_findable_by_name(
+    ctx, db_session, tenant, hostel
+):
+    from modules.hostel.models import HostelGatepass
+
+    child = _accountless_child(db_session, tenant, "Farhan Qureshi", "ADM-fq2")
+    gatepass = HostelGatepass(
+        tenant_id=tenant.id, student_id=child.id, hostel_id=hostel.id,
+        type="day_out", status="pending",
+        departure_datetime=datetime(2026, 9, 1, 9, 0),
+        expected_return_datetime=datetime(2026, 9, 1, 18, 0),
+        parent_phone="9800000000",
+    )
+    db_session.add(gatepass)
+    db_session.flush()
+
+    found = GatepassService(db_session).list_gatepasses(
+        tenant_id=tenant.id, search="Qureshi"
+    )
+
+    assert {gp.id for gp in found["items"]} == {gatepass.id}
+
+
+def test_a_visit_to_a_child_without_a_login_is_findable_by_name(
+    ctx, db_session, tenant, hostel
+):
+    from modules.hostel.models import HostelVisitor, HostelVisitorLog
+
+    child = _accountless_child(db_session, tenant, "Farhan Qureshi", "ADM-fq3")
+    visitor = HostelVisitor(tenant_id=tenant.id, phone="9700000001",
+                            name="Their Parent")
+    db_session.add(visitor)
+    db_session.flush()
+    log = HostelVisitorLog(
+        tenant_id=tenant.id, visitor_id=visitor.id, student_id=child.id,
+        hostel_id=hostel.id, check_in_at=datetime(2026, 9, 1, 11, 0),
+    )
+    db_session.add(log)
+    db_session.flush()
+
+    found = VisitorService(db_session).list_visitor_logs(
+        tenant_id=tenant.id, search="Farhan"
+    )
+
+    assert {r.id for r in found["items"]} == {log.id}

@@ -331,14 +331,16 @@ class GatepassService:
         UUID nobody can type. This searches the child's name and admission
         number, the parent's phone and the stated reason.
 
-        Both joins are outer: `students.user_id` is nullable, and an inner join
-        would drop every gatepass belonging to a child with no login account the
-        moment anyone typed in the box.
+        The name is matched on the person *and* the account: `display_name`
+        resolves from `people.full_name`, so matching only `users.name` would
+        make a child with no login unfindable by the box meant to find them.
+        Every student join is outer for the same reason.
         """
         if not search or not search.strip():
             return query
 
         from modules.auth.models import User
+        from modules.people.models import Person
         from modules.students.models import Student
 
         term = search.strip()
@@ -349,8 +351,10 @@ class GatepassService:
         return (
             query.outerjoin(Student, Student.id == HostelGatepass.student_id)
             .outerjoin(User, User.id == Student.user_id)
+            .outerjoin(Person, Person.id == Student.person_id)
             .filter(
                 or_(
+                    Person.full_name.ilike(pattern, escape="\\"),
                     User.name.ilike(pattern, escape="\\"),
                     Student.admission_number.ilike(pattern, escape="\\"),
                     HostelGatepass.parent_phone.ilike(pattern, escape="\\"),
