@@ -1752,6 +1752,10 @@ def get_bus_details(
         # with the enrolment rather than one query per seat.
         joinedload(TransportEnrollment.student).joinedload(Student.person),
     ).filter_by(tenant_id=tenant_id, bus_id=bus_id, status="active")
+    # Which bus a child rides is a fact about the child (see branch_scope), so
+    # a campus-restricted reader sees their own campus's riders on it. One
+    # fleet may serve every campus, which is why the vehicle is not the anchor.
+    qen = filter_by_student_ids(qen, TransportEnrollment.student_id)
     if ay:
         qen = qen.filter(TransportEnrollment.academic_year_id == ay)
     for en in qen.all():
@@ -3577,6 +3581,8 @@ def export_bus_students_csv(bus_id: str, academic_year_id: Optional[str] = None)
         .joinedload(Student.current_class)
         .joinedload(Class.grade),
     ).filter_by(tenant_id=tenant_id, bus_id=bus_id, status="active")
+    # A download of the roster follows the same rule as the screen.
+    q = filter_by_student_ids(q, TransportEnrollment.student_id)
     if ay:
         q = q.filter(TransportEnrollment.academic_year_id == ay)
     for en in q.all():
@@ -3626,6 +3632,8 @@ def export_route_students_csv(route_id: str, academic_year_id: Optional[str] = N
         .joinedload(Student.current_class)
         .joinedload(Class.grade),
     ).filter_by(tenant_id=tenant_id, route_id=route_id, status="active")
+    # A download of the roster follows the same rule as the screen.
+    q = filter_by_student_ids(q, TransportEnrollment.student_id)
     if ay:
         q = q.filter(TransportEnrollment.academic_year_id == ay)
     for en in q.all():
