@@ -17,6 +17,7 @@ from typing import Any, Dict, List as _List, Optional
 
 from sqlalchemy.orm import joinedload, selectinload
 
+from core.branch_scope import filter_by_student_ids, student_is_allowed
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.attendance.models import Attendance
@@ -488,6 +489,12 @@ def _actor_is_authorized_approver(leave: StudentLeave, actor_user_id: str) -> bo
         return False
     if not _class_teacher_unavailable_today(leave.class_teacher_id, leave.tenant_id):
         return False
+
+    # The fallback was gated on the teacher being away and nothing else, so a
+    # campus head could approve for a child at a campus they do not run. An
+    # approver needs authority over the child, not just the permission.
+    if not student_is_allowed(leave.student_id):
+        return False
     return True
 
 
@@ -662,7 +669,11 @@ def list_visible_for_user(user, status: Optional[str] = None, page=None,
         q = q.filter(StudentLeave.status == status)
 
     if has_permission(user.id, "student.leave.read.all"):
-        pass
+        # "All" means every leave the reader has authority over, not every
+        # leave in the trust: a sub-admin restricted to one campus reads their
+        # own campus. A leave is a fact about a child — and its reason is
+        # routinely medical — so the child is the anchor.
+        q = filter_by_student_ids(q, StudentLeave.student_id)
     elif has_permission(user.id, "student.leave.read.class"):
         teacher = (
             db.session.query(Teacher)
@@ -759,7 +770,9 @@ def admin_fallback_queue(user):
         .subquery()
     )
     return (
-        db.session.query(StudentLeave)
+        filter_by_student_ids(
+            db.session.query(StudentLeave), StudentLeave.student_id
+        )
         .filter(
             StudentLeave.tenant_id == tenant_id,
             StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),

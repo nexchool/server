@@ -239,6 +239,23 @@ def assert_exam_paper_allowed(paper_id: str) -> None:
     assert_class_allowed(row[0])
 
 
+def student_is_allowed(student_id: str) -> bool:
+    """Whether this student is in a branch the caller may act on.
+
+    The boolean form of `assert_student_allowed`, for callers that answer a
+    yes/no question rather than refusing — an authorization predicate that has
+    to compose with other conditions, not a guard clause.
+
+    Unrestricted callers get True. A classless student fails closed for a
+    restricted caller, the same as the assert.
+    """
+    try:
+        assert_student_allowed(student_id)
+    except BranchForbidden:
+        return False
+    return True
+
+
 def assert_student_allowed(student_id: str) -> None:
     """Assert the student's class is in an allowed branch.
 
