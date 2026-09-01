@@ -323,7 +323,7 @@ def list_records_for_session(tenant_id: str, session_id: str) -> List[Dict[str, 
         out.append(
             {
                 "student_id": r.student_id,
-                "student_name": _student_name(st),
+                "student_name": st.display_name if st else None,
                 "admission_number": st.admission_number if st else None,
                 "status": r.status,
                 "remarks": r.remarks,
@@ -331,20 +331,6 @@ def list_records_for_session(tenant_id: str, session_id: str) -> List[Dict[str, 
         )
     return out
 
-
-def _student_name(student) -> Optional[str]:
-    """A child's name for the register, from the person rather than the login.
-
-    `students.user_id` is nullable, so reading it off the account left every
-    child without one nameless on the register their teacher is marking.
-    """
-    if student is None:
-        return None
-    if student.person is not None and student.person.full_name:
-        return student.person.full_name
-    if student.user is not None:
-        return student.user.name
-    return None
 
 
 def upsert_records(

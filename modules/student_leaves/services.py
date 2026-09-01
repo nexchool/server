@@ -147,7 +147,7 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
 
     student = (
         db.session.query(Student)
-        .options(joinedload(Student.user))
+        .options(joinedload(Student.person), joinedload(Student.user))
         .filter(Student.id == student_id, Student.tenant_id == tenant_id)
         .first()
     )
@@ -192,9 +192,7 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
     if leave.class_teacher_id:
         teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
         if teacher and teacher.user_id:
-            student_display = "A student"
-            if student.user and getattr(student.user, "name", None):
-                student_display = student.user.name
+            student_display = student.display_name or "A student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.submitted",
@@ -256,7 +254,7 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
     if leave.status == "pending_admin":
         admin_ids = _admin_user_ids_for_tenant(leave.tenant_id)
         if admin_ids:
-            student_name = leave.student.user.name if (leave.student and leave.student.user and getattr(leave.student.user, "name", None)) else "a student"
+            student_name = (leave.student.display_name if leave.student else None) or "a student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.pending_admin",
@@ -315,7 +313,7 @@ def request_cancel(leave_id: str, actor_user_id: str, reason: str) -> StudentLea
     if leave.class_teacher_id:
         teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
         if teacher and teacher.user_id:
-            student_name = leave.student.user.name if (leave.student and leave.student.user and getattr(leave.student.user, "name", None)) else "A student"
+            student_name = (leave.student.display_name if leave.student else None) or "A student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.cancel_requested",
@@ -605,6 +603,7 @@ def eager_leaves(query):
     an approval queue.
     """
     return query.options(
+        selectinload(StudentLeave.student).selectinload(Student.person),
         selectinload(StudentLeave.student).selectinload(Student.person),
         selectinload(StudentLeave.student).selectinload(Student.user),
         selectinload(StudentLeave.decided_by),

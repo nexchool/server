@@ -93,7 +93,7 @@ def _get_payment_with_student_fee(payment_id: str) -> Optional[dict]:
         d["student_fee"] = sf.to_dict()
         d["student_fee"]["items"] = [i.to_dict() for i in sf.items]
         d["student_fee"]["student_name"] = (
-            sf.student.user.name if sf.student and sf.student.user else None
+            sf.student.display_name if sf.student else None
         )
         d["student_fee"]["fee_structure_name"] = (
             sf.fee_structure.name if sf.fee_structure else None

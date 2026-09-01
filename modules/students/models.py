@@ -162,6 +162,27 @@ class Student(TenantBaseModel):
         lazy=True,
     )
 
+    @property
+    def display_name(self):
+        """The child's name, for anything that shows one.
+
+        Read from the person, not the login: `students.user_id` is nullable
+        while `students.person_id` is not — a child is always a person and only
+        sometimes someone who can sign in. Resolving through the account left
+        children blank on the attendance register, the bus roster, the leave
+        queue and their own invoice.
+
+        Falls back to the account's name if the person has none, and returns
+        None rather than raising: callers render this straight into a cell.
+        """
+        person = self.person
+        if person is not None and person.full_name:
+            return person.full_name
+        user = self.user
+        if user is not None and user.name:
+            return user.name
+        return None
+
     def save(self):
         db.session.add(self)
         db.session.commit()

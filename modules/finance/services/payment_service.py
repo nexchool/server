@@ -50,6 +50,7 @@ def list_recent_payments(limit: int = 10) -> List[Dict[str, Any]]:
     query = (
         Payment.query.filter_by(tenant_id=tenant_id, status=PaymentStatus.success.value)
         .options(
+            joinedload(Payment.student_fee).joinedload(StudentFee.student).joinedload(Student.person),
             joinedload(Payment.student_fee).joinedload(StudentFee.student).joinedload(Student.user),
         )
     )
@@ -69,8 +70,8 @@ def list_recent_payments(limit: int = 10) -> List[Dict[str, Any]]:
     result = []
     for p in payments:
         student_name = None
-        if p.student_fee and p.student_fee.student and p.student_fee.student.user:
-            student_name = p.student_fee.student.user.name
+        if p.student_fee and p.student_fee.student:
+            student_name = p.student_fee.student.display_name
         result.append({
             "id": p.id,
             "amount": float(p.amount) if p.amount is not None else None,

@@ -274,6 +274,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
                     attendance_session_id=session.id,
                 )
                 .options(
+                    joinedload(AttendanceRecord.student).joinedload(Student.person),
                     joinedload(AttendanceRecord.student).joinedload(Student.user),
                 )
                 .all()
@@ -291,7 +292,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
                 attendance_list.append(
                     {
                         "student_id": student.id,
-                        "student_name": student.user.name if student.user else None,
+                        "student_name": student.display_name,
                         "admission_number": student.admission_number,
                         "roll_number": student.roll_number,
                         "status": ar.status if ar else None,
@@ -332,7 +333,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
             attendance_list.append(
                 {
                     "student_id": student.id,
-                    "student_name": student.user.name if student.user else None,
+                    "student_name": student.display_name,
                     "admission_number": student.admission_number,
                     "roll_number": student.roll_number,
                     "status": record.status if record else None,
@@ -424,7 +425,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
                         "date": sess.session_date.isoformat(),
                         "class_id": sess.class_id,
                         "student_id": ar.student_id,
-                        "student_name": student.user.name if student.user else None,
+                        "student_name": student.display_name,
                         "admission_number": student.admission_number,
                         "status": ar.status,
                         "remarks": ar.remarks,
@@ -444,7 +445,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
                 "success": True,
                 "data": {
                     "student_id": student_id,
-                    "student_name": student.user.name if student.user else None,
+                    "student_name": student.display_name,
                     "total_days": total,
                     "present": present,
                     "absent": absent,
@@ -477,7 +478,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
             "success": True,
             "data": {
                 "student_id": student_id,
-                "student_name": student.user.name if student.user else None,
+                "student_name": student.display_name,
                 "total_days": total,
                 "present": present,
                 "absent": absent,

@@ -316,6 +316,7 @@ def list_student_fees(
     query = query.options(
         selectinload(StudentFee.items),
         joinedload(StudentFee.student).joinedload(Student.person),
+        joinedload(StudentFee.student).joinedload(Student.person),
         joinedload(StudentFee.student).joinedload(Student.user),
         joinedload(StudentFee.fee_structure),
     )
@@ -451,7 +452,7 @@ def get_student_fee(fee_id: str) -> Optional[Dict]:
     d = sf.to_dict()
     d["items"] = [i.to_dict() for i in sf.items]
     d["payments"] = [p.to_dict() for p in sf.payments]
-    d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
+    d["student_name"] = sf.student.display_name if sf.student else None
     d["student_profile_picture"] = (
         profile_picture_public_url(sf.student.user.profile_picture_url)
         if sf.student and sf.student.user
