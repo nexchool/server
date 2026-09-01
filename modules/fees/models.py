@@ -5,6 +5,7 @@ fee_invoices, fee_invoice_items, fee_payments, fee_receipts
 Multi-tenant using tenant_id. Never delete financial records.
 """
 
+from decimal import Decimal
 from datetime import datetime
 import uuid
 
@@ -84,10 +85,19 @@ class FeeInvoice(TenantBaseModel):
     created_by_user = db.relationship("User", foreign_keys=[created_by])
 
     def to_dict(self):
-        total_paid = sum(
-            float(p.amount) for p in self.payments
+        # Summed as Decimal, not float. Every amount here is NUMERIC(12,2)
+        # precisely so this is exact, and going through float throws that
+        # away: ₹45,000.90 settled by three instalments of ₹15,000.30 came
+        # back with ₹0.0000000000073 still owing. Converted to float once at
+        # the end, because this dict is a JSON response and Decimal is not
+        # serialisable.
+        total_amount = Decimal(self.total_amount or 0)
+        total_paid_exact = sum(
+            (Decimal(p.amount or 0) for p in self.payments), Decimal(0)
         )
-        remaining = float(self.total_amount) - total_paid
+        remaining_exact = max(Decimal(0), total_amount - total_paid_exact)
+        total_paid = float(total_paid_exact)
+        remaining = float(remaining_exact)
         return {
             "id": self.id,
             "student_id": self.student_id,
@@ -102,7 +112,7 @@ class FeeInvoice(TenantBaseModel):
             "status": self.status,
             "notes": self.notes,
             "amount_paid": total_paid,
-            "remaining_balance": max(0, remaining),
+            "remaining_balance": remaining,
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

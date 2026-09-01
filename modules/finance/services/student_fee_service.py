@@ -100,13 +100,18 @@ def get_finance_summary(
         query = query.filter(Student.class_id == class_id)
 
     row = query.first()
-    total_expected = float(row.total_expected or 0)
-    total_collected = float(row.total_collected or 0)
+    # Subtracted as Decimal. Both sums come out of SQL exact, and taking the
+    # difference in float reports 0.1999999999999318 where the school is owed
+    # 0.20. Converted to float once, for the JSON response.
+    expected_exact = Decimal(row.total_expected or 0)
+    collected_exact = Decimal(row.total_collected or 0)
+    total_expected = float(expected_exact)
+    total_collected = float(collected_exact)
     overdue_count = int(row.overdue_count or 0)
     result = {
         "total_expected": total_expected,
         "total_collected": total_collected,
-        "total_outstanding": total_expected - total_collected,
+        "total_outstanding": float(expected_exact - collected_exact),
         "overdue_count": overdue_count,
     }
     if include_recent_payments and include_recent_payments > 0:
