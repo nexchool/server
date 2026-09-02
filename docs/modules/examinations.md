@@ -201,6 +201,32 @@ Whoever teaches this subject in this class **on the day of the paper**. It is
 resolved through the same teaching-assignment service Attendance uses, so a
 teacher who changed sections mid-year is judged against the day that matters.
 
+## Which Campus
+
+An examination declares no campus, exactly as it declares no classes — **its
+papers carry the section, and the section carries the campus.** A user
+restricted to one campus therefore sees an examination when any of its sittings
+is in a section they hold, which is what lets a single "Half Yearly" belong to
+every campus of a trust at once. Their papers, register, marks, corrections,
+results and marksheets are their own.
+
+An examination with no paper in their campus is not listed for them, the same
+way a teacher with no class there is not — it appears the moment a paper lands
+in one of their sections.
+
+Two rules are easy to get backwards:
+
+- **A list filters; an operation on one named thing refuses.** A reviewer
+  opening a correction queue that happens to hold another campus's request
+  wants their own rows, not an error. Asking for one paper, one child's
+  marksheet or one revision out of branch is refused outright.
+- **`papers_for` is not branch-scoped, and that is deliberate.** It is the
+  calculation's input, not a screen's. Scoping it would make a student's result
+  depend on who pressed calculate — a child enrolled in another campus's batch
+  would total differently — and a result is a frozen snapshot, so the
+  difference would be permanent. `papers_with_labels` is the screen's read and
+  is scoped.
+
 ## Mark States
 
 A student's outcome for a paper is one of five things, and the fifth is the

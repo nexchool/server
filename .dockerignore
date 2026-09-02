@@ -12,3 +12,9 @@ __pycache__
 .ruff_cache
 htmlcov
 .coverage
+
+# Never bake credentials into an image layer. `Dockerfile` does `COPY . .`,
+# and `server/secrets/firebase-service-account.json` is a live GCP private
+# key. CI is safe (checkout never has it) — a local `docker build ./server`
+# was not.
+secrets/

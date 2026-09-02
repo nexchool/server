@@ -129,8 +129,21 @@ def reject_cancel_leave(leave_id):
 @auth_required
 def list_leaves():
     status = request.args.get("status")
-    rows = services.list_visible_for_user(g.current_user, status=status)
-    return success_response(data=[r.to_dict() for r in rows])
+    result = services.list_visible_for_user(
+        g.current_user,
+        status=status,
+        page=request.args.get("page"),
+        per_page=request.args.get("per_page"),
+    )
+    return success_response(
+        data={
+            "items": [r.to_dict() for r in result["items"]],
+            "total": result["total"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_pages": result["total_pages"],
+        }
+    )
 
 
 @student_leaves_bp.route("/queue/me", methods=["GET"])

@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from core.branch_scope import (
     assert_class_allowed,
@@ -302,19 +303,34 @@ def list_records_for_session(tenant_id: str, session_id: str) -> List[Dict[str, 
     rows = AttendanceRecord.query.filter_by(
         tenant_id=tenant_id, attendance_session_id=session_id
     ).all()
+    if not rows:
+        return []
+
+    # One query for the whole register rather than one per child, with the
+    # person and the login loaded alongside — `student_name` needs both.
+    students = {
+        st.id: st
+        for st in Student.query.options(
+            selectinload(Student.person), selectinload(Student.user)
+        )
+        .filter(Student.id.in_({r.student_id for r in rows}))
+        .all()
+    }
+
     out: List[Dict[str, Any]] = []
     for r in rows:
-        st = Student.query.get(r.student_id)
+        st = students.get(r.student_id)
         out.append(
             {
                 "student_id": r.student_id,
-                "student_name": st.user.name if st and st.user else None,
+                "student_name": st.display_name if st else None,
                 "admission_number": st.admission_number if st else None,
                 "status": r.status,
                 "remarks": r.remarks,
             }
         )
     return out
+
 
 
 def upsert_records(
@@ -353,22 +369,40 @@ def upsert_records(
     skipped: List[Dict[str, Any]] = []
     now = datetime.now(timezone.utc)
 
+    # Both lookups, once, instead of two queries per child: a class of forty
+    # cost eighty round trips per submission, on the write a school repeats
+    # for every section every morning.
+    submitted_ids = {
+        rec.get("student_id") for rec in records if rec.get("student_id")
+    }
+    students_in_class = {
+        st.id: st
+        for st in Student.query.filter(
+            Student.tenant_id == tenant_id, Student.id.in_(submitted_ids)
+        ).all()
+    } if submitted_ids else {}
+    existing = {
+        row.student_id: row
+        for row in AttendanceRecord.query.filter(
+            AttendanceRecord.attendance_session_id == session_id,
+            AttendanceRecord.student_id.in_(submitted_ids),
+        ).all()
+    } if submitted_ids else {}
+
     for rec in records:
         student_id = rec.get("student_id")
         status = (rec.get("status") or "absent").strip()
         if status not in ("present", "absent", "late", "excused"):
             skipped.append({"student_id": student_id, "reason": f"invalid status '{status}'"})
             continue
-        st = Student.query.filter_by(id=student_id, tenant_id=tenant_id).first()
+        st = students_in_class.get(student_id)
         if not st or st.class_id != s.class_id:
             skipped.append(
                 {"student_id": student_id, "reason": "student is not in this class"}
             )
             continue
 
-        row = AttendanceRecord.query.filter_by(
-            attendance_session_id=session_id, student_id=student_id
-        ).first()
+        row = existing.get(student_id)
         if row:
             row.status = status
             row.remarks = rec.get("remarks")
@@ -385,6 +419,9 @@ def upsert_records(
                 recorded_by_user_id=user_id,
             )
             db.session.add(row)
+            # A submission may name the same child twice; the second occurrence
+            # must update this row rather than insert a duplicate.
+            existing[student_id] = row
             created += 1
 
     s.marked_by_user_id = user_id

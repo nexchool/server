@@ -215,6 +215,47 @@ def assert_class_allowed(class_id: str) -> None:
         raise BranchForbidden()
 
 
+def assert_exam_paper_allowed(paper_id: str) -> None:
+    """Assert the paper's section is in an allowed branch.
+
+    A paper is one sitting of one subject by one section, so the section it
+    names is the campus it belongs to. No-op when unrestricted. A missing paper
+    is left to the caller's 404 handling, the same as everywhere else here.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return
+
+    from modules.examinations.models import ExamPaper
+
+    tenant_id = getattr(g, "tenant_id", None)
+    query = db_session().query(ExamPaper.class_id).filter(ExamPaper.id == paper_id)
+    if tenant_id is not None:
+        query = query.filter(ExamPaper.tenant_id == tenant_id)
+    row = query.first()
+    if row is None:
+        # Paper not found in tenant -> defer to caller's 404 handling.
+        return
+    assert_class_allowed(row[0])
+
+
+def student_is_allowed(student_id: str) -> bool:
+    """Whether this student is in a branch the caller may act on.
+
+    The boolean form of `assert_student_allowed`, for callers that answer a
+    yes/no question rather than refusing — an authorization predicate that has
+    to compose with other conditions, not a guard clause.
+
+    Unrestricted callers get True. A classless student fails closed for a
+    restricted caller, the same as the assert.
+    """
+    try:
+        assert_student_allowed(student_id)
+    except BranchForbidden:
+        return False
+    return True
+
+
 def assert_student_allowed(student_id: str) -> None:
     """Assert the student's class is in an allowed branch.
 
@@ -270,6 +311,78 @@ def filter_by_class_ids(query, class_fk_column):
 
     class_subq = _allowed_class_id_subquery(allowed)
     return query.filter(class_fk_column.in_(class_subq.select()))
+
+
+def filter_examinations_by_branch(query):
+    """Restrict an Examination query to examinations a branch actually sits.
+
+    An examination declares no campus (ADR-016) — its *papers* carry the
+    section, and the section carries the campus. So the question "is this
+    examination mine" is answered by asking whether any of its sittings is in a
+    section I hold, which is also why one "Half Yearly" can legitimately belong
+    to every campus of a trust at once.
+
+    An examination with no papers in the allowed branches is excluded, the same
+    way a teacher with no class there is: it becomes visible the moment a paper
+    lands in a section the user holds.
+
+    No-op if unrestricted.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return query
+
+    from modules.examinations.models import ExamPaper, Examination
+
+    tenant_id = getattr(g, "tenant_id", None)
+    class_subq = _allowed_class_id_subquery(allowed)
+    sittings = db_session().query(ExamPaper.id).filter(
+        ExamPaper.examination_id == Examination.id,
+        ExamPaper.class_id.in_(class_subq.select()),
+        ExamPaper.deleted_at.is_(None),
+    )
+    if tenant_id is not None:
+        sittings = sittings.filter(ExamPaper.tenant_id == tenant_id)
+    return query.filter(sittings.exists())
+
+
+def _allowed_exam_paper_id_subquery(allowed_units: Set[str]):
+    """Scalar subquery: exam papers sat by a section in the allowed set."""
+    from modules.examinations.models import ExamPaper
+
+    tenant_id = getattr(g, "tenant_id", None)
+    class_subq = _allowed_class_id_subquery(allowed_units)
+    query = db_session().query(ExamPaper.id).filter(
+        ExamPaper.class_id.in_(class_subq.select())
+    )
+    if tenant_id is not None:
+        query = query.filter(ExamPaper.tenant_id == tenant_id)
+    return query.subquery()
+
+
+def filter_by_exam_mark_ids(query, mark_fk_column):
+    """Restrict a query by its mark FK to marks sat in an allowed branch.
+
+    For the queues built *on top of* marks — corrections above all. A list
+    filters rather than refusing: a reviewer opening a queue that happens to
+    contain another campus's request wants their own rows, not a 403.
+
+    No-op if unrestricted.
+    """
+    allowed = get_allowed_unit_ids()
+    if allowed is None:
+        return query
+
+    from modules.examinations.models import ExamMark
+
+    tenant_id = getattr(g, "tenant_id", None)
+    paper_subq = _allowed_exam_paper_id_subquery(allowed)
+    marks = db_session().query(ExamMark.id).filter(
+        ExamMark.exam_paper_id.in_(paper_subq.select())
+    )
+    if tenant_id is not None:
+        marks = marks.filter(ExamMark.tenant_id == tenant_id)
+    return query.filter(mark_fk_column.in_(marks.subquery().select()))
 
 
 def filter_students_by_branch(query):

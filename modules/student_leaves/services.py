@@ -15,8 +15,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List as _List, Optional
 
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
+from core.branch_scope import filter_by_student_ids, student_is_allowed
 from core.database import db
 from core.tenant import get_tenant_id
 from modules.attendance.models import Attendance
@@ -147,7 +148,7 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
 
     student = (
         db.session.query(Student)
-        .options(joinedload(Student.user))
+        .options(joinedload(Student.person), joinedload(Student.user))
         .filter(Student.id == student_id, Student.tenant_id == tenant_id)
         .first()
     )
@@ -192,9 +193,7 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
     if leave.class_teacher_id:
         teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
         if teacher and teacher.user_id:
-            student_display = "A student"
-            if student.user and getattr(student.user, "name", None):
-                student_display = student.user.name
+            student_display = student.display_name or "A student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.submitted",
@@ -256,7 +255,7 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
     if leave.status == "pending_admin":
         admin_ids = _admin_user_ids_for_tenant(leave.tenant_id)
         if admin_ids:
-            student_name = leave.student.user.name if (leave.student and leave.student.user and getattr(leave.student.user, "name", None)) else "a student"
+            student_name = (leave.student.display_name if leave.student else None) or "a student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.pending_admin",
@@ -315,7 +314,7 @@ def request_cancel(leave_id: str, actor_user_id: str, reason: str) -> StudentLea
     if leave.class_teacher_id:
         teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
         if teacher and teacher.user_id:
-            student_name = leave.student.user.name if (leave.student and leave.student.user and getattr(leave.student.user, "name", None)) else "A student"
+            student_name = (leave.student.display_name if leave.student else None) or "A student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.cancel_requested",
@@ -490,6 +489,12 @@ def _actor_is_authorized_approver(leave: StudentLeave, actor_user_id: str) -> bo
         return False
     if not _class_teacher_unavailable_today(leave.class_teacher_id, leave.tenant_id):
         return False
+
+    # The fallback was gated on the teacher being away and nothing else, so a
+    # campus head could approve for a child at a campus they do not run. An
+    # approver needs authority over the child, not just the permission.
+    if not student_is_allowed(leave.student_id):
+        return False
     return True
 
 
@@ -583,11 +588,78 @@ def _actor_is_owning_student(leave: StudentLeave, actor_user_id: str) -> bool:
 # Query helpers (Task 6)
 # ---------------------------------------------------------------------------
 
-def list_visible_for_user(user, status: Optional[str] = None):
-    """Return leaves visible to ``user`` within their tenant, optionally filtered
-    by ``status``. Scoping follows the read permission held by the user:
-    read.all (admin) → all rows; read.class (teacher) → leaves where the user
-    is the class teacher; read.own (student) → only their own leaves.
+LEAVE_PAGE_SIZE = 25
+LEAVE_MAX_PAGE_SIZE = 100
+
+
+def _positive_int(value, *, default: int, maximum: Optional[int] = None) -> int:
+    """Coerce a query-string number, falling back rather than raising."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    number = max(1, number)
+    return min(number, maximum) if maximum else number
+
+
+def eager_leaves(query):
+    """Load what `StudentLeave.to_dict` reads, instead of a query per row.
+
+    It touches the student, the student's person and login (for the name and
+    admission number) and the deciding user — four lazy loads on every row of
+    an approval queue.
+    """
+    return query.options(
+        selectinload(StudentLeave.student).selectinload(Student.person),
+        selectinload(StudentLeave.student).selectinload(Student.person),
+        selectinload(StudentLeave.student).selectinload(Student.user),
+        selectinload(StudentLeave.decided_by),
+    )
+
+
+def _empty_page() -> dict:
+    return {"items": [], "total": 0, "page": 1, "per_page": 0, "total_pages": 1}
+
+
+def _page(query, *, page, per_page) -> dict:
+    """One page of leaves, newest first.
+
+    The id breaks the tie on created_at: a class's leaves are often filed in
+    one sitting, and LIMIT/OFFSET over a partial order serves some rows twice
+    and skips others.
+    """
+    total = query.count()
+    page = _positive_int(page, default=1)
+    per_page = _positive_int(
+        per_page, default=LEAVE_PAGE_SIZE, maximum=LEAVE_MAX_PAGE_SIZE
+    )
+    items = (
+        eager_leaves(query)
+        .order_by(StudentLeave.created_at.desc(), StudentLeave.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+    }
+
+
+def list_visible_for_user(user, status: Optional[str] = None, page=None,
+                          per_page=None) -> dict:
+    """One page of the leaves ``user`` may see, as
+    ``{items, total, page, per_page, total_pages}``.
+
+    Scoping follows the read permission held by the user: read.all (admin) →
+    all rows; read.class (teacher) → leaves where the user is the class
+    teacher; read.own (student) → only their own leaves.
+
+    Paged because of the first of those: for a student this is their own
+    handful of leaves, but an admin sees every leave the school has recorded.
     """
     from modules.rbac.services import has_permission
 
@@ -597,7 +669,11 @@ def list_visible_for_user(user, status: Optional[str] = None):
         q = q.filter(StudentLeave.status == status)
 
     if has_permission(user.id, "student.leave.read.all"):
-        pass
+        # "All" means every leave the reader has authority over, not every
+        # leave in the trust: a sub-admin restricted to one campus reads their
+        # own campus. A leave is a fact about a child — and its reason is
+        # routinely medical — so the child is the anchor.
+        q = filter_by_student_ids(q, StudentLeave.student_id)
     elif has_permission(user.id, "student.leave.read.class"):
         teacher = (
             db.session.query(Teacher)
@@ -607,7 +683,7 @@ def list_visible_for_user(user, status: Optional[str] = None):
         if teacher:
             q = q.filter(StudentLeave.class_teacher_id == teacher.id)
         else:
-            return []
+            return _empty_page()
     elif has_permission(user.id, "student.leave.read.own"):
         student = (
             db.session.query(Student)
@@ -617,11 +693,11 @@ def list_visible_for_user(user, status: Optional[str] = None):
         if student:
             q = q.filter(StudentLeave.student_id == student.id)
         else:
-            return []
+            return _empty_page()
     else:
-        return []
+        return _empty_page()
 
-    return q.order_by(StudentLeave.created_at.desc()).all()
+    return _page(q, page=page, per_page=per_page)
 
 
 def get_for_user(leave_id: str, user) -> StudentLeave:
@@ -662,7 +738,7 @@ def teacher_queue(user):
     )
     if not teacher:
         return []
-    return (
+    return eager_leaves(
         db.session.query(StudentLeave)
         .filter(
             StudentLeave.tenant_id == tenant_id,
@@ -694,7 +770,9 @@ def admin_fallback_queue(user):
         .subquery()
     )
     return (
-        db.session.query(StudentLeave)
+        filter_by_student_ids(
+            db.session.query(StudentLeave), StudentLeave.student_id
+        )
         .filter(
             StudentLeave.tenant_id == tenant_id,
             StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),

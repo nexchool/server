@@ -7,7 +7,8 @@ Uses Jinja2 with safe environment (no dangerous constructs).
 
 from typing import Any, Dict, Optional
 
-from jinja2 import Environment, BaseLoader, select_autoescape
+from jinja2 import BaseLoader, select_autoescape
+from jinja2.sandbox import SandboxedEnvironment
 from jinja2.exceptions import TemplateError
 
 from core.database import db
@@ -35,9 +36,16 @@ class TemplateNotFoundError(Exception):
     pass
 
 
-def _safe_jinja_env() -> Environment:
-    """Create Jinja2 environment with safe defaults (no arbitrary code execution)."""
-    return Environment(
+def _safe_jinja_env() -> SandboxedEnvironment:
+    """Jinja2 environment for templates that come out of the database.
+
+    **Sandboxed, and that is the point.** A plain `Environment` reaches Python
+    attributes from inside a template, so `notification_templates` — rows a
+    platform admin can write and preview — was an arbitrary-code-execution
+    oracle on the box holding every school's data. The docstring claimed "no
+    arbitrary code execution" while the class allowed exactly that.
+    """
+    return SandboxedEnvironment(
         loader=BaseLoader(),
         autoescape=select_autoescape(["html", "xml"]),
         trim_blocks=True,

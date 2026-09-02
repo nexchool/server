@@ -23,6 +23,11 @@ from __future__ import annotations
 import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
+from core.branch_scope import (
+    assert_class_allowed,
+    filter_by_class_ids,
+    filter_examinations_by_branch,
+)
 from core.database import db
 from core.school_time import school_today
 from modules.academics.backbone.models import AcademicTerm
@@ -186,6 +191,10 @@ def _validate_offering(
     ).first()
     if cls is None:
         return None, _refuse("CLASS_NOT_FOUND", "The offering's class is missing")
+    # Before anything else is said about the section: a user restricted to one
+    # campus may not schedule a sitting in another's, and must not learn from a
+    # refusal's wording that the section exists.
+    assert_class_allowed(cls.id)
     if cls.academic_cycle_id != cycle.id:
         return None, _refuse(
             "CLASS_WRONG_CYCLE",
@@ -531,14 +540,24 @@ def add_papers(
 
 
 def papers_for(examination_id: str, tenant_id: str) -> List[ExamPaper]:
-    return (
+    """Every sitting this examination holds — **deliberately not branch-scoped.**
+
+    This is the computation's input, not a screen's: `applicable_papers`,
+    `examination_cohort` and the scheduling checks all read it. Scoping it would
+    make a student's result depend on *who calculated it* — a child enrolled in
+    another campus's batch would total differently for a campus head than for
+    the trust, and results are frozen snapshots, so that difference would be
+    written down permanently.
+
+    The branch-scoped read a screen wants is `papers_with_labels`.
+    """
+    query = (
         ExamPaper.query.filter_by(
             examination_id=examination_id, tenant_id=tenant_id
         )
         .filter(ExamPaper.deleted_at.is_(None))
-        .order_by(ExamPaper.exam_date, ExamPaper.starts_at)
-        .all()
     )
+    return query.order_by(ExamPaper.exam_date, ExamPaper.starts_at).all()
 
 
 def papers_with_labels(examination_id: str, tenant_id: str) -> List[tuple]:
@@ -547,6 +566,10 @@ def papers_with_labels(examination_id: str, tenant_id: str) -> List[tuple]:
     `(paper, class_label, subject_name)`. A paper stores ids; a screen says
     "10-A Mathematics", and resolving that per row would be an N+1 on a list
     that is one row per section per subject. One query instead.
+
+    **This is the screen's read, so it is branch-scoped** — unlike `papers_for`,
+    which is the calculation's and must stay whole. A campus head opening a
+    trust-wide examination sees the sittings their own sections take.
     """
     from modules.subjects.models import Subject
 
@@ -566,9 +589,10 @@ def papers_with_labels(examination_id: str, tenant_id: str) -> List[tuple]:
             ExamPaper.tenant_id == tenant_id,
             ExamPaper.deleted_at.is_(None),
         )
-        .order_by(ExamPaper.exam_date, ExamPaper.starts_at)
-        .all()
     )
+    rows = filter_by_class_ids(rows, ExamPaper.class_id).order_by(
+        ExamPaper.exam_date, ExamPaper.starts_at
+    ).all()
     return [
         (paper, cls.display_name or cls.section or cls.id, subject.name)
         for paper, cls, subject in rows
@@ -602,17 +626,13 @@ def paper_labels(paper_id: str, tenant_id: str) -> tuple:
 
 def classes_sitting(examination_id: str, tenant_id: str) -> List[str]:
     """Which sections sit this examination — derived, never declared (ADR-016)."""
-    rows = (
-        db.session.query(ExamPaper.class_id)
-        .filter(
-            ExamPaper.examination_id == examination_id,
-            ExamPaper.tenant_id == tenant_id,
-            ExamPaper.deleted_at.is_(None),
-        )
-        .distinct()
-        .all()
+    query = db.session.query(ExamPaper.class_id).filter(
+        ExamPaper.examination_id == examination_id,
+        ExamPaper.tenant_id == tenant_id,
+        ExamPaper.deleted_at.is_(None),
     )
-    return [r[0] for r in rows]
+    query = filter_by_class_ids(query, ExamPaper.class_id)
+    return [r[0] for r in query.distinct().all()]
 
 
 # ---------------------------------------------------------------------------
@@ -979,6 +999,9 @@ def _examination_query(
     query = Examination.query.filter(
         Examination.tenant_id == tenant_id, Examination.deleted_at.is_(None)
     )
+    # Both the page and its total go through here, so a branch-restricted user
+    # cannot get a count that disagrees with the rows they can see.
+    query = filter_examinations_by_branch(query)
     if academic_cycle_id:
         query = query.filter(Examination.academic_cycle_id == academic_cycle_id)
     if status:

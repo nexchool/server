@@ -431,29 +431,98 @@ def register_error_handlers(app: Flask):
         return response
 
 
+#: The container healthcheck allows 5s. A hung database must not hold a request
+#: thread past that — there are only ~48 of them and a probe runs every 30s.
+_HEALTH_CHECK_TIMEOUT_MS = 2000
+
+
+def _database_is_reachable() -> None:
+    """One trivial round trip. Raises if Postgres cannot answer."""
+    from sqlalchemy import text
+
+    from core.database import db
+
+    connection = db.session.connection()
+    # Bound the wait explicitly: without it a database that accepts the socket
+    # but never answers would block until the statement timeout, long after the
+    # probe gave up, holding a thread the whole time.
+    connection.exec_driver_sql(
+        f"SET LOCAL statement_timeout = {_HEALTH_CHECK_TIMEOUT_MS}"
+    )
+    connection.execute(text("SELECT 1"))
+
+
+def _cache_is_reachable() -> None:
+    """Raises if Redis cannot answer. Never fatal — see the route."""
+    from core.cache import cache_enabled, redis_client
+
+    if not cache_enabled():
+        return
+    client = redis_client()
+    if client is None:
+        raise RuntimeError("cache client unavailable")
+    client.ping()
+
+
 def register_health_check(app: Flask):
     """
     Register health check endpoint.
-    
+
     Useful for monitoring, load balancers, and container orchestration.
-    
+
     Args:
         app: Flask application instance
     """
-    
+
     @app.route('/api/health', methods=['GET'])
     def health_check():
+        """Whether this instance can actually serve, not merely respond.
+
+        This used to return a hardcoded "healthy" — so it answered 200 through
+        a total database outage, which is the one thing a health check exists
+        to catch. It is the container's healthcheck and the only endpoint an
+        uptime monitor can probe unauthenticated.
+
+        **Postgres failing is fatal (503):** nothing business-facing can be
+        answered without it. **Redis failing is not (200, "degraded"):**
+        `core/cache.py` fails open by design, so the product still serves
+        without a cache, and taking a working instance out of rotation over one
+        would be the more expensive mistake.
+
+        Reasons are logged, never returned: this endpoint is unauthenticated
+        and a driver error carries the DSN.
         """
-        Health check endpoint.
-        
-        Returns:
-            200: Service is healthy
-        """
+        checks = {}
+        healthy = True
+
+        try:
+            _database_is_reachable()
+            checks['database'] = 'ok'
+        except Exception:
+            app.logger.exception("Health check: database unreachable")
+            checks['database'] = 'unreachable'
+            healthy = False
+
+        try:
+            _cache_is_reachable()
+            checks['cache'] = 'ok'
+        except Exception:
+            app.logger.warning("Health check: cache unreachable", exc_info=True)
+            checks['cache'] = 'unreachable'
+
+        if not healthy:
+            status = 'unhealthy'
+        elif checks.get('cache') != 'ok':
+            status = 'degraded'
+        else:
+            status = 'healthy'
+
         return jsonify({
-            'status': 'healthy',
+            'status': status,
             'service': 'School ERP Backend',
-            'version': '1.0.0'
-        }), 200
+            'version': '1.0.0',
+            'checks': checks,
+        }), (200 if healthy else 503)
     
     @app.route('/api', methods=['GET'])
     def api_root():

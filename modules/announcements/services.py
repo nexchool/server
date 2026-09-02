@@ -452,13 +452,48 @@ def get_for_user(announcement_id: str, user) -> Announcement:
     return a
 
 
-def list_recipients(announcement_id: str) -> list:
-    """NotificationRecipient rows joined to User for the read-receipt roster."""
+RECIPIENTS_PAGE_SIZE = 50
+RECIPIENTS_MAX_PAGE_SIZE = 100
+
+
+def _positive_int(value, *, default: int, maximum: int | None = None) -> int:
+    """Coerce a query-string number, falling back rather than raising.
+
+    These arrive straight off the URL, so a stray `?page=abc` must land on
+    page 1 and not a 500.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    number = max(1, number)
+    return min(number, maximum) if maximum else number
+
+
+def list_recipients(announcement_id: str, *, page=None, per_page=None) -> dict:
+    """One page of the read-receipt roster, plus totals for the whole roster.
+
+    Returns `{items, total, read_count, page, per_page, total_pages}`.
+
+    `total` and `read_count` are SQL aggregates over every recipient, not over
+    `items` — both screens render "read / total" and a notice to a whole school
+    is one row per parent, so the roster is paged while the counter still has
+    to describe all of it.
+
+    Ordered by name and then id: names repeat constantly in a school, and
+    LIMIT/OFFSET over a non-total order serves some rows twice and others never.
+    """
     tenant_id = get_tenant_id()
     a = _get_or_404(announcement_id)
     from modules.notifications.models import Notification, NotificationRecipient
     from modules.auth.models import User
-    rows = (
+
+    page = _positive_int(page, default=1)
+    per_page = _positive_int(
+        per_page, default=RECIPIENTS_PAGE_SIZE, maximum=RECIPIENTS_MAX_PAGE_SIZE
+    )
+
+    roster = (
         db.session.query(NotificationRecipient, User)
         .join(User, User.id == NotificationRecipient.user_id)
         .join(Notification, Notification.id == NotificationRecipient.notification_id)
@@ -467,17 +502,40 @@ def list_recipients(announcement_id: str) -> list:
             Notification.extra_data["announcement_id"].as_string() == a.id,
             Notification.tenant_id == tenant_id,
         )
+    )
+
+    # One round trip for both numbers; COUNT over a nullable column counts the
+    # non-null ones, which is exactly "how many have read it".
+    total, read_count = (
+        roster.with_entities(
+            func.count(NotificationRecipient.id),
+            func.count(NotificationRecipient.read_at),
+        ).one()
+    )
+
+    rows = (
+        roster.order_by(User.name.asc(), User.id.asc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
         .all()
     )
-    return [
-        {
-            "user_id": user.id,
-            "name": user.name,
-            "read_at": recipient.read_at.isoformat() if recipient.read_at else None,
-            "status": recipient.status,
-        }
-        for recipient, user in rows
-    ]
+
+    return {
+        "items": [
+            {
+                "user_id": user.id,
+                "name": user.name,
+                "read_at": recipient.read_at.isoformat() if recipient.read_at else None,
+                "status": recipient.status,
+            }
+            for recipient, user in rows
+        ],
+        "total": total,
+        "read_count": read_count,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+    }
 
 
 def list_revisions(announcement_id: str) -> list:
@@ -489,6 +547,86 @@ def list_revisions(announcement_id: str) -> list:
 # Attachments
 # ---------------------------------------------------------------------------
 
+#: What a school actually attaches to a notice: a letter, a form, a photograph.
+#:
+#: Deliberately narrow, and two absences are the point. **`text/html`** would
+#: be stored as the S3 object's own content type and then served as markup
+#: from a presigned URL — script running against whatever that origin reaches.
+#: **`image/svg+xml`** is the same hazard wearing an image's name: SVG carries
+#: `<script>`. `application/octet-stream` is out too, because it is what the
+#: route substitutes when the client declares nothing, and accepting it made
+#: the allowlist decorative.
+ALLOWED_ATTACHMENT_TYPES = frozenset({
+    "application/pdf",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+})
+
+#: An announcement fans out to every parent, so this is tighter than the 64 MB
+#: global request ceiling — which was previously the only limit that applied.
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+#: The allowlist read backwards, for when the uploader declares nothing useful.
+#: Both clients pick with no filter and the Expo one sends
+#: `application/octet-stream` whenever the platform cannot name the type, so a
+#: perfectly ordinary PDF arrives unlabelled and would otherwise be refused.
+#:
+#: Inferring from the name is not a weakening: the result still has to be on
+#: the allowlist, and it is the *inferred* type that gets stored and sent to
+#: S3. Nothing here sniffs content — a file named `.pdf` containing markup is
+#: stored as a PDF, which is exactly the outcome that makes it harmless.
+_TYPE_BY_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".doc": "application/msword",
+    ".docx": (
+        "application/vnd.openxmlformats-officedocument"
+        ".wordprocessingml.document"
+    ),
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument"
+        ".spreadsheetml.sheet"
+    ),
+}
+
+#: What a client sends when it has no idea — never a claim worth honouring.
+_UNDECLARED_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
+
+
+def _resolve_attachment_type(content_type: str, filename: str) -> str:
+    """The type to store, from what the client said or what the name implies."""
+    declared = (content_type or "").strip().lower()
+    if declared not in _UNDECLARED_TYPES:
+        return declared
+    import os.path
+
+    extension = os.path.splitext(filename or "")[1].lower()
+    return _TYPE_BY_EXTENSION.get(extension, declared)
+
+
+def _measured_size(file_stream) -> int:
+    """Size by seeking, not by asking.
+
+    The route passes `file.content_length`, which multipart uploads generally
+    leave at 0 and which the client sets in any case. It was recorded as the
+    attachment's size without anyone checking it against the bytes.
+    """
+    file_stream.seek(0, 2)
+    size = file_stream.tell()
+    file_stream.seek(0)
+    return size
+
+
 def create_attachment(
     *,
     actor_user_id: str,
@@ -498,12 +636,33 @@ def create_attachment(
     size_bytes: int,
     announcement_id: Optional[str] = None,
 ):
+    """Store a file against an announcement, or refuse it.
+
+    `size_bytes` is accepted for the caller's convenience and then ignored —
+    the stream is measured. Nothing here trusts a value the uploader chose.
+    """
     from shared.s3_utils import upload_file, sanitize_folder
     from modules.announcements.models import AnnouncementAttachment
 
     tenant_id = get_tenant_id()
     if not tenant_id:
         raise AuthorizationError("Tenant context required")
+
+    normalized_type = _resolve_attachment_type(content_type, filename)
+    if normalized_type not in ALLOWED_ATTACHMENT_TYPES:
+        raise ValidationError(
+            "That file type cannot be attached to an announcement. "
+            "Allowed: PDF, JPEG, PNG, WebP, Word and Excel documents."
+        )
+
+    measured = _measured_size(file_stream)
+    if measured == 0:
+        raise ValidationError("The file is empty.")
+    if measured > MAX_ATTACHMENT_BYTES:
+        limit_mb = MAX_ATTACHMENT_BYTES // (1024 * 1024)
+        raise ValidationError(
+            f"That file is too large. The maximum is {limit_mb} MB."
+        )
 
     if announcement_id:
         a = _get_or_404(announcement_id)
@@ -514,15 +673,17 @@ def create_attachment(
     folder = sanitize_folder(f"tenants/{tenant_id}/announcements")
 
     # upload_file returns (presigned_url, object_key) — we persist object_key only.
-    _url, stored_key = upload_file(file_stream, folder, filename, content_type)
+    # The normalised type goes to S3, not the raw header: it becomes the
+    # object's own ContentType and therefore decides how it is later served.
+    _url, stored_key = upload_file(file_stream, folder, filename, normalized_type)
 
     att = AnnouncementAttachment(
         tenant_id=tenant_id,
         announcement_id=target_announcement_id,
         s3_key=stored_key,
         original_filename=filename,
-        content_type=content_type,
-        size_bytes=size_bytes,
+        content_type=normalized_type,
+        size_bytes=measured,
         uploaded_by_user_id=actor_user_id,
     )
     db.session.add(att)

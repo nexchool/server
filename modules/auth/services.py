@@ -308,6 +308,59 @@ def find_users_by_email_password(
     return matches
 
 
+#: How long an account stays locked after too many wrong passwords, and how
+#: many are allowed when a school has not configured its own limit. They live
+#: beside `record_failed_login` because they are that rule's constants — the
+#: login routes import them rather than restating them.
+LOGIN_LOCKOUT_MINUTES = 15
+DEFAULT_MAX_LOGIN_ATTEMPTS = 5
+
+
+def accounts_for_email(email: str) -> List[User]:
+    """Every live account with this email, in whichever school it belongs to.
+
+    The companion to `find_users_by_email_password` for the case that one
+    cannot answer: the password was wrong, so there is no match to return, and
+    something still has to be counted against.
+    """
+    return (
+        User.query.filter_by(email=email).filter(User.deleted_at.is_(None)).all()
+    )
+
+
+def record_failed_login(user: User, *, max_attempts: int) -> None:
+    """Count one wrong password, and lock the account once it passes the limit.
+
+    **One owner for both login paths.** Login branches on whether the body
+    named a school, and only the branch that did used to count — so omitting
+    `tenant_id` bought unlimited guesses against any account, bounded only by a
+    per-IP rate limit that a rotating-IP attacker ignores. The rule lives here
+    now so the two paths cannot drift again.
+
+    Platform admins are skipped: they authenticate against every tenant, so a
+    stranger guessing at one school could otherwise lock them out of all of
+    them.
+    """
+    if getattr(user, "is_platform_admin", False):
+        return
+
+    user.failed_login_count = (user.failed_login_count or 0) + 1
+    if user.failed_login_count >= max_attempts:
+        user.login_locked_until = utc_now() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        user.failed_login_count = 0
+    user.save()
+
+
+def max_login_attempts() -> int:
+    """How many wrong passwords a school allows before locking an account."""
+    from modules.platform.services import get_platform_setting
+
+    configured = get_platform_setting("max_login_attempts")
+    if configured and str(configured).isdigit():
+        return int(configured)
+    return DEFAULT_MAX_LOGIN_ATTEMPTS
+
+
 def logout_user(refresh_token: str) -> bool:
     """
     Logout user by revoking the session.

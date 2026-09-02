@@ -276,10 +276,30 @@ class StudentQuery:
         description="One student of this school.",
     )
     def student(self, info: strawberry.Info, id: strawberry.ID) -> Optional[Student]:
+        """One child — and only if this caller may read *that* child.
+
+        The permission says which kind of thing may be read; these two say
+        which one. Both mirror `GET /api/students/<id>`, in its order: the
+        campus refuses outright, because a restricted admin asking outside
+        their branches is a different thing from a child not existing; the
+        class ceiling reads as not-found, because a teacher's school is their
+        own classes and an id outside them should not confirm anything.
+        """
+        from core.branch_scope import assert_student_allowed
+
         from .services import get_student_row
 
         row = get_student_row(str(id))
-        return student_to_graphql(row) if row is not None else None
+        if row is None:
+            return None
+
+        assert_student_allowed(str(id))
+
+        ceiling = _class_ceiling(info)
+        if ceiling is not None and row.class_id not in ceiling:
+            return None
+
+        return student_to_graphql(row)
 
 
 @strawberry.type

@@ -446,9 +446,9 @@ def test_list_gatepasses_filter_by_status(db_session, tenant, hostel, student, s
     service.approve_gatepass(gp2.id, actor_user_id="warden-1")
 
     pending = service.list_gatepasses(tenant_id=tenant.id, status="pending")
-    assert {g.id for g in pending} == {gp1.id}
+    assert {g.id for g in pending["items"]} == {gp1.id}
     approved = service.list_gatepasses(tenant_id=tenant.id, status="approved")
-    assert {g.id for g in approved} == {gp2.id}
+    assert {g.id for g in approved["items"]} == {gp2.id}
 
 
 def test_list_gatepasses_filter_by_student(
@@ -480,4 +480,4 @@ def test_list_gatepasses_filter_by_student(
     )
 
     rows = service.list_gatepasses(tenant_id=tenant.id, student_id=student.id)
-    assert {g.id for g in rows} == {gp1.id}
+    assert {g.id for g in rows["items"]} == {gp1.id}

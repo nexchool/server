@@ -39,18 +39,24 @@ def paginate_query(query, page: int = 1, per_page: int = 20, max_per_page: int =
         >>> print(result['items'])  # List of users
         >>> print(result['total'])  # Total count
     """
-    # Ensure per_page doesn't exceed max
-    per_page = min(per_page, max_per_page)
-    
-    # Calculate offset
+    # Both values come from a query string, so both are the caller's choice and
+    # neither can be trusted. Only the upper clamp used to exist, which left the
+    # arithmetic open at the bottom: `per_page=0` divided by zero below,
+    # `per_page=-5` asked for `LIMIT -5`, and `page=0` for `OFFSET -20` — three
+    # 500s any signed-in caller could pick from a URL. Clamp on both sides, at
+    # the choke point rather than in each route, because a route that forgets is
+    # how this arrived.
+    per_page = max(1, min(per_page, max_per_page))
+    page = max(1, page)
+
     offset = (page - 1) * per_page
-    
+
     # Get total count
     total = query.count()
-    
+
     # Get items for current page
     items = query.limit(per_page).offset(offset).all()
-    
+
     # Calculate total pages
     total_pages = (total + per_page - 1) // per_page if total > 0 else 0
     

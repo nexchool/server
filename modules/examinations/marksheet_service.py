@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from core.branch_scope import assert_student_allowed
+
 from .models import ExamResult
 from .services import _ok, _refuse
 
@@ -65,6 +67,10 @@ def marksheet_model(
     examination = _get(examination_id, tenant_id)
     if examination is None:
         return _refuse("NOT_FOUND", "Examination not found")
+
+    # A marksheet names one child, so it is refused outright rather than
+    # filtered — there is no partial answer to "print this student's result".
+    assert_student_allowed(student_id)
 
     query = ExamResult.query.filter(
         ExamResult.tenant_id == tenant_id,

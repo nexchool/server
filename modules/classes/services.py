@@ -575,8 +575,14 @@ def get_all_classes(
     )
 
     if page and per_page:
+        # Clamped here as well as at the route: `get_all_classes` is called
+        # directly by the CSV export and by GraphQL, so the service cannot rely
+        # on a parser it does not own. Unlike `list_students`, this took the
+        # caller's number verbatim.
+        page = max(1, int(page))
+        per_page = max(1, min(int(per_page), MAX_PER_PAGE))
         query = query.limit(per_page).offset((page - 1) * per_page)
-        total_pages = (total + per_page - 1) // per_page if per_page else 1
+        total_pages = (total + per_page - 1) // per_page
     else:
         total_pages = 1
 
@@ -1110,11 +1116,8 @@ def delete_class(class_id: str) -> Dict:
         return {'success': False, 'error': safe_error(e, "Failed to delete class")}
 
     if tenant_id:
-        try:
-            from modules.school_setup.services import recompute_setup_complete
-            recompute_setup_complete(tenant_id)
-        except Exception:
-            pass
+        from modules.school_setup.services import refresh_setup_status
+        refresh_setup_status(tenant_id)
     return {'success': True, 'message': 'Class deleted'}
 
 

@@ -49,6 +49,18 @@ class AuthorizationError(BusinessError):
     code = "FORBIDDEN"
 
 
+class PasswordResetRequiredError(BusinessError):
+    """Authenticated, but locked into a mandatory password change.
+
+    Separate from `AuthorizationError` because the client's response differs:
+    lacking authority means "you cannot do this", while this means "do one
+    specific thing first". Collapsing them into FORBIDDEN would leave the app
+    unable to route the user to the screen that resolves it.
+    """
+
+    code = "PASSWORD_RESET_REQUIRED"
+
+
 class NotFoundError(BusinessError):
     """The requested resource does not exist (or is not visible to this caller)."""
 

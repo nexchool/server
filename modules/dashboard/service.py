@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
-from sqlalchemy import cast, func, Date
+from sqlalchemy import and_, cast, func, Date
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -141,6 +141,69 @@ def _today_ops(tenant_id: str) -> Dict[str, Any]:
     }
 
 
+def _count_students_on_inactive_routes(tenant_id: str) -> int:
+    """Active enrolments whose route is no longer running.
+
+    Counted in the database. Both callers used to pull every active
+    enrolment's route_id into a Python list — thousands of rows on a trust
+    that buses its students — and walk it.
+    """
+    return (
+        db.session.query(func.count(TransportEnrollment.id))
+        .outerjoin(
+            TransportRoute,
+            and_(
+                TransportRoute.id == TransportEnrollment.route_id,
+                TransportRoute.tenant_id == tenant_id,
+                TransportRoute.status == "active",
+            ),
+        )
+        .filter(
+            TransportEnrollment.tenant_id == tenant_id,
+            TransportEnrollment.status == "active",
+            TransportRoute.id.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _count_buses_near_capacity(tenant_id: str, threshold: float = 0.85) -> int:
+    """Active buses at or above `threshold` of their stated capacity.
+
+    One grouped query. Both callers used to run a COUNT(*) inside a loop over
+    the buses, so a forty-bus fleet meant forty round trips on the most-loaded
+    page in the app.
+
+    A bus with no stated capacity is skipped: unknown is not full, and
+    dividing by it would be a crash rather than an alert.
+    """
+    seats_taken = (
+        db.session.query(
+            TransportEnrollment.bus_id.label("bus_id"),
+            func.count(TransportEnrollment.id).label("used"),
+        )
+        .filter(
+            TransportEnrollment.tenant_id == tenant_id,
+            TransportEnrollment.status == "active",
+        )
+        .group_by(TransportEnrollment.bus_id)
+        .subquery()
+    )
+    return (
+        db.session.query(func.count(TransportBus.id))
+        .join(seats_taken, seats_taken.c.bus_id == TransportBus.id)
+        .filter(
+            TransportBus.tenant_id == tenant_id,
+            TransportBus.status == "active",
+            TransportBus.capacity > 0,
+            seats_taken.c.used >= threshold * TransportBus.capacity,
+        )
+        .scalar()
+        or 0
+    )
+
+
 def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = True) -> Dict[str, Any]:
     timetable_enabled = is_feature_enabled(tenant_id, "timetable")
 
@@ -260,50 +323,8 @@ def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = Tru
     # Transport issues
     transport_issues = 0
     if transport_enabled:
-        today = _today()
-        # Students on inactive routes
-        active_route_ids = {
-            r.id
-            for r in TransportRoute.query.filter_by(
-                tenant_id=tenant_id, status="active"
-            )
-            .with_entities(TransportRoute.id)
-            .all()
-        }
-        enrolled_route_ids = [
-            row[0]
-            for row in db.session.query(TransportEnrollment.route_id)
-            .filter(
-                TransportEnrollment.tenant_id == tenant_id,
-                TransportEnrollment.status == "active",
-            )
-            .all()
-        ]
-        students_inactive = sum(
-            1 for rid in enrolled_route_ids if rid not in active_route_ids
-        )
-
-        # Buses near/at capacity
-        buses = TransportBus.query.filter_by(
-            tenant_id=tenant_id, status="active"
-        ).all()
-        buses_near = 0
-        for b in buses:
-            cap = b.capacity or 0
-            if cap <= 0:
-                continue
-            used = (
-                db.session.query(func.count(TransportEnrollment.id))
-                .filter(
-                    TransportEnrollment.tenant_id == tenant_id,
-                    TransportEnrollment.bus_id == b.id,
-                    TransportEnrollment.status == "active",
-                )
-                .scalar()
-                or 0
-            )
-            if used / cap >= 0.85:
-                buses_near += 1
+        students_inactive = _count_students_on_inactive_routes(tenant_id)
+        buses_near = _count_buses_near_capacity(tenant_id)
 
         transport_issues = students_inactive + buses_near
 
@@ -432,45 +453,10 @@ def _transport(tenant_id: str) -> Dict[str, Any]:
         or 0
     )
 
-    # Buses with ≥ 85 % occupancy
-    buses_near_capacity = 0
-    for b in buses:
-        if b.status != "active":
-            continue
-        cap = b.capacity or 0
-        if cap <= 0:
-            continue
-        used = (
-            db.session.query(func.count(TransportEnrollment.id))
-            .filter(
-                TransportEnrollment.tenant_id == tenant_id,
-                TransportEnrollment.bus_id == b.id,
-                TransportEnrollment.status == "active",
-            )
-            .scalar()
-            or 0
-        )
-        if used / cap >= 0.85:
-            buses_near_capacity += 1
-
-    active_route_ids = {
-        r.id
-        for r in TransportRoute.query.filter_by(tenant_id=tenant_id, status="active")
-        .with_entities(TransportRoute.id)
-        .all()
-    }
-    enrolled_route_ids = [
-        row[0]
-        for row in db.session.query(TransportEnrollment.route_id)
-        .filter(
-            TransportEnrollment.tenant_id == tenant_id,
-            TransportEnrollment.status == "active",
-        )
-        .all()
-    ]
-    students_on_inactive_routes = sum(
-        1 for rid in enrolled_route_ids if rid not in active_route_ids
-    )
+    # The same two numbers the alerts panel shows, and the same helpers — this
+    # function had its own copy of both, including the per-bus query loop.
+    buses_near_capacity = _count_buses_near_capacity(tenant_id)
+    students_on_inactive_routes = _count_students_on_inactive_routes(tenant_id)
 
     return {
         "enabled": True,

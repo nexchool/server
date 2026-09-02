@@ -192,9 +192,6 @@ def delete_school_unit(unit_id: str, tenant_id: str) -> Dict:
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
 
-    try:
-        from modules.school_setup.services import recompute_setup_complete
-        recompute_setup_complete(tenant_id)
-    except Exception:
-        pass
+    from modules.school_setup.services import refresh_setup_status
+    refresh_setup_status(tenant_id)
     return {"success": True, "message": "School unit deleted"}

@@ -12,6 +12,7 @@ from shared.safe_error import safe_error
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from core.database import db
@@ -34,6 +35,11 @@ from . import session_services as session_svc
 from .models import Attendance
 from core.school_time import school_today
 
+
+#: The documented maximum page size (api-conventions.md). Also the ceiling
+#: applied when a caller asks for no page at all, so this endpoint can never
+#: read a whole term of attendance into memory.
+MAX_ATTENDANCE_PAGE_SIZE = 100
 
 def get_teacher_class_ids(user_id: str) -> List[str]:
     """Class ids this user's teacher may mark attendance for.
@@ -268,6 +274,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
                     attendance_session_id=session.id,
                 )
                 .options(
+                    joinedload(AttendanceRecord.student).joinedload(Student.person),
                     joinedload(AttendanceRecord.student).joinedload(Student.user),
                 )
                 .all()
@@ -285,7 +292,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
                 attendance_list.append(
                     {
                         "student_id": student.id,
-                        "student_name": student.user.name if student.user else None,
+                        "student_name": student.display_name,
                         "admission_number": student.admission_number,
                         "roll_number": student.roll_number,
                         "status": ar.status if ar else None,
@@ -326,7 +333,7 @@ def get_attendance_by_class_date(class_id: str, date_str: str) -> Dict:
             attendance_list.append(
                 {
                     "student_id": student.id,
-                    "student_name": student.user.name if student.user else None,
+                    "student_name": student.display_name,
                     "admission_number": student.admission_number,
                     "roll_number": student.roll_number,
                     "status": record.status if record else None,
@@ -418,7 +425,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
                         "date": sess.session_date.isoformat(),
                         "class_id": sess.class_id,
                         "student_id": ar.student_id,
-                        "student_name": student.user.name if student.user else None,
+                        "student_name": student.display_name,
                         "admission_number": student.admission_number,
                         "status": ar.status,
                         "remarks": ar.remarks,
@@ -438,7 +445,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
                 "success": True,
                 "data": {
                     "student_id": student_id,
-                    "student_name": student.user.name if student.user else None,
+                    "student_name": student.display_name,
                     "total_days": total,
                     "present": present,
                     "absent": absent,
@@ -471,7 +478,7 @@ def get_student_attendance(student_id: str, month: Optional[str] = None) -> Dict
             "success": True,
             "data": {
                 "student_id": student_id,
-                "student_name": student.user.name if student.user else None,
+                "student_name": student.display_name,
                 "total_days": total,
                 "present": present,
                 "absent": absent,
@@ -496,17 +503,21 @@ def get_my_classes(user_id: str) -> List[Dict]:
 
     classes = Class.query.filter(Class.id.in_(class_ids)).order_by(Class.name, Class.section).all()
 
-    result = []
-    for cls in classes:
-        student_count = Student.query.filter_by(class_id=cls.id).count()
-        result.append(
-            {
-                **cls.to_dict(),
-                "student_count": student_count,
-            }
-        )
+    # One grouped count for all of them rather than one per class: this is the
+    # screen a teacher opens to take a register, so it is paid several times a
+    # day. A class with nobody in it is absent from the result, hence the
+    # default of zero.
+    roll = dict(
+        db.session.query(Student.class_id, func.count(Student.id))
+        .filter(Student.class_id.in_(class_ids))
+        .group_by(Student.class_id)
+        .all()
+    )
 
-    return result
+    return [
+        {**cls.to_dict(), "student_count": roll.get(cls.id, 0)}
+        for cls in classes
+    ]
 
 
 def _parse_iso_date(value: Optional[str]) -> Optional[date]:
@@ -592,11 +603,18 @@ def list_attendance_records(
     total = query.count()
     if page is not None or per_page is not None:
         page_v = max(1, int(page or 1))
-        per_page_v = max(1, min(int(per_page or 50), 200))
+        # 100 is the documented maximum (api-conventions). This read 200.
+        per_page_v = max(1, min(int(per_page or 50), MAX_ATTENDANCE_PAGE_SIZE))
         rows = query.limit(per_page_v).offset((page_v - 1) * per_page_v).all()
         total_pages = max(1, (total + per_page_v - 1) // per_page_v)
     else:
-        rows = query.all()
+        # `attendance` is one row per student per class per day — roughly 3.3M
+        # a year at the product's stated scale, and this was the largest
+        # unbounded read in the codebase. Nothing calls it without paging (the
+        # only reference outside this module is a test), so a caller that omits
+        # both parameters gets a first page rather than the table. `total` above
+        # is unaffected, so the envelope still reports the true size.
+        rows = query.limit(MAX_ATTENDANCE_PAGE_SIZE).all()
         page_v = 1
         per_page_v = len(rows) or 0
         total_pages = 1

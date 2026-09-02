@@ -13,23 +13,29 @@ from core.decorators import (
 )
 from modules.students import students_bp
 from modules.students.bulk_student_import_service import run_import, run_preview
+from core.uploads import SpreadsheetTooLarge, read_spreadsheet_bytes
 from shared.helpers import error_response, success_response, validation_error_response
 
 PERM_CREATE = "student.create"
 
 
 def _read_xlsx_bytes():
-    """Returns (bytes, None) or (None, error_response)."""
-    f = request.files.get("file")
-    if not f or not getattr(f, "filename", ""):
-        return None, validation_error_response("file is required (xlsx)")
-    name = (f.filename or "").lower()
-    if not name.endswith(".xlsx"):
-        return None, validation_error_response("Only .xlsx files are accepted")
-    data = f.read()
-    if not data:
-        return None, validation_error_response("File is empty")
-    return data, None
+    """Returns (bytes, None) or (None, error_response).
+
+    Delegates to `core.uploads`, which measures the upload before reading it:
+    an xlsx is a zip and openpyxl expands it in the worker's own memory, so an
+    oversized file has to be refused rather than loaded and then reported on.
+    """
+    try:
+        return read_spreadsheet_bytes(request.files.get("file")), None
+    except SpreadsheetTooLarge as too_big:
+        return None, error_response(
+            "FileTooLarge",
+            f"Spreadsheet must be {too_big.limit // (1024 * 1024)} MB or smaller",
+            413,
+        )
+    except ValueError as bad:
+        return None, validation_error_response(str(bad))
 
 
 @students_bp.route(

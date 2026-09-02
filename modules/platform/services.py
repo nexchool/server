@@ -744,6 +744,23 @@ def reset_tenant_admin(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]
     return {"success": True, "message": "Password reset and email sent"}
 
 
+def _counts_by_tenant(model, tenant_ids: list) -> dict:
+    """How many rows of `model` each of these tenants holds.
+
+    One grouped query. A tenant with none is absent from the result, so callers
+    default to zero rather than expecting a key.
+    """
+    if not tenant_ids:
+        return {}
+    rows = (
+        db.session.query(model.tenant_id, db.func.count(model.id))
+        .filter(model.tenant_id.in_(tenant_ids))
+        .group_by(model.tenant_id)
+        .all()
+    )
+    return {tenant_id: count for tenant_id, count in rows}
+
+
 def list_tenants(
     page: int = 1,
     per_page: int = 20,
@@ -769,10 +786,17 @@ def list_tenants(
         )
     query = query.order_by(Tenant.created_at.desc())
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    # Both headcounts for the whole page in one query each, rather than two
+    # per school: this is the screen the company looks at to see its own
+    # customers, and a per-row count made it slower with every school signed up.
+    page_tenant_ids = [t.id for t in pagination.items]
+    student_counts = _counts_by_tenant(Student, page_tenant_ids)
+    teacher_counts = _counts_by_tenant(Teacher, page_tenant_ids)
+
     items = []
     for t in pagination.items:
-        student_count = Student.query.filter_by(tenant_id=t.id).count()
-        teacher_count = Teacher.query.filter_by(tenant_id=t.id).count()
+        student_count = student_counts.get(t.id, 0)
+        teacher_count = teacher_counts.get(t.id, 0)
         items.append({
             "id": t.id,
             "name": t.name,

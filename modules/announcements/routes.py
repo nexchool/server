@@ -189,10 +189,14 @@ def revisions_route(announcement_id):
 @require_permission(PERM_ANNOUNCEMENT_READ_ALL)
 def recipients_route(announcement_id):
     try:
-        rows = services.list_recipients(announcement_id)
+        result = services.list_recipients(
+            announcement_id,
+            page=request.args.get("page"),
+            per_page=request.args.get("per_page"),
+        )
     except services.ValidationError as e:
         return validation_error_response({"detail": str(e)})
-    return success_response(data=rows)
+    return success_response(data=result)
 
 
 # --- Attachments -------------------------------------------------------------

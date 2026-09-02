@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from core.branch_scope import filter_by_exam_mark_ids
 from core.database import db
 from core.school_time import utc_now
 
@@ -342,7 +343,11 @@ def reject_correction(
 
 
 def correction_queue(
-    tenant_id: str, *, status: Optional[str] = None
+    tenant_id: str,
+    *,
+    status: Optional[str] = None,
+    exam_mark_id: Optional[str] = None,
+    correction_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Corrections with enough context to decide on, for a whole queue at once.
 
@@ -354,6 +359,12 @@ def correction_queue(
 
     `status` filters; omitted, it returns the whole history so an audit can
     read approved and rejected requests too.
+
+    `exam_mark_id` and `correction_id` narrow to one mark or one request **in
+    SQL**. Both callers used to read the entire tenant's corrections and then
+    pick their row out in Python — `correctionsForMark` for one mark's history,
+    and the re-read after every approve/reject — so deciding a single
+    correction scanned every correction the school had ever raised.
     """
     from modules.auth.models import User
     from modules.people.models import Person
@@ -363,8 +374,16 @@ def correction_queue(
     from .services import paper_labels
 
     query = ExamMarkCorrection.query.filter_by(tenant_id=tenant_id)
+    # Scoped at the source, not per row: `_paper_of` below refuses a paper out
+    # of branch, so a queue holding another campus's request would raise rather
+    # than simply not show it.
+    query = filter_by_exam_mark_ids(query, ExamMarkCorrection.exam_mark_id)
     if status:
         query = query.filter(ExamMarkCorrection.status == status)
+    if exam_mark_id:
+        query = query.filter(ExamMarkCorrection.exam_mark_id == exam_mark_id)
+    if correction_id:
+        query = query.filter(ExamMarkCorrection.id == correction_id)
     corrections = query.order_by(ExamMarkCorrection.requested_at.desc()).all()
     if not corrections:
         return []
@@ -451,10 +470,10 @@ def corrections_for_mark(
 
 def pending_corrections(tenant_id: str) -> List[ExamMarkCorrection]:
     """The queue somebody has to work through."""
-    return (
+    query = filter_by_exam_mark_ids(
         ExamMarkCorrection.query.filter_by(
             tenant_id=tenant_id, status=CORRECTION_REQUESTED
-        )
-        .order_by(ExamMarkCorrection.requested_at)
-        .all()
+        ),
+        ExamMarkCorrection.exam_mark_id,
     )
+    return query.order_by(ExamMarkCorrection.requested_at).all()

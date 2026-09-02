@@ -340,6 +340,32 @@ def _read_tenant(tenant_id: str) -> Optional[Tenant]:
     return Tenant.query.filter_by(id=tenant_id).first()
 
 
+def refresh_setup_status(tenant_id: Optional[str]) -> None:
+    """Recompute the tenant's setup flag after a change that could affect it.
+
+    Nine services call this — creating or deleting a class, grade, programme,
+    school unit or subject context can all change whether setup is still
+    complete — and each of them used to wrap the call in
+    `except Exception: pass`.
+
+    Swallowing is right: the primary write has already committed, and failing
+    the request because a derived flag could not be refreshed would be worse
+    than the stale flag. Doing it silently is not, because this function exists
+    to flip `is_setup_complete` back to false on drift — so a lost failure
+    leaves a school marked complete when it is not, with the onboarding wizard
+    never reappearing and nobody told.
+    """
+    if not tenant_id:
+        return
+    try:
+        recompute_setup_complete(tenant_id)
+    except Exception:
+        logger.warning(
+            "Could not refresh setup status for tenant %s; the stored flag may "
+            "now be stale", tenant_id, exc_info=True,
+        )
+
+
 def recompute_setup_complete(
     tenant_id: str, status: Optional[Dict[str, Any]] = None
 ) -> bool:

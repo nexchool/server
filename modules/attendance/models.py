@@ -60,7 +60,7 @@ class Attendance(TenantBaseModel):
             "date": self.date.isoformat(),
             "class_id": self.class_id,
             "student_id": self.student_id,
-            "student_name": self.student.user.name if self.student and self.student.user else None,
+            "student_name": self.student.display_name if self.student else None,
             "admission_number": self.student.admission_number if self.student else None,
             "status": self.status,
             "remarks": self.remarks,

@@ -21,16 +21,31 @@ Rules:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Sequence
 
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
+
+from core.branch_scope import filter_by_student_ids
 
 from modules.hostel.models import (
     HostelGatepass,
     HostelGatepassAudit,
 )
 from core.school_time import utc_now
+
+GATEPASS_PAGE_SIZE = 25
+GATEPASS_MAX_PAGE_SIZE = 100
+
+
+def _positive_int(value, *, default: int, maximum: Optional[int] = None) -> int:
+    """Coerce a query-string number, falling back rather than raising."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    number = max(1, number)
+    return min(number, maximum) if maximum else number
 
 
 class GatepassService:
@@ -212,16 +227,49 @@ class GatepassService:
     # Queries
     # ------------------------------------------------------------------
 
+    def get_gatepass(
+        self, gatepass_id: str, *, tenant_id: str
+    ) -> Optional[HostelGatepass]:
+        """One gatepass, or None if it is not this caller's to read.
+
+        Branch-filtered rather than refused: raising would confirm the gatepass
+        exists, and for someone with no authority over the child it belongs to,
+        "not found" is the honest answer. Reading one by id must not be the way
+        around the list being scoped.
+        """
+        query = self.session.query(HostelGatepass).filter(
+            HostelGatepass.id == gatepass_id,
+            HostelGatepass.tenant_id == tenant_id,
+            HostelGatepass.deleted_at.is_(None),
+        )
+        return filter_by_student_ids(query, HostelGatepass.student_id).first()
+
     def list_gatepasses(
         self,
         *,
         tenant_id: str,
         hostel_id: Optional[str] = None,
         student_id: Optional[str] = None,
-        status: Optional[str] = None,
+        status: Optional[str | Sequence[str]] = None,
         gatepass_type: Optional[str] = None,
-    ) -> list[HostelGatepass]:
-        """List gatepasses with optional filters, newest first."""
+        search: Optional[str] = None,
+        page=None,
+        per_page=None,
+        oldest_first: bool = False,
+    ) -> dict:
+        """One page of gatepasses, plus the total for the whole filtered set.
+
+        Returns ``{items, total, page, per_page, total_pages}``.
+
+        The admin board is five columns, and each asks for its own slice: its
+        statuses (``status`` takes a list, because "closed" and "rejected" share
+        a column), its own page, and its own sort — a warden works the pending
+        queue oldest-first, while every other column reads newest-first.
+
+        ``total`` is a COUNT over the filter, not ``len(items)``: it is what the
+        column header shows, and the "closed" column holds every gatepass the
+        school has ever issued.
+        """
         query = self.session.query(HostelGatepass).filter(
             HostelGatepass.tenant_id == tenant_id,
             HostelGatepass.deleted_at.is_(None),
@@ -231,30 +279,112 @@ class GatepassService:
         if student_id is not None:
             query = query.filter(HostelGatepass.student_id == student_id)
         if status is not None:
-            query = query.filter(HostelGatepass.status == status)
+            wanted = [status] if isinstance(status, str) else list(status)
+            query = query.filter(HostelGatepass.status.in_(wanted))
         if gatepass_type is not None:
             query = query.filter(HostelGatepass.type == gatepass_type)
-        return query.order_by(HostelGatepass.requested_at.desc()).all()
+
+        # Whether a child may leave the hostel is a fact about the child, the
+        # same as which bed they sleep in — so a campus-restricted warden sees
+        # their own campus's gatepasses. Hostels carry no school_unit_id (they
+        # are tenant-wide), which makes the student the only anchor.
+        query = filter_by_student_ids(query, HostelGatepass.student_id)
+
+        query = self._apply_search(query, search)
+
+        total = query.count()
+
+        page = _positive_int(page, default=1)
+        per_page = _positive_int(
+            per_page, default=GATEPASS_PAGE_SIZE, maximum=GATEPASS_MAX_PAGE_SIZE
+        )
+
+        # `requested_at` ties constantly — a warden approves a batch in one
+        # sitting — so the id breaks the tie and makes the order total. Without
+        # it LIMIT/OFFSET can serve a row twice and skip another.
+        requested = HostelGatepass.requested_at
+        order = (
+            (requested.asc(), HostelGatepass.id.asc())
+            if oldest_first
+            else (requested.desc(), HostelGatepass.id.desc())
+        )
+        items = (
+            query.order_by(*order)
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+            .all()
+        )
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": max(1, (total + per_page - 1) // per_page),
+        }
+
+    def _apply_search(self, query, search: Optional[str]):
+        """Match what a warden would actually type into the box.
+
+        The board used to filter in the browser, which meant it only ever
+        searched the rows already downloaded — and it searched `student_id`, a
+        UUID nobody can type. This searches the child's name and admission
+        number, the parent's phone and the stated reason.
+
+        The name is matched on the person *and* the account: `display_name`
+        resolves from `people.full_name`, so matching only `users.name` would
+        make a child with no login unfindable by the box meant to find them.
+        Every student join is outer for the same reason.
+        """
+        if not search or not search.strip():
+            return query
+
+        from modules.auth.models import User
+        from modules.people.models import Person
+        from modules.students.models import Student
+
+        term = search.strip()
+        # Escape LIKE metacharacters — an unescaped "%" matches every child.
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+
+        return (
+            query.outerjoin(Student, Student.id == HostelGatepass.student_id)
+            .outerjoin(User, User.id == Student.user_id)
+            .outerjoin(Person, Person.id == Student.person_id)
+            .filter(
+                or_(
+                    Person.full_name.ilike(pattern, escape="\\"),
+                    User.name.ilike(pattern, escape="\\"),
+                    Student.admission_number.ilike(pattern, escape="\\"),
+                    HostelGatepass.parent_phone.ilike(pattern, escape="\\"),
+                    HostelGatepass.reason.ilike(pattern, escape="\\"),
+                )
+            )
+        )
 
     def find_overdue_gatepasses(
         self, *, grace_period_minutes: int = DEFAULT_GRACE_PERIOD_MINUTES
     ) -> list[HostelGatepass]:
         """Return ACTIVE gatepasses whose expected return is past grace period.
 
-        The Celery beat task uses this to find candidates for mark_overdue.
+        Two callers with deliberately different reach:
+
+        * the Celery beat task, which finds candidates for mark_overdue and
+          must see every campus — it runs outside a request, where branch scope
+          resolves to UNRESTRICTED, so the sweep is unaffected;
+        * the warden's alert screen, where a campus-restricted user must see
+          only their own campus's children.
         """
         cutoff = utc_now() - timedelta(minutes=grace_period_minutes)
-        return (
-            self.session.query(HostelGatepass)
-            .filter(
-                and_(
-                    HostelGatepass.status == HostelGatepass.STATUS_ACTIVE,
-                    HostelGatepass.expected_return_datetime < cutoff,
-                    HostelGatepass.deleted_at.is_(None),
-                )
+        query = self.session.query(HostelGatepass).filter(
+            and_(
+                HostelGatepass.status == HostelGatepass.STATUS_ACTIVE,
+                HostelGatepass.expected_return_datetime < cutoff,
+                HostelGatepass.deleted_at.is_(None),
             )
-            .all()
         )
+        return filter_by_student_ids(query, HostelGatepass.student_id).all()
 
     # ------------------------------------------------------------------
     # Notifications recording (informational only in v1)

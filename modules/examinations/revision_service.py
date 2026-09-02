@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from core.branch_scope import assert_student_allowed
 from core.database import db
 from core.school_time import utc_now
 from sqlalchemy import func
@@ -187,6 +188,8 @@ def revise_result(
 
     if not has_permission(actor_user_id, PERM_PUBLISH):
         return _refuse("FORBIDDEN", f"You do not hold {PERM_PUBLISH}.")
+    # A revision names one child, so it is refused rather than filtered.
+    assert_student_allowed(student_id)
     if not (reason or "").strip():
         return _refuse(
             "REASON_REQUIRED",
@@ -303,6 +306,8 @@ def publish_revision(
 
     if not has_permission(actor_user_id, PERM_PUBLISH):
         return _refuse("FORBIDDEN", f"You do not hold {PERM_PUBLISH}.")
+    # Issuing a revised result names one child, the same as making it.
+    assert_student_allowed(student_id)
 
     examination = _lock_examination(examination_id, tenant_id)
     if examination is None:

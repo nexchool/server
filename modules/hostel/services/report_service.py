@@ -16,6 +16,8 @@ from typing import Optional
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
+from core.branch_scope import filter_by_student_ids
+
 from modules.hostel.models import (
     Hostel,
     HostelAllocation,
@@ -89,6 +91,11 @@ class ReportService:
         )
         if hostel_id is not None:
             query = query.filter(HostelGatepass.hostel_id == hostel_id)
+
+        # A child who has not come back is a fact about that child, so a
+        # campus-restricted warden is alerted about their own campus.
+        query = filter_by_student_ids(query, HostelGatepass.student_id)
+
         return query.order_by(HostelGatepass.expected_return_datetime).all()
 
     # ------------------------------------------------------------------
@@ -117,6 +124,10 @@ class ReportService:
         )
         if hostel_id is not None:
             query = query.filter(Hostel.id == hostel_id)
+
+        # This one leaves the building as a file, so scoping it matters more
+        # than for a screen: a campus head exports their own campus's boarders.
+        query = filter_by_student_ids(query, HostelAllocation.student_id)
 
         rows: list[dict] = []
         for allocation, room, bed, hostel in query.order_by(Hostel.name, HostelRoom.room_number, HostelBed.bed_number).all():

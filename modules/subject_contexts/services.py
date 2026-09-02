@@ -364,11 +364,8 @@ def delete_context(context_id: str, tenant_id: str) -> Dict[str, Any]:
     c.deleted_at = datetime.now(timezone.utc)
     c.is_active = False
     db.session.commit()
-    try:
-        from modules.school_setup.services import recompute_setup_complete
-        recompute_setup_complete(tenant_id)
-    except Exception:
-        pass
+    from modules.school_setup.services import refresh_setup_status
+    refresh_setup_status(tenant_id)
     return {"success": True}
 
 
@@ -676,11 +673,8 @@ def apply_for_grade(
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
 
-    try:
-        from modules.school_setup.services import recompute_setup_complete
-        recompute_setup_complete(tenant_id)
-    except Exception:
-        pass
+    from modules.school_setup.services import refresh_setup_status
+    refresh_setup_status(tenant_id)
 
     return {
         "success": True,

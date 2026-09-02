@@ -135,6 +135,20 @@ def test_the_only_orm_hooks_enforce_consistency():
         # build these rows; the one that forgets is the one that fails at
         # insert.
         ("modules/academics/cycles/consistency.py", "before_flush"),
+        # The moment a permission invalidation is allowed to take effect.
+        # Clearing the cache before the commit is a race: the row still reads
+        # as it did, so a concurrent request reloads the *old* permissions and
+        # caches them again — for the full TTL, with the revocation already
+        # applied underneath. These two hold the invalidation until the
+        # transaction is visible, and throw it away if it rolls back.
+        #
+        # Consistency, not workflow, and narrowly so: nothing is decided here.
+        # Whoever called `invalidate_user_permissions` already decided —
+        # `withdraw_authority`, `suspend_sub_admin`, `remove_login_for_deleted_
+        # profile` — and a reader finds the decision there. All these do is
+        # choose the instant at which a derived value stops being wrong.
+        ("modules/rbac/services.py", "after_commit"),
+        ("modules/rbac/services.py", "after_rollback"),
     }
 
     found = set()

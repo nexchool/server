@@ -17,6 +17,7 @@ from core.decorators import auth_required, require_permission, tenant_required
 from core.feature_flags import require_feature
 from modules.examinations import examinations_bp
 from modules.examinations import marks_import, marksheet_service
+from core.uploads import SpreadsheetTooLarge, read_spreadsheet_bytes
 from shared.helpers import error_response, success_response, validation_error_response
 
 # The same key entering marks by hand needs. Importing is a way of marking, not
@@ -44,17 +45,22 @@ FEATURE = "examinations"
 
 
 def _read_xlsx_bytes():
-    """Returns (bytes, None) or (None, error_response) — the student importer's
-    contract, so one upload behaves like the other."""
-    uploaded = request.files.get("file")
-    if not uploaded or not getattr(uploaded, "filename", ""):
-        return None, validation_error_response("file is required (xlsx)")
-    if not (uploaded.filename or "").lower().endswith(".xlsx"):
-        return None, validation_error_response("Only .xlsx files are accepted")
-    data = uploaded.read()
-    if not data:
-        return None, validation_error_response("File is empty")
-    return data, None
+    """Returns (bytes, None) or (None, error_response).
+
+    Delegates to `core.uploads`, which measures the upload before reading it:
+    an xlsx is a zip and openpyxl expands it in the worker's own memory, so an
+    oversized file has to be refused rather than loaded and then reported on.
+    """
+    try:
+        return read_spreadsheet_bytes(request.files.get("file")), None
+    except SpreadsheetTooLarge as too_big:
+        return None, error_response(
+            "FileTooLarge",
+            f"Spreadsheet must be {too_big.limit // (1024 * 1024)} MB or smaller",
+            413,
+        )
+    except ValueError as bad:
+        return None, validation_error_response(str(bad))
 
 
 def _refused(result):

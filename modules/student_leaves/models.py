@@ -25,6 +25,7 @@ LEAVE_STATUSES = (
 HALF_DAY_VALUES = ("am", "pm")
 
 
+
 class StudentLeave(TenantBaseModel):
     """Student leave request — one row per submitted request."""
 
@@ -76,7 +77,10 @@ class StudentLeave(TenantBaseModel):
             "id": self.id,
             "tenant_id": self.tenant_id,
             "student_id": self.student_id,
-            "student_name": self.student.user.name if self.student and self.student.user else None,
+            # The person owns the name, not the login: `students.user_id` is
+            # nullable, and reading it off the account left every child without
+            # one nameless in the approval queue. Same shape as debt 15.
+            "student_name": self.student.display_name if self.student else None,
             "admission_number": self.student.admission_number if self.student else None,
             "class_id": self.class_id,
             "class_teacher_id": self.class_teacher_id,

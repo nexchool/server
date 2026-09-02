@@ -14,6 +14,7 @@ from strawberry.permission import BasePermission
 from .errors import (
     AuthenticationError,
     AuthorizationError,
+    PasswordResetRequiredError,
     FeatureDisabledError,
     SetupIncompleteError,
     TenantRequiredError,
@@ -31,11 +32,25 @@ class IsAuthenticated(BasePermission):
     message = "Authentication required"
 
     def has_permission(self, source: Any, info: Any, **kwargs: Any) -> bool:
+        from core.authentication import (
+            PASSWORD_RESET_MESSAGE,
+            password_change_is_outstanding,
+        )
+
         context = info.context
-        if getattr(context, "current_user", None) is None:
+        user = getattr(context, "current_user", None)
+        if user is None:
             raise AuthenticationError(
                 getattr(context, "authentication_error", None) or self.message
             )
+
+        # Locked into a password change. Every field lists this class first,
+        # so refusing here refuses the whole schema — which is right: password
+        # operations are REST, so there is no GraphQL call to make until the
+        # new password is set. `path=None` would exempt nothing anyway, since
+        # every operation arrives at the one endpoint.
+        if password_change_is_outstanding(user, path=None):
+            raise PasswordResetRequiredError(PASSWORD_RESET_MESSAGE)
         return True
 
 

@@ -20,6 +20,7 @@ from core.database import db
 from core.decorators import auth_required, require_feature, tenant_required
 from core.decorators.rbac import require_any_permission, require_permission
 from modules.hostel import hostel_bp
+from modules.hostel.hostel_schemas import validate_hostel_payload
 from modules.hostel.models import (
     Hostel,
     HostelAllocation,
@@ -41,6 +42,7 @@ from modules.hostel.permissions import (
 )
 from modules.hostel.services import (
     AllocationService,
+    FacilityService,
     GatepassService,
     ReportService,
     VisitorService,
@@ -86,6 +88,7 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
     explicit ``None`` fields so the shape is stable.
     """
     from modules.auth.models import User
+    from modules.people.models import Person
     from modules.students.models import Student
 
     student_ids = {it["student_id"] for it in items if it.get("student_id")}
@@ -95,16 +98,26 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
             it.setdefault("admission_number", None)
         return items
 
+    # Both joins are outer, and the person is the fallback: `students.user_id`
+    # is nullable while `students.person_id` is not, so a child with no login
+    # account has a name here even though they have no `users` row. An inner
+    # join left the board rendering a blank where their name belongs.
     info: dict[str, dict] = {}
     rows = (
-        db.session.query(Student, User)
-        .join(User, Student.user_id == User.id)
+        db.session.query(Student, User, Person)
+        .outerjoin(User, Student.user_id == User.id)
+        .outerjoin(Person, Student.person_id == Person.id)
         .filter(Student.id.in_(student_ids))
         .all()
     )
-    for student, user in rows:
+    for student, user, person in rows:
+        name = None
+        if user is not None:
+            name = user.name or user.email
+        if not name and person is not None:
+            name = person.full_name
         info[student.id] = {
-            "student_name": user.name or user.email,
+            "student_name": name,
             "admission_number": student.admission_number,
         }
 
@@ -113,6 +126,35 @@ def _attach_student_info(items: list[dict]) -> list[dict]:
         it["student_name"] = meta["student_name"] if meta else None
         it["admission_number"] = meta["admission_number"] if meta else None
     return items
+
+
+def _rooms_with_occupancy(tenant_id: str, hostel_id: str) -> list[dict]:
+    """Rooms of a hostel, each carrying how many of its beds are taken.
+
+    The count comes from one grouped query rather than from the allocation
+    rows themselves: the screen used to fetch every active allocation in the
+    hostel and tally them in the browser, which is the wrong shape at 300
+    boarders and silently wrong once that endpoint pages.
+    """
+    rooms = (
+        db.session.query(HostelRoom)
+        .filter(
+            HostelRoom.tenant_id == tenant_id,
+            HostelRoom.hostel_id == hostel_id,
+            HostelRoom.deleted_at.is_(None),
+        )
+        .order_by(HostelRoom.room_number)
+        .all()
+    )
+    occupied = AllocationService(db.session).occupied_counts_by_room(
+        tenant_id=tenant_id, hostel_id=hostel_id
+    )
+    out = []
+    for room in rooms:
+        row = room.to_dict()
+        row["occupied_count"] = occupied.get(room.id, 0)
+        out.append(row)
+    return out
 
 
 def _attach_visitor_info(items: list[dict]) -> list[dict]:
@@ -197,9 +239,7 @@ def create_hostel():
     name = (payload.get("name") or "").strip()
     capacity = payload.get("capacity")
 
-    errors = {}
-    if not name:
-        errors["name"] = "Required"
+    errors = validate_hostel_payload(payload) or {}
     if not isinstance(capacity, int) or capacity <= 0:
         errors["capacity"] = "Must be a positive integer"
     if errors:
@@ -239,6 +279,10 @@ def update_hostel(hostel_id: str):
         return not_found_response("Hostel")
 
     payload = request.get_json() or {}
+    errors = validate_hostel_payload(payload, is_update=True)
+    if errors:
+        return validation_error_response(errors)
+
     for field in ("name", "warden_name", "warden_phone", "address", "status"):
         if field in payload:
             setattr(hostel, field, payload[field])
@@ -270,7 +314,25 @@ def delete_hostel(hostel_id: str):
     )
     if hostel is None:
         return not_found_response("Hostel")
-    hostel.deleted_at = utc_now()
+
+    # Same rule as delete_bed: a container holding people is not deletable.
+    residents = AllocationService(db.session).count_active_residents(
+        tenant_id=_tenant_id(), hostel_id=hostel_id
+    )
+    if residents:
+        return error_response(
+            error="HostelOccupied",
+            message=(
+                f"Cannot delete a hostel with {residents} "
+                f"{'student' if residents == 1 else 'students'} still allocated. "
+                "Check them out first."
+            ),
+            status_code=409,
+        )
+
+    FacilityService(db.session).retire_hostel(
+        tenant_id=_tenant_id(), hostel=hostel
+    )
     db.session.commit()
     return success_response(data=None, status_code=204)
 
@@ -285,18 +347,10 @@ def delete_hostel(hostel_id: str):
 @require_feature("hostel")
 @require_any_permission(HOSTEL_READ, HOSTEL_MANAGE)
 def list_rooms(hostel_id: str):
-    """GET /api/hostel/hostels/:id/rooms"""
-    rows = (
-        db.session.query(HostelRoom)
-        .filter(
-            HostelRoom.tenant_id == _tenant_id(),
-            HostelRoom.hostel_id == hostel_id,
-            HostelRoom.deleted_at.is_(None),
-        )
-        .order_by(HostelRoom.room_number)
-        .all()
+    """GET /api/hostel/hostels/:id/rooms — each room with its occupied count."""
+    return success_response(
+        data={"rooms": _rooms_with_occupancy(_tenant_id(), hostel_id)}
     )
-    return success_response(data={"rooms": [r.to_dict() for r in rows]})
 
 
 @hostel_bp.route("/rooms/<string:room_id>", methods=["GET"])
@@ -470,7 +524,24 @@ def delete_room(room_id: str):
     )
     if room is None:
         return not_found_response("Room")
-    room.deleted_at = utc_now()
+
+    # Same rule as delete_hostel and delete_bed: a container holding people is
+    # not deletable.
+    residents = AllocationService(db.session).count_active_room_residents(
+        tenant_id=_tenant_id(), room_id=room_id
+    )
+    if residents:
+        return error_response(
+            error="RoomOccupied",
+            message=(
+                f"Cannot delete a room with {residents} "
+                f"{'student' if residents == 1 else 'students'} still allocated. "
+                "Check them out first."
+            ),
+            status_code=409,
+        )
+
+    FacilityService(db.session).retire_room(tenant_id=_tenant_id(), room=room)
     db.session.commit()
     return success_response(data=None, status_code=204)
 
@@ -555,7 +626,11 @@ def update_bed(bed_id: str):
 @require_feature("hostel")
 @require_permission(HOSTEL_MANAGE)
 def delete_bed(bed_id: str):
-    """DELETE /api/hostel/beds/:id — sets status=removed (no soft delete column)."""
+    """DELETE /api/hostel/beds/:id — retires the bed.
+
+    Sets both status=removed and deleted_at: readers disagree about which one
+    means "gone", so only setting one leaves the bed visible to the other.
+    """
     bed = (
         db.session.query(HostelBed)
         .filter(
@@ -574,7 +649,7 @@ def delete_bed(bed_id: str):
             status_code=409,
         )
 
-    bed.status = "removed"
+    FacilityService(db.session).retire_bed(bed=bed)
     db.session.commit()
     return success_response(data=None, status_code=204)
 
@@ -592,16 +667,29 @@ def list_allocations():
     """GET /api/hostel/allocations — filters: hostel_id, room_id, student_id,
     status, academic_year_id."""
     service = AllocationService(db.session)
-    rows = service.list_allocations(
+    # Always paged here, even though the service can return everything — the
+    # unpaged shape exists for the year-end rollover task, not for a screen.
+    result = service.list_allocations(
         tenant_id=_tenant_id(),
         hostel_id=request.args.get("hostel_id") or None,
         room_id=request.args.get("room_id") or None,
         student_id=request.args.get("student_id") or None,
         status=request.args.get("status") or None,
         academic_year_id=request.args.get("academic_year_id") or None,
+        search=request.args.get("search") or None,
+        page=request.args.get("page") or 1,
+        per_page=request.args.get("per_page"),
     )
     return success_response(
-        data={"allocations": _attach_student_info([a.to_dict() for a in rows])}
+        data={
+            "allocations": _attach_student_info(
+                [a.to_dict() for a in result["items"]]
+            ),
+            "total": result["total"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_pages": result["total_pages"],
+        }
     )
 
 
@@ -726,17 +814,39 @@ def _current_user_id():
 @require_feature("hostel")
 @require_any_permission(HOSTEL_GP_READ, HOSTEL_GP_APPROVE, HOSTEL_GP_GATEKEEPER)
 def list_gatepasses():
-    """GET /api/hostel/gatepasses — filters: status, type, student_id, hostel_id."""
+    """GET /api/hostel/gatepasses — one page of the board's column.
+
+    Filters: status (comma-separated, so one column may merge two), type,
+    student_id, hostel_id, search. Paged with page/per_page, and `oldest=1`
+    for the pending queue, which a warden works from the oldest request.
+    """
     service = GatepassService(db.session)
-    rows = service.list_gatepasses(
+    status = request.args.get("status") or None
+    if status:
+        # "closed,rejected" — the board's last column is two statuses.
+        status = [s for s in (part.strip() for part in status.split(",")) if s]
+
+    result = service.list_gatepasses(
         tenant_id=_tenant_id(),
         hostel_id=request.args.get("hostel_id") or None,
         student_id=request.args.get("student_id") or None,
-        status=request.args.get("status") or None,
+        status=status,
         gatepass_type=request.args.get("type") or None,
+        search=request.args.get("search") or None,
+        page=request.args.get("page"),
+        per_page=request.args.get("per_page"),
+        oldest_first=request.args.get("oldest") in ("1", "true", "yes"),
     )
     return success_response(
-        data={"gatepasses": _attach_student_info([g.to_dict() for g in rows])}
+        data={
+            "gatepasses": _attach_student_info(
+                [g.to_dict() for g in result["items"]]
+            ),
+            "total": result["total"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_pages": result["total_pages"],
+        }
     )
 
 
@@ -747,16 +857,10 @@ def list_gatepasses():
 @require_any_permission(HOSTEL_GP_READ, HOSTEL_GP_APPROVE, HOSTEL_GP_GATEKEEPER)
 def get_gatepass(gatepass_id: str):
     """GET /api/hostel/gatepasses/:id"""
-    from modules.hostel.models import HostelGatepass, HostelGatepassAudit
+    from modules.hostel.models import HostelGatepassAudit
 
-    gp = (
-        db.session.query(HostelGatepass)
-        .filter(
-            HostelGatepass.id == gatepass_id,
-            HostelGatepass.tenant_id == _tenant_id(),
-            HostelGatepass.deleted_at.is_(None),
-        )
-        .first()
+    gp = GatepassService(db.session).get_gatepass(
+        gatepass_id, tenant_id=_tenant_id()
     )
     if gp is None:
         return not_found_response("Gatepass")
@@ -1064,11 +1168,21 @@ def list_visitor_logs():
     service = VisitorService(db.session)
     only_open = request.args.get("open", "").lower() in ("1", "true", "yes")
 
+    page = request.args.get("page") or 1
+    per_page = request.args.get("per_page")
+
     if only_open:
+        # Bounded by however many visitors are in the building right now.
         rows = service.get_currently_inside(
             tenant_id=_tenant_id(),
             hostel_id=request.args.get("hostel_id") or None,
         )
+        meta = {
+            "total": len(rows),
+            "page": 1,
+            "per_page": len(rows),
+            "total_pages": 1,
+        }
     else:
         # Parse optional ISO date range.
         start_date = None
@@ -1083,16 +1197,27 @@ def list_visitor_logs():
         except ValueError as exc:
             return validation_error_response({"date_range": str(exc)})
 
-        rows = service.list_visitor_logs(
+        result = service.list_visitor_logs(
             tenant_id=_tenant_id(),
             hostel_id=request.args.get("hostel_id") or None,
             student_id=request.args.get("student_id") or None,
             visitor_id=request.args.get("visitor_id") or None,
             start_date=start_date,
             end_date=end_date,
+            search=request.args.get("search") or None,
+            page=page,
+            per_page=per_page,
         )
+        rows = result["items"]
+        meta = {k: result[k] for k in ("total", "page", "per_page", "total_pages")}
+
     return success_response(
-        data={"visitor_logs": _attach_visitor_info(_attach_student_info([l.to_dict() for l in rows]))}
+        data={
+            "visitor_logs": _attach_visitor_info(
+                _attach_student_info([l.to_dict() for l in rows])
+            ),
+            **meta,
+        }
     )
 
 

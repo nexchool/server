@@ -347,11 +347,8 @@ def import_excel(
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
 
-    try:
-        from .services import recompute_setup_complete
-        recompute_setup_complete(tenant_id)
-    except Exception:
-        pass
+    from .services import refresh_setup_status
+    refresh_setup_status(tenant_id)
 
     return {
         "success": True,

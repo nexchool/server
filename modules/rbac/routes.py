@@ -83,8 +83,10 @@ def create_permission_route():
 def list_permissions_route():
     """List all permissions with optional search"""
     search = request.args.get('search')
-    limit = request.args.get('limit', 100, type=int)
-    offset = request.args.get('offset', 0, type=int)
+    # Clamped: this flows straight into `.limit()`, so an unclamped value
+    # let any caller ask for the whole table.
+    limit = max(1, min(request.args.get('limit', 100, type=int), 100))
+    offset = max(0, request.args.get('offset', 0, type=int))
     
     permissions = list_permissions(search, limit, offset)
     
@@ -170,8 +172,10 @@ def create_role_route():
 def list_roles_route():
     """List all roles with optional search"""
     search = request.args.get('search')
-    limit = request.args.get('limit', 100, type=int)
-    offset = request.args.get('offset', 0, type=int)
+    # Clamped: this flows straight into `.limit()`, so an unclamped value
+    # let any caller ask for the whole table.
+    limit = max(1, min(request.args.get('limit', 100, type=int), 100))
+    offset = max(0, request.args.get('offset', 0, type=int))
     
     roles = list_roles(search, limit, offset)
     

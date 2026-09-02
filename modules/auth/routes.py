@@ -4,7 +4,6 @@ Authentication Routes
 API endpoints for user authentication, registration, and account management.
 
 Routes:
-- POST /register - Register new user
 - POST /login - Login user
 - POST /logout - Logout user
 - GET /email/validate - Validate email verification token
@@ -32,7 +31,10 @@ from .services import (
     find_users_by_email_password,
     generate_access_token,
     create_session,
-    logout_user as logout_user_service
+    logout_user as logout_user_service,
+    # The lockout rule and its constants have one owner in `services`, so the
+    # two login paths cannot drift apart again.
+    LOGIN_LOCKOUT_MINUTES,  # noqa: F401 (re-exported)
 )
 from core.decorators import auth_required, tenant_required  # tenant_required still used for routes that run after middleware
 from core.database import db
@@ -50,103 +52,19 @@ PROFILE_PICTURE_ALLOWED_MIME = frozenset(
 
 # ==================== REGISTRATION ====================
 
-@auth_bp.route('/register', methods=['POST'])
-def register():
-    """
-    Register a new user.
-    
-    Request Body:
-        - email: User email (required)
-        - password: User password (required)
-        - name: User name (optional)
-        
-    Returns:
-        201: User created successfully
-        400: Validation error or user already exists
-    """
-    err = resolve_tenant_for_auth(request.get_json(silent=True) or {})
-    if err:
-        return err[1], err[0]
-
-    data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
-    name = data.get('name')
-
-    # Validation
-    if not email or not password:
-        return error_response(
-            error='ValidationError',
-            message='Email and password are required',
-            status_code=400
-        )
-
-    tenant_id = get_tenant_id()
-    if not tenant_id:
-        return error_response(
-            error='TenantRequired',
-            message='Tenant context is required',
-            status_code=400
-        )
-
-    # Check if user already exists (tenant-scoped). Include soft-deleted rows:
-    # the (email, tenant_id) unique constraint is not scoped to deleted_at, so a
-    # soft-deleted email must still produce a clean UserExists 400 here instead
-    # of slipping through to an IntegrityError (HTTP 500) on insert.
-    if User.get_user_by_email(email, tenant_id=tenant_id, include_deleted=True):
-        return error_response(
-            error='UserExists',
-            message='User already exists',
-            status_code=400
-        )
-
-    # Create user (tenant-scoped)
-    user = User()
-    user.tenant_id = tenant_id
-    user.email = email
-    user.set_password(password)
-    if name:
-        user.name = name
-
-    # Generate email verification token
-    email_verification_token = user.generate_email_verification_token()
-    user.save()
-
-    # Auto-assign default role (handled by RBAC module).
-    # seed_roles_for_tenant ensures the role exists and has all its permissions
-    # before we try to assign it — guards against tenants seeded before global
-    # permissions were created.
-    from modules.rbac.services import assign_role_to_user_by_email
-    from modules.rbac.role_seeder import seed_roles_for_tenant
-    default_role = os.getenv("DEFAULT_USER_ROLE", "Student")
-    seed_roles_for_tenant(tenant_id)
-    assign_result = assign_role_to_user_by_email(email, default_role, tenant_id=tenant_id)
-
-    if not assign_result['success']:
-        # Log warning but don't fail registration
-        print(f"Warning: Could not assign default role to {email}: {assign_result.get('error')}")
-
-    # Send verification email via notification dispatcher
-    from config.settings import get_email_verification_url
-    from modules.notifications.services import notification_dispatcher
-    from modules.notifications.enums import NotificationChannel
-
-    verify_url = get_email_verification_url(email_verification_token, email)
-    notification_dispatcher.dispatch(
-        user_id=user.id,
-        tenant_id=tenant_id,
-        notification_type="EMAIL_VERIFICATION",
-        channels=[NotificationChannel.EMAIL.value],
-        title="Verify your email",
-        body=None,
-        extra_data={"verify_url": verify_url, "email": email},
-    )
-
-    return success_response(
-        data={'email': email},
-        message=f'User {email} registered successfully! Please verify your email.',
-        status_code=201
-    )
+# Public self-registration was removed (2026-08-30). `POST /api/auth/register`
+# was unauthenticated and unrated, and resolved its tenant with use_default=True
+# — a request naming no school landed in DEFAULT_TENANT_SUBDOMAIN, which prod
+# sets to `default`. It created a real account, granted it DEFAULT_USER_ROLE
+# ("Student"), and emailed the verification link to the address the caller had
+# just typed, so a stranger verified themselves into a live school.
+#
+# There is no self-service signup in this product and never was: a school issues
+# credentials. Students arrive by bulk import or admission, staff through the
+# admin console, tenants through the panel — and under ADR-011 a household shares
+# the pupil's login, so there is not even a parent to sign up.
+#
+# The Expo app's Sign Up link and register screen are removed with it.
 
 
 # ==================== TENANT BRANDING (public) ====================
@@ -187,8 +105,6 @@ def tenant_branding():
 
 # ==================== LOGIN ====================
 
-# Lockout duration when max_login_attempts exceeded (tenant logins only)
-LOGIN_LOCKOUT_MINUTES = 15
 
 
 @auth_bp.route('/login', methods=['POST'])
@@ -261,15 +177,14 @@ def login():
             else:
                 # No god access: run the normal failed-login lockout. Skip it
                 # for the platform-admin email path (no tenant user_by_email).
-                if user_by_email and not getattr(user_by_email, 'is_platform_admin', False):
-                    from modules.platform.services import get_platform_setting
-                    max_attempts_str = get_platform_setting('max_login_attempts')
-                    max_attempts = int(max_attempts_str) if max_attempts_str and str(max_attempts_str).isdigit() else 5
-                    user_by_email.failed_login_count = (user_by_email.failed_login_count or 0) + 1
-                    if user_by_email.failed_login_count >= max_attempts:
-                        user_by_email.login_locked_until = utc_now() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
-                        user_by_email.failed_login_count = 0
-                    user_by_email.save()
+                if user_by_email:
+                    from modules.auth.services import (
+                        max_login_attempts,
+                        record_failed_login,
+                    )
+                    record_failed_login(
+                        user_by_email, max_attempts=max_login_attempts()
+                    )
                 return error_response(
                     error='InvalidCredentials',
                     message='Invalid email or password',
@@ -280,6 +195,19 @@ def login():
         # No tenant: search across all tenants (single app for all schools)
         matches = find_users_by_email_password(email, password)
         if len(matches) == 0:
+            # Count the guess. This branch is chosen by the *body* alone, so
+            # without this an attacker omits `tenant_id` and guesses forever
+            # against any account — the per-IP rate limit being the only thing
+            # left, which a rotating-IP attacker ignores. Every school this
+            # email belongs to counts it, the same way naming one school does.
+            from modules.auth.services import (
+                accounts_for_email,
+                max_login_attempts,
+                record_failed_login,
+            )
+            limit = max_login_attempts()
+            for account in accounts_for_email(email):
+                record_failed_login(account, max_attempts=limit)
             return error_response(
                 error='InvalidCredentials',
                 message='Invalid email or password',
@@ -389,7 +317,15 @@ def _finalize_login(user, tenant, is_god_login):
             if mins and str(mins).isdigit():
                 access_minutes = max(5, min(10080, int(mins)))
         except Exception:
-            pass
+            # Falling back to the default token lifetime is the right
+            # behaviour — a login must not fail because a setting could not be
+            # read. But it used to `pass`, so if this started failing every
+            # session would quietly ignore the configured timeout and nobody
+            # would know. Degrade, and say so.
+            logger.warning(
+                'Could not read session_timeout_minutes; using the default '
+                'token lifetime', exc_info=True,
+            )
 
     access_token = generate_access_token(user, access_minutes=access_minutes)
     session = create_session(user, request)

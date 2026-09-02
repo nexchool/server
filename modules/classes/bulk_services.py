@@ -188,11 +188,8 @@ def bulk_create_classes(payload: Dict[str, Any], tenant_id: str) -> Dict[str, An
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
 
-    try:
-        from modules.school_setup.services import recompute_setup_complete
-        recompute_setup_complete(tenant_id)
-    except Exception:
-        pass
+    from modules.school_setup.services import refresh_setup_status
+    refresh_setup_status(tenant_id)
 
     return {
         "success": True,
@@ -325,11 +322,8 @@ def bulk_assign_class_subjects(payload: Dict[str, Any], tenant_id: str) -> Dict[
         db.session.rollback()
         return {"success": False, "error": safe_error(e)}
 
-    try:
-        from modules.school_setup.services import recompute_setup_complete
-        recompute_setup_complete(tenant_id)
-    except Exception:
-        pass
+    from modules.school_setup.services import refresh_setup_status
+    refresh_setup_status(tenant_id)
 
     return {
         "success": True,

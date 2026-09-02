@@ -92,12 +92,25 @@ def list_invoices():
     status = request.args.get("status")
     academic_year = request.args.get("academic_year")
 
-    data = invoice_service.list_invoices(
+    result = invoice_service.list_invoices(
         student_id=student_id,
         status=status,
         academic_year=academic_year,
+        page=request.args.get("page"),
+        per_page=request.args.get("per_page"),
     )
-    return success_response(data={"invoices": data})
+    return success_response(
+        data={
+            "invoices": result["items"],
+            "total": result["total"],
+            "page": result["page"],
+            "per_page": result["per_page"],
+            "total_pages": result["total_pages"],
+            # Over every matching invoice, not the page — the screen shows
+            # this as an amount of money owed.
+            "summary": result["summary"],
+        }
+    )
 
 
 @fees_bp.route("/invoices/<invoice_id>", methods=["GET"])

@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 from sqlalchemy import case, func
+from sqlalchemy.orm import joinedload, selectinload
 
 from core.database import db
 from core.tenant import get_tenant_id
@@ -99,13 +100,18 @@ def get_finance_summary(
         query = query.filter(Student.class_id == class_id)
 
     row = query.first()
-    total_expected = float(row.total_expected or 0)
-    total_collected = float(row.total_collected or 0)
+    # Subtracted as Decimal. Both sums come out of SQL exact, and taking the
+    # difference in float reports 0.1999999999999318 where the school is owed
+    # 0.20. Converted to float once, for the JSON response.
+    expected_exact = Decimal(row.total_expected or 0)
+    collected_exact = Decimal(row.total_collected or 0)
+    total_expected = float(expected_exact)
+    total_collected = float(collected_exact)
     overdue_count = int(row.overdue_count or 0)
     result = {
         "total_expected": total_expected,
         "total_collected": total_collected,
-        "total_outstanding": total_expected - total_collected,
+        "total_outstanding": float(expected_exact - collected_exact),
         "overdue_count": overdue_count,
     }
     if include_recent_payments and include_recent_payments > 0:
@@ -261,6 +267,7 @@ def _build_student_fees_query(
                 Student.admission_number.ilike(f"%{search.strip()}%"),
             )
         )
+
     return query
 
 
@@ -299,16 +306,43 @@ def list_student_fees(
     if page and page_size:
         query = query.limit(page_size).offset((page - 1) * page_size)
 
+    # Everything the loop below touches, fetched with the page instead of per
+    # row. Without these it cost four lazy loads a row — `items`, `student`,
+    # `student.person`, `fee_structure` — so an unpaginated ledger for a
+    # 15,000-student tenant ran to tens of thousands of queries in one request.
+    #
+    # Applied here and not in `_build_student_fees_query`, because that builder
+    # is shared with `count_student_fees`, which reads no relationship at all —
+    # eager loading a COUNT is pure waste.
+    #
+    # `items` is a collection, so it gets its own SELECT (`selectinload`);
+    # joining it would multiply each fee row by its items. The rest are
+    # many-to-one and ride along.
+    query = query.options(
+        selectinload(StudentFee.items),
+        joinedload(StudentFee.student).joinedload(Student.person),
+        joinedload(StudentFee.student).joinedload(Student.person),
+        joinedload(StudentFee.student).joinedload(Student.user),
+        joinedload(StudentFee.fee_structure),
+    )
+
     fees = query.all()
     result = []
     for sf in fees:
         d = sf.to_dict()
         if include_items:
             d["items"] = [i.to_dict() for i in sf.items]
-        d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
+        # The name is the Person's. `students.user_id` is nullable (migration
+        # 094), so reading it off the login left every account-less child
+        # nameless on the fee ledger — the same defect debt 15 found in the
+        # teacher leave queue. The picture still comes from the account,
+        # because that is the only place one is stored today.
+        person = sf.student.person if sf.student else None
+        account = sf.student.user if sf.student else None
+        d["student_name"] = person.full_name if person else None
         d["student_profile_picture"] = (
-            profile_picture_public_url(sf.student.user.profile_picture_url)
-            if sf.student and sf.student.user
+            profile_picture_public_url(account.profile_picture_url)
+            if account and account.profile_picture_url
             else None
         )
         d["admission_number"] = sf.student.admission_number if sf.student else None
@@ -423,7 +457,7 @@ def get_student_fee(fee_id: str) -> Optional[Dict]:
     d = sf.to_dict()
     d["items"] = [i.to_dict() for i in sf.items]
     d["payments"] = [p.to_dict() for p in sf.payments]
-    d["student_name"] = sf.student.user.name if sf.student and sf.student.user else None
+    d["student_name"] = sf.student.display_name if sf.student else None
     d["student_profile_picture"] = (
         profile_picture_public_url(sf.student.user.profile_picture_url)
         if sf.student and sf.student.user
@@ -580,28 +614,45 @@ def unassign_fees_for_removed_classes(
         StudentFee.tenant_id == tenant_id,
     ).all()
 
-    removed = 0
-    for sf in student_fees:
-        has_payments = (
-            Payment.query.filter_by(
-                tenant_id=tenant_id,
-                student_fee_id=sf.id,
-                status=PaymentStatus.success.value,
-            ).count()
-            > 0
+    # Set operations rather than four statements per fee. A structure covering
+    # five hundred children was two thousand round trips inside one
+    # transaction, which on a destructive operation is not just slow: the
+    # longer it holds the rows, the likelier a statement timeout leaves the
+    # delete half done.
+    fee_ids = [sf.id for sf in student_fees]
+    if not fee_ids:
+        return {"success": True, "removed_count": 0}
+
+    # A fee with money received against it is never removed — deleting it
+    # would erase the record of that payment.
+    paid_fee_ids = {
+        row[0]
+        for row in db.session.query(Payment.student_fee_id)
+        .filter(
+            Payment.tenant_id == tenant_id,
+            Payment.student_fee_id.in_(fee_ids),
+            Payment.status == PaymentStatus.success.value,
         )
-        if has_payments:
-            continue
-        Payment.query.filter_by(
-            tenant_id=tenant_id, student_fee_id=sf.id
-        ).delete(synchronize_session=False)
-        StudentFeeItem.query.filter_by(
-            tenant_id=tenant_id, student_fee_id=sf.id
-        ).delete(synchronize_session=False)
-        StudentFee.query.filter_by(
-            tenant_id=tenant_id, id=sf.id
-        ).delete(synchronize_session=False)
-        removed += 1
+        .distinct()
+        .all()
+    }
+    removable_ids = [fid for fid in fee_ids if fid not in paid_fee_ids]
+    if not removable_ids:
+        return {"success": True, "removed_count": 0}
+
+    Payment.query.filter(
+        Payment.tenant_id == tenant_id,
+        Payment.student_fee_id.in_(removable_ids),
+    ).delete(synchronize_session=False)
+    StudentFeeItem.query.filter(
+        StudentFeeItem.tenant_id == tenant_id,
+        StudentFeeItem.student_fee_id.in_(removable_ids),
+    ).delete(synchronize_session=False)
+    StudentFee.query.filter(
+        StudentFee.tenant_id == tenant_id,
+        StudentFee.id.in_(removable_ids),
+    ).delete(synchronize_session=False)
+    removed = len(removable_ids)
 
     try:
         db.session.commit()

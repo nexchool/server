@@ -255,7 +255,7 @@ def test_list_allocations_no_filters(db_session, tenant, hostel, room, beds, stu
         check_in_at=utc_now(),
     )
 
-    rows = service.list_allocations(tenant_id=tenant.id)
+    rows = service.list_allocations(tenant_id=tenant.id)["items"]
     assert len(rows) == 2
 
 
@@ -283,7 +283,7 @@ def test_list_allocations_filter_by_student(
         check_in_at=utc_now(),
     )
 
-    rows = service.list_allocations(tenant_id=tenant.id, student_id=student.id)
+    rows = service.list_allocations(tenant_id=tenant.id, student_id=student.id)["items"]
     assert len(rows) == 1
     assert rows[0].id == a1.id
 
@@ -313,7 +313,7 @@ def test_list_allocations_filter_by_status_active(
     )
     service.checkout_allocation(a2.id)
 
-    active = service.list_allocations(tenant_id=tenant.id, status="active")
+    active = service.list_allocations(tenant_id=tenant.id, status="active")["items"]
     assert len(active) == 1
     assert active[0].id == a1.id
 
@@ -334,7 +334,7 @@ def test_list_allocations_filter_by_hostel(
         check_in_at=utc_now(),
     )
 
-    rows = service.list_allocations(tenant_id=tenant.id, hostel_id=hostel.id)
+    rows = service.list_allocations(tenant_id=tenant.id, hostel_id=hostel.id)["items"]
     assert len(rows) == 1
-    rows = service.list_allocations(tenant_id=tenant.id, hostel_id="other-hostel-id")
+    rows = service.list_allocations(tenant_id=tenant.id, hostel_id="other-hostel-id")["items"]
     assert rows == []

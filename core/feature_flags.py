@@ -83,6 +83,30 @@ OPTIONAL_FEATURES: List[str] = [
 # A key leaves this set once the module is deliberately rolled out.
 DEFAULT_OFF_FEATURES: set = {"examinations"}
 
+# Keys migration 043 seeded onto every tenant and that no longer mean anything.
+#
+# `update_tenant_feature_flags` merges rather than prunes — deliberately, since
+# that column doubles as a per-tenant settings bag and pruning would delete a
+# school's `login_variant` — so these are still stored on live tenants, saying
+# `true`, years after the modules they named were dropped.
+#
+# Harmless until a stored value starts to matter, and then not harmless at all:
+# `examinations` shipped in DEFAULT_OFF_FEATURES, where a missing key means off,
+# and a stored value beats a default — so every tenant seeded by 043 switched
+# the module on the day it deployed. Migration 120 deleted that one key.
+#
+# Reusing any of these as a new feature key inherits the same stale answer.
+# Pick a fresh key, or write a migration that deletes the stored one first.
+# `tests/test_retired_feature_keys.py` fails if one comes back.
+RETIRED_FEATURE_KEYS: set = {
+    "library",
+    "inventory",
+    "reports",
+    "finance",
+    "holiday_management",
+    "schedule_management",
+}
+
 ALL_FEATURE_KEYS: List[str] = CORE_FEATURES + OPTIONAL_FEATURES
 
 # Two keys for one capability, from before the two halves agreed on a name:

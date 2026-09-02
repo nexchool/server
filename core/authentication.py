@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Optional
 
-from flask import g, request
+from flask import g, has_request_context, request
 from core.school_time import utc_now
 
 
@@ -154,3 +154,54 @@ def authenticate_request() -> AuthenticatedRequest:
     session.save()
 
     return AuthenticatedRequest(user=user, new_access_token=new_access_token)
+
+
+# ---------------------------------------------------------------------------
+# Mandatory password change
+# ---------------------------------------------------------------------------
+
+#: What an account locked into a password change may still reach. Everything
+#: else is refused until the password is set.
+#:
+#: The list is exactly the way out and the client's ability to render it:
+#: change the password, read your own profile and the feature list the app
+#: boots with, or leave. `tenant-branding` and `login` are unauthenticated and
+#: never reach this check at all.
+PASSWORD_RESET_EXEMPT_PATHS = frozenset({
+    "/api/auth/password/force-reset",
+    "/api/auth/logout",
+    "/api/auth/profile",
+    "/api/auth/enabled-features",
+})
+
+#: Distinct on purpose: a client has to tell "change your password" apart from
+#: "you lack a permission", and both are 403.
+PASSWORD_RESET_ERROR = "PasswordResetRequired"
+PASSWORD_RESET_MESSAGE = (
+    "Set a new password before continuing. The one you signed in with was "
+    "issued by your school and must be changed."
+)
+
+
+def password_change_is_outstanding(user, path: Optional[str] = None) -> bool:
+    """Is this caller locked into a password change on this request?
+
+    `force_password_reset` is set by seven provisioning paths — teacher and
+    student creation, both bulk imports, sub-admin creation, and the
+    platform-admin resets — and was read only by the login and profile
+    payloads. That made it advice to the client: the account still received a
+    fully privileged token and could ignore the redirect, keeping a temporary
+    password an administrator chose. For a bulk-imported account that password
+    is derived from the person's own name.
+
+    `path` defaults to the current request's. Pass it explicitly from a
+    transport that has no meaningful path of its own — GraphQL serves every
+    operation from one URL, so it exempts nothing: password operations are
+    REST (backend-architecture.md lists them as infrastructure), which leaves
+    no legitimate GraphQL call to make while locked out.
+    """
+    if user is None or not getattr(user, "force_password_reset", False):
+        return False
+    if path is None:
+        path = request.path if has_request_context() else None
+    return path not in PASSWORD_RESET_EXEMPT_PATHS
