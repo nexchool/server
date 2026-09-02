@@ -1116,11 +1116,8 @@ def delete_class(class_id: str) -> Dict:
         return {'success': False, 'error': safe_error(e, "Failed to delete class")}
 
     if tenant_id:
-        try:
-            from modules.school_setup.services import recompute_setup_complete
-            recompute_setup_complete(tenant_id)
-        except Exception:
-            pass
+        from modules.school_setup.services import refresh_setup_status
+        refresh_setup_status(tenant_id)
     return {'success': True, 'message': 'Class deleted'}
 
 

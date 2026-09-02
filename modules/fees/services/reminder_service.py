@@ -3,6 +3,7 @@ Reminder Service
 
 Sends invoice reminders via push notification, email, and in-app notification.
 """
+import logging
 from shared.safe_error import safe_error
 
 from typing import Any, Dict, Optional
@@ -13,6 +14,8 @@ from core.branch_scope import assert_student_allowed
 from modules.fees.models import FeeInvoice
 from modules.notifications.models import Notification
 from modules.students.models import Student
+
+logger = logging.getLogger(__name__)
 
 
 def send_invoice_reminder(invoice_id: str) -> Dict[str, Any]:
@@ -79,13 +82,31 @@ def send_invoice_reminder(invoice_id: str) -> Dict[str, Any]:
         db.session.flush()
         channels_sent.append("in_app")
     except Exception:
-        pass
+        # Logged, not swallowed. This used to `pass`, which left `channels_sent`
+        # empty, let the commit below succeed with nothing to write, and
+        # returned success — so the office was told the parent had been
+        # reminded when nobody had been.
+        db.session.rollback()
+        logger.exception(
+            "Failed to queue fee reminder for invoice %s (student %s)",
+            invoice_id,
+            invoice.student_id,
+        )
 
     # 2. Push notification (if FCM/Expo configured - stub for future)
     # channels_sent.append("push")
 
     # 3. Email (if mailer configured - stub for future)
     # channels_sent.append("email")
+
+    if not channels_sent:
+        # Nothing reached the parent, so the reminder did not happen. Saying
+        # otherwise is the failure this function used to have.
+        return {
+            "success": False,
+            "channels_sent": [],
+            "error": "Could not send the reminder. Please try again.",
+        }
 
     try:
         db.session.commit()

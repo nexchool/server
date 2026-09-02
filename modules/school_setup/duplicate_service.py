@@ -332,9 +332,6 @@ def duplicate_structure(tenant_id: str, payload: Dict[str, Any]) -> Dict[str, An
         }
 
     if result.get("success"):
-        try:
-            from .services import recompute_setup_complete
-            recompute_setup_complete(tenant_id)
-        except Exception:
-            pass
+        from .services import refresh_setup_status
+        refresh_setup_status(tenant_id)
     return result

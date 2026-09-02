@@ -317,7 +317,15 @@ def _finalize_login(user, tenant, is_god_login):
             if mins and str(mins).isdigit():
                 access_minutes = max(5, min(10080, int(mins)))
         except Exception:
-            pass
+            # Falling back to the default token lifetime is the right
+            # behaviour — a login must not fail because a setting could not be
+            # read. But it used to `pass`, so if this started failing every
+            # session would quietly ignore the configured timeout and nobody
+            # would know. Degrade, and say so.
+            logger.warning(
+                'Could not read session_timeout_minutes; using the default '
+                'token lifetime', exc_info=True,
+            )
 
     access_token = generate_access_token(user, access_minutes=access_minutes)
     session = create_session(user, request)
