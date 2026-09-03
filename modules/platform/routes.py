@@ -13,6 +13,7 @@ from modules.platform import platform_bp
 from core.database import db
 from core.decorators import auth_required, platform_admin_required
 from core.extensions import limiter
+from core.theme import derive_palette, validate_seeds
 from shared.helpers import success_response, error_response, not_found_response, validation_error_response
 from modules.platform import services
 
@@ -164,6 +165,60 @@ def update_tenant_features(tenant_id):
     return success_response(
         data={"tenant_id": result["tenant_id"], "feature_flags": result["feature_flags"]},
         message="Feature flags updated",
+    )
+
+
+@platform_bp.route("/theme/preview", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def preview_theme():
+    """
+    POST /platform/theme/preview
+    Body: { seeds: { primary, secondary?, tertiary? } }
+
+    Derives a palette without storing it, so the panel can show what a colour
+    will actually do before anyone commits a school to it. Deliberately the
+    same `derive_palette` the tenant endpoint uses — a preview computed
+    separately is a preview that can lie.
+    """
+    data = request.get_json() or {}
+    seeds, errors = validate_seeds(data.get("seeds"))
+    if errors:
+        return validation_error_response(errors)
+    return success_response(data={"seeds": seeds, "colors": derive_palette(seeds)})
+
+
+@platform_bp.route("/tenants/<tenant_id>/theme", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def update_tenant_theme(tenant_id):
+    """
+    PATCH /platform/tenants/<id>/theme
+    Body: { seeds: { primary, secondary?, tertiary? } } — hex colours.
+          { seeds: null } clears the theme and returns the school to the
+          palette the app ships with.
+
+    Only `primary` is required; the others fall back to it, so a school with
+    one brand colour is not a form that refuses to submit.
+    """
+    data = request.get_json() or {}
+    if "seeds" not in data:
+        return validation_error_response({"seeds": "Required"})
+
+    result = services.update_tenant_theme(
+        tenant_id=tenant_id,
+        platform_admin_id=g.current_user.id,
+        seeds=data["seeds"],
+    )
+    if not result["success"]:
+        if result["error"] == "Tenant not found":
+            return not_found_response("Tenant")
+        return validation_error_response(result.get("fields") or {"seeds": result["error"]})
+    return success_response(
+        data={"tenant_id": result["tenant_id"], "theme": result["theme"]},
+        message="Theme updated",
     )
 
 

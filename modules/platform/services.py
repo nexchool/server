@@ -40,6 +40,7 @@ from modules.streams.services import seed_default_streams
 from modules.students.models import Student
 from modules.teachers.models import Teacher
 from modules.platform.audit import log_platform_action
+from core.theme import DEFAULT_SEEDS, resolve_theme, validate_seeds
 from core.school_time import is_valid_timezone, utc_now
 from core.school_time import school_today
 
@@ -89,6 +90,11 @@ def _serialize_tenant(tenant: Tenant) -> Dict[str, Any]:
         "tagline": tenant.tagline,
         "board_affiliation": tenant.board_affiliation,
         "status": tenant.status,
+        # The brand colours the panel edits, and null for a school that has
+        # never been themed — the panel shows core.theme.DEFAULT_SEEDS in that
+        # state so the operator always sees real hex codes to start from.
+        "theme_seeds": tenant.theme_seeds or None,
+        "theme_default_seeds": DEFAULT_SEEDS,
         "price_per_student_per_year": (
             float(tenant.price_per_student_per_year)
             if tenant.price_per_student_per_year is not None else None
@@ -580,6 +586,46 @@ def update_tenant_feature_flags(
         "tenant_id": tenant_id,
         "feature_flags": get_tenant_feature_flags(tenant_id),
     }
+
+
+def update_tenant_theme(
+    tenant_id: str,
+    platform_admin_id: str,
+    seeds: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Set, or clear, the brand colours the tenant's mobile app is drawn in.
+
+    `seeds` of None clears the theme rather than storing the defaults. The two
+    are not the same thing: a cleared tenant falls back to the palette compiled
+    into the app, so it is never re-coloured by a later change to the
+    derivation, while a tenant storing the default values would be.
+
+    Only the seeds are persisted. The full palette is derived on read, so
+    improving `core.theme` improves every themed school at once instead of
+    leaving stale colours in the database.
+    """
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+
+    if seeds is None:
+        tenant.theme_seeds = None
+        validated: Optional[Dict[str, str]] = None
+    else:
+        validated, errors = validate_seeds(seeds)
+        if errors:
+            return {"success": False, "error": "Invalid colours", "fields": errors}
+        tenant.theme_seeds = validated
+
+    tenant.updated_at = utc_now()
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="tenant.theme.updated",
+        tenant_id=tenant_id,
+        metadata={"seeds": validated},
+    )
+    return {"success": True, "tenant_id": tenant_id, "theme": resolve_theme(tenant)}
 
 
 def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> Dict[str, Any]:

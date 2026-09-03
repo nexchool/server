@@ -104,6 +104,18 @@ class Tenant(db.Model):
     discount_end_date = db.Column(db.Date, nullable=True)
     feature_flags = db.Column(db.JSON, nullable=False, default=dict)
 
+    # The school's brand colours, as {primary, secondary?, tertiary?} hex
+    # values. Every colour the mobile app draws is derived from these by
+    # core/theme.py — an operator sets two or three, not the thirty-two
+    # semantic tokens the app actually uses.
+    #
+    # Null means "never themed", and is not the same as storing the defaults:
+    # the app then falls back to the palette compiled into it, so a school that
+    # has not asked for branding is never re-coloured by a change to the
+    # derivation. The panel shows core.theme.DEFAULT_SEEDS as the starting
+    # point in that state without persisting them.
+    theme_seeds = db.Column(db.JSON, nullable=True)
+
     # The clocks the school runs on, as an IANA zone name. Everything the
     # school would call "today" — is attendance being taken for a day that has
     # not happened, which lesson is on now, is this fee overdue — is answered

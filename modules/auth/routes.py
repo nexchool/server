@@ -41,6 +41,7 @@ from core.database import db
 from core.extensions import limiter
 from shared.helpers import success_response, error_response
 from core.school_time import utc_now
+from core.theme import resolve_theme
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,12 @@ def tenant_branding():
         'logo_url': tenant.logo_url,
         'tagline': tenant.tagline,
         'login_variant': login_variant,
+        # The school's colours, resolved to the token set the mobile app draws
+        # with. Null for a school that has never been themed, which the app
+        # reads as "use the palette you shipped with" — see core/theme.py.
+        # Public on purpose: the sign-in screen is branded before anyone has
+        # signed in, and none of this is secret.
+        'theme': resolve_theme(tenant),
     })
 
 
