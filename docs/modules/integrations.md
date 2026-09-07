@@ -20,13 +20,15 @@ The rule the whole module exists to enforce:
     Business modules request a capability.
     They do not know which external provider implements it.
 
-So a future OTP feature says
+So a feature that wants to send a message says
 
 ```python
-send_sms(tenant_id=..., destination=..., message=..., purpose="login_otp")
+send_sms(tenant_id=..., destination=..., body=..., purpose="fee_reminder")
 ```
 
-and never
+— or `send_whatsapp`, or `messaging.send_message(channel=...)` directly, the
+way `modules/auth/otp.py` does once it has read the school's chosen
+channel — and never
 
 ```python
 some_vendor_client.messages.create(...)
@@ -357,43 +359,58 @@ change.
 
 ---
 
-# No vendor is registered
+# No vendor can be enabled
 
-The only provider in this build is a test double, and the resolver refuses to
-hand it out outside testing or debug — an operator who configures a school
-onto it by mistake gets a clean refusal rather than messages that vanish.
+Two real providers are registered — `msg91` (SMS) and `meta_whatsapp`
+(WhatsApp) — alongside the `fake_sms` / `fake_whatsapp` test doubles the
+resolver refuses to hand out outside testing or debug. Registering a client
+is not the same as being able to use it: both real providers declare
+`required_credentials`, `capability_health` reports either one not-ready
+until its credential is actually set on this server (`MSG91_AUTH_KEY`,
+`META_WHATSAPP_ACCESS_TOKEN`), and `set_integration_status` refuses to enable
+either one before that — an operator who configures a school onto either
+vendor today gets a clean refusal, the same as if it were unregistered.
 
-Choosing an SMS company is a commercial decision nobody has taken. Phase 2
-shipped the billing catalog empty for the same reason, and a provider that
-appeared here without a decision being made would be that decision taken by
-accident.
+Standing up the commercial account behind either client — MSG91's DLT entity
+registration, or Meta's business verification and an approved authentication
+template — is a decision nobody has finished taking. Phase 2 shipped the
+billing catalog empty for the same reason: nothing seeds it, so a school is
+signed up to a vendor commercially only when an operator does it on purpose.
+See `../operations/otp-vendor-registration.md` for what remains before
+either one can actually send.
 
 ---
 
-# Future: how OTP will connect to this
+# How OTP connects to this
 
-**Not built.** Described so the next phase does not invent a second mechanism.
+**Built**, since Phase 4, and Phase 9 changed one line of it — the channel is
+no longer fixed:
 
 ```
 Mobile OTP strategy
         ↓
-OTP service                    ← generates and verifies the code
+OTP service                                    ← generates and verifies the code
         ↓
-send_sms(capability = "sms")   ← this module's surface
+messaging.send_message(channel = otp_delivery_channel(tenant))   ← this module's surface
         ↓
-resolve_provider(tenant, sms)
+resolve_provider(tenant, channel)
+        ↓
+template_for(configuration, purpose)           ← Phase 9: no channel sends free text
         ↓
 the school's provider client
         ↓
-normalized SmsSendResult
+normalized MessageSendResult
         ↓
-ServiceUsageRecord             ← Phase 2's ledger
+ServiceUsageRecord                             ← Phase 2's ledger
         ↓
 a billing component on the school's estimate
 ```
 
-What Phase 4 has to add: the OTP itself — generation, storage, expiry,
-verification, attempt limits and anti-abuse — plus an authentication strategy
-and a tenant policy method. What it must **not** add: an HTTP call, a vendor
-name, a retry policy or a price. Those all live here, and `purpose` is the
-only thing OTP has to pass down.
+`modules/auth/otp.py::_deliver` calls `messaging.send_message` directly
+rather than through the `send_sms` / `send_whatsapp` named surfaces, because
+it does not know which of the two it wants until it reads the school's
+`otp_delivery_channel` — see `../modules/mobile-otp-authentication.md`'s
+*Channel choice* section and `../architecture/adr/ADR-021-one-otp-channel-no-fallback.md`.
+No HTTP call, no vendor name, no retry policy and no price appears in the
+authentication module — asserted by a test that parses every import under
+`modules/auth/` — and `purpose` remains the only thing OTP passes down.

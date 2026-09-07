@@ -12,7 +12,8 @@ those two facts.
 
 ```
 identifier   mobile number, canonical E.164
-proof        a six-digit code, sent by SMS, valid for five minutes
+proof        a six-digit code, sent on the school's chosen channel
+             (SMS or WhatsApp — see Channel choice below), valid for five minutes
 tenant       required, always
 default      OFF for every school, existing and new
 ```
@@ -312,11 +313,16 @@ tenant with one gets whatever was enabled, which does not include this.
 Enabling it now has a write endpoint, added because this is the first method a
 school would plausibly want switched on and off and there was no way to do it
 but a Python shell. Enabling a method that cannot work is **refused**: OTP
-needs an SMS provider, and a school switched on without one would present a
-sign-in option whose codes silently never arrive.
+needs a working provider for whichever channel this school has chosen — SMS
+by default, or WhatsApp for a school that switched to it — and a school
+switched on without one would present a sign-in option whose codes silently
+never arrive.
 
-Since no real SMS vendor is registered in this build, that refusal is what
-every attempt to enable it in production currently gets — correctly.
+Both real providers (`msg91`, `meta_whatsapp`) are registered but neither has
+its credential set on this server, so that refusal is what every attempt to
+enable it in production currently gets — correctly, whichever channel a
+school picks. See `../operations/otp-vendor-registration.md` for what has to
+be true before either one can be enabled.
 
 ---
 
@@ -344,27 +350,35 @@ secret — the full number, or any credential.
 
 ---
 
-# Before production SMS can be switched on
+# Before production OTP delivery can be switched on
 
 > Since Phase 5, a mobile identifier is also what `mobile_pin` signs in with —
 > so `issue_mobile_identifier` asks whether *either* mobile method is enabled
 > rather than only this one. See `mobile-pin-authentication.md`.
 
-**No real SMS provider exists in this build**, and none was added. What a
-future phase has to settle before a school can actually receive a code:
+Both real providers are registered — `msg91` (Phase 8) and `meta_whatsapp`
+(Phase 9) — and neither can be enabled today: `capability_health` reports
+both without their credential, and `set_integration_status` refuses to
+switch either on until it is set. What stands between here and a school
+actually receiving a code is not code, it is vendor paperwork — DLT entity
+registration and a matching content template for MSG91, business
+verification and an approved authentication template for Meta WhatsApp — and
+that checklist now lives in one place, not duplicated here:
+**`../operations/otp-vendor-registration.md`**.
 
-- **Choose a vendor** and register a provider client (Phase 3's integration
-  layer is where it goes; nothing in authentication changes).
-- **India's DLT regime.** A commercial SMS in India requires the sender to be
-  registered on a telecom operator's DLT platform, with a registered header
-  (sender id) and a pre-approved template. The message this phase sends is the
-  text that would be registered; a template mismatch is rejected by the
-  operator, not by us.
-- **Sender id** provisioning, which is per-organisation and takes days.
-- **Per-tenant credentials**, if schools bring their own vendor accounts —
-  today a credential is NexSchool's own, named by an environment variable.
-- **Delivery receipts**, if `delivered` is ever to mean anything: that needs an
-  inbound webhook, which does not exist.
+Two things that checklist does not cover, because they are not vendor
+paperwork:
 
-None of these are assumptions in the code. The architecture is vendor-neutral
-and nothing above changes when a vendor is chosen.
+- **Per-tenant credentials**, if a school ever brings its own vendor account
+  instead of using NexSchool's. Today a credential is NexSchool's own, named
+  by one environment variable per channel (`MSG91_AUTH_KEY`,
+  `META_WHATSAPP_ACCESS_TOKEN`) and shared by every school sending on that
+  channel — `credentials.py`'s reference scheme resolves a bare environment
+  variable and does not vary by tenant.
+- **Delivery receipts**, if `delivered` is ever to mean anything beyond
+  `accepted`: that needs an inbound webhook from the provider, and none
+  exists for either channel.
+
+Neither is an assumption baked into the code. The architecture stays
+vendor-neutral, and adding per-tenant credentials or a receipt webhook later
+changes nothing above this line.
