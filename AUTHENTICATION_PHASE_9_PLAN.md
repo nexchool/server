@@ -2364,6 +2364,56 @@ EOF
 
 ---
 
+## Task 13b: The panel must offer every method, not only the configured ones
+
+**Found by Task 13.** `ensure_default_policy` seeds one rule per subject kind, all
+`email_password`. A school therefore has **no row at all** for
+`admission_id_password`, `mobile_otp` or `mobile_pin` — and "absence means denied"
+is the policy's deliberate semantic, not an oversight. The card renders a switch per
+existing rule, so those three methods do not appear and cannot be switched on. The
+task that exists to unblock testing them does not.
+
+Nothing exposes the strategy registry either: `routes.py` imports it only to validate
+a submitted key.
+
+The design this phase is built on says authentication methods must not be hardcoded
+into the UI — the panel should ask the build what exists. The precedent is already
+here: `GET /platform/integration-capabilities` reports what the *build* can do, while
+`GET /platform/tenants/<id>/integrations` reports what a *school* has configured. Auth
+methods want the same split.
+
+**Files:** `server/modules/auth/strategies/registry.py` (a describe helper),
+`server/modules/platform/routes.py` (the route), `panel/hooks/useApi.ts`,
+`panel/types/index.ts`, and the login-access card.
+
+**Interfaces:**
+- `GET /api/platform/auth-methods` → `{methods: [{key, subject_kinds, is_paid, requires_channel}]}`
+- `useAuthMethods()` in the panel
+
+- [ ] **Step 1: Failing tests, server side.** The route lists every registered method,
+  including ones no school has a rule for. It reports `is_paid` truthfully — the panel
+  needs it to know which methods need a working channel. It requires a platform admin.
+
+- [ ] **Step 2: Add the describe helper to the strategy registry**, reading the
+  strategies' own declared attributes rather than a list maintained beside them. A
+  method added later must appear here by being registered, not by somebody remembering.
+
+- [ ] **Step 3: Add the route**, mirroring `list_integration_capabilities` — same
+  decorators, same "this is a property of the deployed build, not of anybody's
+  configuration" framing.
+
+- [ ] **Step 4: Failing test, panel side.** The card shows a switch for a method the
+  school has no rule for, in the off position, and switching it on calls the mutation.
+
+- [ ] **Step 5: Merge catalog with rules in the card.** Every method the build has,
+  for every subject kind it applies to, with its state read from the rule when one
+  exists and defaulting to off when none does. Keep the existing labels; a key with no
+  label falls back to a readable form rather than disappearing.
+
+- [ ] **Step 6: Commit.**
+
+---
+
 ## Task 14: The tenant Integrations section
 
 **Files:**
