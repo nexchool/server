@@ -5,7 +5,7 @@ a vendor's JSON, its status strings or its exception types — that is what lets
 NexSchool change provider without touching a feature.
 
 The care in this file is mostly about **not claiming more than the provider
-gave us**. See `SmsSendResult.status`.
+gave us**. See `MessageSendResult.status`.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ SEND_STATUSES = (STATUS_ACCEPTED, STATUS_SENT, STATUS_DELIVERED, STATUS_FAILED)
 
 
 @dataclass
-class SmsSendResult:
-    """The outcome of asking a provider to send one message.
+class MessageSendResult:
+    """The outcome of asking a provider to send one message, on any channel.
 
     `status` is the honest one. A provider that only acknowledges receipt gets
     `accepted`, and nothing in this codebase may upgrade that to `delivered`

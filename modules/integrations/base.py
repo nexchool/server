@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from .capabilities import CAPABILITY_SMS
-from .results import ProviderHealth, SmsSendResult
+from .results import ProviderHealth, MessageSendResult
 
 
 class ProviderClient(ABC):
@@ -81,7 +81,7 @@ class SmsProvider(ProviderClient):
         configuration: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,
-    ) -> SmsSendResult:
+    ) -> MessageSendResult:
         """Ask the provider to send one message.
 
         Returns a result rather than raising, including on failure: "the

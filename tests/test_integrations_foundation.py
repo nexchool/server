@@ -64,7 +64,7 @@ from modules.integrations.registry import (
     registry,
 )
 from modules.integrations.resolver import resolve_provider
-from modules.integrations.results import STATUS_ACCEPTED, SmsSendResult
+from modules.integrations.results import STATUS_ACCEPTED, MessageSendResult
 from modules.integrations.services import (
     IntegrationConfigurationError,
     configure_integration,

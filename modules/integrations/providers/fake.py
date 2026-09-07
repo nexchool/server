@@ -17,7 +17,7 @@ from typing import Optional
 
 from .. import errors
 from ..base import SmsProvider
-from ..results import STATUS_ACCEPTED, ProviderHealth, SmsSendResult
+from ..results import STATUS_ACCEPTED, ProviderHealth, MessageSendResult
 
 #: Put in a school's `configuration` to choose what this provider does. A real
 #: provider has no such knob, which is the point — it is visible in the row.
@@ -68,12 +68,12 @@ class FakeSmsProvider(SmsProvider):
         configuration: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,
-    ) -> SmsSendResult:
+    ) -> MessageSendResult:
         behaviour = (configuration or {}).get(BEHAVIOUR_KEY, BEHAVIOUR_SUCCESS)
 
         if behaviour in _FAILURES:
             code, detail = _FAILURES[behaviour]
-            return SmsSendResult(
+            return MessageSendResult(
                 success=False,
                 error_code=code,
                 error_message=detail,
@@ -86,7 +86,7 @@ class FakeSmsProvider(SmsProvider):
         # the idempotency key when there is one, so a test can prove that the
         # same key produces the same reference.
         reference = idempotency_key or operation_id or "fake-message"
-        return SmsSendResult(
+        return MessageSendResult(
             success=True,
             status=STATUS_ACCEPTED,
             provider_message_id=f"fake-{reference}",

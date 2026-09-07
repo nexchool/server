@@ -30,7 +30,7 @@ from .capabilities import CAPABILITY_SMS
 from .errors import IntegrationError
 from .operations import new_operation_id, redact_destination
 from .resolver import resolve_provider
-from .results import SmsSendResult
+from .results import MessageSendResult
 from .usage_recorder import record_provider_usage
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ def send_sms(
     message: str,
     purpose: str,
     idempotency_key: Optional[str] = None,
-) -> SmsSendResult:
+) -> MessageSendResult:
     """Ask this school's SMS provider to send one message.
 
     `purpose` is what the message is for — `login_otp`, `fee_reminder`. It
@@ -71,7 +71,7 @@ def send_sms(
             purpose,
             operation_id,
         )
-        return SmsSendResult(
+        return MessageSendResult(
             success=False,
             error_code=exc.code,
             error_message=exc.message,
@@ -96,7 +96,7 @@ def send_sms(
             tenant_id,
             operation_id,
         )
-        return SmsSendResult(
+        return MessageSendResult(
             success=False,
             error_code="unknown_provider_error",
             error_message="The provider could not be reached.",

@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from .results import SmsSendResult
+from .results import MessageSendResult
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def record_provider_usage(
     tenant_id: str,
     capability: str,
     provider_key: str,
-    result: SmsSendResult,
+    result: MessageSendResult,
     purpose: str,
 ) -> Optional[object]:
     """Record one billable provider operation in the usage ledger.
