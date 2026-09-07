@@ -25,6 +25,63 @@
 - **Migration head is `133_an_auth_event_says_who_did_it`.** Only Task 5 adds a migration; its `down_revision` is that.
 - **Panel queries** follow `.claude/rules/query-conventions.md`. Platform endpoints are *not* tenant-scoped in the query-key sense (a platform admin is not bound to one tenant), so plain `useQuery` is correct there — but the tenant id is still part of the key because the data is per-school.
 
+### Test conventions — read before writing any test
+
+The test snippets in the tasks below are written for clarity and **name
+fixtures loosely**. The repository's real conventions are these, and they
+govern. Where a snippet says `app`, `platform_admin_client`,
+`tenant_admin_client`, `student_with_mobile` or `sms_service_configured`,
+translate it as below rather than creating a parallel set of fixtures.
+
+**Fixtures that exist in `tests/conftest.py`:** `flask_app`, `db_session`,
+`tenant`, `student`, `student2`, `throttling` (opt-in; the suite is otherwise
+un-throttled), plus hostel-domain ones this phase does not use. **There is no
+`app` fixture — it is `flask_app`.**
+
+**A test client** is declared per module, as `test_integrations_routes.py`
+does:
+
+```python
+@pytest.fixture
+def client(flask_app):
+    return flask_app.test_client()
+```
+
+**Authenticating a request** uses header helpers, not client fixtures. Copy
+`_platform_admin` and `_school_user` from `tests/test_integrations_routes.py`
+(lines 36–55) into any new route-test module — that duplication is the
+established pattern here, and every platform-route test module has its own
+pair. So `platform_admin_client.post(url, json=…)` means
+`client.post(url, json=…, headers=_platform_admin(db_session, tenant))`, and
+`tenant_admin_client` means the same with `_school_user(db_session, tenant)`.
+
+**Shared account builders** live in `tests/auth/_characterization.py`:
+`make_tenant`, `make_user`, `make_account`, `make_platform_admin`,
+`grant_permissions`, `login`, `sessions_for`, `live_sessions_for`,
+`decode_access_token`.
+
+**For anything OTP,** do not invent setup. `tests/auth/test_mobile_otp.py`
+already has exactly what the tasks below need, and new OTP tests reuse it:
+
+- `_school(db_session, *, otp_enabled=True, sms_working=True)` — a tenant with
+  the policy and the fake SMS integration already arranged. This is what the
+  plan's `enabled_fake_sms` and `otp_enabled_for_students` fixtures were
+  reaching for; extend it with a `whatsapp_working=False` keyword rather than
+  adding a second builder.
+- `_member(db_session, tenant, *, mobile=None, …)` — an account with a mobile
+  identifier issued. This is `student_with_mobile`.
+- `_issue(tenant, mobile, **kwargs)` and `_code_for(challenge_id)` — request a
+  code and read it back.
+- `_reachable_redis` is an **autouse** fixture in that module that skips when
+  Redis is not up, because the OTP limiter needs it. Any new module that
+  requests an OTP needs the same guard, or it will fail confusingly on a
+  machine with no Redis.
+
+**`sms_service_configured`** does not exist and is not a fixture: it means the
+billing catalog has an `sms` service, arranged with the helpers in
+`tests/test_platform_service_billing.py`. Read that file before writing the
+usage assertion in Task 10.
+
 ---
 
 ## File Structure
@@ -1341,21 +1398,14 @@ def clear() -> None:
 
 - [ ] **Step 4: Record from the fakes, and add the WhatsApp double**
 
-In `providers/fake.py`, in `FakeSmsProvider.send`, before returning the success result:
+**The recording happens in `messaging.py`, not in the providers.** A provider's
+`send` receives no tenant id and no purpose — only a destination, a body or
+template, and the school's configuration — so recording from inside a fake
+would mean threading two parameters through both provider signatures for the
+benefit of the test doubles alone. `messaging.py` already has both values in
+hand, and it is already the one place that resolves, redacts and records.
 
-```python
-        from ..outbox import record
-
-        record(
-            tenant_id=(configuration or {}).get("tenant_id", ""),
-            channel=self.capability,
-            destination=destination,
-            body=body,
-            purpose=(configuration or {}).get("purpose", ""),
-        )
-```
-
-Since `configuration` does not carry the tenant, pass what is available: record with `tenant_id=""` and let `messaging.py` fill it — simpler, do the recording in `messaging.py` instead, guarded on `resolved.client.is_test_double`:
+In `messaging.py`, after the usage-recording block:
 
 ```python
     if resolved.client.is_test_double and result.success:
