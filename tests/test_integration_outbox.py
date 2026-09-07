@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 import uuid
 
 import pytest
@@ -9,6 +11,32 @@ import pytest
 from modules.auth.services import generate_access_token
 from modules.integrations import outbox
 from tests.auth._characterization import grant_permissions, make_tenant, make_user
+
+#: A real, independently-running Redis reachable from the host test process
+#: (a Homebrew instance on the default port — separate from the docker
+#: compose service `.env` points at, which resolves only inside the
+#: container network). Good enough to prove the property that matters here:
+#: the outbox's source of truth is external to any one process.
+_HOST_REDIS_URL = "redis://localhost:6379/0"
+
+
+def _load_independent_outbox_module(alias: str):
+    """A second, wholly separate module object for `modules.integrations.outbox`.
+
+    `importlib.reload` re-executes a module in place and hands back the same
+    object — useless for proving cross-process visibility, since "the same
+    object" is exactly what two gunicorn workers never share. Loading the
+    same file under a second name in `sys.modules` gives it its own globals
+    (its own `_messages` deque, its own `threading.Lock`), which is the part
+    of "a separate worker process" that actually matters for this test: two
+    independent pieces of process-local state that must agree only because
+    something outside both of them (Redis) holds the real data.
+    """
+    spec = importlib.util.spec_from_file_location(alias, outbox.__file__)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[alias] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -109,3 +137,106 @@ def test_the_endpoint_needs_a_platform_admin(flask_app, db_session, client):
     headers = _school_user(db_session, tenant)
     response = client.get("/api/platform/integrations/outbox", headers=headers)
     assert response.status_code in (401, 403)
+
+
+def test_a_message_recorded_by_one_worker_is_read_by_another(flask_app, monkeypatch):
+    """The bug this module exists to fix: gunicorn runs multiple worker
+    processes, a send lands in whichever one handled the request, and a read
+    is served by whichever one the load balancer picks next. Measured against
+    the real deployment: 2 of 12 outbox reads after one OTP send returned the
+    message, 10 returned nothing.
+
+    A bare `deque` behind a `threading.Lock` cannot pass this test no matter
+    how the test is written, because two worker processes never share one
+    Python object. Two independent module namespaces stand in for two
+    workers; both must resolve to the same store for this to pass.
+    """
+    from core import cache as cache_module
+
+    monkeypatch.setitem(flask_app.config, "REDIS_URL", _HOST_REDIS_URL)
+    monkeypatch.setattr(cache_module, "_pool", None)
+    monkeypatch.setitem(sys.modules, "outbox_worker_a", None)
+    monkeypatch.setitem(sys.modules, "outbox_worker_b", None)
+
+    with flask_app.app_context():
+        worker_a = _load_independent_outbox_module("outbox_worker_a")
+        worker_b = _load_independent_outbox_module("outbox_worker_b")
+        assert worker_a is not worker_b
+        assert worker_a._messages is not worker_b._messages
+
+        worker_a.clear()
+        worker_a.record(
+            tenant_id="t", channel="sms", destination="+919876543210",
+            body="817263 is your NexSchool sign-in code.", purpose="authentication_otp",
+        )
+
+        messages = worker_b.recent()
+
+    assert messages, "a message recorded by one worker must be readable by another"
+    assert messages[0]["body"] == "817263 is your NexSchool sign-in code."
+
+
+def test_the_buffer_stays_bounded_when_backed_by_redis(flask_app, monkeypatch):
+    """`CAPACITY` is a promise about the store, not about whichever process
+    happens to be reading it — the same bound must hold when Redis is the
+    backing store, via `LTRIM`, not just against the in-memory fallback."""
+    from core import cache as cache_module
+
+    monkeypatch.setitem(flask_app.config, "REDIS_URL", _HOST_REDIS_URL)
+    monkeypatch.setattr(cache_module, "_pool", None)
+
+    with flask_app.app_context():
+        outbox.clear()
+        for index in range(outbox.CAPACITY + 10):
+            outbox.record(
+                tenant_id="t", channel="sms", destination="+91987654321",
+                body=f"message {index}", purpose="authentication_otp",
+            )
+        assert len(outbox.recent(limit=1000)) == outbox.CAPACITY
+        outbox.clear()
+
+
+def test_falls_back_to_memory_when_redis_is_unavailable(monkeypatch):
+    """No Redis configured (or Redis down) must be silent and safe: the
+    developer flow that reads OTPs out of the outbox cannot depend on a
+    service the rest of the test suite and a bare local run do not have."""
+    from core import cache as cache_module
+
+    monkeypatch.setattr(cache_module, "redis_client", lambda: None)
+
+    outbox.clear()
+    outbox.record(
+        tenant_id="t", channel="sms", destination="+9198", body="fallback works",
+        purpose="authentication_otp",
+    )
+    assert outbox.recent()[0]["body"] == "fallback works"
+    outbox.clear()
+    assert outbox.recent() == []
+
+
+def test_falls_back_to_memory_when_redis_raises(monkeypatch):
+    """A Redis that is configured but unreachable (refused connection, DNS
+    failure, timeout) must degrade the same way as no Redis at all — never
+    surface as an error to a developer just trying to read an OTP."""
+
+    class _ExplodingRedis:
+        def pipeline(self):
+            raise ConnectionError("simulated redis outage")
+
+        def lrange(self, *a, **k):
+            raise ConnectionError("simulated redis outage")
+
+        def delete(self, *a, **k):
+            raise ConnectionError("simulated redis outage")
+
+    from core import cache as cache_module
+
+    monkeypatch.setattr(cache_module, "redis_client", lambda: _ExplodingRedis())
+
+    outbox.clear()
+    outbox.record(
+        tenant_id="t", channel="sms", destination="+9198", body="still works",
+        purpose="authentication_otp",
+    )
+    assert outbox.recent()[0]["body"] == "still works"
+    outbox.clear()
