@@ -36,6 +36,11 @@ PROVIDER_REJECTED = "provider_rejected"
 #: unknown failure is safe to repeat is how duplicates happen.
 UNKNOWN_PROVIDER_ERROR = "unknown_provider_error"
 
+#: The school's integration has no template registered for this purpose.
+#: A configuration problem, and specifically one that is cheaper to catch
+#: here than to learn from a vendor's rejection.
+TEMPLATE_NOT_CONFIGURED = "template_not_configured"
+
 ERROR_CODES = (
     CONFIGURATION_ERROR,
     AUTHENTICATION_ERROR,
@@ -45,6 +50,7 @@ ERROR_CODES = (
     PROVIDER_UNAVAILABLE,
     PROVIDER_REJECTED,
     UNKNOWN_PROVIDER_ERROR,
+    TEMPLATE_NOT_CONFIGURED,
 )
 
 #: Errors where trying again could plausibly work.
@@ -60,7 +66,11 @@ RETRYABLE_ERROR_CODES = (RATE_LIMITED, PROVIDER_UNAVAILABLE)
 
 #: Errors that mean an operator has to do something. Reported differently from
 #: weather, because a school waiting for a fix should not be told "try again".
-CONFIGURATION_ERROR_CODES = (CONFIGURATION_ERROR, AUTHENTICATION_ERROR)
+CONFIGURATION_ERROR_CODES = (
+    CONFIGURATION_ERROR,
+    AUTHENTICATION_ERROR,
+    TEMPLATE_NOT_CONFIGURED,
+)
 
 
 def is_retryable(error_code: Optional[str]) -> bool:

@@ -31,3 +31,16 @@ def build_otp_message(code: str) -> str:
         f"{code} is your NexSchool sign-in code. "
         f"It expires in {minutes} minutes. Do not share it with anyone."
     )
+
+
+def otp_variables(code: str) -> list:
+    """The values a registered template interpolates, in its slot order.
+
+    Positional rather than named because that is what both vendors take: DLT
+    templates number their variables and Meta's components are an ordered
+    list. The order here is the order the wording in `build_otp_message` was
+    registered with, and changing one without the other is a re-registration,
+    not a code change.
+    """
+    minutes = max(OTP_TTL_SECONDS // 60, 1)
+    return [code, str(minutes)]
