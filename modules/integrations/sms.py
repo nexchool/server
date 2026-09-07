@@ -84,7 +84,8 @@ def send_sms(
     try:
         result = resolved.client.send(
             destination=destination,
-            message=message,
+            body=message,
+            template_id=None,
             configuration=resolved.configuration,
             idempotency_key=idempotency_key,
             operation_id=operation_id,

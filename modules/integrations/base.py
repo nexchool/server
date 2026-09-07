@@ -22,7 +22,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from .capabilities import CAPABILITY_SMS
+from .capabilities import CAPABILITY_SMS, CAPABILITY_WHATSAPP
 from .results import ProviderHealth, MessageSendResult
 
 
@@ -67,7 +67,16 @@ class ProviderClient(ABC):
         """
 
 
-class SmsProvider(ProviderClient):
+class MessagingProvider(ProviderClient):
+    """A provider that delivers a message to a person.
+
+    Holds nothing but the shared identity. It deliberately declares no
+    `send`, because the two channels do not take the same arguments and a
+    common signature would have to lie about one of them.
+    """
+
+
+class SmsProvider(MessagingProvider):
     """A provider that can send a short message to a phone."""
 
     capability: str = CAPABILITY_SMS
@@ -77,19 +86,48 @@ class SmsProvider(ProviderClient):
         self,
         *,
         destination: str,
-        message: str,
+        body: str,
+        template_id: Optional[str],
         configuration: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,
     ) -> MessageSendResult:
         """Ask the provider to send one message.
 
+        `body` is the rendered text and `template_id` the registration it
+        matches. Under India's DLT regime the second is what makes the first
+        deliverable: an operator registers the wording, and every send names
+        the registration. A provider outside that regime may ignore it.
+
         Returns a result rather than raising, including on failure: "the
         message did not send" is an outcome the caller has to handle, not a
         surprise. Only a programming error escapes as an exception.
 
-        `configuration` is the school's non-secret settings — a sender id, a
-        route. Credentials are **not** in it; the client fetches those itself
-        from the environment, so a configuration blob can be logged or
-        returned by an API without anybody having to remember to redact it.
+        `configuration` is the school's non-secret settings. Credentials are
+        **not** in it; the client fetches those itself from the environment.
+        """
+
+
+class WhatsAppProvider(MessagingProvider):
+    """A provider that can send a WhatsApp template message."""
+
+    capability: str = CAPABILITY_WHATSAPP
+
+    @abstractmethod
+    def send(
+        self,
+        *,
+        destination: str,
+        template_name: str,
+        variables: "list[str]",
+        configuration: dict,
+        idempotency_key: Optional[str] = None,
+        operation_id: Optional[str] = None,
+    ) -> MessageSendResult:
+        """Ask the provider to send one template message.
+
+        There is no body. Meta carries an authentication message only through
+        a template approved in advance, and the send names that template and
+        supplies its variables **positionally** — the order is the template's,
+        not ours, so `variables` is a list and not a mapping.
         """

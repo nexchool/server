@@ -14,11 +14,24 @@ from __future__ import annotations
 #: A short text message to a phone. The capability Phase 4's OTP will ask for.
 CAPABILITY_SMS = "sms"
 
-CAPABILITIES = (CAPABILITY_SMS,)
+#: A message through WhatsApp. Not a second authentication method — the
+#: method stays `mobile_otp`, and this is one of the wires it can go down.
+#: Meta will not carry an authentication message except through a template
+#: approved in advance, which is why `templates.py` exists.
+CAPABILITY_WHATSAPP = "whatsapp"
+
+CAPABILITIES = (CAPABILITY_SMS, CAPABILITY_WHATSAPP)
+
+#: The capabilities that deliver a message to a person. Grouped because the
+#: OTP channel choice ranges over exactly these, and a future capability that
+#: is not a message — a payment, a lookup — must not silently become an
+#: option on that menu.
+MESSAGING_CAPABILITIES = (CAPABILITY_SMS, CAPABILITY_WHATSAPP)
 
 #: Human labels for the platform screens.
 CAPABILITY_LABELS = {
     CAPABILITY_SMS: "SMS",
+    CAPABILITY_WHATSAPP: "WhatsApp",
 }
 
 
