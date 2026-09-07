@@ -31,7 +31,7 @@ def init_extensions(app):
     cors_config = {
         'origins': app.config.get('CORS_ORIGINS', ['*']),
         'methods': app.config.get('CORS_METHODS', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']),
-        'allow_headers': app.config.get('CORS_ALLOW_HEADERS', ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain']),
+        'allow_headers': app.config.get('CORS_ALLOW_HEADERS', ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain', 'X-Client-Surface']),
         'expose_headers': app.config.get('CORS_EXPOSE_HEADERS', ['X-New-Access-Token']),
         'supports_credentials': app.config.get('CORS_SUPPORTS_CREDENTIALS', True)
     }
@@ -107,3 +107,24 @@ def _configure_rate_limit_storage(config) -> None:
     if storage:
         config.setdefault("RATELIMIT_STORAGE_URI", storage)
         config.setdefault("RATELIMIT_IN_MEMORY_FALLBACK_ENABLED", True)
+
+
+def actor_rate_key() -> str:
+    """Rate-limit key for an operation performed *by* somebody, not from somewhere.
+
+    `get_remote_address` is the right key for a sign-in, where the caller is
+    anonymous and the address is all there is. It is the wrong key for issuing
+    credentials: those calls are authenticated, and what needs bounding is how
+    fast one operator can harvest secrets — not how fast one office can work.
+    A school with everybody behind one NAT would share an IP limit, while an
+    attacker holding a stolen session and a proxy pool would evade it.
+
+    Falls back to the address when there is no authenticated caller, so the
+    key is never empty.
+    """
+    from flask import g
+
+    user = getattr(g, "current_user", None)
+    if user is not None and getattr(user, "id", None):
+        return f"actor:{user.id}"
+    return get_remote_address()

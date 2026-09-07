@@ -50,6 +50,12 @@ PERMISSIONS: List[Tuple[str, str]] = [
     ('student.update', 'Update student information'),
     ('student.delete', 'Delete students'),
     ('student.manage', 'Full student management access'),
+    # Issuing and resetting a child's sign-in credential is student
+    # management, so `student.manage` grants it through the usual hierarchy —
+    # but it is named separately because it is the one student operation that
+    # hands somebody a working password, and a school may eventually want to
+    # give it to fewer people than everything else.
+    ('student.credential.manage', 'Issue, reset and revoke student sign-in credentials'),
 
     ('teacher.read', 'View teacher information'),
     ('teacher.create', 'Create new teachers'),
@@ -361,6 +367,17 @@ DEFAULT_ROLES: Dict[str, dict] = {
     },
     'Parent': {
         'description': "Parent with access to their children's data",
+        # Held by being somebody's parent, not by being granted — the same
+        # shape the Student role has. Without this the role was seeded into
+        # every school and reachable by nobody: `_roles_implied_by_relationships`
+        # matches on this column, so a Parent row that did not declare it could
+        # never be implied, and a parent account would hold no permissions at
+        # all and be refused at sign-in.
+        #
+        # Declaring it does not by itself give anybody the role: the
+        # implication is additionally gated on the school running separate
+        # parent logins (ADR-011). Under shared access nothing changes.
+        'implied_by_relationship': 'parent',
         'permissions': [
             'student.read.self',
             'attendance.read.self',

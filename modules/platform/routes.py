@@ -276,6 +276,30 @@ def update_tenant_subscription(tenant_id):
     )
 
 
+@platform_bp.route("/tenants/<tenant_id>/auth-policy", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def get_tenant_auth_policy(tenant_id):
+    """GET /platform/tenants/<id>/auth-policy
+
+    Which authentication methods this school permits, for which of its people,
+    on which surface — plus ADR-011's family access mode and the credential
+    policy. Read-only in this phase; the policy is configuration that nothing
+    consults yet.
+
+    Configuration only. No account, no identifier, no credential and nothing
+    secret appears in the response.
+    """
+    from modules.auth.policy import describe
+
+    tenant = _resolve_target_tenant(tenant_id)
+    if tenant is None:
+        return not_found_response("Tenant")
+
+    return success_response(data=describe(tenant.id))
+
+
 @platform_bp.route("/tenants/<tenant_id>/usage", methods=["GET"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required
@@ -311,6 +335,442 @@ def get_tenant_billing(tenant_id):
     if not result["success"]:
         return not_found_response("Tenant")
     return success_response(data=result)
+
+
+# ---------------------------------------------------------------------------
+# Third-party services — what NexSchool buys, and what it charges for it
+#
+# Platform-admin only, and that is the authorization story in full: the
+# catalog holds what NexSchool pays its vendors, which is a supplier
+# negotiation and not a school's business. The school's own view of what it is
+# charged is on `/api/subscription/state`, with the costs stripped out.
+# ---------------------------------------------------------------------------
+
+@platform_bp.route("/service-catalog", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def list_service_catalog():
+    """GET /platform/service-catalog — every provider and what it sells."""
+    from modules.billing.services import list_providers
+
+    include_inactive = str(
+        request.args.get("include_inactive", "false")
+    ).lower() in ("1", "true", "yes")
+    return success_response(data={"providers": list_providers(include_inactive=include_inactive)})
+
+
+@platform_bp.route("/service-catalog/providers", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def upsert_service_provider():
+    """POST /platform/service-catalog/providers — add or correct a vendor."""
+    from modules.billing.services import BillingConfigurationError, upsert_provider
+
+    data = request.get_json(silent=True) or {}
+    try:
+        provider = upsert_provider(
+            key=data.get("key"),
+            name=data.get("name"),
+            is_active=bool(data.get("is_active", True)),
+        )
+        db.session.commit()
+    except BillingConfigurationError as exc:
+        db.session.rollback()
+        return validation_error_response({"provider": str(exc)})
+
+    return success_response(data=provider.to_dict())
+
+
+@platform_bp.route("/service-catalog/services", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def upsert_provider_service():
+    """POST /platform/service-catalog/services — add or correct what a vendor sells."""
+    from modules.billing.services import BillingConfigurationError, upsert_service
+
+    data = request.get_json(silent=True) or {}
+    try:
+        service = upsert_service(
+            provider_key=data.get("provider_key"),
+            key=data.get("key"),
+            name=data.get("name"),
+            unit=data.get("unit"),
+            pricing_mode=data.get("pricing_mode"),
+            provider_unit_cost=data.get("provider_unit_cost"),
+            is_active=bool(data.get("is_active", True)),
+        )
+        db.session.commit()
+    except BillingConfigurationError as exc:
+        db.session.rollback()
+        return validation_error_response({"service": str(exc)})
+
+    # Platform-facing, so the internal cost is shown — this is the screen where
+    # somebody is deciding what to charge for it.
+    return success_response(data=service.to_dict(include_provider_cost=True))
+
+
+@platform_bp.route("/tenants/<tenant_id>/services", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def list_tenant_services(tenant_id):
+    """GET /platform/tenants/<id>/services — what this school is signed up to."""
+    from core.models import Tenant
+    from modules.billing.services import describe_tenant_services
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+    return success_response(data={"services": describe_tenant_services(tenant_id)})
+
+
+@platform_bp.route("/tenants/<tenant_id>/services", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def configure_tenant_service(tenant_id):
+    """POST /platform/tenants/<id>/services — sign a school up, or change its terms.
+
+    Price and cost are set separately and neither is derived from the other.
+    An operator who wants them equal asks for `pass_through` and says so.
+    """
+    from core.models import Tenant
+    from modules.billing.services import (
+        BillingConfigurationError,
+        configure_tenant_service as _configure,
+    )
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+
+    data = request.get_json(silent=True) or {}
+    try:
+        configuration = _configure(
+            tenant_id,
+            service_key=data.get("service_key"),
+            is_enabled=bool(data.get("is_enabled", True)),
+            pricing_mode=data.get("pricing_mode"),
+            customer_unit_price=data.get("customer_unit_price"),
+            customer_fixed_price=data.get("customer_fixed_price"),
+            provider_unit_cost=data.get("provider_unit_cost"),
+            estimated_annual_quantity=data.get("estimated_annual_quantity"),
+        )
+        db.session.commit()
+    except BillingConfigurationError as exc:
+        db.session.rollback()
+        return validation_error_response({"service": str(exc)})
+
+    from modules.billing.services import describe_tenant_services
+
+    return success_response(
+        data={
+            "tenant_service_id": configuration.id,
+            "services": describe_tenant_services(tenant_id),
+        }
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/annual-statement", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def get_tenant_annual_statement(tenant_id):
+    """GET /platform/tenants/<id>/annual-statement?on_date=YYYY-MM-DD
+
+    The whole year in one answer: the NexSchool subscription, one component per
+    third-party service, and what they add to. An **estimate** — the payload
+    says so in a field — because NexSchool has no invoices and this must not be
+    mistaken for one.
+    """
+    from modules.billing.services import tenant_annual_statement
+
+    on_date = None
+    on_date_str = request.args.get("on_date")
+    if on_date_str:
+        try:
+            from datetime import datetime as dt
+
+            on_date = dt.strptime(on_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return validation_error_response({"on_date": "Expected YYYY-MM-DD"})
+
+    # The live count, the same question `/billing` asks, so the two agree.
+    billing = services.calculate_tenant_billing(tenant_id, on_date=on_date)
+    if not billing["success"]:
+        return not_found_response("Tenant")
+
+    statement = tenant_annual_statement(
+        tenant_id, active_students=billing["active_students"], on_date=on_date
+    )
+    if statement is None:
+        return not_found_response("Tenant")
+    return success_response(data=statement)
+
+
+# ---------------------------------------------------------------------------
+# Integrations — whose wire a school's work goes down
+#
+# Platform-admin only, the same boundary Phase 2 drew around pricing: which
+# vendor NexSchool uses, and on what terms, is a commercial decision and not a
+# school's setting. Nothing here returns a credential; the configuration holds
+# the *names* of environment variables and never their values.
+# ---------------------------------------------------------------------------
+
+@platform_bp.route("/tenants/<tenant_id>/auth-policy", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def update_tenant_auth_policy(tenant_id):
+    """PATCH /platform/tenants/<id>/auth-policy — the school's own settings.
+
+    The two that are not methods: whether parents sign in as themselves
+    (`family_access_mode`, ADR-011) and whether a school-issued student
+    credential must be replaced on first use.
+
+    **Turning separate parent logins on provisions nobody**, and turning them
+    off destroys nothing — accounts, credentials, identifiers, sessions and
+    family relationships all survive, and a parent simply stops being a parent
+    authentication subject. A policy change that deleted identity would be the
+    worst kind of surprise, so it does not.
+
+    Both fields are optional; sending neither is a no-op that returns the
+    current policy, which is what a client refreshing its view wants.
+    """
+    from core.models import Tenant
+    from modules.auth import policy
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return not_found_response("Tenant")
+
+    data = request.get_json(silent=True) or {}
+    family_access_mode = (data.get("family_access_mode") or "").strip()
+    credential_policy = (data.get("student_credential_policy") or "").strip()
+
+    try:
+        if family_access_mode:
+            policy.set_family_access_mode(
+                tenant_id, family_access_mode, updated_by_user_id=g.current_user.id
+            )
+        if credential_policy:
+            policy.set_student_credential_policy(
+                tenant_id, credential_policy, updated_by_user_id=g.current_user.id
+            )
+        policy.ensure_default_policy(tenant_id, updated_by_user_id=g.current_user.id)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return validation_error_response({"auth_policy": str(exc)})
+
+    return success_response(data=policy.describe(tenant_id))
+
+
+@platform_bp.route("/tenants/<tenant_id>/auth-policy/methods", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def set_tenant_auth_method(tenant_id):
+    """PATCH /platform/tenants/<id>/auth-policy/methods — turn a sign-in method on or off.
+
+    The policy read has existed since Phase 0c; this is the write, added
+    because `mobile_otp` is the first method a school would plausibly want
+    switched on and off and there was no way to do it but a Python shell.
+
+    **Enabling a method that cannot work is refused.** `mobile_otp` needs an
+    SMS provider, and a school switched on without one would present a sign-in
+    option whose codes silently never arrive. So the integration is checked
+    first and the operator is told what is missing — which, until a vendor is
+    selected, is every time.
+    """
+    from core.models import Tenant
+    from modules.auth import policy
+    from modules.auth.strategies import UnknownAuthenticationMethod, registry
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return not_found_response("Tenant")
+
+    data = request.get_json(silent=True) or {}
+    method_key = (data.get("method_key") or "").strip()
+    subject_kind = (data.get("subject_kind") or "").strip()
+    enabled = bool(data.get("enabled"))
+    surface = (data.get("surface") or "any").strip() or "any"
+
+    if method_key not in registry:
+        return validation_error_response(
+            {"method_key": f"'{method_key}' is not a sign-in method this build has."}
+        )
+
+    if enabled and _method_needs_sms(method_key):
+        from modules.integrations.capabilities import CAPABILITY_SMS
+        from modules.integrations.health import capability_health
+
+        report = capability_health(tenant_id=tenant_id, capability=CAPABILITY_SMS)
+        if not report.ready:
+            return validation_error_response(
+                {
+                    "method_key": (
+                        "This method sends an SMS, and this school has no working "
+                        "SMS provider. " + (report.detail or "")
+                    ).strip()
+                }
+            )
+
+    try:
+        policy.ensure_default_policy(tenant_id)
+        policy.set_method(
+            tenant_id,
+            subject_kind,
+            method_key,
+            enabled=enabled,
+            surface=surface,
+            updated_by_user_id=g.current_user.id,
+        )
+        db.session.commit()
+    except (ValueError, UnknownAuthenticationMethod) as exc:
+        db.session.rollback()
+        return validation_error_response({"policy": str(exc)})
+
+    return success_response(data=policy.describe(tenant_id))
+
+
+def _method_needs_sms(method_key: str) -> bool:
+    """Whether turning this method on commits a school to sending messages.
+
+    Read from the strategy rather than a list kept here, so a future paid
+    method is covered by declaring itself paid.
+    """
+    from modules.auth.strategies import registry
+
+    try:
+        strategy = registry.get(method_key)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(getattr(strategy, "is_paid", False))
+
+
+@platform_bp.route("/integration-capabilities", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def list_integration_capabilities():
+    """GET /platform/integration-capabilities — what this build can do, and who could do it.
+
+    Read from the registry, not the database: this is a property of the
+    deployed code rather than of anybody's configuration.
+    """
+    from modules.integrations.services import describe_capabilities
+
+    return success_response(data={"capabilities": describe_capabilities()})
+
+
+@platform_bp.route("/tenants/<tenant_id>/integrations", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def list_tenant_integrations(tenant_id):
+    """GET /platform/tenants/<id>/integrations — configured providers, with health.
+
+    Health is a readiness report and **nothing is sent to produce it**. Finding
+    out whether an SMS integration works by sending an SMS charges the school
+    and rings a real person's phone.
+    """
+    from core.models import Tenant
+    from modules.integrations.services import describe_tenant_integrations
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+    return success_response(
+        data={"integrations": describe_tenant_integrations(tenant_id)}
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/integrations", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def configure_tenant_integration(tenant_id):
+    """POST /platform/tenants/<id>/integrations — point a capability at a provider.
+
+    Configuring never enables. A new integration starts disabled so that adding
+    a row cannot start carrying traffic; somebody turns it on deliberately,
+    after reading its health.
+
+    `credential_references` takes the **names** of environment variables. A
+    value pasted into that field is refused — which is the point of the field.
+    """
+    from core.models import Tenant
+    from modules.integrations.services import (
+        IntegrationConfigurationError,
+        configure_integration,
+        describe_tenant_integrations,
+    )
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+
+    data = request.get_json(silent=True) or {}
+    try:
+        configure_integration(
+            tenant_id,
+            capability=data.get("capability"),
+            provider_key=data.get("provider_key"),
+            configuration=data.get("configuration") or {},
+            credential_references=data.get("credential_references") or {},
+            actor_user_id=g.current_user.id,
+        )
+        db.session.commit()
+    except IntegrationConfigurationError as exc:
+        db.session.rollback()
+        return validation_error_response({"integration": str(exc)})
+
+    return success_response(
+        data={"integrations": describe_tenant_integrations(tenant_id)}
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/integrations/<capability>/status", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def set_tenant_integration_status(tenant_id, capability):
+    """PATCH /platform/tenants/<id>/integrations/<capability>/status
+
+    Enabling refuses when the provider's credentials are not present on this
+    server — an integration switched on that cannot possibly work produces a
+    school whose messages fail silently.
+
+    Disabling is not deleting. Configuration, usage history and billing records
+    all survive, because last term's messages still have to be explicable.
+    """
+    from core.models import Tenant
+    from modules.integrations.services import (
+        IntegrationConfigurationError,
+        describe_tenant_integrations,
+        set_integration_status,
+    )
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+
+    data = request.get_json(silent=True) or {}
+    try:
+        set_integration_status(
+            tenant_id,
+            capability=capability,
+            status=data.get("status"),
+            actor_user_id=g.current_user.id,
+        )
+        db.session.commit()
+    except IntegrationConfigurationError as exc:
+        db.session.rollback()
+        return validation_error_response({"integration": str(exc)})
+
+    return success_response(
+        data={"integrations": describe_tenant_integrations(tenant_id)}
+    )
 
 
 @platform_bp.route("/tenants/<tenant_id>/reset-admin", methods=["POST"])

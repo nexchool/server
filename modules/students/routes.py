@@ -1,3 +1,4 @@
+import logging
 from datetime import date as _date
 
 from flask import request, g, Response
@@ -31,6 +32,12 @@ from . import services
 from modules.documents import rest as document_rest
 from .student_schemas import validate_student_payload
 from core.school_time import utc_now
+from core.database import db
+from core.extensions import actor_rate_key, limiter
+from core.tenant import get_tenant_id
+from shared.safe_error import safe_error
+
+logger = logging.getLogger(__name__)
 
 # Permissions
 PERM_CREATE = 'student.create'
@@ -40,6 +47,10 @@ PERM_READ_SELF = 'student.read.self'
 PERM_UPDATE = 'student.update'
 PERM_DELETE = 'student.delete'
 PERM_MANAGE = 'student.manage'
+# Handing somebody a working password is the one student operation that does
+# that, so it is named separately. `student.manage` still grants it through
+# the usual hierarchy.
+PERM_CREDENTIAL = 'student.credential.manage'
 
 
 @students_bp.route('/me/dashboard', methods=['GET'])
@@ -1171,3 +1182,460 @@ def get_student_document_file(student_id, document_id):
     return document_rest.stream_document(
         services.person_id_for_student(student_id), document_id
     )
+
+
+# ---------------------------------------------------------------------------
+# Credential administration
+#
+# Every route here resolves the student inside the caller's own tenant before
+# touching anything, so an operator cannot reach another school's account by
+# guessing an id — the id is a *student's*, and a student that is not this
+# school's simply is not found.
+# ---------------------------------------------------------------------------
+
+def _student_in_my_school(student_id):
+    """The student, if they belong to the school making the request."""
+    from modules.students.models import Student
+
+    return Student.query.filter_by(
+        id=student_id, tenant_id=get_tenant_id()
+    ).first()
+
+
+@students_bp.route('/<student_id>/credentials', methods=['GET'], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_permission(PERM_CREDENTIAL)
+def get_student_credential_status(student_id):
+    """Can this child sign in, and how?
+
+    Carries no secret: not the hash, not the password, not a token. There is
+    deliberately no read path anywhere that can produce a plaintext password —
+    a leak would need a code change, not a request.
+    """
+    from modules.auth.credential_admin import credential_status
+
+    student = _student_in_my_school(student_id)
+    if student is None:
+        return not_found_response('Student')
+
+    try:
+        assert_student_allowed(student.id)
+    except BranchForbidden as exc:
+        return forbidden_response(str(exc))
+
+    return success_response(data=credential_status(student))
+
+
+@students_bp.route(
+    '/<student_id>/credentials/issue', methods=['POST'], strict_slashes=False
+)
+@tenant_required
+@auth_required
+@limiter.limit("30 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def issue_student_credential(student_id):
+    """Give this child a password, or replace the one they have.
+
+    `reset` is the destructive one and is never the default: without it a
+    student who already has a working password is skipped rather than locked
+    out. With it, the old password stops working and the sessions using it end.
+
+    The plaintext comes back in this response and exists nowhere else.
+    """
+    from modules.auth.credential_admin import issue_credential
+
+    student = _student_in_my_school(student_id)
+    if student is None:
+        return not_found_response('Student')
+
+    try:
+        assert_student_allowed(student.id)
+    except BranchForbidden as exc:
+        return forbidden_response(str(exc))
+
+    data = request.get_json(silent=True) or {}
+    reset = bool(data.get('reset'))
+
+    try:
+        result = issue_credential(
+            student, actor_user_id=g.current_user.id, reset=reset
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('credential issuance failed for student %s', student_id)
+        return error_response('InternalError', safe_error(exc, 'Could not issue credential'), 500)
+
+    if result.get('status') == 'skipped':
+        return error_response(
+            'CredentialNotIssued',
+            _skip_message(result.get('reason')),
+            409,
+        )
+    return success_response(data=result)
+
+
+@students_bp.route(
+    '/<student_id>/credentials/force-change', methods=['POST'], strict_slashes=False
+)
+@tenant_required
+@auth_required
+@limiter.limit("30 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def force_student_password_change(student_id):
+    """Require a new password at the next sign-in, without issuing one.
+
+    Deliberately not a reset: the child's current password keeps working once
+    more, so nobody is locked out while a new slip is printed.
+    """
+    from modules.auth.credential_admin import force_password_change
+
+    student = _student_in_my_school(student_id)
+    if student is None:
+        return not_found_response('Student')
+
+    try:
+        assert_student_allowed(student.id)
+    except BranchForbidden as exc:
+        return forbidden_response(str(exc))
+
+    try:
+        result = force_password_change(student, actor_user_id=g.current_user.id)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('force-change failed for student %s', student_id)
+        return error_response('InternalError', safe_error(exc, 'Could not update credential'), 500)
+
+    if result.get('status') == 'skipped':
+        return error_response(
+            'CredentialNotUpdated', _skip_message(result.get('reason')), 409
+        )
+    return success_response(data=result)
+
+
+@students_bp.route('/credentials/bulk-issue', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@limiter.limit("6 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def bulk_issue_student_credentials():
+    """Issue credentials for a class, or for a named list of students.
+
+    `reset` defaults to false, and that default is the whole safety story: a
+    school running this twice on a class fills the gaps rather than
+    invalidating every password it handed out last week.
+    """
+    from modules.auth.credential_admin import bulk_issue_credentials
+
+    students, failure = _students_for_bulk(request.get_json(silent=True) or {})
+    if failure is not None:
+        return failure
+
+    reset = bool((request.get_json(silent=True) or {}).get('reset'))
+
+    try:
+        result = bulk_issue_credentials(
+            students, actor_user_id=g.current_user.id, reset=reset
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('bulk credential issuance failed')
+        return error_response('InternalError', safe_error(exc, 'Bulk issuance failed'), 500)
+
+    return success_response(data=result)
+
+
+@students_bp.route(
+    '/credentials/backfill-admission-ids', methods=['POST'], strict_slashes=False
+)
+@tenant_required
+@auth_required
+@limiter.limit("6 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def backfill_student_admission_identifiers():
+    """Let students who were already here be found by their admission number.
+
+    Never touches a password: a child signing in happily today keeps doing so.
+    Idempotent, so running it twice is a no-op rather than a second identifier.
+    """
+    from modules.auth.credential_admin import backfill_admission_identifiers
+
+    students, failure = _students_for_bulk(request.get_json(silent=True) or {})
+    if failure is not None:
+        return failure
+
+    try:
+        result = backfill_admission_identifiers(
+            students, actor_user_id=g.current_user.id
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('admission-id backfill failed')
+        return error_response('InternalError', safe_error(exc, 'Backfill failed'), 500)
+
+    return success_response(data=result)
+
+
+@students_bp.route('/<student_id>/pin', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@limiter.limit("30 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def issue_student_pin(student_id):
+    """Give this student a PIN for signing in from a phone, or replace it.
+
+    A PIN is a separate credential from their password: issuing one does not
+    disturb the password, the admission number, or anything else this child
+    already uses to sign in.
+
+    `reset` is the destructive one and is never the default. With it, the old
+    PIN stops working and the sessions opened with it end.
+
+    The digits come back in this response and exist nowhere else.
+    """
+    from modules.auth.credential_admin import issue_pin
+
+    student = _student_in_my_school(student_id)
+    if student is None:
+        return not_found_response('Student')
+
+    try:
+        assert_student_allowed(student.id)
+    except BranchForbidden as exc:
+        return forbidden_response(str(exc))
+
+    data = request.get_json(silent=True) or {}
+    reset = bool(data.get('reset'))
+
+    try:
+        result = issue_pin(student, actor_user_id=g.current_user.id, reset=reset)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('PIN issuance failed for student %s', student_id)
+        return error_response('InternalError', safe_error(exc, 'Could not issue a PIN'), 500)
+
+    if result.get('status') == 'skipped':
+        return error_response('PinNotIssued', _skip_message(result.get('reason')), 409)
+    return success_response(data=result)
+
+
+@students_bp.route('/<student_id>/pin/force-change', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@limiter.limit("30 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def force_student_pin_change(student_id):
+    """Require a new PIN at the next sign-in, without issuing one.
+
+    Set on the PIN alone. A child whose password must also be changed is a
+    separate fact; neither operation touches the other.
+    """
+    from modules.auth.credential_admin import force_pin_change
+
+    student = _student_in_my_school(student_id)
+    if student is None:
+        return not_found_response('Student')
+
+    try:
+        assert_student_allowed(student.id)
+    except BranchForbidden as exc:
+        return forbidden_response(str(exc))
+
+    try:
+        result = force_pin_change(student, actor_user_id=g.current_user.id)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('PIN force-change failed for student %s', student_id)
+        return error_response('InternalError', safe_error(exc, 'Could not update the PIN'), 500)
+
+    if result.get('status') == 'skipped':
+        return error_response('PinNotUpdated', _skip_message(result.get('reason')), 409)
+    return success_response(data=result)
+
+
+@students_bp.route('/pins/bulk-issue', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@limiter.limit("6 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def bulk_issue_student_pins():
+    """PINs for a class, or for a named list of students.
+
+    Same scoping and same safety as the password bulk issuance: `reset`
+    defaults to false, so running it twice fills gaps rather than invalidating
+    a term's worth of PINs.
+    """
+    from modules.auth.credential_admin import bulk_issue_pins
+
+    students, failure = _students_for_bulk(request.get_json(silent=True) or {})
+    if failure is not None:
+        return failure
+
+    reset = bool((request.get_json(silent=True) or {}).get('reset'))
+
+    try:
+        result = bulk_issue_pins(students, actor_user_id=g.current_user.id, reset=reset)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('bulk PIN issuance failed')
+        return error_response('InternalError', safe_error(exc, 'Bulk PIN issuance failed'), 500)
+
+    return success_response(data=result)
+
+
+@students_bp.route('/<student_id>/mobile', methods=['POST'], strict_slashes=False)
+@tenant_required
+@auth_required
+@limiter.limit("30 per minute", key_func=actor_rate_key)
+@require_permission(PERM_CREDENTIAL)
+def issue_student_mobile_identifier(student_id):
+    """Let this student be found by a mobile number.
+
+    The step both phone sign-in methods rest on: a code and a PIN are each
+    sent to, or checked against, a number the school has deliberately recorded
+    as this child's way in.
+
+    Deliberately **not** taken from the student's contact details. The phone
+    number on a record is typed by a clerk, never verified, rewritten by
+    spreadsheet imports, and shared across a household by design — promoting
+    it automatically would mint sign-in identities from data nobody confirmed.
+    An operator enters the number they checked.
+
+    Idempotent for the same student. A number another account at this school
+    already uses is refused rather than moved.
+    """
+    from modules.auth.provisioning import MobileAlreadyInUse, issue_mobile_identifier
+
+    student = _student_in_my_school(student_id)
+    if student is None:
+        return not_found_response('Student')
+
+    try:
+        assert_student_allowed(student.id)
+    except BranchForbidden as exc:
+        return forbidden_response(str(exc))
+
+    account = student.user if student.user_id else None
+    if account is None:
+        return error_response(
+            'MobileNotIssued', _skip_message('no_account'), 409
+        )
+
+    mobile = ((request.get_json(silent=True) or {}).get('mobile') or '').strip()
+    if not mobile:
+        return validation_error_response({'mobile': 'A mobile number is required.'})
+
+    try:
+        identifier = issue_mobile_identifier(
+            account, mobile, issued_by_user_id=g.current_user.id
+        )
+        db.session.commit()
+    except MobileAlreadyInUse as exc:
+        db.session.rollback()
+        return error_response('MobileAlreadyInUse', str(exc), 409)
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('mobile identifier issuance failed for student %s', student_id)
+        return error_response(
+            'InternalError', safe_error(exc, 'Could not add the mobile number'), 500
+        )
+
+    if identifier is None:
+        # Either the number is not dialable, or the school has enabled neither
+        # phone sign-in method — told apart, because the operator's next action
+        # differs completely.
+        from modules.auth.identifiers import normalize_mobile
+
+        if not normalize_mobile(mobile):
+            return validation_error_response(
+                {'mobile': 'That is not a mobile number that can receive a message.'}
+            )
+        return error_response(
+            'MobileNotIssued',
+            'Neither code nor PIN sign-in is enabled for this school, so a '
+            'mobile number would have nothing to do.',
+            409,
+        )
+
+    return success_response(
+        data={
+            'student_id': student.id,
+            # As stored: what the office typed, and the canonical form the
+            # lookup uses. Never a secret — an identifier is not a credential.
+            'mobile': identifier.identifier_value,
+            'mobile_normalized': identifier.identifier_value_normalized,
+            'is_verified': identifier.is_verified,
+        }
+    )
+
+
+#: Why a student was passed over, in words an operator can act on.
+_SKIP_MESSAGES = {
+    'no_account': (
+        'This student has no sign-in account. An account needs an email '
+        'address; add one to the student first.'
+    ),
+    'already_had_credential': (
+        'This student already has a password. Use reset if you mean to '
+        'replace it — their current one will stop working.'
+    ),
+    'already_had_identifier': 'This student can already sign in with their admission number.',
+    'method_not_enabled': (
+        'That sign-in method is not enabled for this school.'
+    ),
+    'no_credential': 'This student has no PIN to change.',
+}
+
+
+def _skip_message(reason):
+    return _SKIP_MESSAGES.get(reason, 'No credential change was made.')
+
+
+def _students_for_bulk(data):
+    """The students a bulk request names, scoped to the caller's school.
+
+    Only the scopes the product already exposes — a class, or an explicit
+    list. Both are resolved inside the tenant and through branch scope, so a
+    class id from another school selects nobody.
+    """
+    from modules.students.models import Student
+
+    tenant_id = get_tenant_id()
+    class_id = data.get('class_id')
+    student_ids = data.get('student_ids')
+
+    if not class_id and not student_ids:
+        return None, validation_error_response(
+            {'students': 'Name the students: pass class_id or student_ids.'}
+        )
+
+    query = Student.query.filter_by(tenant_id=tenant_id)
+    if class_id:
+        try:
+            assert_class_allowed(class_id)
+        except BranchForbidden as exc:
+            return None, forbidden_response(str(exc))
+        query = query.filter(Student.class_id == class_id)
+    if student_ids:
+        if not isinstance(student_ids, list):
+            return None, validation_error_response(
+                {'student_ids': 'student_ids must be a list.'}
+            )
+        query = query.filter(Student.id.in_(student_ids))
+
+    students = query.order_by(Student.admission_number).all()
+
+    for student in students:
+        try:
+            assert_student_allowed(student.id)
+        except BranchForbidden as exc:
+            return None, forbidden_response(str(exc))
+
+    return students, None

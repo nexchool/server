@@ -348,40 +348,69 @@ def import_teachers_from_rows(
 
     tkwargs = _teacher_kwargs_from_coerced
     success_count = 0
+    accounts_created = 0
+    accounts_skipped = 0
 
     for i in range(0, len(validated), BATCH_SIZE):
         chunk = validated[i : i + BATCH_SIZE]
         batch_created: List[Tuple[int, str]] = []
         for rn, coerced in chunk:
-            emp_id = coerced["employee_id"]
             email_in = coerced.get("email")
-            actual_email = (
-                email_in.strip().lower()
-                if email_in
-                else f"{emp_id.lower()}@teacher.school"
-            )
-            pwd = generate_teacher_password(coerced["name"])
+            # A teacher who gave no address gets no account, and no address is
+            # invented for them.
+            #
+            # This used to synthesize `<employee_id>@teacher.school` so that
+            # `users.email`, which is NOT NULL, could be satisfied. That is a
+            # fabricated identity: it reaches nobody, it cannot be verified, it
+            # cannot receive a password reset, and it is indistinguishable from
+            # a real address to every notification, search and export path in
+            # the product. `create_teacher` stopped minting them; the importer
+            # — which is how a school actually onboards a staff room — did not.
+            #
+            # An account-less teacher is a first-class citizen (ADR-003): the
+            # employment, the authority and the person are all recorded, and
+            # only the login is absent. Giving them a real account without an
+            # address needs `users.email` to be nullable, which is a later
+            # phase deliberately not brought forward here.
+            actual_email = email_in.strip().lower() if email_in else None
+            pwd = generate_teacher_password(coerced["name"]) if actual_email else None
             try:
                 with db.session.begin_nested():
-                    user = User(
-                        tenant_id=tenant_id,
-                        email=actual_email,
-                        name=coerced["name"],
-                        email_verified=True,
-                        force_password_reset=True,
-                    )
-                    user.set_password(pwd)
-                    db.session.add(user)
-                    db.session.flush()
+                    user = None
+                    if actual_email:
+                        user = User(
+                            tenant_id=tenant_id,
+                            email=actual_email,
+                            name=coerced["name"],
+                            email_verified=True,
+                            force_password_reset=True,
+                        )
+                        user.set_password(pwd)
+                        db.session.add(user)
+                        db.session.flush()
 
                     # Teaching is a participation of employment (ADR-005), so
                     # the imported teacher is employed before they teach.
-                    from modules.people.service import employ, employment_status_for_legacy_flag
+                    from modules.people.service import (
+                        employ,
+                        employment_status_for_legacy_flag,
+                        record_person,
+                    )
+
+                    if user is not None:
+                        # The account already carries the person.
+                        person_id = user.person_id
+                    else:
+                        # Nobody else will record them, so the import does.
+                        person = record_person(tenant_id, coerced["name"])
+                        db.session.add(person)
+                        db.session.flush()
+                        person_id = person.id
 
                     teacher_fields = tkwargs(coerced)
                     staff = employ(
                         tenant_id,
-                        user.person_id,
+                        person_id,
                         employee_number=teacher_fields.pop("_employee_id", None),
                         designation=teacher_fields.pop("_designation", None),
                         department_id=teacher_fields.pop("_department_id", None),
@@ -410,19 +439,21 @@ def import_teachers_from_rows(
                     teacher = Teacher(
                         id=str(uuid.uuid4()),
                         tenant_id=tenant_id,
-                        user_id=user.id,
+                        user_id=user.id if user is not None else None,
                         staff_id=staff.id,
                         **teacher_fields,
                     )
                     db.session.add(teacher)
                     db.session.flush()
-                    batch_created.append((rn, user.id))
+                    batch_created.append(
+                        (rn, user.id if user is not None else None)
+                    )
             except IntegrityError as e:
                 logger.warning("bulk_teacher_import: integrity row=%s: %s", rn, e)
                 failed_rows.append(
                     {
                         "row_number": rn,
-                        "email": coerced.get("email") or actual_email,
+                        "email": coerced.get("email") or actual_email or "",
                         "errors": ["Database constraint violation (duplicate or invalid)"],
                     }
                 )
@@ -431,7 +462,7 @@ def import_teachers_from_rows(
                 failed_rows.append(
                     {
                         "row_number": rn,
-                        "email": coerced.get("email") or actual_email,
+                        "email": coerced.get("email") or actual_email or "",
                         "errors": [str(e)],
                     }
                 )
@@ -453,6 +484,17 @@ def import_teachers_from_rows(
 
         for rn, user_id in batch_created:
             success_count += 1
+            if user_id is None:
+                # Imported, and deliberately without a login. Not a failure:
+                # the teacher, their employment and their authority all exist.
+                accounts_skipped += 1
+                logger.info(
+                    "bulk_teacher_import: teacher row=%s imported without a "
+                    "login (no email address supplied)",
+                    rn,
+                )
+                continue
+            accounts_created += 1
             logger.info(
                 "bulk_teacher_import: created teacher user_id=%s row=%s",
                 user_id,
@@ -465,6 +507,11 @@ def import_teachers_from_rows(
         "success": success_count,
         "failed": len(failed_rows),
         "failed_rows": failed_rows,
+        # Two facts the summary could not previously distinguish: a teacher who
+        # can sign in, and a teacher the school has recorded but not given a
+        # login. Both are successful imports.
+        "accounts_created": accounts_created,
+        "accounts_skipped_no_email": accounts_skipped,
     }
 
 

@@ -71,8 +71,25 @@ def test_repeated_tenantless_guesses_lock_the_account(
     assert person.login_locked_until is not None, "the account should be locked"
 
     # And the lock is honoured on the path that named the school all along.
+    #
+    # Honoured, not announced. This used to assert a distinct 429, which told
+    # an unauthenticated caller both that the account exists and that it is
+    # *currently under attack* — a live signal about which accounts are worth
+    # attacking, available without a password. The refusal is now the same
+    # 401 a wrong password gets, so what is asserted is the lock itself and
+    # the reason recorded against it, not a status an attacker can read.
+    from modules.auth.event_models import AuthEvent
+
     response = _guess(client, person.email, subdomain=tenant.subdomain)
-    assert response.status_code == 429
+    assert response.status_code == 401
+    assert response.get_json()["error"] == "InvalidCredentials"
+
+    latest = (
+        AuthEvent.query.filter_by(account_id=person.id)
+        .order_by(AuthEvent.created_at.desc())
+        .first()
+    )
+    assert latest.reason == "account_locked"
 
 
 def test_naming_the_school_still_counts(client, db_session, person, tenant):

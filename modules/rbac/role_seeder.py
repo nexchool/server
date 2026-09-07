@@ -55,6 +55,18 @@ def seed_roles_for_tenant(
         if existing:
             role = existing
             role_ids[role_name] = role.id
+
+            # What *kind* of role this is, as opposed to what it grants.
+            # Permissions are only ever added, because an operator who granted
+            # a key by hand should not lose it on somebody's next sign-in — but
+            # `implied_by_relationship` is not a grant, it is the catalogue
+            # saying how this role comes to be held. A row that disagrees with
+            # the catalogue about that is a row nobody can hold, so it is
+            # repaired rather than left.
+            declared = role_data.get("implied_by_relationship")
+            if declared and role.implied_by_relationship != declared:
+                role.implied_by_relationship = declared
+
             # Backfill any missing permissions
             existing_perm_ids = {p.id for p in role.permissions}
             for perm_name in role_data["permissions"]:

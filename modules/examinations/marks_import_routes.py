@@ -13,7 +13,12 @@ service, and translate the answer.
 
 from flask import g, request
 
-from core.decorators import auth_required, require_permission, tenant_required
+from core.decorators import (
+    auth_required,
+    require_any_permission,
+    require_permission,
+    tenant_required,
+)
 from core.feature_flags import require_feature
 from modules.examinations import examinations_bp
 from modules.examinations import marks_import, marksheet_service
@@ -159,6 +164,20 @@ def marks_template_download(paper_id):
 @auth_required
 @require_feature(FEATURE)
 @require_permission(marksheet_service.PERM_READ)
+# Two keys, both required — the same pair `_RESULT_READS` uses for the cohort
+# board, and for the same reason stated there: `examination.read` says you may
+# know an examination exists, not that you may read its marks. It is held by
+# the Student and Parent profiles, the Student one implied by the relationship
+# so **every pupil holds it automatically**, and this route renders one named
+# child's marks, total, percentage and grade.
+#
+# The board was given the second key when that was noticed; this route was
+# missed, and was reachable only because the global `examination.read`
+# permission row happened not to be seeded — an accident, not a control, and
+# `seed_roles_for_tenant` runs on every login.
+@require_any_permission(
+    "assessment.read.class", "assessment.read.all", "assessment.manage"
+)
 def download_marksheet(examination_id, student_id):
     """The published result as a document.
 

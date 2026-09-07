@@ -19,6 +19,9 @@ from core.decorators import (
 from core.models import Tenant
 from shared.helpers import error_response, success_response
 
+from modules.billing.calculation import customer_facing
+from modules.billing.services import tenant_service_components
+
 from .usage import get_tenant_usage
 from core.school_time import school_today
 
@@ -27,43 +30,30 @@ subscription_bp = Blueprint("subscription", __name__)
 
 
 def _bill_summary(tenant: Tenant, active_students: int):
-    """Inline mini-bill: keeps the dashboard widget self-contained without
-    re-running the platform billing service per dashboard hit."""
-    from decimal import Decimal
-    from datetime import date
+    """This school's own view of its bill.
 
-    price = tenant.price_per_student_per_year or Decimal("0")
-    base = (price * Decimal(active_students)).quantize(Decimal("0.01"))
+    Was a hand-copied second implementation of the platform's billing
+    arithmetic, with a docstring saying so. The copies had already drifted —
+    this one never had `discount_window` — and two definitions of a discount
+    window is one too many when both are money.
 
-    discount_pct = tenant.discount_percentage or Decimal("0")
-    today = school_today()
-    discount_active = False
-    discount_amount = Decimal("0")
-    if discount_pct > 0:
-        start_ok = (
-            tenant.discount_start_date is None
-            or today >= tenant.discount_start_date
-        )
-        end_ok = (
-            tenant.discount_end_date is None
-            or today <= tenant.discount_end_date
-        )
-        if start_ok and end_ok:
-            discount_active = True
-            discount_amount = (
-                base * discount_pct / Decimal("100")
-            ).quantize(Decimal("0.01"))
+    The *question* is still this screen's own, and stays: it reads the usage
+    snapshot the dashboard already has rather than recounting every student on
+    every page load. That difference is deliberate and unchanged; only the sum
+    is now shared.
+    """
+    from modules.billing.calculation import subscription_component
 
-    total = (base - discount_amount).quantize(Decimal("0.01"))
+    component = subscription_component(tenant, active_students)
     return {
-        "active_students": active_students,
-        "price_per_student_per_year": float(price),
-        "base_amount": float(base),
-        "discount_percentage": float(discount_pct) if discount_pct else 0.0,
-        "discount_active": discount_active,
-        "discount_amount": float(discount_amount),
-        "total": float(total),
-        "currency": "INR",
+        "active_students": component["active_students"],
+        "price_per_student_per_year": component["price_per_student_per_year"],
+        "base_amount": component["base_amount"],
+        "discount_percentage": component["discount_percentage"],
+        "discount_active": component["discount_active"],
+        "discount_amount": component["discount_amount"],
+        "total": component["total"],
+        "currency": component["currency"],
     }
 
 
@@ -110,5 +100,11 @@ def state():
         payload["billing"] = _bill_summary(
             tenant, usage.get("active_students_count", 0)
         )
+        # Third-party services the school is signed up to, as separate line
+        # items. `customer_facing` removes what NexSchool pays its providers —
+        # a school is entitled to know what it is charged, not NexSchool's
+        # margin — and it strips by field name wherever it appears, so a
+        # component that later gains a cost field is still safe here.
+        payload["services"] = customer_facing(tenant_service_components(tenant_id))
 
     return success_response(data=payload)

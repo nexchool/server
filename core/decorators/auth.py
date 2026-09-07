@@ -12,7 +12,10 @@ from core.authentication import (
     PASSWORD_RESET_ERROR,
     PASSWORD_RESET_MESSAGE,
     authenticate_request,
+    PIN_CHANGE_ERROR,
+    PIN_CHANGE_MESSAGE,
     password_change_is_outstanding,
+    pin_change_is_outstanding,
 )
 
 
@@ -57,6 +60,15 @@ def auth_required(fn):
         # Authenticated, but locked into a password change. 403 and not 401:
         # the caller *is* signed in, and a 401 would sign the Expo client out
         # of the very session it needs to set the new password.
+        if pin_change_is_outstanding(outcome.user):
+            return (
+                jsonify({
+                    "error": PIN_CHANGE_ERROR,
+                    "message": PIN_CHANGE_MESSAGE,
+                }),
+                403,
+            )
+
         if password_change_is_outstanding(outcome.user):
             return (
                 jsonify({
@@ -75,6 +87,11 @@ def auth_required(fn):
 
                 response = make_response(response)
             response.headers["X-New-Access-Token"] = outcome.new_access_token
+            if outcome.new_refresh_token:
+                # The token the client sent has been spent. It must store this
+                # one, or its next refresh replays a consumed token and the
+                # server ends the session as a suspected theft.
+                response.headers["X-New-Refresh-Token"] = outcome.new_refresh_token
 
         return response
 

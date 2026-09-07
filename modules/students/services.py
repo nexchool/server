@@ -345,9 +345,12 @@ def create_student(
                 # Link to existing user
                 user = existing_user
             else:
-                # Create new user with credentials
-                # Password = First 3 letters of name + birth year
-                temp_password = generate_student_password(name, date_of_birth)
+                # A credential that says nothing about the child (A5). The old
+                # generator produced the first three letters of their name and
+                # their birth year, which every classmate already knows.
+                from modules.auth.provisioning import generate_initial_password
+
+                temp_password = generate_initial_password()
                 user = User()
                 user.tenant_id = tenant_id
                 user.email = email
@@ -356,6 +359,15 @@ def create_student(
                 user.email_verified = True  # Auto-verify for admin-created students
                 user.force_password_reset = True  # Force password change on first login
                 user.save()
+
+            # Record the password the school just issued in the credential
+            # table the authentication pipeline reads. `users.password_hash`
+            # remains authoritative during the dual-read window; both carry
+            # the same hash, and `person_link` keeps them in step afterwards.
+            if temp_password:
+                from modules.auth.provisioning import issue_password_credential
+
+                issue_password_credential(user, temp_password)
 
             # Ensure the Student profile exists with its permissions for this
             # tenant (idempotent). It is NOT granted: a student's access is
@@ -514,6 +526,16 @@ def create_student(
                     "success": False,
                     "error": enr.get("error", "Could not create class enrollment"),
                 }
+
+        # Let the account be found by the admission number, where the school
+        # permits students to sign in that way. Issued to the account the
+        # student already has — never by creating one, because an account
+        # still needs an email address until a later phase says otherwise.
+        if user is not None:
+            from modules.auth.provisioning import issue_admission_identifier
+
+            issue_admission_identifier(user, admission_number)
+
         db.session.commit()
 
         # Refresh tenant usage so billing reflects the new student. Failures

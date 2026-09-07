@@ -379,3 +379,73 @@ def test_the_download_returns_a_pdf_or_says_why_not(
     else:
         assert response.status_code == 503
         assert response.get_json()["details"]["code"] == "PDF_UNAVAILABLE"
+
+
+# ---------------------------------------------------------------------------
+# Who may print one
+# ---------------------------------------------------------------------------
+
+def test_holding_examination_read_alone_does_not_open_a_marksheet(
+    client, db_session, tenant
+):
+    """A marksheet is mark data, and `examination.read` is a pupil's key.
+
+    The GraphQL cohort board already learned this: `examination.read` says you
+    may know an examination exists, not that you may read its marks, and it is
+    held by the Student and Parent profiles — the Student one implied by the
+    relationship, so **every pupil in the school holds it automatically**. The
+    result board was given a second key for exactly that reason; this route
+    was not, so any pupil holding the first key could print any other child's
+    name, marks, percentage and grade by passing their id.
+
+    Unreachable at the time it was written only because the global
+    `examination.read` permission row happened not to exist — an accident of
+    seeding, not a control, and `seed_roles_for_tenant` runs on every login.
+    """
+    from modules.auth.services import generate_access_token
+    from modules.rbac.models import Permission
+    from modules.rbac.role_seeder import seed_roles_for_tenant
+    from modules.students.models import Student
+    from tests.auth._characterization import make_user, new_id
+
+    if Permission.query.filter_by(name="examination.read").first() is None:
+        db_session.add(
+            Permission(name="examination.read", description="View examinations")
+        )
+        db_session.flush()
+
+    seed_roles_for_tenant(tenant.id)
+    tenant.feature_flags = dict(tenant.feature_flags or {}, examinations=True)
+    db_session.flush()
+
+    def a_pupil():
+        account = make_user(db_session, tenant, password="Password123")
+        student = Student(
+            id=new_id("s-"),
+            tenant_id=tenant.id,
+            user_id=account.id,
+            person_id=account.person_id,
+            admission_number=f"ADM-{uuid.uuid4().hex[:8]}",
+        )
+        db_session.add(student)
+        db_session.flush()
+        return student, account
+
+    _, curious = a_pupil()
+    somebody_else, _ = a_pupil()
+
+    from modules.rbac.services import get_user_permissions
+
+    assert "examination.read" in set(get_user_permissions(curious.id))
+
+    response = client.get(
+        f"/api/examinations/{new_id('ex-')}/students/{somebody_else.id}/marksheet",
+        headers={
+            "Authorization": f"Bearer {generate_access_token(curious)}",
+            "X-Tenant-ID": tenant.id,
+        },
+    )
+
+    # 403 — refused at the gate. Anything else means the request reached the
+    # handler, and a real examination id would have rendered the document.
+    assert response.status_code == 403

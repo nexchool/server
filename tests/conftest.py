@@ -45,6 +45,14 @@ os.environ.setdefault(
     "postgresql://postgres:postgres@localhost:5432/school_erp",
 )
 
+# Count rate limits in this process rather than in the deployment's Redis.
+# `.env` points the limiter at the docker hostname `redis`, which does not
+# resolve from a test run on the host; more importantly a suite that shared
+# the deployment's counters would inherit yesterday's attempts and leave its
+# own behind. Set before `app` is imported, because that is when the limiter
+# reads it.
+os.environ.setdefault("RATELIMIT_STORAGE_URI", "memory://")
+
 
 # ---------------------------------------------------------------------------
 # Flask app — session-scoped
@@ -62,12 +70,14 @@ def flask_app():
 def _no_throttling(flask_app):
     """Run the suite with rate limiting off.
 
-    Throttling is a production protection and no test asserts it, but the
-    limiter counts in memory and the whole suite shares one app and one
+    The limiter counts in memory and the whole suite shares one app and one
     counter — so the 120-per-minute GraphQL limit trips once enough GraphQL
     tests land inside the same minute. That made `test_identity_graphql`
     fail with `KeyError: 'data'` (a 429 body has no `data`) in some runs and
     not others, which reads as a flake in identity rather than what it is.
+
+    A test that is *about* a limit asks for `throttling` below, which turns it
+    back on for that test alone and starts it from an empty counter.
     """
     from core.extensions import limiter
 
@@ -75,6 +85,35 @@ def _no_throttling(flask_app):
     limiter.enabled = False
     yield
     limiter.enabled = previous
+
+
+@pytest.fixture
+def throttling(flask_app):
+    """Rate limiting on, for a test that asserts a limit.
+
+    Requested explicitly rather than made the default: the shared in-memory
+    counter would otherwise make unrelated tests fail each other by arriving
+    in the same minute. Storage is reset on the way in and out so the test
+    sees only its own attempts, and neither inherits a neighbour's count nor
+    leaves one behind.
+    """
+    from core.extensions import limiter
+
+    def _reset():
+        storage = getattr(limiter, "storage", None)
+        if storage is None or not hasattr(storage, "reset"):
+            return
+        try:
+            storage.reset()
+        except Exception:  # noqa: BLE001 - a backend that cannot, or is away
+            pass
+
+    previous = limiter.enabled
+    _reset()
+    limiter.enabled = True
+    yield limiter
+    limiter.enabled = previous
+    _reset()
 
 
 @pytest.fixture(scope="session")

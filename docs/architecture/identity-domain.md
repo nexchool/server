@@ -224,6 +224,43 @@ The session represents the authenticated Account.
 
 It does not determine business identity.
 
+## What a session is made of (2026-09-07)
+
+Two tokens, and they are different in kind.
+
+The **access token** is a short-lived JWT — fifteen minutes by default — that
+the client sends on every request. It names its own session in a `sid` claim,
+which is what makes revocation immediate: a request is refused as soon as the
+named session is no longer live, rather than at the next renewal.
+
+The **refresh token** is not a JWT. It is 48 bytes of random, stored only as a
+SHA-256 digest, and it **may be spent exactly once**: presenting it returns a
+new access token *and* a new refresh token, and the presented one dies. A
+token presented after it has been spent is a replay — two parties hold a copy
+and one of them should not — so the session and every generation of its token
+family end, and the event is recorded.
+
+Two rules follow for anything that talks to this API:
+
+- **A client must store the replacement.** Keeping the old token means the
+  next renewal is a replay, and the session ends.
+- **A client must renew in one place.** Several requests failing together must
+  share one renewal; each asking separately would spend the same token several
+  times, which is indistinguishable from theft.
+
+## Ending a session
+
+Ending a session revokes it and retires its refresh tokens together — an
+access token that stops working while its refresh token still renews is not an
+ended session.
+
+A session can end because the person signed out, because an administrator
+suspended the account or ended that session, because a forced password change
+cleared the others, or because the school disabled the method it was opened
+with. **Reactivating a suspended account restores no session**, and neither
+does re-enabling a method: the person signs in again, so that "restored" means
+the same thing however long the interruption lasted.
+
 ---
 
 # Active Context

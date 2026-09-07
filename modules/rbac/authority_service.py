@@ -212,6 +212,7 @@ def delegations_in_effect_for(staff_id: str, on_date: Optional[date] = None):
 
 
 RELATIONSHIP_STUDENT = "student"
+RELATIONSHIP_PARENT = "parent"
 
 
 def _roles_from_employment(person_id: str, on_date: Optional[date]) -> List[Role]:
@@ -254,6 +255,9 @@ def _roles_implied_by_relationships(person_id: str) -> List[Role]:
     if Student.query.filter_by(person_id=person_id).first() is not None:
         implied.append(RELATIONSHIP_STUDENT)
 
+    if _is_a_parent_with_their_own_login(person):
+        implied.append(RELATIONSHIP_PARENT)
+
     if not implied:
         return []
 
@@ -263,6 +267,31 @@ def _roles_implied_by_relationships(person_id: str) -> List[Role]:
             Role.implied_by_relationship.in_(implied),
         ).all()
     )
+
+
+def _is_a_parent_with_their_own_login(person) -> bool:
+    """Whether being this person's parent is authority they hold.
+
+    Two conditions, and both are the school's own answer rather than this
+    module's. **The relationship**: a responsible adult in a household, which
+    excludes the child's own membership — being somebody's sibling is not
+    being their parent. **The mode**: only where the school runs separate
+    parent logins (ADR-011). Under shared access a household signs in as the
+    student, there is no parent experience to hold authority over, and this
+    returns False for every parent in the school.
+
+    That second condition is what keeps this change inert on deployment. A
+    school that has not chosen separate logins sees no difference at all.
+    """
+    from modules.auth.policy import family_access_mode
+    from modules.auth.policy_models import FAMILY_ACCESS_SEPARATE
+    from modules.people.models import FAMILY_ROLE_CHILD
+
+    memberships = getattr(person, "family_memberships", None) or []
+    if not any(m.relationship != FAMILY_ROLE_CHILD for m in memberships):
+        return False
+
+    return family_access_mode(person.tenant_id) == FAMILY_ACCESS_SEPARATE
 
 
 def authority_profiles_for_person(

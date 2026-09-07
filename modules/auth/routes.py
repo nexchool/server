@@ -36,10 +36,10 @@ from .services import (
     # two login paths cannot drift apart again.
     LOGIN_LOCKOUT_MINUTES,  # noqa: F401 (re-exported)
 )
-from core.decorators import auth_required, tenant_required  # tenant_required still used for routes that run after middleware
+from core.decorators import auth_required, tenant_required, require_permission  # tenant_required still used for routes that run after middleware
 from core.database import db
-from core.extensions import limiter
-from shared.helpers import success_response, error_response
+from core.extensions import actor_rate_key, limiter
+from shared.helpers import success_response, error_response, not_found_response
 from core.school_time import utc_now
 from core.theme import resolve_theme
 
@@ -85,6 +85,8 @@ def tenant_branding():
       200: { data: { name, subdomain, logo_url, tagline, login_variant } }
       404: no tenant could be resolved from the request
     """
+    from modules.auth.policy import published_auth_methods
+
     err = resolve_tenant_for_auth(use_default=False)
     if err:
         return error_response('No school found for this address', status_code=404)
@@ -101,6 +103,12 @@ def tenant_branding():
         'logo_url': tenant.logo_url,
         'tagline': tenant.tagline,
         'login_variant': login_variant,
+        # Which ways in this school allows, so the sign-in screen can offer
+        # them. The union across the kinds of person a school has, never per
+        # person — which methods a school offers is visible on its login page
+        # anyway; which method a *particular* human may use is not, and is
+        # never published here.
+        'auth': {'methods': published_auth_methods(tenant.id)},
         # The school's colours, resolved to the token set the mobile app draws
         # with. Null for a school that has never been themed, which the app
         # reads as "use the palette you shipped with" — see core/theme.py.
@@ -117,6 +125,89 @@ def tenant_branding():
 @auth_bp.route('/login', methods=['POST'])
 @limiter.limit("5 per minute")
 def login():
+    """Sign in.
+
+    Two implementations live behind this route during the pipeline migration.
+    `auth_pipeline_enabled` chooses between them, and it exists so that
+    authentication can be returned to the path it used before Phase 0d without
+    a deployment. Missing means enabled: the pipeline is the intended path, and
+    a setting nobody has written must never be able to turn sign-in off.
+
+    Both produce the same responses. `_login_through_pipeline` is the new one;
+    `_login_legacy` below is the previous implementation, unchanged, kept as
+    the rollback target rather than deleted.
+    """
+    from .pipeline import pipeline_enabled
+
+    if pipeline_enabled():
+        return _login_through_pipeline()
+    return _login_legacy()
+
+
+def _login_through_pipeline():
+    """Sign in through the strategy pipeline.
+
+    The route's whole job is translation: build the request, run the pipeline,
+    turn its outcome into HTTP, and hand a success to the existing
+    finalization — which is untouched by this phase.
+    """
+    from .pipeline import (
+        AuthenticationRequest,
+        AuthenticationService,
+        clear_context,
+        publish_context,
+    )
+
+    attempt = AuthenticationRequest.from_flask(request)
+    outcome = AuthenticationService().authenticate(attempt)
+
+    if outcome.needs_tenant_choice:
+        return success_response(
+            data={
+                'requires_tenant_choice': True,
+                'tenants': [
+                    {'id': t.id, 'name': t.name, 'subdomain': t.subdomain}
+                    for t in outcome.tenant_choices
+                ],
+            },
+            message='Choose your school',
+            status_code=200,
+        )
+
+    if not outcome.succeeded:
+        # A tenant that could not be resolved keeps the resolver's own
+        # response, so its wording and status are exactly what they were.
+        prepared = getattr(outcome, '_tenant_response', None)
+        if prepared is not None:
+            return prepared[1], prepared[0]
+        return error_response(
+            error=outcome.error,
+            message=outcome.message,
+            status_code=outcome.status_code,
+        )
+
+    # The entered school scopes everything after this point.
+    g.tenant_id = outcome.tenant.id if outcome.tenant else None
+    g.tenant = outcome.tenant
+
+    # Using a code sent to a number is the proof of possession that issuing the
+    # identifier deliberately did not claim. Recorded here, once the pipeline
+    # has accepted the attempt and before finalization — which stays untouched.
+    if outcome.method_key == 'mobile_otp' and outcome.identifier is not None:
+        from .provisioning import mark_mobile_verified
+
+        mark_mobile_verified(outcome.identifier)
+
+    publish_context(outcome)
+    try:
+        return _finalize_login(
+            outcome.account, outcome.tenant, is_god_login=outcome.is_god_login
+        )
+    finally:
+        clear_context()
+
+
+def _login_legacy():
     """
     Login with email and password.
 
@@ -334,8 +425,16 @@ def _finalize_login(user, tenant, is_god_login):
                 'token lifetime', exc_info=True,
             )
 
-    access_token = generate_access_token(user, access_minutes=access_minutes)
+    # The session first, then the token — the one ordering change this phase
+    # makes inside `_finalize_login`, and it is load-bearing rather than
+    # tidiness. An access token names the session it came from, and validation
+    # checks that session is still live; a token minted before its session
+    # existed would carry no name, and revoking the session would go on being
+    # a promise about the future instead of taking effect now.
     session = create_session(user, request)
+    access_token = generate_access_token(
+        user, access_minutes=access_minutes, session_id=session.id
+    )
 
     if not is_platform_admin:
         from core.feature_flags import get_tenant_enabled_features
@@ -384,7 +483,7 @@ def _finalize_login(user, tenant, is_god_login):
     response, status_code = success_response(
         data={
             'access_token': access_token,
-            'refresh_token': session.refresh_token,
+            'refresh_token': session.issued_refresh_token,
             'tenant_id': resolved_tenant_id,
             'subdomain': tenant.subdomain if tenant else None,
             'tenant_name': tenant.name if tenant else None,
@@ -482,36 +581,72 @@ def logout():
     Logout user by revoking the session.
     Tenant from X-Tenant-ID header or default.
     
-    Headers:
-        - X-Refresh-Token: Refresh token (optional; required for mobile/client)
-    Cookies:
-        - auth-token: Access token (optional; used by panel when no header)
-        
+    Whichever token the caller holds identifies **one** session, and that one
+    session ends. Three ways in, in order of directness:
+
+        Authorization: Bearer <access token>   every current client
+        auth-token cookie                      the panel, cross-origin
+        X-Refresh-Token                        older builds
+
+    The access token is preferred because it names its session in a `sid`
+    claim, so nothing has to be looked up — and because the refresh token is
+    no longer sent on ordinary requests: once a refresh token may be spent
+    only once, a client cannot attach it to everything.
+
+    **Never every session.** The cookie branch used to call
+    `revoke_all_user_sessions`, which meant an unauthenticated request
+    carrying only a cookie could sign somebody out of every device they owned
+    — and because the production cookie is `SameSite=None`, any site could
+    cause it. Signing a person out of their phone from a page they merely
+    visited is not a logout, it is a denial of service with a friendly name.
+    Signing out everywhere is still available, deliberately, at
+    `DELETE /api/auth/sessions`, which is authenticated.
+
     Returns:
         200: Logout successful
-        400: Missing both refresh token and auth-token cookie
+        400: No token of any kind
     """
     err = resolve_tenant_for_auth()
     if err:
         return err[1], err[0]
 
-    refresh_token = request.headers.get("X-Refresh-Token")
-    access_token_cookie = request.cookies.get("auth-token")
+    from modules.auth.services import validate_jwt_token
 
-    if refresh_token:
-        logout_user_service(refresh_token)
-    elif access_token_cookie:
-        from modules.auth.services import validate_jwt_token
-        payload = validate_jwt_token(access_token_cookie, token_type="access")
+    refresh_token = request.headers.get("X-Refresh-Token")
+    header = request.headers.get("Authorization") or ""
+    access_token = (
+        header[7:].strip() if header.lower().startswith("bearer ") else None
+    ) or request.cookies.get("auth-token")
+
+    session_id = None
+    if access_token:
+        payload = validate_jwt_token(access_token, token_type="access")
         if payload:
-            from modules.auth.services import revoke_all_user_sessions
-            revoke_all_user_sessions(str(payload["sub"]))
-    else:
+            session_id = payload.get("sid")
+
+    if session_id:
+        from core.authentication import load_without_tenant_scope
+
+        session = load_without_tenant_scope(
+            lambda: Session.query.filter_by(id=session_id, revoked=False).first()
+        )
+        if session is not None:
+            session.revoke()
+            from modules.auth.tokens import revoke_session_tokens
+
+            revoke_session_tokens(session.id)
+            db.session.commit()
+    elif refresh_token:
+        logout_user_service(refresh_token)
+    elif not access_token:
         return error_response(
             error='ValidationError',
-            message='Refresh token or auth cookie is required',
+            message='A token is required to sign out.',
             status_code=400
         )
+    # An access token that is present but unreadable — expired, or from a
+    # build before sessions were named — is not an error to report. There is
+    # nothing to end, and the client is about to discard it anyway.
 
     response, status_code = success_response(
         message='User logged out successfully',
@@ -595,14 +730,15 @@ def validate_email():
             quote('Email verified successfully, but no permissions assigned. Contact administrator.')
         ))
 
-    # Auto-login: create session
-    access_token = generate_access_token(user)
+    # Auto-login: the session first, so the token can name it. See
+    # `_finalize_login` for why the order matters.
     session = create_session(user, request)
+    access_token = generate_access_token(user, session_id=session.id)
 
     # Redirect to app with tokens
     return redirect(get_app_verification_success_url(
         access_token=access_token,
-        refresh_token=session.refresh_token,
+        refresh_token=session.issued_refresh_token,
         user_id=user.id,
         email=user.email
     ))
@@ -746,7 +882,9 @@ def force_reset_password():
 
     Used for the mandatory first-login change after an admin provisions or
     resets an account (force_password_reset=True). Preserves the caller's
-    current session (matched by X-Refresh-Token) and revokes the rest.
+    current session — the one their access token names — and revokes the
+    rest, so that a password somebody else may have seen stops working
+    everywhere except here.
 
     Body:
         - new_password (required, must pass strength rule)
@@ -773,26 +911,25 @@ def force_reset_password():
     user.force_password_reset = False
 
     # Revoke every other active session; keep the caller's current one.
-    # Only revoke when we can identify the caller's session (via X-Refresh-Token);
-    # otherwise skip revocation rather than log the caller out of the session they
-    # just used to set their password.
-    refresh_token = request.headers.get('X-Refresh-Token')
-    current_session = None
-    if refresh_token:
-        current_session = Session.query.filter_by(
-            refresh_token=refresh_token, revoked=False
-        ).first()
+    # Only when that one can be identified — otherwise skip revocation rather
+    # than sign the caller out of the session they are setting the password
+    # from, which would strand them.
+    from .session_admin import current_session_id
+    from .tokens import revoke_session_tokens
 
-    if current_session is not None:
+    current = current_session_id()
+
+    if current is not None:
         others = Session.query.filter_by(user_id=user.id, revoked=False).filter(
-            Session.id != current_session.id
+            Session.id != current
         )
         for session in others.all():
             session.revoke()
+            revoke_session_tokens(session.id)
     else:
         logger.warning(
-            "force-reset: no current session identified (missing X-Refresh-Token); "
-            "skipping other-session revocation for user %s", user.id
+            "force-reset: no current session identified; skipping "
+            "other-session revocation for user %s", user.id
         )
 
     user.save()
@@ -1080,3 +1217,564 @@ def change_password():
         )
 
     return success_response(data=result)
+
+
+@auth_bp.route('/refresh', methods=['POST'])
+@limiter.limit("30 per minute")
+def refresh_tokens():
+    """Trade a refresh token for a fresh pair.
+
+    An explicit endpoint, because the implicit one — send an expired access
+    token plus `X-Refresh-Token` to any route and read the replacement off a
+    response header — is invisible in the API surface and gave a client no way
+    to renew without first making a request that fails. The implicit path
+    still works; this is the one a client should use.
+
+    **The token sent here is spent.** Every refresh rotates: the response
+    carries a new refresh token and the old one is dead the moment this
+    returns. A client that keeps the old one will, on its next attempt, be
+    replaying a consumed token — which is indistinguishable from a thief doing
+    the same, so the session ends.
+
+    Every refusal is one answer. Unknown, expired, replayed, revoked session,
+    suspended account, suspended school: all `401 InvalidRefreshToken`. The
+    real reason is recorded.
+    """
+    from .tokens import RefreshOutcome, rotate
+
+    data = request.get_json(silent=True) or {}
+    token = (
+        request.headers.get('X-Refresh-Token')
+        or data.get('refresh_token')
+        or ''
+    ).strip()
+
+    if not token:
+        return error_response(
+            error='ValidationError',
+            message='A refresh token is required.',
+            status_code=400,
+        )
+
+    outcome, session, replacement = rotate(token)
+    if outcome != RefreshOutcome.OK or session is None:
+        db.session.commit()  # a reuse detection revokes; that must persist
+        return error_response(
+            error='InvalidRefreshToken',
+            message='Please sign in again.',
+            status_code=401,
+        )
+
+    user = User.query.filter_by(id=session.user_id).first()
+    if user is None:
+        db.session.rollback()
+        return error_response(
+            error='InvalidRefreshToken',
+            message='Please sign in again.',
+            status_code=401,
+        )
+
+    access_token = services.generate_access_token(
+        user,
+        tenant_id=session.tenant_id,
+        method=session.login_method,
+        session_id=session.id,
+    )
+    db.session.commit()
+
+    return success_response(
+        data={
+            'access_token': access_token,
+            'refresh_token': replacement,
+            'expires_in': services.JWT_ACCESS_MINUTES * 60,
+        },
+        message='Token refreshed',
+        status_code=200,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Account access — suspend and reactivate
+#
+# Access, never the record. A suspended pupil is still enrolled, still on the
+# register and still in last term's results; they simply cannot sign in.
+# ---------------------------------------------------------------------------
+
+@auth_bp.route('/accounts/<account_id>/suspend', methods=['POST'])
+@tenant_required
+@auth_required
+@require_permission('user.manage')
+def suspend_account_access(account_id):
+    """Stop this account signing in, immediately.
+
+    Sessions are revoked, refresh tokens retired, and the access token already
+    in their browser stops working on its next request. Nothing about their
+    record changes.
+    """
+    from .account_status import AccountStatusError, describe_access, suspend_account
+
+    account = _account_in_my_school(account_id)
+    if account is None:
+        return not_found_response('Account')
+
+    if account.id == g.current_user.id:
+        # Suspending yourself locks you out of the screen you would need to
+        # undo it.
+        return error_response(
+            error='ValidationError',
+            message='You cannot suspend your own access.',
+            status_code=400,
+        )
+
+    data = request.get_json(silent=True) or {}
+    try:
+        result = suspend_account(
+            account,
+            actor_user_id=g.current_user.id,
+            reason=(data.get('reason') or '').strip() or None,
+        )
+        db.session.commit()
+    except AccountStatusError as exc:
+        db.session.rollback()
+        return error_response('ValidationError', str(exc), 400)
+
+    return success_response(data={**result, 'access': describe_access(account)})
+
+
+@auth_bp.route('/accounts/<account_id>/reactivate', methods=['POST'])
+@tenant_required
+@auth_required
+@require_permission('user.manage')
+def reactivate_account_access(account_id):
+    """Let this account sign in again.
+
+    **No session is restored.** The tokens from before the suspension stay
+    dead and the person signs in fresh — so "reactivated" means the same thing
+    however long the suspension lasted. Their password and PIN still work.
+    """
+    from .account_status import AccountStatusError, describe_access, reactivate_account
+
+    account = _account_in_my_school(account_id)
+    if account is None:
+        return not_found_response('Account')
+
+    try:
+        result = reactivate_account(account, actor_user_id=g.current_user.id)
+        db.session.commit()
+    except AccountStatusError as exc:
+        db.session.rollback()
+        return error_response('ValidationError', str(exc), 400)
+
+    return success_response(data={**result, 'access': describe_access(account)})
+
+
+@auth_bp.route('/accounts/<account_id>/access', methods=['GET'])
+@tenant_required
+@auth_required
+@require_permission('user.manage')
+def read_account_access(account_id):
+    """What an operator needs before deciding. Carries no secret."""
+    from .account_status import describe_access
+
+    account = _account_in_my_school(account_id)
+    if account is None:
+        return not_found_response('Account')
+    return success_response(data=describe_access(account))
+
+
+# ---------------------------------------------------------------------------
+# Mobile OTP
+#
+# Only the *request* half is a new endpoint. Verification is an ordinary sign-in
+# through `POST /api/auth/login` with `method=mobile_otp`, so it runs every gate
+# the pipeline already owns — maintenance, policy, lockout, account status,
+# disambiguation, events, finalization — rather than a second copy of them.
+# ---------------------------------------------------------------------------
+
+@auth_bp.route('/otp/request', methods=['POST'])
+@limiter.limit("10 per minute")
+def request_mobile_otp():
+    """Send a sign-in code to a mobile number.
+
+    **Answers the same way whatever happens.** A number that belongs to
+    nobody, a school that has not enabled the method, a suspended account, a
+    number shared by two people and a code that was genuinely sent all produce
+    one response. Anything else would answer, for free, the question an
+    attacker is asking: *is this number a NexSchool customer?*
+
+    The precise reason is recorded internally — see `otp.py` — so an operator
+    investigating can tell those cases apart. The caller cannot.
+
+    Rate limits are enforced inside the service, across the number, the school
+    and the address, because a per-IP limit alone is no defence against
+    somebody with a list of addresses ringing one victim's phone all night.
+    """
+    from .otp import request_otp
+
+    data = request.get_json(silent=True) or {}
+    mobile = (data.get('mobile') or data.get('identifier') or '').strip()
+
+    # The school must be **named**, not merely resolvable. `resolve_tenant_for_auth`
+    # falls back to the tenant with subdomain "default" when nothing names one
+    # — a documented behaviour the login path deliberately keeps — and here
+    # that fallback would be a hole: a request with no school would send a code
+    # to whoever happens to hold that number at the default school. So the
+    # naming is checked first, and an unnamed school is an error.
+    named = bool(
+        data.get('tenant_id')
+        or data.get('tenantId')
+        or (data.get('subdomain') or '').strip()
+        or request.headers.get('X-Tenant-ID')
+        or request.headers.get('X-Tenant-Subdomain')
+    )
+    if not named:
+        return error_response(
+            error='TenantRequired',
+            message='Tenant is required for this sign-in method.',
+            status_code=400,
+        )
+
+    failure = resolve_tenant_for_auth(data)
+    if failure:
+        return failure[1], failure[0]
+
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return error_response(
+            error='TenantRequired',
+            message='Tenant is required for this sign-in method.',
+            status_code=400,
+        )
+
+    if not mobile:
+        return error_response(
+            error='ValidationError',
+            message='A mobile number is required.',
+            status_code=400,
+        )
+
+    result = request_otp(
+        tenant_id=tenant_id,
+        mobile=mobile,
+        ip_address=request.remote_addr,
+        client_surface=(request.headers.get('X-Client-Surface') or '').strip()[:30] or None,
+    )
+
+    # One response for every outcome — with one exception. Being throttled is
+    # told plainly, because a client that does not know it is rate limited
+    # simply retries, and because the caller learns nothing from it that they
+    # did not already know: they are the one who sent the requests.
+    if not result.accepted and result.reason == 'throttled':
+        return error_response(
+            error='TooManyRequests',
+            message='Too many codes have been requested. Please wait and try again.',
+            status_code=429,
+            details=(
+                {'retry_after_seconds': result.retry_after_seconds}
+                if result.retry_after_seconds
+                else None
+            ),
+        )
+
+    payload = {'sent': True}
+    if result.accepted and result.challenge is not None:
+        # The challenge id and its expiry — nothing that identifies a person,
+        # and nothing that says whether an account exists. A refused request
+        # returns no id at all, which a client treats as "wait for the code".
+        payload.update(result.challenge.to_dict())
+        payload.pop('attempts_remaining', None)
+
+    return success_response(
+        data=payload,
+        message='If that number can sign in here, a code is on its way.',
+        status_code=200,
+    )
+
+
+@auth_bp.route('/pin/change', methods=['POST'])
+@auth_required
+@limiter.limit("5 per minute")
+def change_pin():
+    """Replace the PIN on the signed-in account.
+
+    The holder's own operation, so it needs the current PIN as well as the new
+    one — being signed in is not by itself permission to change a second
+    credential, and somebody who walked away from an unlocked phone should not
+    lose their PIN to whoever picked it up.
+
+    Clears `must_change` on the PIN and nothing else. A password that must also
+    be changed stays that way: they are separate credentials with separate
+    flags, and discharging one requirement is not discharging the other.
+    """
+    from werkzeug.security import check_password_hash
+
+    from .pin import InvalidPin, WeakPin
+    from .provisioning import issue_pin_credential, live_pin_credential
+
+    data = request.get_json(silent=True) or {}
+    current = data.get('current_pin') or ''
+    replacement = data.get('new_pin') or ''
+
+    credential = live_pin_credential(g.current_user)
+    if credential is None:
+        return error_response(
+            error='NoPinCredential',
+            message='This account has no PIN to change.',
+            status_code=404,
+        )
+
+    if not current or not check_password_hash(credential.secret_hash, current):
+        return error_response(
+            error='InvalidCredentials',
+            message='That PIN is not correct.',
+            status_code=401,
+        )
+
+    try:
+        issue_pin_credential(
+            g.current_user,
+            replacement,
+            issued_by_user_id=g.current_user.id,
+            # Chosen by the holder, not issued by the school — which is what
+            # `is_provisional` records, and it is now false.
+            is_provisional=False,
+        )
+        db.session.commit()
+    except (InvalidPin, WeakPin) as exc:
+        db.session.rollback()
+        return error_response(error='WeakPin', message=str(exc), status_code=422)
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception('PIN change failed')
+        return error_response('InternalError', 'Could not change the PIN.', 500)
+
+    return success_response(message='PIN changed')
+
+
+# ---------------------------------------------------------------------------
+# Parent logins
+#
+# Provisioning is a school operation and needs `user.manage`; reading one's own
+# children needs only a session, because the answer is derived from who is
+# signed in rather than from anything they send.
+# ---------------------------------------------------------------------------
+
+@auth_bp.route('/parents/<person_id>/login', methods=['POST'])
+@tenant_required
+@auth_required
+@limiter.limit("30 per minute", key_func=actor_rate_key)
+@require_permission('user.manage')
+def provision_parent(person_id):
+    """Give a parent their own way to sign in.
+
+    Explicit and audited. Importing a spreadsheet of fathers creates fathers,
+    not logins — a school that has chosen separate parent logins still asks
+    for each one deliberately.
+
+    Reuses the account this person already has if there is one (a teacher who
+    becomes a parent keeps one account), and issues a password only when there
+    was none. The plaintext comes back in this response and exists nowhere
+    else.
+    """
+    from modules.people.models import Person
+
+    from .parents import ParentProvisioningError, provision_parent_login
+
+    person = Person.query.filter_by(
+        id=person_id, tenant_id=get_tenant_id()
+    ).filter(Person.deleted_at.is_(None)).first()
+    if person is None:
+        return not_found_response('Person')
+
+    data = request.get_json(silent=True) or {}
+
+    try:
+        result = provision_parent_login(
+            person,
+            email=(data.get('email') or '').strip(),
+            actor_user_id=g.current_user.id,
+        )
+        db.session.commit()
+    except ParentProvisioningError as exc:
+        db.session.rollback()
+        return error_response(
+            error='ParentLoginNotProvisioned', message=str(exc), status_code=422
+        )
+
+    payload = {
+        'account_id': result.account.id,
+        'email': result.account.email,
+        'created_account': result.created_account,
+        'reused_existing_account': result.reused_existing_account,
+    }
+    if result.password:
+        # Once, and never again — the same contract every issued credential
+        # in this codebase follows.
+        payload['password'] = result.password
+
+    return success_response(data=payload)
+
+
+@auth_bp.route('/parents/me/children', methods=['GET'])
+@tenant_required
+@auth_required
+def my_children():
+    """The students the signed-in account is a parent of.
+
+    Derived from the family relationship, not from anything the caller sends,
+    so there is no id here for somebody to substitute. A person who is not a
+    parent gets an empty list rather than an error — that is a true answer,
+    and distinguishing it would say who is a parent at this school.
+    """
+    from .parents import children_of_account
+
+    children = children_of_account(g.current_user)
+    return success_response(
+        data={
+            'children': [
+                {
+                    'id': student.id,
+                    'admission_number': student.admission_number,
+                    'name': student.display_name,
+                    'class_id': student.class_id,
+                }
+                for student in children
+            ]
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session administration
+#
+# Two audiences, one model. A person managing their own sessions needs no
+# permission beyond being signed in; an operator managing somebody else's
+# needs `user.manage` and can only reach accounts in their own school.
+# ---------------------------------------------------------------------------
+
+@auth_bp.route('/sessions', methods=['GET'])
+@auth_required
+def list_my_sessions():
+    """Where am I signed in?
+
+    Metadata only — a session's refresh token is the credential that session
+    is made of, and a listing carrying it would hand every session to whoever
+    could read one.
+    """
+    from modules.auth.session_admin import list_sessions
+
+    return success_response(data={'sessions': list_sessions(g.current_user)})
+
+
+@auth_bp.route('/sessions/<session_id>', methods=['DELETE'])
+@auth_required
+def revoke_my_session(session_id):
+    """Sign out of one place.
+
+    The session is matched by id *and* account, so somebody else's session id
+    is simply not found rather than revoked.
+    """
+    from modules.auth.session_admin import revoke_session
+
+    if not revoke_session(
+        g.current_user, session_id, actor_user_id=g.current_user.id
+    ):
+        return not_found_response('Session')
+    db.session.commit()
+    return success_response(message='Session revoked')
+
+
+@auth_bp.route('/sessions', methods=['DELETE'])
+@auth_required
+def revoke_my_other_sessions():
+    """Sign out everywhere else.
+
+    The front door for signing out everywhere. It is the *only* way to do it:
+    the unauthenticated `logout` route ends one session, deliberately, so that
+    nobody can sign somebody else out of every device they own.
+
+    The caller's own session is kept by default, so asking to be signed out
+    elsewhere does not sign them out of the screen they asked from. Which one
+    is theirs comes from their access token's `sid` claim — see
+    `current_session_id`.
+    """
+    from modules.auth.session_admin import current_session_id, revoke_all_sessions
+
+    keep_current = str(
+        (request.args.get('keep_current') or 'true')
+    ).lower() not in ('false', '0', 'no')
+
+    current = current_session_id()
+    revoked = revoke_all_sessions(
+        g.current_user,
+        actor_user_id=g.current_user.id,
+        keep_session_id=current if (current and keep_current) else None,
+    )
+    db.session.commit()
+    return success_response(data={'revoked': revoked})
+
+
+@auth_bp.route('/accounts/<account_id>/sessions', methods=['GET'])
+@tenant_required
+@auth_required
+@require_permission('user.manage')
+def list_account_sessions(account_id):
+    """Where is this account signed in? For an operator, about somebody else."""
+    from modules.auth.session_admin import list_sessions
+
+    account = _account_in_my_school(account_id)
+    if account is None:
+        return not_found_response('Account')
+
+    return success_response(data={'sessions': list_sessions(account)})
+
+
+@auth_bp.route('/accounts/<account_id>/sessions/<session_id>', methods=['DELETE'])
+@tenant_required
+@auth_required
+@require_permission('user.manage')
+def revoke_account_session(account_id, session_id):
+    """End one of somebody else's sessions."""
+    from modules.auth.session_admin import revoke_session
+
+    account = _account_in_my_school(account_id)
+    if account is None:
+        return not_found_response('Account')
+
+    if not revoke_session(account, session_id, actor_user_id=g.current_user.id):
+        return not_found_response('Session')
+    db.session.commit()
+    return success_response(message='Session revoked')
+
+
+@auth_bp.route('/accounts/<account_id>/sessions', methods=['DELETE'])
+@tenant_required
+@auth_required
+@require_permission('user.manage')
+def revoke_account_sessions(account_id):
+    """Sign this account out everywhere."""
+    from modules.auth.session_admin import revoke_all_sessions
+
+    account = _account_in_my_school(account_id)
+    if account is None:
+        return not_found_response('Account')
+
+    revoked = revoke_all_sessions(account, actor_user_id=g.current_user.id)
+    db.session.commit()
+    return success_response(data={'revoked': revoked})
+
+
+def _account_in_my_school(account_id):
+    """The account, if it belongs to the school making the request.
+
+    A platform administrator's account is deliberately not reachable this way.
+    They are not a member of the school they are operating in, and a school
+    administrator ending the operator's session is not a capability any school
+    has been given.
+    """
+    account = User.query.filter_by(
+        id=account_id, tenant_id=get_tenant_id()
+    ).filter(User.deleted_at.is_(None)).first()
+    if account is None or account.is_platform_admin:
+        return None
+    return account

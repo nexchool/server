@@ -141,12 +141,23 @@ class Config:
     _cors_env = os.getenv('CORS_ORIGINS', '').strip()
     CORS_ORIGINS = [o.strip() for o in _cors_env.split(',') if o.strip()] if _cors_env else ['*']
     CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-    CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain']
+    # Every custom header our own clients attach must be listed. A browser
+    # will not send the real request when a preflight omits one it asked for,
+    # and fetch reports that as a bare network failure — so a missing entry
+    # here reads as "the API is unreachable", not as a CORS problem.
+    CORS_ALLOW_HEADERS = ['Content-Type', 'Authorization', 'X-Refresh-Token', 'X-Tenant-ID', 'X-Tenant-Subdomain', 'X-Client-Surface']
     # A browser can only read response headers named here. X-Feature-Stamp has
     # to be on the list or admin-web, served from a different origin than the
     # API in production, silently never notices a module being switched off —
     # while working fine locally behind nginx.
-    CORS_EXPOSE_HEADERS = ['X-New-Access-Token', 'X-Feature-Stamp']
+    # A browser reads none of these unless they are exposed. The refresh
+    # token joins the list because refresh tokens now rotate: a client that
+    # could not read its replacement would keep sending a spent one.
+    CORS_EXPOSE_HEADERS = [
+        'X-New-Access-Token',
+        'X-New-Refresh-Token',
+        'X-Feature-Stamp',
+    ]
     CORS_SUPPORTS_CREDENTIALS = True
 
     # Rate limiting (storage URL optional; default in-memory)
@@ -241,6 +252,30 @@ class ProductionConfig(Config):
             raise ValueError("BACKEND_URL must be set in production")
         if cls.SECRET_KEY == 'dev-secret-key-change-in-production':
             raise ValueError("SECRET_KEY must be changed in production")
+
+        # The JWT secret is what makes a token unforgeable, and it is read
+        # straight from the environment by the signer rather than from this
+        # config — so a deployment that sets SECRET_KEY and forgets this one
+        # signs every token with a string that is in a public repository.
+        # Anybody who has read it could then mint a token for any account in
+        # any school. Validated here, in the same place and the same way as
+        # SECRET_KEY, because the failure is silent otherwise.
+        from modules.auth.services import INSECURE_JWT_SECRET
+
+        jwt_secret = os.getenv('JWT_SECRET_KEY')
+        if not jwt_secret or not jwt_secret.strip():
+            raise ValueError("JWT_SECRET_KEY must be set in production")
+        if jwt_secret == INSECURE_JWT_SECRET:
+            raise ValueError(
+                "JWT_SECRET_KEY is still the development default and must be "
+                "changed in production"
+            )
+        if jwt_secret == cls.SECRET_KEY:
+            # Not fatal on its own, but one leaked value should not cost both
+            # session integrity and token integrity.
+            raise ValueError(
+                "JWT_SECRET_KEY must differ from SECRET_KEY in production"
+            )
 
 
 class StagingConfig(ProductionConfig):

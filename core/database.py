@@ -78,7 +78,16 @@ def init_db(app):
 
     with app.app_context():
         from core.models import Tenant, Plan, AuditLog, PlatformSetting
+        from modules.integrations.models import TenantIntegration  # noqa: F401
+        from modules.billing.models import (  # noqa: F401
+            ProviderService,
+            ServiceProvider,
+            ServiceUsageRecord,
+            TenantService,
+        )
         from modules.auth.models import User, Session
+        from modules.auth.otp_models import MobileOtpChallenge  # noqa: F401
+        from modules.auth.refresh_models import RefreshToken  # noqa: F401
         from modules.rbac.models import Role, Permission, RolePermission
         from modules.sub_admins.models import UserSchoolUnit  # noqa: F401
         from modules.students.models import Student, StudentPromotionBatch

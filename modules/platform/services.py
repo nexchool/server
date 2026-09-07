@@ -120,6 +120,8 @@ def get_dashboard_stats() -> Dict[str, Any]:
     summed across active tenants based on their per-student pricing."""
     from sqlalchemy import func
 
+    from modules.billing.calculation import monthly_run_rate
+
     tenants = Tenant.query.filter(Tenant.status != TENANT_STATUS_DELETED).all()
     total_tenants = len(tenants)
     active_tenants = sum(
@@ -161,7 +163,10 @@ def get_dashboard_stats() -> Dict[str, Any]:
         "total_students": total_students,
         "total_teachers": total_teachers,
         "revenue_yearly": float(revenue_yearly),
-        "revenue_monthly": float(revenue_yearly / 12) if revenue_yearly else 0.0,
+        # Was `revenue_yearly / 12` written out here. Same number, but the
+        # caveats now live with the definition rather than being invisible at
+        # the call site: it is a run rate, not anybody's monthly bill.
+        "revenue_monthly": monthly_run_rate(revenue_yearly),
         "tenant_growth_by_month": tenant_growth_by_month,
     }
 
@@ -251,6 +256,15 @@ def create_tenant(
 
     employment = employ(tenant_id, user.person_id)
     grant_authority(employment.id, admin_role.id)
+
+    # Which ways in this school allows. Seeded with the defaults, which are
+    # exactly what the product did before policy existed, so a new school is
+    # usable the moment it is created and nobody has to initialise it by hand.
+    # Inside the same transaction as everything above: a tenant that fails to
+    # be created leaves no half-made policy behind.
+    from modules.auth.policy import ensure_default_policy
+
+    ensure_default_policy(tenant_id, updated_by_user_id=platform_admin_id)
 
     db.session.commit()
 
@@ -635,6 +649,14 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
 
     Active = student status not 'inactive'/'withdrawn'/'graduated'/'transferred'.
     Falls back to "any student row" if status is unset.
+
+    The arithmetic itself now lives in `modules/billing/calculation.py` and is
+    shared with the tenant-facing dashboard, which used to carry its own copy
+    of the discount window and the rounding. What stays here is the *question*
+    this caller asks — a live count of billable students, as of a date — which
+    is genuinely different from the one the school's own screen asks.
+
+    The payload is unchanged, deliberately: the panel reads these keys.
     """
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
@@ -645,6 +667,7 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
     # written out here as well, with a comment on the other copy asking that
     # they be kept in step by hand — which is how `dropped_out` came to be
     # billable in both.
+    from modules.billing.calculation import subscription_component
     from modules.subscription.usage import INACTIVE_STUDENT_STATUSES
 
     inactive_statuses = INACTIVE_STUDENT_STATUSES
@@ -658,37 +681,24 @@ def calculate_tenant_billing(tenant_id: str, on_date: Optional[date] = None) -> 
         .count()
     )
 
-    price = tenant.price_per_student_per_year or Decimal("0")
-    base = (price * Decimal(active_students)).quantize(Decimal("0.01"))
-
-    discount_active = False
-    discount_amount = Decimal("0")
-    discount_pct = tenant.discount_percentage or Decimal("0")
-    if discount_pct > 0:
-        start_ok = (tenant.discount_start_date is None) or (on_date >= tenant.discount_start_date)
-        end_ok = (tenant.discount_end_date is None) or (on_date <= tenant.discount_end_date)
-        if start_ok and end_ok:
-            discount_active = True
-            discount_amount = (base * discount_pct / Decimal("100")).quantize(Decimal("0.01"))
-
-    total = (base - discount_amount).quantize(Decimal("0.01"))
+    component = subscription_component(tenant, active_students, on_date=on_date)
 
     return {
         "success": True,
         "tenant_id": tenant_id,
         "on_date": on_date.isoformat(),
-        "active_students": active_students,
-        "price_per_student_per_year": float(price),
-        "base_amount": float(base),
-        "discount_percentage": float(discount_pct) if discount_pct else 0.0,
-        "discount_active": discount_active,
+        "active_students": component["active_students"],
+        "price_per_student_per_year": component["price_per_student_per_year"],
+        "base_amount": component["base_amount"],
+        "discount_percentage": component["discount_percentage"],
+        "discount_active": component["discount_active"],
         "discount_window": {
             "start": tenant.discount_start_date.isoformat() if tenant.discount_start_date else None,
             "end": tenant.discount_end_date.isoformat() if tenant.discount_end_date else None,
         },
-        "discount_amount": float(discount_amount),
-        "total": float(total),
-        "currency": "INR",
+        "discount_amount": component["discount_amount"],
+        "total": component["total"],
+        "currency": component["currency"],
     }
 
 

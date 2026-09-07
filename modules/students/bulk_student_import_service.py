@@ -465,11 +465,17 @@ def _student_kwargs_from_row(
     *,
     academic_year_id: str,
 ) -> Dict[str, Any]:
-    """Build kwargs for Student() from normalized import row."""
-    dob = None
-    if coerced.get("date_of_birth"):
-        dob = datetime.strptime(coerced["date_of_birth"], "%Y-%m-%d").date()
+    """Build kwargs for Student() from normalized import row.
 
+    Student-specific facts only. Who the child *is* — date of birth, gender,
+    phone, address, Aadhaar — belongs to the Person, and is written there by
+    `_record_the_person_behind_the_row`, which is the same path
+    `create_student` takes. Those five columns were moved onto `persons` by the
+    v2 person-centric refactor and this builder was not updated with them, so
+    every created row raised `'date_of_birth' is an invalid keyword argument
+    for Student` and every updated row silently set an attribute that was not a
+    column and went nowhere.
+    """
     adm_date = None
     if coerced.get("admission_date"):
         adm_date = datetime.strptime(coerced["admission_date"], "%Y-%m-%d").date()
@@ -481,10 +487,6 @@ def _student_kwargs_from_row(
         "academic_year_id": academic_year_id,
         "class_id": coerced["class_id"],
         "roll_number": _clean_int(coerced.get("roll_number")),
-        "date_of_birth": dob,
-        "gender": _clean_str(coerced.get("gender")),
-        "phone": _clean_str(coerced.get("phone")),
-        "address": _clean_str(coerced.get("address")),
         "guardian_name": _clean_str(coerced.get("guardian_name")),
         "guardian_relationship": _clean_str(coerced.get("guardian_relationship")),
         "guardian_phone": _clean_str(coerced.get("guardian_phone")),
@@ -509,7 +511,6 @@ def _student_kwargs_from_row(
         "mother_email": _clean_str(coerced.get("mother_email")),
         "mother_occupation": _clean_str(coerced.get("mother_occupation")),
         "mother_annual_income": _clean_int(coerced.get("mother_annual_income")),
-        "aadhar_number": _clean_str(coerced.get("aadhar_number")),
         "apaar_id": _clean_str(coerced.get("apaar_id")),
         "emis_number": _clean_str(coerced.get("emis_number")),
         "udise_student_id": _clean_str(coerced.get("udise_student_id")),
@@ -791,6 +792,13 @@ def import_students_from_rows(
                         changed = _apply_row_updates(
                             student, coerced, academic_year_id=academic_year_id
                         )
+                        # The identity and family the sheet carries belong to
+                        # the person, and a re-import is how a school fills
+                        # in what the first upload left out. `fill_blank_identity`
+                        # only fills gaps, so this adds detail and never
+                        # overwrites what is already on record — the same rule
+                        # the rest of this branch follows.
+                        _record_the_person_behind_the_row(student, coerced)
                         batch_updated.append((rn, coerced, changed))
                 except Exception as e:
                     logger.exception("bulk_import: update row=%s failed: %s", rn, e)
@@ -803,7 +811,11 @@ def import_students_from_rows(
                     )
                 continue
 
-            pwd = default_student_import_password(coerced["name"])
+            # A credential that says nothing about the child (A5). The old
+            # import password was their first name and `@123`.
+            from modules.auth.provisioning import generate_initial_password
+
+            pwd = generate_initial_password()
             try:
                 with db.session.begin_nested():
                     user = User(
@@ -811,7 +823,16 @@ def import_students_from_rows(
                         email=coerced["email"],
                         name=coerced["name"],
                         email_verified=True,
-                        force_password_reset=False,
+                        # The password below is generated from the child's own
+                        # name, so it is not a secret from anybody who knows
+                        # them. Every other provisioning path in the product
+                        # has always flagged such a credential; this one did
+                        # not, which meant an imported student could keep it
+                        # for as long as they liked. `core/authentication.py`
+                        # enforces the flag on every request, so setting it is
+                        # what makes the credential temporary in fact and not
+                        # merely in intent.
+                        force_password_reset=True,
                     )
                     user.set_password(pwd)
                     db.session.add(user)
@@ -832,6 +853,20 @@ def import_students_from_rows(
                     )
                     db.session.add(student)
                     db.session.flush()
+
+                    # The credential the pipeline reads, and the identifier the
+                    # school will print on the slip. Both go through the same
+                    # provisioning service the admissions path uses; the
+                    # identifier is only issued where the tenant permits
+                    # students to sign in that way.
+                    from modules.auth.provisioning import (
+                        issue_admission_identifier,
+                        issue_password_credential,
+                    )
+
+                    issue_password_credential(user, pwd)
+                    issue_admission_identifier(user, student.admission_number)
+
                     # An imported student is a person like any other: the sheet
                     # says who they are and who is responsible for them, and
                     # that is where those facts are read from now.
@@ -984,10 +1019,25 @@ def _record_the_person_behind_the_row(student, row: dict) -> None:
     if person is None:
         return
 
+    # `Person.date_of_birth` is a Date. The importer hands this helper the
+    # sheet's ISO string, and other callers hand it a real date — so both are
+    # accepted, and only a string is parsed. Nothing else is coerced: a value
+    # of some other type is a caller's mistake and should surface as one rather
+    # than being quietly dropped, which is how the first version of this
+    # parsing turned a `date` into None.
+    date_of_birth = row.get("date_of_birth")
+    if isinstance(date_of_birth, str):
+        try:
+            date_of_birth = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
+        except ValueError:
+            # Validation rejects an unparseable date before the row gets here;
+            # one that somehow arrives is left off rather than guessed at.
+            date_of_birth = None
+
     fill_blank_identity(
         person,
         {
-            "date_of_birth": row.get("date_of_birth"),
+            "date_of_birth": date_of_birth,
             "gender": row.get("gender"),
             "phone_number": row.get("phone"),
             "address": row.get("address"),

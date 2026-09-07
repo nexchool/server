@@ -76,10 +76,16 @@ class AuthenticatedRequest:
     ``new_access_token`` is set only when the access token was expired and a
     valid refresh token minted a replacement; transports must return it to the
     client (REST: ``X-New-Access-Token`` header).
+
+    ``new_refresh_token`` comes with it, because refresh tokens now rotate: the
+    one the client sent has been spent, and a client that kept using it would
+    be replaying a consumed token — which the server treats as theft. Both
+    headers must be honoured together or neither.
     """
 
     user: Optional[Any] = None
     new_access_token: Optional[str] = None
+    new_refresh_token: Optional[str] = None
     error: Optional[str] = None
 
     @property
@@ -103,7 +109,7 @@ def authenticate_request() -> AuthenticatedRequest:
     """
     # Imported here to avoid a circular import at module load.
     from modules.auth.models import User, Session
-    from modules.auth.services import validate_jwt_token, refresh_access_token
+    from modules.auth.services import generate_access_token, validate_jwt_token
 
     access_token = _read_access_token()
     if not access_token:
@@ -118,7 +124,19 @@ def authenticate_request() -> AuthenticatedRequest:
             # 401 (not 403) routes admin-web through logout+redirect-to-login,
             # where re-login surfaces the proper AccountSuspended reason.
             return AuthenticatedRequest(error="Session expired")
+
+        # The session this token came from must still be live. Without this a
+        # revocation is only a promise about the *future*: the token already
+        # in somebody's hands kept working until it expired, which for a
+        # suspended account mid-incident is not a window anybody should have
+        # to explain. It costs a primary-key lookup per request, deliberately.
+        from modules.auth.tokens import session_is_live
+
+        if not session_is_live(payload.get("sid")):
+            return AuthenticatedRequest(error="Session expired")
+
         g.current_user = user
+        g.auth_session_id = payload.get("sid")
         return AuthenticatedRequest(user=user)
 
     # Access token expired — fall back to the refresh token.
@@ -126,34 +144,37 @@ def authenticate_request() -> AuthenticatedRequest:
     if not refresh_token:
         return AuthenticatedRequest(error="Access token expired")
 
-    new_access_token = refresh_access_token(refresh_token, request)
-    if not new_access_token:
-        return AuthenticatedRequest(error="Invalid refresh token")
+    # Rotation happens here: the presented token is spent and its successor is
+    # issued. Every refusal — unknown, expired, replayed, revoked session,
+    # suspended account, suspended school — comes back as one coarse error, so
+    # a caller holding a bad token learns only that it is bad.
+    from modules.auth.tokens import RefreshOutcome, rotate
 
-    session = load_without_tenant_scope(
-        lambda: Session.query.filter_by(
-            refresh_token=refresh_token,
-            revoked=False,
-        ).first()
-    )
-    if not session:
-        return AuthenticatedRequest(error="Session not found")
+    outcome, session, replacement = rotate(refresh_token)
+    if outcome != RefreshOutcome.OK or session is None:
+        return AuthenticatedRequest(error="Invalid refresh token")
 
     user = load_without_tenant_scope(lambda: User.query.get(session.user_id))
     if not user or _acts_outside_own_tenant(user):
         return AuthenticatedRequest(error="Session not found")
 
-    # Defense in depth: the refresh path already revokes sessions on
-    # suspend/delete, but re-check so a stale-but-unrevoked session can never
-    # re-mint access for an inactive account.
-    if _account_inactive(user):
-        return AuthenticatedRequest(error="Session expired")
-
     g.current_user = user
+    g.auth_session_id = session.id
     session.last_accessed_at = utc_now()
     session.save()
 
-    return AuthenticatedRequest(user=user, new_access_token=new_access_token)
+    new_access_token = generate_access_token(
+        user,
+        tenant_id=session.tenant_id,
+        method=session.login_method,
+        session_id=session.id,
+    )
+
+    return AuthenticatedRequest(
+        user=user,
+        new_access_token=new_access_token,
+        new_refresh_token=replacement,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +194,23 @@ PASSWORD_RESET_EXEMPT_PATHS = frozenset({
     "/api/auth/profile",
     "/api/auth/enabled-features",
 })
+
+#: What a holder locked into a *PIN* change may still reach. A different set,
+#: because a different credential is being replaced: the PIN change endpoint
+#: rather than the password one. `profile` and `logout` are common to both —
+#: an app has to be able to render who is signed in, and to sign out.
+PIN_CHANGE_EXEMPT_PATHS = frozenset({
+    "/api/auth/pin/change",
+    "/api/auth/logout",
+    "/api/auth/profile",
+    "/api/auth/enabled-features",
+})
+
+PIN_CHANGE_ERROR = "PinChangeRequired"
+PIN_CHANGE_MESSAGE = (
+    "Set a new PIN before continuing. The one you signed in with was issued "
+    "by your school and must be changed."
+)
 
 #: Distinct on purpose: a client has to tell "change your password" apart from
 #: "you lack a permission", and both are 403.
@@ -205,3 +243,51 @@ def password_change_is_outstanding(user, path: Optional[str] = None) -> bool:
     if path is None:
         path = request.path if has_request_context() else None
     return path not in PASSWORD_RESET_EXEMPT_PATHS
+
+
+def pin_change_is_outstanding(user, path: Optional[str] = None) -> bool:
+    """Is this caller locked into a PIN change on this request?
+
+    The PIN's own flag, on its own credential row, and read only when the
+    request is actually acting under a PIN sign-in — which is the whole
+    subtlety. A pupil who signs in with their password should not be stopped
+    because a PIN they have not used is provisional; the requirement is about
+    the credential in use, not about the account.
+
+    Until this existed the flag was written and read by nothing. A school that
+    clicked "Ask for a new PIN" got a stored boolean and no behaviour: the
+    child kept signing in with the PIN the school had just decided was
+    compromised.
+    """
+    if user is None:
+        return False
+
+    if not has_request_context():
+        return False
+
+    # Only a session opened with a PIN is subject to it.
+    method = getattr(g, "auth_login_method", None)
+    if method is None:
+        session_id = getattr(g, "auth_session_id", None)
+        if not session_id:
+            return False
+        from modules.auth.models import Session
+
+        session = load_without_tenant_scope(
+            lambda: Session.query.filter_by(id=session_id).first()
+        )
+        method = session.login_method if session else None
+        g.auth_login_method = method
+
+    if method != "mobile_pin":
+        return False
+
+    from modules.auth.provisioning import live_pin_credential
+
+    credential = live_pin_credential(user)
+    if credential is None or not credential.must_change:
+        return False
+
+    if path is None:
+        path = request.path if has_request_context() else None
+    return path not in PIN_CHANGE_EXEMPT_PATHS

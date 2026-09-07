@@ -48,6 +48,21 @@ one Account, and may have none.
 One signed-in device. A Person signed in on a phone and a laptop has two
 sessions, which expire, refresh and are revoked independently.
 
+A Person may see where they are signed in and end any of those places, and an
+operator with authority over accounts may do the same for somebody else in
+their own organization — never for another organization, and never for a
+platform operator working inside theirs. Ending one session ends only that
+one; ending all of them is a deliberate, separate act that is recorded.
+
+---
+
+## Parent
+
+A responsible adult in a household, and — where the school has chosen separate
+parent logins — an authentication subject in their own right. Never a second
+kind of account: one Person has one Account per school, whatever roles they
+hold. See `parent-authentication.md`.
+
 ---
 
 ## Active Context
@@ -60,6 +75,25 @@ Which business experience the application is currently presenting.
 
 Passwords, reset links and the rules protecting them (lockout, expiry, forced
 reset).
+
+A person may also sign in with a **code sent to their phone**, where the
+school has enabled it — a factor rather than a credential: issued, verified
+once and destroyed in flight, with nothing kept on the account between times.
+A student may also hold a short **PIN** for signing in from a phone — a
+credential of its own, alongside the password rather than instead of it, so
+changing one never disturbs the other. See `mobile-otp-authentication.md` and
+`mobile-pin-authentication.md`. A mobile number becomes a way in only when
+somebody deliberately makes it one; the number on a person's record is a
+contact detail, not a key to the building.
+
+A school issues credentials rather than a person choosing one unaided: the
+office can give a student a first password, replace one that has been lost,
+or require a new one at the next sign-in without taking today's away. A
+replacement invalidates the old password and ends the sessions it opened. An
+issued password is shown once, to the operator who asked for it, and is never
+stored, logged or recoverable afterwards — a lost slip is replaced, not looked
+up. None of this happens on its own: no deployment, migration or policy change
+issues, resets or expires anybody's credential.
 
 ---
 
@@ -171,14 +205,26 @@ A session represents one signed-in device.
 
 Access tokens are short-lived and are refreshed using the refresh token without
 asking the person to sign in again. Signing out revokes that device's session
-and leaves other devices signed in.
+and leaves other devices signed in — including the unauthenticated cookie path,
+which since 2026-09-07 ends one session rather than all of them.
+
+The refresh token **may be spent once**: renewing returns a new one and kills
+the old. See `architecture/identity-domain.md` for what that means for a
+client — store the replacement, and renew in one place.
 
 Sessions are revoked when:
 
 - The person signs out.
-- The password changes.
-- The account is suspended or closed.
+- The password changes, or a forced change is completed (every session but the
+  one completing it).
+- The account is suspended or closed. Reactivating restores none of them.
+- The school disables the method the session was opened with.
+- A spent refresh token is presented again — the session and its whole token
+  family end, because two parties are holding one credential.
 - The refresh token expires.
+
+A revocation is felt on the next request, not at the next renewal: an access
+token names its session and is refused once that session is gone.
 
 ---
 

@@ -165,7 +165,13 @@ def _call_login(routes, *, request_json, authed_user):
     fake_request = MagicMock()
     fake_request.get_json.return_value = request_json
 
-    inner = routes.login.__wrapped__
+    # The legacy login implementation, which is what this test has always
+    # exercised. Phase 0d split `login()` into a dispatcher that chooses
+    # between the strategy pipeline and this — so the body is the same code,
+    # now reachable under its own name. The pipeline's own suspension and
+    # soft-delete behaviour is covered by the characterization tests, which go
+    # through the HTTP route rather than mocking its collaborators.
+    inner = routes._login_legacy
 
     with (
         patch.object(routes, "request", fake_request),
