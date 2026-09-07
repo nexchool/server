@@ -20,6 +20,7 @@ from typing import Dict, List
 from .base import ProviderClient
 from .capabilities import CAPABILITIES
 from .providers.fake import FakeSmsProvider, FakeWhatsAppProvider
+from .providers.msg91 import Msg91Provider
 
 
 class RegistryInvalid(Exception):
@@ -93,9 +94,14 @@ class ProviderRegistry:
 
 #: The registry this build runs with.
 #:
-#: **No real vendor is registered, and that is not an omission.** Choosing an
-#: SMS or WhatsApp company is a commercial decision nobody has taken, and
-#: Phase 2 shipped the billing catalog empty for the same reason. The only
-#: entries are test doubles, which the resolver refuses to hand out outside
-#: a test.
-registry = ProviderRegistry([FakeSmsProvider(), FakeWhatsAppProvider()])
+#: MSG91 is the first real vendor registered, and it is registered without a
+#: commercial decision having been taken — no MSG91 account exists and no DLT
+#: paperwork has been started. That is safe because registering is not the
+#: same as being usable: `Msg91Provider.required_credentials` guarantees
+#: `capability_health` reports it unconfigured and `set_integration_status`
+#: refuses to enable it until `MSG91_AUTH_KEY` is set on the server. The
+#: remaining entries are test doubles, which the resolver refuses to hand out
+#: outside a test.
+registry = ProviderRegistry(
+    [FakeSmsProvider(), FakeWhatsAppProvider(), Msg91Provider()]
+)

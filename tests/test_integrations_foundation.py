@@ -58,6 +58,7 @@ from modules.integrations.providers.fake import (
     FakeSmsProvider,
     FakeWhatsAppProvider,
 )
+from modules.integrations.providers.msg91 import Msg91Provider
 from modules.integrations.registry import (
     ProviderRegistry,
     RegistryInvalid,
@@ -136,13 +137,44 @@ def _billable(db_session, tenant, *, provider_key=None, service_key=CAPABILITY_S
 # The registry
 # ---------------------------------------------------------------------------
 
-def test_this_build_registers_no_real_vendor():
-    """Not an omission. Choosing an SMS or WhatsApp company is a decision
-    nobody has taken, and a provider that appeared without one being made
-    would be that decision taken by accident."""
-    assert registry.keys() == sorted([FAKE, FakeWhatsAppProvider.key])
-    for key in registry.keys():
-        assert registry.get(key).is_test_double is True
+def test_a_real_vendor_is_registered_but_stays_unusable_without_credentials(
+    db_session, monkeypatch
+):
+    """MSG91 (Phase 9) is a real vendor, not a test double, and registering it
+    is not the decision that used to be missing here — it is just the client
+    existing. **No MSG91 account exists and no DLT paperwork has been
+    started**, so what actually has to hold is narrower and more load-bearing
+    than "no real vendor is registered": a real vendor with no credentials
+    must never become enable-able. `MSG91_AUTH_KEY` is unset here on purpose,
+    to prove the refusal rather than merely observe the absence."""
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
+
+    msg91 = registry.get(Msg91Provider.key)
+    assert msg91.is_test_double is False
+
+    tenant = make_tenant(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=Msg91Provider.key,
+        configuration={"sender_id": "NEXSCH"},
+    )
+    db_session.flush()
+
+    with pytest.raises(IntegrationConfigurationError):
+        set_integration_status(
+            tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED
+        )
+
+
+def test_the_test_doubles_need_no_credential_and_that_is_why_they_are_gated_elsewhere():
+    """The other half of the same story: a test double asks for nothing, which
+    is exactly why it must never run outside a test — that gate is
+    `resolver.py`'s job, not this registry's."""
+    for key in (FAKE, FakeWhatsAppProvider.key):
+        provider = registry.get(key)
+        assert provider.is_test_double is True
+        assert provider.required_credentials == ()
 
 
 def test_two_providers_under_one_key_will_not_start():
@@ -180,7 +212,9 @@ def test_an_unknown_provider_is_refused_never_substituted(db_session):
 
 
 def test_the_registry_can_be_asked_who_does_what():
-    assert [p.key for p in registry.for_capability(CAPABILITY_SMS)] == [FAKE]
+    assert [p.key for p in registry.for_capability(CAPABILITY_SMS)] == sorted(
+        [FAKE, Msg91Provider.key]
+    )
     assert registry.for_capability("telepathy") == []
 
 

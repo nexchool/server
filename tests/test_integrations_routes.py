@@ -23,6 +23,7 @@ from modules.integrations.capabilities import (
     STATUS_ENABLED,
 )
 from modules.integrations.providers.fake import FakeSmsProvider
+from modules.integrations.providers.msg91 import Msg91Provider
 from modules.integrations.services import configure_integration, set_integration_status
 from tests.auth._characterization import grant_permissions, make_tenant, make_user
 
@@ -67,8 +68,13 @@ def test_an_operator_can_see_what_capabilities_exist(client, db_session):
     assert response.status_code == 200
     capabilities = response.get_json()["data"]["capabilities"]
     sms = [c for c in capabilities if c["capability"] == CAPABILITY_SMS][0]
-    assert [p["key"] for p in sms["providers"]] == [FAKE]
-    assert sms["providers"][0]["is_test_double"] is True
+    # `FAKE` (a test double) and `msg91` (a real vendor, registered but
+    # unusable until MSG91_AUTH_KEY is set — see test_integrations_foundation.py).
+    assert [p["key"] for p in sms["providers"]] == sorted([FAKE, Msg91Provider.key])
+    by_key = {p["key"]: p for p in sms["providers"]}
+    assert by_key[FAKE]["is_test_double"] is True
+    assert by_key[Msg91Provider.key]["is_test_double"] is False
+    assert by_key[Msg91Provider.key]["required_credentials"] == ["MSG91_AUTH_KEY"]
 
 
 def test_a_school_cannot_see_or_choose_its_own_provider(client, db_session):
