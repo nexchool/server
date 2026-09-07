@@ -109,6 +109,35 @@ class AuthenticationStrategyRegistry:
     def __contains__(self, method_key: str) -> bool:
         return method_key in self._by_key
 
+    # -- catalog ---------------------------------------------------------
+
+    def describe_methods(self) -> List[Dict]:
+        """Every sign-in method this build can execute, read from the class
+        attributes each strategy already carries.
+
+        The parallel is `describe_capabilities` in
+        `modules/integrations/services.py`: that reads the provider registry
+        because which providers exist is a property of the deployed code, not
+        of any tenant's configuration. This is the same question about
+        methods. It must not read `TenantAuthPolicyRule` — `ensure_default_policy`
+        seeds only `email_password`, and "absence means denied" is that
+        table's deliberate semantic (`modules/auth/policy.py`), so a school
+        with no row for `mobile_otp` would otherwise make `mobile_otp` invisible
+        rather than merely off. A method appears here by being registered, so
+        a fifth strategy is covered without editing this method.
+        """
+        return [
+            {
+                "key": strategy.key,
+                "identifier_type": strategy.identifier_type,
+                "credential_type": strategy.credential_type,
+                "requires_tenant": strategy.requires_tenant,
+                "is_paid": strategy.is_paid,
+                "counts_toward_account_lockout": strategy.counts_toward_account_lockout,
+            }
+            for _, strategy in sorted(self._by_key.items())
+        ]
+
 
 #: The default authentication method, and what a request that names none gets.
 #: Old clients send no `method`, and must keep working.

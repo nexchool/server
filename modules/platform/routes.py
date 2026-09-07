@@ -700,6 +700,27 @@ def list_integration_capabilities():
     return success_response(data={"capabilities": describe_capabilities()})
 
 
+@platform_bp.route("/auth-methods", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def list_auth_methods():
+    """GET /platform/auth-methods — what this build can do, and who could do it.
+
+    Read from the strategy registry, not from any school's policy: this is a
+    property of the deployed code, the same split `/integration-capabilities`
+    draws for providers. It matters here for a concrete reason —
+    `ensure_default_policy` seeds a school with a rule only for
+    `email_password`, and that table's semantics are "absence means denied"
+    (`modules/auth/policy.py`), so reading it for a catalog would render
+    `admission_id_password`, `mobile_otp` and `mobile_pin` invisible rather
+    than merely off, and the panel could never offer switching them on.
+    """
+    from modules.auth.strategies import registry
+
+    return success_response(data={"methods": registry.describe_methods()})
+
+
 @platform_bp.route("/integrations/outbox", methods=["GET"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required
