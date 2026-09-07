@@ -397,7 +397,7 @@ The requirement that changes the message layer, argued in spec §3: DLT will not
 - Produces:
   - `TEMPLATE_NOT_CONFIGURED = "template_not_configured"` (added to `errors.py`)
   - `template_for(configuration: dict, purpose: str) -> str` — raises `IntegrationError(TEMPLATE_NOT_CONFIGURED, …)` when absent
-  - `PURPOSE_LOGIN_OTP = "login_otp"`
+  - no OTP purpose constant: `modules/auth/otp_models.py` already owns it as `PURPOSE_AUTHENTICATION`
   - `otp_message.otp_variables(code: str) -> list[str]` — positional, `[code, minutes]`
 
 - [ ] **Step 1: Write the failing test**
@@ -414,9 +414,9 @@ from modules.integrations.errors import IntegrationError, TEMPLATE_NOT_CONFIGURE
 
 
 def test_a_configured_template_is_found_by_purpose():
-    configuration = {"templates": {"login_otp": "1707169900000000000"}}
+    configuration = {"templates": {"authentication_otp": "1707169900000000000"}}
     assert (
-        templates.template_for(configuration, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for(configuration, "authentication_otp")
         == "1707169900000000000"
     )
 
@@ -425,20 +425,20 @@ def test_a_missing_template_is_refused_before_any_provider_is_called():
     """Discovering a missing template from a vendor's rejection code is a
     worse day than discovering it from our own refusal."""
     with pytest.raises(IntegrationError) as raised:
-        templates.template_for({"templates": {}}, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for({"templates": {}}, "authentication_otp")
     assert raised.value.code == TEMPLATE_NOT_CONFIGURED
 
 
 def test_a_configuration_with_no_templates_key_at_all_is_refused_the_same_way():
     with pytest.raises(IntegrationError) as raised:
-        templates.template_for({}, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for({}, "authentication_otp")
     assert raised.value.code == TEMPLATE_NOT_CONFIGURED
 
 
 def test_a_missing_template_is_not_retryable():
     """Nobody should retry a configuration problem; somebody should fix it."""
     with pytest.raises(IntegrationError) as raised:
-        templates.template_for({}, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for({}, "authentication_otp")
     assert raised.value.retryable is False
 
 
@@ -503,9 +503,11 @@ from __future__ import annotations
 
 from .errors import TEMPLATE_NOT_CONFIGURED, IntegrationError
 
-#: A sign-in code. The only purpose this phase has; each new one is a
-#: separate registration with each vendor and so earns its own constant.
-PURPOSE_LOGIN_OTP = "login_otp"
+#: **No OTP purpose constant lives here.** `modules/auth/otp_models.py`
+#: already owns that concept as `PURPOSE_AUTHENTICATION`, and it is a stored
+#: column value with a server default, a challenge-lookup filter and a billing
+#: usage_type. A second name for it here would be a second owner. Callers pass
+#: the purpose they own; this module owns only the lookup.
 
 #: Where the map lives on an integration's `configuration`.
 TEMPLATES_KEY = "templates"
@@ -604,7 +606,7 @@ def test_a_send_on_an_unconfigured_channel_returns_a_result_not_an_exception(app
     result = send_message(
         tenant_id=tenant.id,
         channel="whatsapp",
-        purpose="login_otp",
+        purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
     )
@@ -619,7 +621,7 @@ def test_a_missing_template_stops_the_send_before_the_provider(app, tenant, enab
     result = send_message(
         tenant_id=tenant.id,
         channel="sms",
-        purpose="login_otp",
+        purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
         body="418302 is your NexSchool sign-in code.",
@@ -651,7 +653,7 @@ def enabled_fake_sms(app, tenant):
         tenant.id,
         capability="sms",
         provider_key="fake_sms",
-        configuration={"templates": {"login_otp": "test-template-1"}},
+        configuration={"templates": {"authentication_otp": "test-template-1"}},
     )
     set_integration_status(tenant.id, capability="sms", status="enabled")
     db.session.commit()
@@ -694,7 +696,8 @@ def send_message(
 ) -> MessageSendResult:
     """Ask this school's provider for `channel` to send one message.
 
-    `purpose` is what the message is for — `login_otp`, `fee_reminder`. It
+    `purpose` is what the message is for — `authentication_otp`,
+    `fee_reminder`. It
     selects the registered template and becomes the usage record's
     `usage_type`, so a bill can be explained back to the feature that caused
     it.
@@ -838,7 +841,7 @@ def send_sms(
 cd server && ./venv/bin/python -m pytest tests/test_messaging_capability.py tests/test_integrations_foundation.py tests/test_integrations_routes.py tests/auth/test_mobile_otp.py -q
 ```
 
-Expected: PASS. `otp.py` still calls `send_sms`; update its call to pass `body=` and `variables=otp_variables(code)` and `purpose=PURPOSE_LOGIN_OTP`.
+Expected: PASS. `otp.py` still calls `send_sms`; update its call to pass `body=` and `variables=otp_variables(code)` and `purpose=purpose` (the value `_deliver` already receives).
 
 - [ ] **Step 6: Commit**
 
@@ -1110,7 +1113,7 @@ def _deliver(*, tenant_id, challenge, destination, code, purpose) -> bool:
     coming.
     """
     from modules.integrations.messaging import send_message
-    from modules.integrations.templates import PURPOSE_LOGIN_OTP
+
 
     from .otp_message import build_otp_message, otp_variables
     from .policy import otp_delivery_channel
@@ -1118,7 +1121,7 @@ def _deliver(*, tenant_id, challenge, destination, code, purpose) -> bool:
     result = send_message(
         tenant_id=tenant_id,
         channel=otp_delivery_channel(tenant_id),
-        purpose=PURPOSE_LOGIN_OTP,
+        purpose=purpose,
         destination=destination,
         variables=otp_variables(code),
         body=build_otp_message(code),
@@ -1278,15 +1281,15 @@ def test_the_buffer_is_bounded(app):
     for index in range(outbox.CAPACITY + 10):
         outbox.record(
             tenant_id="t", channel="sms", destination="+91987654321",
-            body=f"message {index}", purpose="login_otp",
+            body=f"message {index}", purpose="authentication_otp",
         )
     assert len(outbox.recent(limit=1000)) == outbox.CAPACITY
 
 
 def test_the_newest_message_is_first(app):
     outbox.clear()
-    outbox.record(tenant_id="t", channel="sms", destination="+9198", body="first", purpose="login_otp")
-    outbox.record(tenant_id="t", channel="sms", destination="+9198", body="second", purpose="login_otp")
+    outbox.record(tenant_id="t", channel="sms", destination="+9198", body="first", purpose="authentication_otp")
+    outbox.record(tenant_id="t", channel="sms", destination="+9198", body="second", purpose="authentication_otp")
     assert outbox.recent()[0]["body"] == "second"
 
 
@@ -1297,7 +1300,7 @@ def test_a_fake_send_reaches_the_outbox(app, tenant, enabled_fake_sms):
     send_sms(
         tenant_id=tenant.id, destination="+919876543210",
         body="418302 is your NexSchool sign-in code.",
-        purpose="login_otp", variables=["418302", "5"],
+        purpose="authentication_otp", variables=["418302", "5"],
     )
     assert "418302" in outbox.recent()[0]["body"]
 
