@@ -26,14 +26,13 @@ from __future__ import annotations
 from typing import Iterable, List, Optional, Set
 
 from core.database import db
+from modules.integrations.capabilities import CAPABILITY_SMS, MESSAGING_CAPABILITIES
 
 from .policy_models import (
     CREDENTIAL_FORCE_CHANGE,
     FAMILY_ACCESS_MODES,
     FAMILY_ACCESS_SEPARATE,
     FAMILY_ACCESS_SHARED,
-    OTP_CHANNEL_SMS,
-    OTP_DELIVERY_CHANNELS,
     SUBJECT_KINDS,
     SUBJECT_PARENT,
     SUBJECT_STAFF,
@@ -72,7 +71,7 @@ def student_credential_policy(tenant_id: str) -> str:
 def otp_delivery_channel(tenant_id: str) -> str:
     """Which channel carries this school's sign-in codes."""
     policy = policy_for(tenant_id)
-    return policy.otp_delivery_channel if policy else OTP_CHANNEL_SMS
+    return policy.otp_delivery_channel if policy else CAPABILITY_SMS
 
 
 def subject_kinds(account) -> Set[str]:
@@ -280,7 +279,7 @@ def describe(tenant_id: str) -> dict:
             policy.student_credential_policy if policy else CREDENTIAL_FORCE_CHANGE
         ),
         "otp_delivery_channel": (
-            policy.otp_delivery_channel if policy else OTP_CHANNEL_SMS
+            policy.otp_delivery_channel if policy else CAPABILITY_SMS
         ),
         # True when the school has no row of its own and is being described by
         # the defaults — which the panel says out loud rather than implying.
@@ -369,10 +368,10 @@ def set_otp_delivery_channel(
     is a routing decision and provisions nothing, revokes nothing and ends no
     session — a code in flight down the old channel is still a valid code.
     """
-    if channel not in OTP_DELIVERY_CHANNELS:
+    if channel not in MESSAGING_CAPABILITIES:
         raise ValueError(
             f"Unknown OTP delivery channel {channel!r}. "
-            f"Known: {list(OTP_DELIVERY_CHANNELS)}."
+            f"Known: {list(MESSAGING_CAPABILITIES)}."
         )
     policy = ensure_default_policy(tenant_id, updated_by_user_id=updated_by_user_id)
     policy.otp_delivery_channel = channel

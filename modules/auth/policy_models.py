@@ -29,6 +29,7 @@ import uuid
 from core.database import db
 from core.models import TenantBaseModel
 from core.school_time import utc_now
+from modules.integrations.capabilities import CAPABILITY_SMS, MESSAGING_CAPABILITIES
 
 
 # --- family access (ADR-011) -----------------------------------------------
@@ -58,14 +59,16 @@ SUBJECT_PARENT = "parent"
 SUBJECT_KINDS = (SUBJECT_STUDENT, SUBJECT_STAFF, SUBJECT_PARENT)
 
 # --- which wire a school's sign-in codes go down ----------------------------
-
-#: Which channel carries a sign-in code. Not a list of what a school *has* —
-#: one choice, deliberately. Automatic fallback between channels doubles the
-#: failure modes and the billing explanation for a reliability problem
-#: nobody has measured; see ADR-015.
-OTP_CHANNEL_SMS = "sms"
-OTP_CHANNEL_WHATSAPP = "whatsapp"
-OTP_DELIVERY_CHANNELS = (OTP_CHANNEL_SMS, OTP_CHANNEL_WHATSAPP)
+#
+# One choice, deliberately, not a list of what a school *has*. Automatic
+# fallback between channels doubles the failure modes and the billing
+# explanation for a reliability problem nobody has measured; see ADR-021, to
+# be written in this phase.
+#
+# The choice ranges over `MESSAGING_CAPABILITIES` — `capabilities.py` already
+# owns "which capabilities deliver a message to a person", and a second,
+# parallel list here would be the same drift `templates.PURPOSE_LOGIN_OTP`
+# was retired for: one owner per concept, the existing owner wins.
 
 #: A rule that applies wherever the account signs in from. Every seeded rule
 #: uses this: surface is recorded but narrows nothing until a school asks it
@@ -109,8 +112,8 @@ class TenantAuthPolicy(TenantBaseModel):
     otp_delivery_channel = db.Column(
         db.String(20),
         nullable=False,
-        default=OTP_CHANNEL_SMS,
-        server_default=OTP_CHANNEL_SMS,
+        default=CAPABILITY_SMS,
+        server_default=CAPABILITY_SMS,
     )
 
     updated_by_user_id = db.Column(
@@ -144,6 +147,12 @@ class TenantAuthPolicy(TenantBaseModel):
             "('force_change_on_first_login', 'no_forced_change')",
             name="ck_tenant_auth_policies_student_credential_policy",
         ),
+        # SQL cannot read `MESSAGING_CAPABILITIES` — this literal has to be
+        # kept in step with it by hand.
+        # `test_the_constraint_matches_messaging_capabilities` in
+        # test_otp_delivery_channel.py fails if they drift, so a third
+        # capability added there without being added here fails a test
+        # instead of failing a school's OTP in production.
         db.CheckConstraint(
             "otp_delivery_channel IN ('sms', 'whatsapp')",
             name="ck_tenant_auth_policies_otp_delivery_channel",
