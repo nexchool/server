@@ -26,11 +26,30 @@ this table is a record of a change, not a computation of one.
 Existing rows are all `sms` (129's constraint permitted nothing else), so
 there is nothing to backfill — this only enlarges what a future row may be.
 
+**The downgrade refuses rather than guessing what to do with a `whatsapp`
+row it would otherwise leave the database unable to explain.** Once this
+migration has run, a school can genuinely be configured onto `whatsapp` (see
+`configure_integration`) — a state that did not exist under 129's
+constraint. A downgrade that simply reinstated `capability IN ('sms')`
+against a database holding such a row would not error at the migration
+step: `ALTER TABLE ... ADD CONSTRAINT` validates existing rows immediately,
+so Postgres itself would refuse the `ALTER` with a constraint-violation
+error naming a row id and nothing about what a school lost, or why. Checking
+first and raising a plain, worded error before touching the schema gives an
+operator the same refusal with an actual next step, rather than making them
+decode a database exception into "someone has to move this school off
+WhatsApp first." This migration does not decide *for* them — silently
+disabling a school's live integration on a schema downgrade would be a data
+decision hiding inside what should be a reversible schema change, and
+"reversible" stops being true the moment a downgrade starts making product
+choices no operator asked for.
+
 Revision ID: 135_a_school_may_be_configured_for_whatsapp
 Revises: 134_which_wire_a_schools_codes_go_down
 """
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "135_a_school_may_be_configured_for_whatsapp"
 down_revision = "134_which_wire_a_schools_codes_go_down"
@@ -50,6 +69,21 @@ def upgrade():
 
 
 def downgrade():
+    connection = op.get_bind()
+    whatsapp_rows = connection.execute(
+        sa.text(
+            "SELECT count(*) FROM tenant_integrations WHERE capability = 'whatsapp'"
+        )
+    ).scalar()
+    if whatsapp_rows:
+        raise RuntimeError(
+            f"{whatsapp_rows} tenant_integrations row(s) are configured for "
+            "'whatsapp'. The constraint this downgrade restores only "
+            "permits 'sms', and Postgres would refuse it anyway once it "
+            "validated those rows — reassign or remove them first (an "
+            "operator decision this migration will not make for you), then "
+            "downgrade again."
+        )
     op.drop_constraint(_CONSTRAINT, "tenant_integrations", type_="check")
     op.create_check_constraint(
         _CONSTRAINT,

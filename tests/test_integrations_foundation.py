@@ -986,6 +986,41 @@ def test_a_provider_that_needs_nothing_is_unaffected_by_a_stray_reference(
     assert ready_report.ready is True
 
 
+def test_a_missing_provider_identifier_is_not_ready_even_though_credentials_resolve(
+    db_session, monkeypatch
+):
+    """`capability_health` used to overwrite whatever `client.health()`
+    computed for `configured` with just "the row is not disabled" —
+    discarding the provider's own check for the identifier its `send()`
+    actually needs. `meta_whatsapp.py` requires `phone_number_id` in
+    `configuration`; a row that resolves `META_WHATSAPP_ACCESS_TOKEN` but
+    was never given one used to report `configured=True` once enabled,
+    which made `ready=True` too — passing the `mobile_otp` switch-on gate
+    for a channel that fails every send with CONFIGURATION_ERROR. Same
+    shape Task 14b closed for credentials, left open for configuration.
+    """
+    monkeypatch.setenv("META_WHATSAPP_ACCESS_TOKEN", "a-real-looking-token")
+
+    tenant = make_tenant(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_WHATSAPP,
+        provider_key=MetaWhatsAppProvider.key,
+        configuration={},  # no phone_number_id
+    )
+    db_session.flush()
+    set_integration_status(
+        tenant.id, capability=CAPABILITY_WHATSAPP, status=STATUS_ENABLED
+    )
+    db_session.flush()
+
+    report = capability_health(tenant_id=tenant.id, capability=CAPABILITY_WHATSAPP)
+
+    assert report.configured is False
+    assert report.ready is False
+    assert report.checks["configured"] is False
+
+
 # ---------------------------------------------------------------------------
 # Configuring it
 # ---------------------------------------------------------------------------
@@ -1095,6 +1130,55 @@ def test_a_provider_cannot_be_pointed_at_the_wrong_capability(db_session):
         configure_integration(
             tenant.id, capability=CAPABILITY_SMS, provider_key="an_emailer"
         )
+
+
+def test_reconfiguring_an_enabled_integration_onto_an_uncredentialed_provider_disables_it(
+    db_session, monkeypatch
+):
+    """`configure_integration` re-checks nothing by design — re-pointing an
+    already-enabled row must not itself take a school offline. That used to
+    mean re-pointing it at MSG91 with `MSG91_AUTH_KEY` unset left
+    `status='enabled'` on a provider `set_integration_status` would have
+    refused outright: a walk around the enable gate, reachable from the
+    panel's provider dropdown."""
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
+
+    tenant = make_tenant(db_session)
+    _routed(db_session, tenant)  # enabled fake_sms
+
+    integration = configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=Msg91Provider.key,
+        configuration={**SMS_TEMPLATES, "sender_id": "NEXSCH"},
+    )
+    db_session.flush()
+
+    assert integration.status == STATUS_DISABLED
+    assert "MSG91_AUTH_KEY" in integration.status_detail
+
+
+def test_reconfiguring_an_enabled_integration_onto_a_credentialed_provider_stays_enabled(
+    db_session, monkeypatch
+):
+    """The half that must keep working: a like-for-like (or any working)
+    swap does not take a school's SMS offline just because it changed
+    vendor."""
+    monkeypatch.setenv("MSG91_AUTH_KEY", "a-real-looking-key")
+
+    tenant = make_tenant(db_session)
+    _routed(db_session, tenant)  # enabled fake_sms
+
+    integration = configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=Msg91Provider.key,
+        configuration={**SMS_TEMPLATES, "sender_id": "NEXSCH"},
+    )
+    db_session.flush()
+
+    assert integration.status == STATUS_ENABLED
+    assert integration.status_detail is None
 
 
 def test_one_school_s_integration_is_not_another_s(db_session):

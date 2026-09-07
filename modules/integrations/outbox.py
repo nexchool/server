@@ -146,12 +146,25 @@ def record(*, tenant_id: str, channel: str, destination: str, body: str, purpose
 
 
 def recent(limit: int = 20) -> List[Dict]:
-    """The most recent messages, newest first."""
+    """The most recent messages, newest first.
+
+    `limit <= 0` returns `[]` before either store is touched — the answer to
+    "how many did you ask for" is unambiguous regardless of what Redis has,
+    so there is nothing to fall back for. This used to be handled inside the
+    in-memory branch as `max(1, limit)`, which floored zero up to one and
+    handed back a message nobody asked for; `_recent_from_redis`'s own
+    `client.lrange(_REDIS_KEY, 0, max(0, limit - 1))` had the same shape of
+    bug for `limit=0` (Redis's `LRANGE ... 0 0` is inclusive, so it always
+    returns one element rather than none). One guard here is simpler than
+    fixing the same off-by-one in two places that compute it differently.
+    """
+    if limit <= 0:
+        return []
     messages = _recent_from_redis(limit)
     if messages is not None:
         return messages
     with _lock:
-        return list(_messages)[: max(1, limit)]
+        return list(_messages)[:limit]
 
 
 def clear() -> None:

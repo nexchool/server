@@ -88,7 +88,18 @@ def capability_health(*, tenant_id: str, capability: str) -> ProviderHealth:
 
     # The provider's own check, which by contract never sends anything.
     report = client.health(integration.configuration or {})
-    report.configured = integration.status != STATUS_DISABLED
+    # `client.health` already asked the one question this function cannot ask
+    # for it — msg91.py checks for `sender_id`, meta_whatsapp.py for
+    # `phone_number_id`, whatever a future provider's own send() actually
+    # requires. Overwriting that with just "the row is not disabled" (as this
+    # used to) discards it: a row that resolves a credential but is missing
+    # the identifier its provider needs would report `configured=True` and,
+    # once enabled, `ready=True` — passing the `mobile_otp` switch-on gate —
+    # and then fail every send with CONFIGURATION_ERROR. ANDing the two
+    # keeps both facts: still not configured while the row itself is
+    # disabled, and not configured either if the provider's own check says
+    # so once it is enabled.
+    report.configured = (integration.status != STATUS_DISABLED) and report.configured
     report.credentials_present = has_credentials and report.credentials_present
     report.provider_supported = True
     report.checks = {
@@ -96,6 +107,7 @@ def capability_health(*, tenant_id: str, capability: str) -> ProviderHealth:
         "enabled": integration.status != STATUS_DISABLED,
         "provider_supported": True,
         "credentials_present": has_credentials,
+        "configured": report.configured,
     }
 
     if report.provider_reachable is None:

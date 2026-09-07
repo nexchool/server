@@ -138,9 +138,25 @@ def configure_integration(
 
     **Never enables it.** A newly configured integration starts disabled, so
     adding a row cannot start carrying traffic — somebody enables it
-    deliberately, after looking at its health. Re-configuring an already
-    enabled integration leaves it enabled; changing a vendor is not a reason
-    to take a school's SMS offline.
+    deliberately, after looking at its health.
+
+    **Re-configuring an already-enabled integration leaves it enabled when
+    the new provider can actually work, and drops it to disabled with a
+    reason when it cannot.** Changing a vendor is not itself a reason to
+    take a school's SMS offline — that half of the old behaviour stands. But
+    leaving status untouched *unconditionally* let an operator walk an
+    enabled row around `set_integration_status`'s own enable gate: point it
+    at a provider whose `required_credentials` were never set, and the row
+    would keep reporting `enabled` for a provider that cannot send, with
+    nothing to explain why every message was about to start failing. So a
+    swap is re-checked against the same fact `set_integration_status`
+    checks — do the *new* provider's credentials resolve — and only that
+    fact: not full readiness (a WhatsApp row missing `phone_number_id` is a
+    configuration gap `capability_health` will still surface, not a reason to
+    silently flip a school's SMS off), just the one a broken swap would
+    otherwise hide. An operator watching the row sees it turn itself off
+    with a reason, which is a better failure mode than finding out from a
+    stream of failed sends.
     """
     if capability not in CAPABILITIES:
         raise IntegrationConfigurationError(
@@ -182,6 +198,21 @@ def configure_integration(
     integration.configuration = configuration or {}
     integration.credential_references = references
     integration.status_detail = None
+
+    if integration.status == STATUS_ENABLED and not credentials_present(
+        {name: name for name in client.required_credentials}
+    ):
+        # The credentials that satisfied the *previous* provider's enable
+        # check say nothing about whether this one's resolve — see the
+        # docstring above for why this is checked here rather than left for
+        # whoever next calls `set_integration_status`.
+        integration.status = STATUS_DISABLED
+        integration.status_detail = (
+            f"Disabled automatically: '{provider_key}' needs "
+            + ", ".join(client.required_credentials)
+            + " set on this server, and it is not."
+        )
+
     db.session.flush()
     return integration
 

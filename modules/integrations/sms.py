@@ -1,11 +1,23 @@
 """Send an SMS, without knowing who sends it.
 
-This is the surface a feature uses. Phase 4's OTP calls `send_sms` and never
-learns which company carried the message, what it cost, or how the provider
-reports failure. The resolve / template / call / normalize / record path
-that boundary depends on now lives in `messaging.py`, shared with WhatsApp —
-this file is a thin, named surface over it, so a caller that only ever means
-"send an SMS" still gets to say exactly that.
+This is the surface a feature uses. `otp._deliver` calls
+`messaging.send_message` directly (it has to: the message can go down SMS or
+WhatsApp depending on the school's chosen channel, and this file only ever
+means SMS), never learns which company carried the message, what it cost, or
+how the provider reports failure. The resolve / template / call / normalize
+/ record path that boundary depends on lives in `messaging.py`, shared with
+WhatsApp — this file is a thin, named surface over it, so a caller that only
+ever means "send an SMS" still gets to say exactly that.
+
+`send_sms` and `whatsapp.py`'s `send_whatsapp` currently have no production
+caller — the one place that sends anything (`otp._deliver`) reads the
+school's channel first and calls `messaging.send_message` itself rather than
+branching to one of these. They exist anyway, deliberately, as the
+per-channel surfaces a caller that already knows its channel is meant to
+use, and as the shape a future non-OTP messaging feature reaches for first.
+Do not delete them for being unreached; delete `messaging.send_message`'s
+direct callers into one of these once one exists, if that consolidation
+turns out to be worth it.
 """
 
 from __future__ import annotations

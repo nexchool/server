@@ -20,6 +20,37 @@ from tests.auth._characterization import grant_permissions, make_tenant, make_us
 _HOST_REDIS_URL = "redis://localhost:6379/0"
 
 
+@pytest.fixture
+def _reachable_redis(flask_app, monkeypatch):
+    """Point at `_HOST_REDIS_URL` and skip, rather than fail for the wrong
+    reason, when this host has none reachable there.
+
+    Only the two tests below that assert a fact specific to a *real* shared
+    Redis — cross-process visibility, `LTRIM` bounding — need this. Without
+    it, `test_a_message_recorded_by_one_worker_is_read_by_another` fails
+    loudly with a connection error when Redis is down (there is no
+    process-local fallback that could make two separate module namespaces
+    agree, so a fail-loud is the honest outcome), and
+    `test_the_buffer_stays_bounded_when_backed_by_redis` passes *anyway* for
+    the wrong reason: the in-memory fallback this module degrades to is
+    bounded too (`deque(maxlen=CAPACITY)`), so that test proved nothing
+    about `LTRIM` at all when Redis was unreachable. Skipping both makes
+    that silent, vacuous pass visible as "did not run" instead. The same
+    posture `tests/auth/test_mobile_otp.py`'s fixture of the same name takes
+    for the OTP throttle.
+    """
+    from core import cache as cache_module
+
+    monkeypatch.setitem(flask_app.config, "REDIS_URL", _HOST_REDIS_URL)
+    monkeypatch.setattr(cache_module, "_pool", None)
+    with flask_app.app_context():
+        client = cache_module.redis_client()
+        try:
+            assert client is not None and client.ping()
+        except Exception:  # noqa: BLE001
+            pytest.skip("this test needs a reachable Redis at localhost:6379")
+
+
 def _load_independent_outbox_module(alias: str):
     """A second, wholly separate module object for `modules.integrations.outbox`.
 
@@ -97,6 +128,18 @@ def test_the_buffer_is_bounded(flask_app):
     assert len(outbox.recent(limit=1000)) == outbox.CAPACITY
 
 
+def test_asking_for_zero_returns_zero(flask_app):
+    """`recent(limit=0)` used to floor up to one message on the in-memory
+    fallback path (`max(1, limit)`) — a caller asking for none got one
+    anyway. Zero means zero."""
+    outbox.clear()
+    outbox.record(
+        tenant_id="t", channel="sms", destination="+9198", body="one",
+        purpose="authentication_otp",
+    )
+    assert outbox.recent(limit=0) == []
+
+
 def test_the_newest_message_is_first(flask_app):
     outbox.clear()
     outbox.record(tenant_id="t", channel="sms", destination="+9198", body="first", purpose="authentication_otp")
@@ -139,7 +182,9 @@ def test_the_endpoint_needs_a_platform_admin(flask_app, db_session, client):
     assert response.status_code in (401, 403)
 
 
-def test_a_message_recorded_by_one_worker_is_read_by_another(flask_app, monkeypatch):
+def test_a_message_recorded_by_one_worker_is_read_by_another(
+    flask_app, monkeypatch, _reachable_redis
+):
     """The bug this module exists to fix: gunicorn runs multiple worker
     processes, a send lands in whichever one handled the request, and a read
     is served by whichever one the load balancer picks next. Measured against
@@ -151,10 +196,6 @@ def test_a_message_recorded_by_one_worker_is_read_by_another(flask_app, monkeypa
     Python object. Two independent module namespaces stand in for two
     workers; both must resolve to the same store for this to pass.
     """
-    from core import cache as cache_module
-
-    monkeypatch.setitem(flask_app.config, "REDIS_URL", _HOST_REDIS_URL)
-    monkeypatch.setattr(cache_module, "_pool", None)
     monkeypatch.setitem(sys.modules, "outbox_worker_a", None)
     monkeypatch.setitem(sys.modules, "outbox_worker_b", None)
 
@@ -176,15 +217,10 @@ def test_a_message_recorded_by_one_worker_is_read_by_another(flask_app, monkeypa
     assert messages[0]["body"] == "817263 is your NexSchool sign-in code."
 
 
-def test_the_buffer_stays_bounded_when_backed_by_redis(flask_app, monkeypatch):
+def test_the_buffer_stays_bounded_when_backed_by_redis(flask_app, _reachable_redis):
     """`CAPACITY` is a promise about the store, not about whichever process
     happens to be reading it — the same bound must hold when Redis is the
     backing store, via `LTRIM`, not just against the in-memory fallback."""
-    from core import cache as cache_module
-
-    monkeypatch.setitem(flask_app.config, "REDIS_URL", _HOST_REDIS_URL)
-    monkeypatch.setattr(cache_module, "_pool", None)
-
     with flask_app.app_context():
         outbox.clear()
         for index in range(outbox.CAPACITY + 10):

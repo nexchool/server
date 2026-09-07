@@ -68,12 +68,17 @@ from modules.auth.strategies.mobile_otp import MobileOtpStrategy
 from modules.billing.constants import PRICING_METERED
 from modules.billing.models import ServiceUsageRecord
 from modules.billing.services import configure_tenant_service, upsert_provider, upsert_service
-from modules.integrations.capabilities import CAPABILITY_SMS, STATUS_ENABLED
+from modules.integrations.capabilities import (
+    CAPABILITY_SMS,
+    CAPABILITY_WHATSAPP,
+    STATUS_ENABLED,
+)
 from modules.integrations.providers.fake import (
     BEHAVIOUR_KEY,
     BEHAVIOUR_REJECTED,
     BEHAVIOUR_TIMEOUT,
     FakeSmsProvider,
+    FakeWhatsAppProvider,
 )
 from modules.integrations.services import configure_integration, set_integration_status
 from tests.auth._characterization import (
@@ -160,7 +165,6 @@ def _school(
     otp_enabled=True,
     sms_working=True,
     whatsapp_working=False,
-    monkeypatch=None,
 ):
     """A school that can send codes, unless the test says otherwise."""
     tenant = make_tenant(db_session)
@@ -196,36 +200,26 @@ def _school(
         )
 
     if whatsapp_working:
-        # Task 7 registered a WhatsApp test double (`fake_whatsapp`) and gave
-        # it an outbox, but `configure_integration` still cannot point a
-        # school's `whatsapp` capability at it: `tenant_integrations` carries
-        # `ck_tenant_integrations_capability`, a database CHECK constraint
-        # from migration 129 that predates WhatsApp as a messaging capability
-        # and still literally reads `capability = 'sms'`. Postgres itself
-        # refuses the row — see `\d+ tenant_integrations` — and widening that
-        # constraint is a migration, which this task may not run. So this
-        # still patches the one seam both the delivery path (`otp._deliver`)
-        # and the readiness gates (`routes._method_needs_messaging`, the
-        # auth-policy PATCH guard) actually read: `messaging.messaging_health`.
-        # A caller must pass its own `monkeypatch` fixture so the patch
-        # unwinds with that test.
-        if monkeypatch is None:
-            raise TypeError("whatsapp_working needs the caller's monkeypatch fixture")
-        import modules.integrations.messaging as messaging_module
-        from modules.integrations.results import ProviderHealth
-
-        def _whatsapp_ready(asked_tenant_id, channel):
-            return ProviderHealth(
-                configured=True,
-                credentials_present=True,
-                provider_supported=True,
-                detail=(
-                    "A test double this build cannot store an integration row "
-                    "for yet — see ck_tenant_integrations_capability."
-                ),
-            )
-
-        monkeypatch.setattr(messaging_module, "messaging_health", _whatsapp_ready)
+        # Migration 135 widened `ck_tenant_integrations_capability` to permit
+        # `whatsapp`, so a school can now be configured onto the real
+        # `fake_whatsapp` test double through `configure_integration` — the
+        # same way `test_integration_lifecycle.py`'s `enabled_fake_whatsapp`
+        # fixture does. This used to patch `messaging.messaging_health`
+        # directly, which meant a test built on this flag could not tell
+        # "the gate correctly checked whatsapp" apart from "the gate is
+        # broken and would have said yes to any channel" — the mock ignored
+        # `channel` entirely. Routing through a real, enabled integration
+        # instead means the gate has to ask about the right capability to
+        # get a ready answer.
+        configure_integration(
+            tenant.id,
+            capability=CAPABILITY_WHATSAPP,
+            provider_key=FakeWhatsAppProvider.key,
+            configuration={"templates": {PURPOSE_AUTHENTICATION: "test-whatsapp-template"}},
+        )
+        set_integration_status(
+            tenant.id, capability=CAPABILITY_WHATSAPP, status=STATUS_ENABLED
+        )
 
     db_session.flush()
     return tenant
