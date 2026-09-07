@@ -12,7 +12,7 @@ from flask import request, g
 from modules.platform import platform_bp
 from core.database import db
 from core.decorators import auth_required, platform_admin_required
-from core.extensions import limiter
+from core.extensions import actor_rate_key, limiter
 from core.theme import derive_palette, validate_seeds
 from shared.helpers import success_response, error_response, not_found_response, validation_error_response
 from modules.platform import services
@@ -824,6 +824,66 @@ def set_tenant_integration_status(tenant_id, capability):
 
     return success_response(
         data={"integrations": describe_tenant_integrations(tenant_id)}
+    )
+
+
+@platform_bp.route(
+    "/tenants/<tenant_id>/integrations/<capability>/test-send", methods=["POST"]
+)
+@auth_required
+@limiter.limit("5 per hour", key_func=actor_rate_key)
+@platform_admin_required
+def test_send_integration(tenant_id, capability):
+    """POST …/integrations/<capability>/test-send — send one real message.
+
+    **Deliberately not folded into the health check.** `health.py` argues
+    that proving an SMS integration works by sending an SMS charges the
+    school and rings a real person's phone; a "test connection" button that
+    quietly does that is a trap. So health stays free and silent, and this is
+    a separate action whose screen says what it costs.
+
+    It goes through the same template path as a real send. A test that
+    bypassed templates would prove nothing about the case that actually
+    fails, which is a template that was never registered.
+
+    Rate-limited on the acting operator, not the caller's address — the
+    decorator sits below `auth_required` so `actor_rate_key` sees
+    `g.current_user` (see `core/extensions.py`); a school behind one NAT
+    would otherwise share a limit, and an attacker with a proxy pool would
+    evade one keyed on the address instead.
+    """
+    from core.models import Tenant
+    from modules.integrations.messaging import send_message
+    from modules.integrations.templates import PURPOSE_INTEGRATION_TEST
+
+    if not Tenant.query.get(tenant_id):
+        return not_found_response("Tenant")
+
+    data = request.get_json(silent=True) or {}
+    destination = (data.get("destination") or "").strip()
+    if not destination:
+        return validation_error_response(
+            {"destination": "A number to send the test message to is required."}
+        )
+
+    result = send_message(
+        tenant_id=tenant_id,
+        channel=capability,
+        purpose=PURPOSE_INTEGRATION_TEST,
+        destination=destination,
+        variables=["test"],
+        body="This is a NexSchool test message. No action is needed.",
+    )
+    db.session.commit()
+
+    return success_response(
+        data={
+            "sent": result.success,
+            "status": result.status,
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+            "operation_id": result.operation_id,
+        }
     )
 
 

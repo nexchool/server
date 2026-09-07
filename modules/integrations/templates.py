@@ -52,6 +52,14 @@ from .errors import TEMPLATE_NOT_CONFIGURED, IntegrationError
 #: Where the map lives on an integration's `configuration`.
 TEMPLATES_KEY = "templates"
 
+#: A deliberate, operator-initiated "does this actually work" send — as
+#: opposed to `authentication_otp`, which nobody asks for on purpose. It
+#: lives here rather than in `otp_models.py` because, unlike the OTP
+#: purpose, nothing else owns this one: no column defaults to it, no
+#: challenge is looked up by it. It is only ever a `messaging.send_message`
+#: argument and a usage-ledger `usage_type`.
+PURPOSE_INTEGRATION_TEST = "integration_test"
+
 
 @dataclass(frozen=True)
 class MessageTemplate:

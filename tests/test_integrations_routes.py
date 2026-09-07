@@ -19,10 +19,12 @@ import pytest
 from modules.auth.services import generate_access_token
 from modules.integrations.capabilities import (
     CAPABILITY_SMS,
+    CAPABILITY_WHATSAPP,
     STATUS_DISABLED,
     STATUS_ENABLED,
 )
-from modules.integrations.providers.fake import FakeSmsProvider
+from modules.integrations.providers.fake import FakeSmsProvider, FakeWhatsAppProvider
+from modules.integrations.providers.meta_whatsapp import MetaWhatsAppProvider
 from modules.integrations.providers.msg91 import Msg91Provider
 from modules.integrations.services import configure_integration, set_integration_status
 from tests.auth._characterization import grant_permissions, make_tenant, make_user
@@ -75,6 +77,28 @@ def test_an_operator_can_see_what_capabilities_exist(client, db_session):
     assert by_key[FAKE]["is_test_double"] is True
     assert by_key[Msg91Provider.key]["is_test_double"] is False
     assert by_key[Msg91Provider.key]["required_credentials"] == ["MSG91_AUTH_KEY"]
+
+
+def test_an_operator_can_see_whatsapp_s_capabilities_too(client, db_session):
+    """SMS's twin. Meta's Cloud API client (Task 8) is registered but shows up
+    nowhere in a listing test until this asserts it."""
+    tenant = make_tenant(db_session)
+    headers = _platform_admin(db_session, tenant)
+
+    response = client.get("/api/platform/integration-capabilities", headers=headers)
+
+    assert response.status_code == 200
+    capabilities = response.get_json()["data"]["capabilities"]
+    whatsapp = [c for c in capabilities if c["capability"] == CAPABILITY_WHATSAPP][0]
+    assert [p["key"] for p in whatsapp["providers"]] == sorted(
+        [FakeWhatsAppProvider.key, MetaWhatsAppProvider.key]
+    )
+    by_key = {p["key"]: p for p in whatsapp["providers"]}
+    assert by_key[FakeWhatsAppProvider.key]["is_test_double"] is True
+    assert by_key[MetaWhatsAppProvider.key]["is_test_double"] is False
+    assert by_key[MetaWhatsAppProvider.key]["required_credentials"] == [
+        "META_WHATSAPP_ACCESS_TOKEN"
+    ]
 
 
 def test_a_school_cannot_see_or_choose_its_own_provider(client, db_session):

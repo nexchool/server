@@ -34,6 +34,7 @@ from modules.billing.usage import AmbiguousService, record_usage
 from modules.integrations import errors
 from modules.integrations.capabilities import (
     CAPABILITY_SMS,
+    CAPABILITY_WHATSAPP,
     STATUS_DISABLED,
     STATUS_ENABLED,
 )
@@ -58,6 +59,7 @@ from modules.integrations.providers.fake import (
     FakeSmsProvider,
     FakeWhatsAppProvider,
 )
+from modules.integrations.providers.meta_whatsapp import MetaWhatsAppProvider
 from modules.integrations.providers.msg91 import Msg91Provider
 from modules.integrations.registry import (
     ProviderRegistry,
@@ -216,6 +218,15 @@ def test_the_registry_can_be_asked_who_does_what():
         [FAKE, Msg91Provider.key]
     )
     assert registry.for_capability("telepathy") == []
+
+
+def test_the_registry_knows_whatsapp_s_two_providers_too():
+    """SMS's twin. WhatsApp has a test double and a real vendor exactly as
+    SMS does, and nothing here checked that the second one was registered
+    against the right capability rather than merely existing somewhere."""
+    assert [p.key for p in registry.for_capability(CAPABILITY_WHATSAPP)] == sorted(
+        [FakeWhatsAppProvider.key, MetaWhatsAppProvider.key]
+    )
 
 
 def test_the_capability_listing_names_credentials_but_never_values():

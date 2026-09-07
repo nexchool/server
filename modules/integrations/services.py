@@ -148,6 +148,29 @@ def configure_integration(
     return integration
 
 
+def methods_depending_on(tenant_id: str, capability: str) -> List[str]:
+    """Which enabled sign-in methods would stop working without this.
+
+    Derived rather than listed: a method is a dependant when it declares
+    itself paid and the school's OTP channel is this capability. A future
+    paid method is covered by declaring itself paid, not by somebody
+    remembering to edit a list here. A channel a school has not chosen is
+    not a dependency — disabling it breaks nothing this school uses.
+    """
+    from modules.auth import policy
+    from modules.auth.strategies import registry as strategies
+
+    if capability != policy.otp_delivery_channel(tenant_id):
+        return []
+
+    return sorted(
+        key
+        for key in strategies.keys()
+        if getattr(strategies.get(key), "is_paid", False)
+        and policy.is_method_enabled_anywhere(tenant_id, key)
+    )
+
+
 def set_integration_status(
     tenant_id: str,
     *,
@@ -161,6 +184,11 @@ def set_integration_status(
     stays, and the billing records stay valid — a school that pauses SMS over
     the summer has not lost its settings, and last term's messages still have
     to be explicable.
+
+    Disabling is refused, not silently allowed, while an enabled paid sign-in
+    method still depends on this capability (see `methods_depending_on`) —
+    otherwise a school keeps showing a sign-in option whose codes will never
+    arrive, with nothing anywhere saying so.
     """
     if status not in STATUSES:
         raise IntegrationConfigurationError(
@@ -174,6 +202,15 @@ def set_integration_status(
         raise IntegrationConfigurationError(
             f"This school has no {capability} integration to enable."
         )
+
+    if status == STATUS_DISABLED:
+        dependants = methods_depending_on(tenant_id, capability)
+        if dependants:
+            raise IntegrationConfigurationError(
+                "This school signs people in with "
+                + ", ".join(dependants)
+                + f", which needs {capability}. Turn the method off first."
+            )
 
     if status == STATUS_ENABLED:
         report = capability_health(tenant_id=tenant_id, capability=capability)
