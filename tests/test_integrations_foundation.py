@@ -82,7 +82,7 @@ FAKE = FakeSmsProvider.key
 #: through the test double needs a template registered for whichever purpose
 #: its tests send under. Merged into whatever configuration a test supplies,
 #: never overriding a `templates` key a test provides for itself.
-SMS_TEMPLATES = {"templates": {"login_otp": "test-template-1", "test": "test-template-2"}}
+SMS_TEMPLATES = {"templates": {"authentication_otp": "test-template-1", "test": "test-template-2"}}
 
 
 def _key(prefix: str) -> str:
@@ -297,7 +297,7 @@ def test_a_send_returns_a_normalized_result(db_session):
         tenant_id=tenant.id,
         destination="+919876500000",
         body="Your code is 123456", variables=[],
-        purpose="login_otp",
+        purpose="authentication_otp",
     )
 
     assert result.success is True
@@ -479,7 +479,7 @@ def test_the_message_body_and_the_number_stay_out_of_the_log(db_session, caplog)
             tenant_id=tenant.id,
             destination="+919876512345",
             body="Your NexSchool code is 483920", variables=[],
-            purpose="login_otp",
+            purpose="authentication_otp",
         )
 
     assert "483920" not in caplog.text
@@ -501,13 +501,13 @@ def test_a_successful_send_reaches_the_usage_ledger(db_session):
     _billable(db_session, tenant)
 
     send_sms(
-        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="authentication_otp"
     )
     db_session.flush()
 
     records = ServiceUsageRecord.query.filter_by(tenant_id=tenant.id).all()
     assert len(records) == 1
-    assert records[0].usage_type == "login_otp"
+    assert records[0].usage_type == "authentication_otp"
     assert records[0].unit == "sms"
 
 
@@ -517,7 +517,7 @@ def test_a_failed_send_is_not_billed(db_session):
     _billable(db_session, tenant)
 
     send_sms(
-        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="authentication_otp"
     )
     db_session.flush()
 
@@ -536,7 +536,7 @@ def test_the_provider_reference_is_what_makes_a_send_billed_once(db_session):
             tenant_id=tenant.id,
             destination="+919876500000",
             body="hi", variables=[],
-            purpose="login_otp",
+            purpose="authentication_otp",
             idempotency_key="one-logical-send",
         )
     db_session.flush()
@@ -552,7 +552,7 @@ def test_two_separate_sends_stay_two(db_session):
 
     for parent in ("+919876500001", "+919876500002"):
         send_sms(
-            tenant_id=tenant.id, destination=parent, body="hi", variables=[], purpose="login_otp"
+            tenant_id=tenant.id, destination=parent, body="hi", variables=[], purpose="authentication_otp"
         )
     db_session.flush()
 
@@ -567,7 +567,7 @@ def test_a_send_a_school_has_no_terms_for_is_reported_not_lost(db_session, caplo
 
     with caplog.at_level("ERROR"):
         result = send_sms(
-            tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
+            tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="authentication_otp"
         )
     db_session.flush()
 
@@ -594,7 +594,7 @@ def test_usage_from_two_vendors_of_one_service_is_refused_rather_than_guessed(
             tenant_id=tenant.id,
             service_key=CAPABILITY_SMS,
             quantity=1,
-            usage_type="login_otp",
+            usage_type="authentication_otp",
         )
 
 
@@ -608,7 +608,7 @@ def test_naming_the_vendor_resolves_the_ambiguity(db_session):
         service_key=CAPABILITY_SMS,
         provider_key=first.key,
         quantity=1,
-        usage_type="login_otp",
+        usage_type="authentication_otp",
     )
     db_session.flush()
 
@@ -778,7 +778,7 @@ def test_disabling_keeps_the_configuration_and_the_history(db_session):
     _routed(db_session, tenant, configuration={"sender_id": "SCHOOL"})
     _billable(db_session, tenant)
     send_sms(
-        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="authentication_otp"
     )
     db_session.flush()
 

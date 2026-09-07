@@ -7,9 +7,9 @@ from modules.integrations.errors import IntegrationError, TEMPLATE_NOT_CONFIGURE
 
 
 def test_a_configured_template_is_found_by_purpose():
-    configuration = {"templates": {"login_otp": "1707169900000000000"}}
+    configuration = {"templates": {"authentication_otp": "1707169900000000000"}}
     assert (
-        templates.template_for(configuration, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for(configuration, "authentication_otp")
         == "1707169900000000000"
     )
 
@@ -18,20 +18,20 @@ def test_a_missing_template_is_refused_before_any_provider_is_called():
     """Discovering a missing template from a vendor's rejection code is a
     worse day than discovering it from our own refusal."""
     with pytest.raises(IntegrationError) as raised:
-        templates.template_for({"templates": {}}, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for({"templates": {}}, "authentication_otp")
     assert raised.value.code == TEMPLATE_NOT_CONFIGURED
 
 
 def test_a_configuration_with_no_templates_key_at_all_is_refused_the_same_way():
     with pytest.raises(IntegrationError) as raised:
-        templates.template_for({}, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for({}, "authentication_otp")
     assert raised.value.code == TEMPLATE_NOT_CONFIGURED
 
 
 def test_a_missing_template_is_not_retryable():
     """Nobody should retry a configuration problem; somebody should fix it."""
     with pytest.raises(IntegrationError) as raised:
-        templates.template_for({}, templates.PURPOSE_LOGIN_OTP)
+        templates.template_for({}, "authentication_otp")
     assert raised.value.retryable is False
 
 

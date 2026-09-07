@@ -61,7 +61,7 @@ def enabled_fake_sms(db_session, tenant):
         tenant.id,
         capability="sms",
         provider_key="fake_sms",
-        configuration={"templates": {"login_otp": "test-template-1"}},
+        configuration={"templates": {"authentication_otp": "test-template-1"}},
     )
     set_integration_status(tenant.id, capability="sms", status="enabled")
     db.session.commit()
@@ -90,7 +90,7 @@ def test_a_send_on_an_unconfigured_channel_returns_a_result_not_an_exception(
     result = send_message(
         tenant_id=tenant.id,
         channel="whatsapp",
-        purpose="login_otp",
+        purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
     )
@@ -107,7 +107,7 @@ def test_a_missing_template_stops_the_send_before_the_provider(
     result = send_message(
         tenant_id=tenant.id,
         channel="sms",
-        purpose="login_otp",
+        purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
         body="418302 is your NexSchool sign-in code.",

@@ -24,9 +24,13 @@ from __future__ import annotations
 
 from .errors import TEMPLATE_NOT_CONFIGURED, IntegrationError
 
-#: A sign-in code. The only purpose this phase has; each new one is a
-#: separate registration with each vendor and so earns its own constant.
-PURPOSE_LOGIN_OTP = "login_otp"
+#: No OTP purpose constant lives here. `otp_models.PURPOSE_AUTHENTICATION`
+#: already owns that concept — it is a stored column value with a server
+#: default and a challenge-lookup filter, and it is what `otp.py` passes to
+#: `send_sms` as both the template key and the usage ledger's `usage_type`.
+#: A second name for the same string would be a second owner of it, and the
+#: two would eventually drift. Callers pass the purpose they already own;
+#: this module only does the lookup.
 
 #: Where the map lives on an integration's `configuration`.
 TEMPLATES_KEY = "templates"

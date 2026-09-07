@@ -52,7 +52,7 @@ def send_message(
 ) -> MessageSendResult:
     """Ask this school's provider for `channel` to send one message.
 
-    `purpose` is what the message is for — `login_otp`, `fee_reminder`. It
+    `purpose` is what the message is for — `authentication_otp`, `fee_reminder`. It
     selects the registered template and becomes the usage record's
     `usage_type`, so a bill can be explained back to the feature that caused
     it.
