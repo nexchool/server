@@ -1,6 +1,7 @@
 """Which wire a school's sign-in codes go down."""
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from core.database import db
 from modules.auth import policy
@@ -26,3 +27,20 @@ def test_a_channel_this_build_cannot_deliver_is_refused(db_session, tenant):
 def test_the_channel_is_in_what_the_panel_reads(db_session, tenant):
     described = policy.describe(tenant.id)
     assert described["otp_delivery_channel"] == "sms"
+
+
+def test_the_database_refuses_a_channel_the_application_would_have_caught(
+    db_session, tenant
+):
+    """The setter validates, but a script or a shell does not go through it.
+
+    `ck_tenant_auth_policies_otp_delivery_channel` is the backstop for
+    whatever bypasses `set_otp_delivery_channel` — set directly on the model
+    the way a one-off script or a future code path might, skipping the
+    `ValueError` the setter already covers above.
+    """
+    policy_row = policy.ensure_default_policy(tenant.id)
+    policy_row.otp_delivery_channel = "carrier_pigeon"
+    with pytest.raises(IntegrityError):
+        db.session.flush()
+    db.session.rollback()

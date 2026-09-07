@@ -144,6 +144,10 @@ class TenantAuthPolicy(TenantBaseModel):
             "('force_change_on_first_login', 'no_forced_change')",
             name="ck_tenant_auth_policies_student_credential_policy",
         ),
+        db.CheckConstraint(
+            "otp_delivery_channel IN ('sms', 'whatsapp')",
+            name="ck_tenant_auth_policies_otp_delivery_channel",
+        ),
     )
 
     def __repr__(self):
