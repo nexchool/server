@@ -19,7 +19,7 @@ from .capabilities import (
     STATUS_ENABLED,
     STATUSES,
 )
-from .credentials import is_valid_reference
+from .credentials import credentials_present, describe_references, is_valid_reference
 from .health import capability_health
 from .models import TenantIntegration
 from .registry import registry
@@ -34,6 +34,32 @@ def describe_capabilities() -> List[Dict]:
 
     Reads the registry rather than the database: this is a property of the
     deployed code, not of anybody's configuration.
+
+    Whether a required environment variable is actually *set* is that same
+    kind of fact — a property of this deployed server, not of any school —
+    which is why it belongs here rather than behind a tenant's health report.
+    The page this feeds exists precisely to answer "can we offer WhatsApp at
+    all yet?" without opening a school, and that question is "is
+    META_WHATSAPP_ACCESS_TOKEN set here?". `required_credentials` alone
+    cannot answer it.
+
+    Both a per-credential list and an aggregate boolean are reported, built
+    with `credentials.py`'s existing helpers rather than a second way to read
+    an environment variable:
+
+    * `credentials` — one `{reference, is_set}` entry per required variable,
+      via `describe_references` (the same shape `describe_tenant_integrations`
+      already returns for a school's stored references). Per-credential is
+      the useful grain: an operator who has set one of two variables needs to
+      know *which* is still missing, not just that the provider overall is
+      not ready.
+    * `credentials_present` — the same aggregate `capability_health` already
+      reports per tenant, via `credentials_present`, so "ready" reads the
+      same way whether you are looking at one school or the whole catalog.
+
+    Reusing `describe_references` also means this cannot regress into
+    leaking a value: that function has no branch that returns one (see its
+    own docstring), so neither does this.
     """
     return [
         {
@@ -49,6 +75,18 @@ def describe_capabilities() -> List[Dict]:
                     # The *names* of what it needs. Never a value; see
                     # `credentials.py`.
                     "required_credentials": list(provider.required_credentials),
+                    # Whether each one is actually set on this server. A
+                    # provider needing nothing (the test doubles) reports an
+                    # empty list here and `credentials_present=True` below —
+                    # vacuously ready, never "missing".
+                    "credentials": list(
+                        describe_references(
+                            {name: name for name in provider.required_credentials}
+                        ).values()
+                    ),
+                    "credentials_present": credentials_present(
+                        {name: name for name in provider.required_credentials}
+                    ),
                 }
                 for provider in registry.for_capability(capability)
             ],

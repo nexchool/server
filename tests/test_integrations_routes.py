@@ -79,6 +79,31 @@ def test_an_operator_can_see_what_capabilities_exist(client, db_session):
     assert by_key[Msg91Provider.key]["required_credentials"] == ["MSG91_AUTH_KEY"]
 
 
+def test_an_operator_can_see_whether_credentials_are_actually_set(
+    client, db_session, monkeypatch
+):
+    """The catalog exists to answer "can we offer this at all yet?" without
+    opening a school — which needs more than the variable's name."""
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
+    tenant = make_tenant(db_session)
+    headers = _platform_admin(db_session, tenant)
+
+    response = client.get("/api/platform/integration-capabilities", headers=headers)
+
+    assert response.status_code == 200
+    capabilities = response.get_json()["data"]["capabilities"]
+    sms = [c for c in capabilities if c["capability"] == CAPABILITY_SMS][0]
+    by_key = {p["key"]: p for p in sms["providers"]}
+
+    assert by_key[Msg91Provider.key]["credentials"] == [
+        {"reference": "MSG91_AUTH_KEY", "is_set": False}
+    ]
+    assert by_key[Msg91Provider.key]["credentials_present"] is False
+    # A test double needs nothing, so it is not reported as missing anything.
+    assert by_key[FAKE]["credentials"] == []
+    assert by_key[FAKE]["credentials_present"] is True
+
+
 def test_an_operator_can_see_whatsapp_s_capabilities_too(client, db_session):
     """SMS's twin. Meta's Cloud API client (Task 8) is registered but shows up
     nowhere in a listing test until this asserts it."""

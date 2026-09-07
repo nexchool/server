@@ -238,6 +238,71 @@ def test_the_capability_listing_names_credentials_but_never_values():
     assert sms["providers"][0]["required_credentials"] == []
 
 
+def test_the_capability_listing_reports_whether_each_credential_is_set(monkeypatch):
+    """The page this feeds exists to answer "can we offer WhatsApp at all
+    yet?" without opening a school — which is exactly "is
+    META_WHATSAPP_ACCESS_TOKEN set on this server?". Names alone cannot
+    answer that; this asserts the presence check travels with them.
+    """
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
+    monkeypatch.setenv("META_WHATSAPP_ACCESS_TOKEN", "does-not-matter-what-value")
+
+    listed = describe_capabilities()
+    sms = [c for c in listed if c["capability"] == CAPABILITY_SMS][0]
+    whatsapp = [c for c in listed if c["capability"] == CAPABILITY_WHATSAPP][0]
+    by_key = {p["key"]: p for p in sms["providers"] + whatsapp["providers"]}
+
+    # A provider whose variable is unset says so, per credential and in
+    # aggregate.
+    msg91 = by_key[Msg91Provider.key]
+    assert msg91["credentials"] == [{"reference": "MSG91_AUTH_KEY", "is_set": False}]
+    assert msg91["credentials_present"] is False
+
+    # A provider whose variable is set says that too — the listing is not a
+    # one-way "missing" flag.
+    meta = by_key[MetaWhatsAppProvider.key]
+    assert meta["credentials"] == [
+        {"reference": "META_WHATSAPP_ACCESS_TOKEN", "is_set": True}
+    ]
+    assert meta["credentials_present"] is True
+
+    # A provider requiring no credentials (the test doubles) reports
+    # sensibly — an empty list and "present" (vacuously true), never
+    # "missing".
+    fake_sms = by_key[FAKE]
+    assert fake_sms["credentials"] == []
+    assert fake_sms["credentials_present"] is True
+
+
+def test_the_capability_listing_payload_never_carries_a_credential_value(monkeypatch):
+    """Extends `test_the_capability_listing_names_credentials_but_never_values`:
+    reporting *whether* a variable is set must never leak *what* it is set
+    to. Walk the whole payload structurally so a future field that started
+    returning a value — not just today's `required_credentials` /
+    `credentials` — would still be caught.
+    """
+    secret = "sk-the-actual-secret-nobody-should-see"
+    monkeypatch.setenv("MSG91_AUTH_KEY", secret)
+    monkeypatch.setenv("META_WHATSAPP_ACCESS_TOKEN", secret)
+
+    listed = describe_capabilities()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+        else:
+            assert node != secret
+            if isinstance(node, str):
+                assert secret not in node
+
+    walk(listed)
+    assert secret not in repr(listed)
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
