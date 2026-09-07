@@ -42,8 +42,17 @@ login path.
 
 ## Capability
 
-What a feature wants done. `sms` today. A capability earns its place by having
-a caller, not by being imaginable.
+What a feature wants done. `sms` and `whatsapp` today, grouped under
+`MESSAGING_CAPABILITIES` because both deliver a message to a person and a
+school's OTP channel choice ranges over exactly that pair — a future
+capability that is not a message (a payment, a lookup) must not silently
+become an option on that menu. A capability earns its place by having a
+caller, not by being imaginable.
+
+WhatsApp is not a second authentication method. The method stays
+`mobile_otp`; WhatsApp is one of the wires its code can go down, chosen by
+`tenant_auth_policies.otp_delivery_channel` and never both at once — see
+ADR-021.
 
 ## Provider client
 
@@ -71,6 +80,32 @@ incoherent registry.
 
 **Registering a provider is what makes it possible. A school's integration row
 is what makes it used.**
+
+## Message template
+
+A message is a **purpose plus variables**, resolved against a template the
+school registered (`templates.py`) — neither channel this build supports
+sends free text. `MessageTemplate(id, variables)`: a vendor template id, and
+the ordered names of the slots it exposes.
+
+The two vendors want those slots filled two different ways. MSG91's Flow API
+has no field for message text at all — the wording lives in a flow already
+registered under India's DLT regime, and a send fills that flow's own
+**named** variables (`##OTP##`, `##MINUTES##`), so SMS gets a **dict**.
+Meta's WhatsApp templates take their variables **positionally** — an ordered
+list, no names anywhere — so WhatsApp gets a **list**. `send_message` zips a
+caller's positional values against the school's registered variable names for
+SMS, and refuses a count mismatch before any provider is called, rather than
+silently truncating to the shorter side.
+
+A **bare string** template (`"1707169900000000000"`, no `variables`) still
+resolves — that is every row registered before this concept existed, and it
+is correct for WhatsApp, which ignores names entirely, while a channel that
+needs named slots (SMS) is refused at the send layer if it is used with one.
+
+Which template serves a purpose is per-school, per-channel configuration on
+the integration row (an identifier, not a secret) — two schools sharing one
+vendor account may have registered different wordings.
 
 ---
 
@@ -258,6 +293,46 @@ implying it was.
 Enabling an integration whose credentials are absent is refused: an
 integration switched on that cannot work produces a school whose messages fail
 silently.
+
+**Disabling is refused too, while a paid sign-in method still depends on it.**
+`set_integration_status` (`services.py`) checks `methods_depending_on`, which
+is derived rather than listed: a strategy is a dependant when it declares
+itself `is_paid` and the school's `otp_delivery_channel` names this
+capability. Turning the integration off first would leave a sign-in method on
+the login screen whose codes silently never arrive; the operator is told to
+turn the method off first instead. A channel a school has not chosen to
+receive OTP on is not a dependency — disabling it breaks nothing.
+
+## Verifying delivery — the test-send route
+
+`POST /platform/tenants/<id>/integrations/<capability>/test-send` sends one
+real, billable message and is deliberately **not** folded into the health
+check above — a "test connection" button that quietly sends a message is the
+trap this section already argues against. It goes through the same template
+path as a real send (`purpose="integration_test"`), so it also proves the
+thing that most often fails: a template that was never registered. Recorded
+in the usage ledger with `usage_type="integration_test"`, same as any other
+send, so it appears on the school's bill like the real messages it stands in
+for. Rate-limited to 5 per hour per acting operator (not per address — a
+school behind one NAT should not share a limit, and an attacker with a proxy
+pool should not evade one).
+
+## The outbox — reading what a test double pretended to send
+
+A fake provider that returns success and throws the message away makes
+`mobile_otp` (and a WhatsApp test-send) unverifiable end to end: the code
+exists and is valid for five minutes, and nothing anywhere says what it is.
+`outbox.py` is the smallest fix — an in-memory, bounded ring buffer (50
+messages) that `messaging.send_message` writes to only after a **test
+double** (`is_test_double`) reports success. A real provider never reaches
+it: a real OTP's body is a live secret, and keeping this in memory only works
+because it only ever holds fictional ones.
+
+`GET /platform/integrations/outbox` reads it back, newest first. It 404s
+(not 403 — an endpoint that exists and refuses tells an attacker it exists)
+wherever `resolver._test_doubles_allowed()` says a fake may not run — the
+same predicate the resolver itself uses, so "may a fake run here" has one
+answer rather than two that could disagree.
 
 ---
 

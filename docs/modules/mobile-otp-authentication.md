@@ -251,12 +251,13 @@ send a code to whoever holds that number at the default school.
 
 ```
 OTP service
-    ↓  send_sms(tenant_id, destination, message, purpose="authentication_otp")
-integrations/sms
+    ↓  send_message(tenant_id, channel=otp_delivery_channel(tenant_id),
+    ↓               destination, variables, body, purpose="authentication_otp")
+integrations/messaging
     ↓
-the school's provider          ← chosen there, never here
+the school's provider, on the school's chosen channel   ← chosen there, never here
     ↓
-normalized SmsSendResult
+normalized MessageSendResult
     ↓
 ServiceUsageRecord             ← what happened
     ↓
@@ -266,6 +267,22 @@ billing                        ← what it costs, separately
 No vendor name, no HTTP call, no retry policy and no price appears anywhere in
 the authentication module — asserted by a test that parses every import under
 `modules/auth/`.
+
+## Channel choice
+
+Which wire carries the code is one column, `tenant_auth_policies.
+otp_delivery_channel` — `'sms'` (the default for every school) or
+`'whatsapp'`, database-constrained to just those two (migration 134). Read by
+`otp_delivery_channel(tenant_id)` and written only by
+`set_otp_delivery_channel`, which is a routing decision and nothing more: it
+provisions nothing, revokes nothing and ends no session — a code already in
+flight down the old channel is still a valid code.
+
+The method stays `mobile_otp` whichever channel carries it; WhatsApp is not a
+second sign-in method, only a second wire this one can use. **A school gets
+exactly one channel, never both at once** — see
+`../architecture/adr/ADR-021-one-otp-channel-no-fallback.md` for why an SMS
+send that fails does not fall back to WhatsApp, or the reverse.
 
 Message text lives in its own file so that changing the wording — for a
 template a provider must pre-register, for a second language — is not a change
