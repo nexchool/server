@@ -227,6 +227,27 @@ Two rules are easy to get backwards:
   difference would be permanent. `papers_with_labels` is the screen's read and
   is scoped.
 
+## What a School May Schedule
+
+A scheduling screen offers the sections of **one campus and one academic year**
+— the two filters a school already sets in the header — and, of the subjects,
+only those every chosen section is actually taught.
+
+This is not a convenience. Fanning a subject across sections is refused for the
+whole set when one of them does not teach it (`OFFERING_NOT_FOUND`), so a
+picker drawing from the subject catalogue offers choices that cannot exist: a
+trust's catalogue holds Gujarati for its Gujarati-medium sections and
+Accountancy for its commerce stream, and every one of them looked equally
+schedulable for a Grade 5 examination. `subject_options_for_sections` reads the
+same offerings the expansion resolves against and says how many of the chosen
+sections teach each, so a subject only some of them are taught is shown as
+what it is rather than as a choice that fails at the last step.
+
+Sections are named by `display_name` — "Grade 10 A", composed on the model.
+`classes.name` is nullable and empty for every section the structured form
+creates, so a picker falling back to `section` listed a column of "A", "A",
+"B" and named nothing.
+
 ## Mark States
 
 A student's outcome for a paper is one of five things, and the fifth is the
@@ -466,9 +487,10 @@ and a publisher does not thereby gain mark-correction authority.
 # Surfaces
 
 **GraphQL** carries the business operations: listing and reading examinations,
-exam types, creating and scheduling and cancelling, adding papers, the marking
-register and recording marks, the correction queue and its decisions, the
-result board, calculating, publishing, revising and publishing a revision.
+exam types, what a set of sections may be examined on, creating and scheduling
+and cancelling, adding papers, the marking register and recording marks, the
+correction queue and its decisions, the result board, calculating, publishing,
+revising and publishing a revision.
 
 **REST carries only bytes** — the marks-sheet template and preview, the import
 upload, and the marksheet PDF. Nothing about the transport makes these a second

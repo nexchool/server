@@ -46,6 +46,7 @@ from . import (
 from .graphql.types import (
     ExamPaperNode,
     ExamTypeNode,
+    ExaminationSubjectOptionNode,
     ExaminationNode,
     ExaminationPageNode,
     ExaminationResultsNode,
@@ -297,6 +298,33 @@ class ExaminationQuery:
         tenant_id = info.context.tenant_id
         found = exam_services.get_examination(str(id), tenant_id)
         return examination_to_graphql(found, tenant_id) if found else None
+
+    @strawberry.field(
+        permission_classes=_READS,
+        description=(
+            "The subjects the given sections are taught, with how many of "
+            "them teach each. What a scheduling screen offers, so that it "
+            "offers only what can actually be scheduled."
+        ),
+    )
+    def examination_subject_options(
+        self, info: strawberry.Info, class_ids: List[strawberry.ID]
+    ) -> List[ExaminationSubjectOptionNode]:
+        result = exam_services.subject_options_for_sections(
+            info.context.tenant_id, [str(class_id) for class_id in class_ids]
+        )
+        if not result.get("success"):
+            _raise(result)
+        return [
+            ExaminationSubjectOptionNode(
+                id=strawberry.ID(row["subject_id"]),
+                name=row["name"],
+                code=row["code"],
+                section_count=row["section_count"],
+                offered_by_all=row["offered_by_all"],
+            )
+            for row in result["subjects"]
+        ]
 
     @strawberry.field(
         permission_classes=_READS,

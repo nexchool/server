@@ -26,6 +26,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from core.branch_scope import (
     assert_class_allowed,
     filter_by_class_ids,
+    filter_classes_by_branch,
     filter_examinations_by_branch,
 )
 from core.database import db
@@ -1139,6 +1140,87 @@ def expand_subject_set(
             specs.append(spec)
 
     return _ok(papers=specs)
+
+
+def subject_options_for_sections(
+    tenant_id: str, class_ids: Iterable[str]
+) -> Dict[str, Any]:
+    """The subjects the chosen sections are actually taught.
+
+    The catalogue is the wrong list to schedule from. A trust's subject
+    catalogue holds every subject any campus teaches — Gujarati for the
+    Gujarati-medium sections, Computer Science for the science stream — and
+    offering all of them to someone scheduling a Grade 5 examination invites
+    the one refusal this wizard cannot recover from: `expand_subject_set`
+    rejects the whole set by name when a single chosen section does not teach
+    a chosen subject.
+
+    So the options are read off the offerings, the same rows the expansion
+    resolves against, and each says how many of the chosen sections teach it.
+    A subject every section teaches is safe to schedule across all of them;
+    one only some teach is still shown — a school may well want it and drop a
+    section — but it is shown as what it is rather than as an equal choice.
+
+    Inactive offerings are left out because `_validate_offering` refuses them,
+    so listing one would be offering a choice that cannot be created.
+    """
+    from modules.subjects.models import Subject
+
+    class_ids = [c for c in class_ids if c]
+    if not class_ids:
+        return _ok(subjects=[])
+
+    sections = filter_classes_by_branch(
+        Class.query.filter(Class.tenant_id == tenant_id, Class.id.in_(class_ids))
+    ).all()
+    allowed_ids = {section.id for section in sections}
+    if not allowed_ids:
+        return _ok(subjects=[])
+
+    # One query, not one per section: a trust scheduling across twenty
+    # sections must not cost twenty round trips.
+    rows = (
+        db.session.query(
+            Subject.id, Subject.name, Subject.code, ClassSubject.class_id
+        )
+        .join(ClassSubject, ClassSubject.subject_id == Subject.id)
+        .filter(
+            ClassSubject.tenant_id == tenant_id,
+            ClassSubject.class_id.in_(allowed_ids),
+            ClassSubject.deleted_at.is_(None),
+            ClassSubject.status == "active",
+            Subject.tenant_id == tenant_id,
+            Subject.deleted_at.is_(None),
+            Subject.is_active.is_(True),
+        )
+        .all()
+    )
+
+    found: Dict[str, Dict[str, Any]] = {}
+    for subject_id, name, code, class_id in rows:
+        entry = found.setdefault(
+            subject_id,
+            {
+                "subject_id": subject_id,
+                "name": name,
+                "code": code,
+                "class_ids": set(),
+            },
+        )
+        entry["class_ids"].add(class_id)
+
+    options = [
+        {
+            "subject_id": entry["subject_id"],
+            "name": entry["name"],
+            "code": entry["code"],
+            "section_count": len(entry["class_ids"]),
+            "offered_by_all": len(entry["class_ids"]) == len(allowed_ids),
+        }
+        for entry in found.values()
+    ]
+    options.sort(key=lambda option: (not option["offered_by_all"], option["name"] or ""))
+    return _ok(subjects=options, section_count=len(allowed_ids))
 
 
 def get_examination(examination_id: str, tenant_id: str) -> Optional[Examination]:

@@ -1074,3 +1074,81 @@ def test_another_schools_exam_type_is_still_refused_before_any_mark(
     )
     assert result["success"] is False
     assert result["code"] == "EXAM_TYPE_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# What a scheduling screen may offer
+# ---------------------------------------------------------------------------
+#
+# The catalogue is the wrong list: a trust's holds every subject any campus
+# teaches, and scheduling one that a chosen section is not taught is refused
+# for the whole set. So the options come off the offerings.
+
+
+def test_subject_options_are_what_the_chosen_sections_are_taught(
+    ctx, db_session, tenant, school
+):
+    result = exam_services.subject_options_for_sections(
+        tenant.id, [school["classes"]["gseb_10a"].id]
+    )
+
+    assert result["success"] is True
+    offered = {row["subject_id"] for row in result["subjects"]}
+    assert offered == {
+        school["offerings"]["gseb_10a_maths"].subject_id,
+        school["offerings"]["gseb_10a_science"].subject_id,
+    }
+    # Physics is on the school's books, but not this section's.
+    assert school["offerings"]["sci_physics"].subject_id not in offered
+
+
+def test_a_subject_only_some_sections_are_taught_is_marked_as_such(
+    ctx, db_session, tenant, school
+):
+    # The same Maths both Grade 10 sections sit; Science only 10A is taught.
+    shared = school["offerings"]["gseb_10a_maths"]
+    db_session.add(
+        ClassSubject(
+            id=_new_id("cs-"), tenant_id=tenant.id,
+            class_id=school["classes"]["gseb_10b"].id,
+            subject_id=shared.subject_id, weekly_periods=5, status="active",
+        )
+    )
+    db_session.flush()
+
+    result = exam_services.subject_options_for_sections(
+        tenant.id,
+        [school["classes"]["gseb_10a"].id, school["classes"]["gseb_10b"].id],
+    )
+
+    by_subject = {row["subject_id"]: row for row in result["subjects"]}
+    maths = by_subject[shared.subject_id]
+    science = by_subject[school["offerings"]["gseb_10a_science"].subject_id]
+
+    assert maths["offered_by_all"] is True and maths["section_count"] == 2
+    # Fanning Science across both would be refused by `expand_subject_set`,
+    # so the screen is told it is not a choice for this set.
+    assert science["offered_by_all"] is False and science["section_count"] == 1
+
+
+def test_an_inactive_offering_is_not_offered_to_schedule(
+    ctx, db_session, tenant, school
+):
+    # `_validate_offering` refuses an inactive offering, so listing it would
+    # be offering something that cannot be created.
+    school["offerings"]["gseb_10a_science"].status = "inactive"
+    db_session.flush()
+
+    result = exam_services.subject_options_for_sections(
+        tenant.id, [school["classes"]["gseb_10a"].id]
+    )
+
+    assert [row["subject_id"] for row in result["subjects"]] == [
+        school["offerings"]["gseb_10a_maths"].subject_id
+    ]
+
+
+def test_another_schools_section_yields_no_subjects(ctx, db_session, tenant, school):
+    result = exam_services.subject_options_for_sections(tenant.id, ["cl-not-ours"])
+    assert result["success"] is True
+    assert result["subjects"] == []

@@ -35,6 +35,23 @@ class ExamTypeNode:
 
 
 @strawberry.type(
+    name="ExaminationSubjectOption",
+    description=(
+        "A subject the chosen sections are taught, and how many of them are "
+        "taught it. The catalogue is not this list: scheduling a subject a "
+        "chosen section does not teach is refused outright, so what a school "
+        "may pick from is what the offerings say."
+    ),
+)
+class ExaminationSubjectOptionNode:
+    id: strawberry.ID
+    name: str
+    code: Optional[str] = None
+    section_count: int = 0
+    offered_by_all: bool = True
+
+
+@strawberry.type(
     name="ExamPaper",
     description=(
         "One sitting: one subject, for one section, on one date. A half yearly "
