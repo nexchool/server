@@ -19,7 +19,7 @@ from typing import Dict, List
 
 from .base import ProviderClient
 from .capabilities import CAPABILITIES
-from .providers.fake import FakeSmsProvider
+from .providers.fake import FakeSmsProvider, FakeWhatsAppProvider
 
 
 class RegistryInvalid(Exception):
@@ -94,7 +94,8 @@ class ProviderRegistry:
 #: The registry this build runs with.
 #:
 #: **No real vendor is registered, and that is not an omission.** Choosing an
-#: SMS company is a commercial decision nobody has taken, and Phase 2 shipped
-#: the billing catalog empty for the same reason. The only entry is a test
-#: double, which the resolver refuses to hand out outside a test.
-registry = ProviderRegistry([FakeSmsProvider()])
+#: SMS or WhatsApp company is a commercial decision nobody has taken, and
+#: Phase 2 shipped the billing catalog empty for the same reason. The only
+#: entries are test doubles, which the resolver refuses to hand out outside
+#: a test.
+registry = ProviderRegistry([FakeSmsProvider(), FakeWhatsAppProvider()])

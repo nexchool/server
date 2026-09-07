@@ -189,14 +189,19 @@ def _school(
         )
 
     if whatsapp_working:
-        # No WhatsApp provider is registered in this build yet — Task 7 is
-        # where a fake one and the outbox that reads it are due — so there is
-        # nothing `configure_integration` can point a `whatsapp` capability
-        # row at the way `sms_working` does above. This patches the one seam
-        # both the delivery path (`otp._deliver`) and the readiness gates
-        # (`routes._method_needs_messaging`, the auth-policy PATCH guard)
-        # actually read: `messaging.messaging_health`. A caller must pass its
-        # own `monkeypatch` fixture so the patch unwinds with that test.
+        # Task 7 registered a WhatsApp test double (`fake_whatsapp`) and gave
+        # it an outbox, but `configure_integration` still cannot point a
+        # school's `whatsapp` capability at it: `tenant_integrations` carries
+        # `ck_tenant_integrations_capability`, a database CHECK constraint
+        # from migration 129 that predates WhatsApp as a messaging capability
+        # and still literally reads `capability = 'sms'`. Postgres itself
+        # refuses the row — see `\d+ tenant_integrations` — and widening that
+        # constraint is a migration, which this task may not run. So this
+        # still patches the one seam both the delivery path (`otp._deliver`)
+        # and the readiness gates (`routes._method_needs_messaging`, the
+        # auth-policy PATCH guard) actually read: `messaging.messaging_health`.
+        # A caller must pass its own `monkeypatch` fixture so the patch
+        # unwinds with that test.
         if monkeypatch is None:
             raise TypeError("whatsapp_working needs the caller's monkeypatch fixture")
         import modules.integrations.messaging as messaging_module
@@ -207,7 +212,10 @@ def _school(
                 configured=True,
                 credentials_present=True,
                 provider_supported=True,
-                detail="A test double for a channel this build has no real provider for.",
+                detail=(
+                    "A test double this build cannot store an integration row "
+                    "for yet — see ck_tenant_integrations_capability."
+                ),
             )
 
         monkeypatch.setattr(messaging_module, "messaging_health", _whatsapp_ready)

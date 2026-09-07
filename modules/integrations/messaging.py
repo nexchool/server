@@ -153,6 +153,17 @@ def send_message(
             purpose=purpose,
         )
 
+    if resolved.client.is_test_double and result.success:
+        from .outbox import record
+
+        record(
+            tenant_id=tenant_id,
+            channel=channel,
+            destination=destination,
+            body=body or " | ".join(str(v) for v in (variables or [])),
+            purpose=purpose,
+        )
+
     return result
 
 

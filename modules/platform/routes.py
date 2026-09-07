@@ -700,6 +700,26 @@ def list_integration_capabilities():
     return success_response(data={"capabilities": describe_capabilities()})
 
 
+@platform_bp.route("/integrations/outbox", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def read_integration_outbox():
+    """GET /platform/integrations/outbox — what the test doubles pretended to send.
+
+    **404 where test doubles may not run.** Not 403: an endpoint that exists
+    and refuses tells an attacker it exists. The predicate is the resolver's,
+    so "may a fake run here" has one answer rather than two.
+    """
+    from modules.integrations.outbox import recent
+    from modules.integrations.resolver import _test_doubles_allowed
+
+    if not _test_doubles_allowed():
+        return not_found_response("Endpoint")
+
+    return success_response(data={"messages": recent(limit=20)})
+
+
 @platform_bp.route("/tenants/<tenant_id>/integrations", methods=["GET"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required

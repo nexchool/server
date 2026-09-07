@@ -56,6 +56,7 @@ from modules.integrations.providers.fake import (
     BEHAVIOUR_TIMEOUT,
     BEHAVIOUR_UNAVAILABLE,
     FakeSmsProvider,
+    FakeWhatsAppProvider,
 )
 from modules.integrations.registry import (
     ProviderRegistry,
@@ -136,11 +137,12 @@ def _billable(db_session, tenant, *, provider_key=None, service_key=CAPABILITY_S
 # ---------------------------------------------------------------------------
 
 def test_this_build_registers_no_real_vendor():
-    """Not an omission. Choosing an SMS company is a decision nobody has taken,
-    and a provider that appeared without one being made would be that decision
-    taken by accident."""
-    assert registry.keys() == [FAKE]
-    assert registry.get(FAKE).is_test_double is True
+    """Not an omission. Choosing an SMS or WhatsApp company is a decision
+    nobody has taken, and a provider that appeared without one being made
+    would be that decision taken by accident."""
+    assert registry.keys() == sorted([FAKE, FakeWhatsAppProvider.key])
+    for key in registry.keys():
+        assert registry.get(key).is_test_double is True
 
 
 def test_two_providers_under_one_key_will_not_start():

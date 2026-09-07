@@ -26,12 +26,19 @@ _CONSTRAINT_NAME = "ck_tenant_auth_policies_otp_delivery_channel"
 # Fixtures and helpers
 #
 # Module-local, the same shape `test_mobile_otp.py` and
-# `tests/test_integrations_routes.py` use — there is no shared `app` fixture,
-# no `platform_admin_client`, and (until Task 7 adds the outbox and a
-# WhatsApp test double) no registered WhatsApp provider to configure a school
-# onto the way `configure_integration` does for SMS. Where a test below needs
-# a "the school's WhatsApp works" fact, it patches `messaging_health` — the
-# one seam both the delivery path and the readiness gates actually read.
+# `tests/test_integrations_routes.py` use — there is no shared `app` fixture
+# and no `platform_admin_client`. Task 7 registered a real `fake_whatsapp`
+# provider and gave it an outbox, but a school still cannot be configured
+# onto it through `configure_integration`: `tenant_integrations` carries a
+# database CHECK constraint (`ck_tenant_integrations_capability`, migration
+# 129) that predates WhatsApp as a messaging capability and still only
+# allows `capability = 'sms'`. Widening it is a migration, which this task
+# may not run — so "the school's WhatsApp works" is still arranged by
+# patching the one seam both the delivery path and the readiness gates
+# actually read: `messaging.messaging_health` (see `_school` in
+# `test_mobile_otp.py`) — except where a test can route through the real
+# provider by patching resolution instead of the send call; see
+# `test_a_code_goes_down_the_channel_the_school_chose` below.
 # ---------------------------------------------------------------------------
 
 
@@ -150,9 +157,33 @@ def test_the_constraint_matches_messaging_capabilities():
 
 def test_a_code_goes_down_the_channel_the_school_chose(db_session, monkeypatch):
     """`_deliver` reads the school's chosen channel from policy — it must not
-    keep sending down SMS regardless of what a school picked."""
+    keep sending down SMS regardless of what a school picked.
+
+    Proved against the real `fake_whatsapp` provider and the real outbox now
+    that Task 7 gives WhatsApp a test double and somewhere to read what it
+    "sent" — stronger than the old version, which patched
+    `messaging.send_message` and so only ever proved which channel *string*
+    was requested. This asserts on the outbox instead, which only a real
+    send reaches.
+
+    One seam is still patched, one level lower than before: `resolve_provider`,
+    not `send_message`. `configure_integration(capability=CAPABILITY_WHATSAPP,
+    ...)` cannot be used to reach it — `tenant_integrations` carries a
+    database CHECK constraint (`ck_tenant_integrations_capability`, migration
+    129) that predates WhatsApp as a messaging capability and still only
+    allows `capability = 'sms'`; Postgres itself refuses the row, and
+    widening that constraint is a migration this task may not run. Patching
+    resolution rather than the send call still leaves everything downstream
+    of it — template lookup, the real provider's `send`, result
+    normalization, and the outbox write — running for real.
+    """
     from modules.auth import otp
-    from modules.integrations.results import STATUS_ACCEPTED, MessageSendResult
+    from modules.auth.otp_models import PURPOSE_AUTHENTICATION
+    from modules.integrations import outbox
+    import modules.integrations.messaging as messaging_module
+    from modules.integrations.providers.fake import FakeWhatsAppProvider
+    from modules.integrations.registry import registry
+    from modules.integrations.resolver import ResolvedIntegration
 
     tenant = _school(db_session, sms_working=False)
     policy.set_otp_delivery_channel(tenant.id, "whatsapp")
@@ -160,28 +191,22 @@ def test_a_code_goes_down_the_channel_the_school_chose(db_session, monkeypatch):
 
     account, number = _member(db_session, tenant)
 
-    import modules.integrations.messaging as messaging_module
-
-    sent = []
-
-    def _fake_send_message(
-        *, tenant_id, channel, purpose, destination, variables, body=None,
-        idempotency_key=None,
-    ):
-        sent.append(channel)
-        return MessageSendResult(
-            success=True,
-            status=STATUS_ACCEPTED,
-            provider_message_id="fake-otp-1",
-            billable_units=0,
+    def _resolve_to_fake_whatsapp(*, tenant_id, capability):
+        return ResolvedIntegration(
+            client=registry.get(FakeWhatsAppProvider.key),
+            integration=None,
+            configuration={"templates": {PURPOSE_AUTHENTICATION: "test-whatsapp-template"}},
         )
 
-    monkeypatch.setattr(messaging_module, "send_message", _fake_send_message)
+    monkeypatch.setattr(messaging_module, "resolve_provider", _resolve_to_fake_whatsapp)
 
+    outbox.clear()
     result = otp.request_otp(tenant_id=tenant.id, mobile=number)
 
     assert result.accepted
-    assert sent == ["whatsapp"]
+    message = outbox.recent()[0]
+    assert message["channel"] == "whatsapp"
+    assert result.challenge._plaintext_code in message["body"]  # noqa: SLF001 - test-only read
 
 
 def test_a_school_on_whatsapp_is_not_blocked_by_a_missing_sms_provider(

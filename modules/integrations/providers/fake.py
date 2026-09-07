@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .. import errors
-from ..base import SmsProvider
+from ..base import SmsProvider, WhatsAppProvider
 from ..results import STATUS_ACCEPTED, ProviderHealth, MessageSendResult
 
 #: Put in a school's `configuration` to choose what this provider does. A real
@@ -66,6 +66,61 @@ class FakeSmsProvider(SmsProvider):
         destination: str,
         body: str,
         template_id: Optional[str],
+        configuration: dict,
+        idempotency_key: Optional[str] = None,
+        operation_id: Optional[str] = None,
+    ) -> MessageSendResult:
+        behaviour = (configuration or {}).get(BEHAVIOUR_KEY, BEHAVIOUR_SUCCESS)
+
+        if behaviour in _FAILURES:
+            code, detail = _FAILURES[behaviour]
+            return MessageSendResult(
+                success=False,
+                error_code=code,
+                error_message=detail,
+                retryable=errors.is_retryable(code),
+                operation_id=operation_id,
+                billable_units=0,
+            )
+
+        # A real provider returns its own id; this one derives a stable id from
+        # the idempotency key when there is one, so a test can prove that the
+        # same key produces the same reference.
+        reference = idempotency_key or operation_id or "fake-message"
+        return MessageSendResult(
+            success=True,
+            status=STATUS_ACCEPTED,
+            provider_message_id=f"fake-{reference}",
+            provider_status="queued",
+            operation_id=operation_id,
+            billable_units=1,
+        )
+
+
+class FakeWhatsAppProvider(WhatsAppProvider):
+    """Deterministic, offline, and refused outside a test."""
+
+    key = "fake_whatsapp"
+    name = "Fake WhatsApp (tests only)"
+    supports_idempotency = True
+    is_test_double = True
+    required_credentials = ()
+
+    def health(self, configuration: dict) -> ProviderHealth:
+        return ProviderHealth(
+            configured=True,
+            credentials_present=True,
+            provider_supported=True,
+            provider_reachable=True,
+            detail="A test double. It never contacts anything.",
+        )
+
+    def send(
+        self,
+        *,
+        destination: str,
+        template_name: str,
+        variables: "list[str]",
         configuration: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,

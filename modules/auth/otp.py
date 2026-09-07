@@ -11,9 +11,10 @@ consumes the challenge in the same statement that checks it, so two requests
 arriving with the same correct code cannot both win. A Python-level "if not
 consumed: consume" would let both through, and under a real race it would.
 
-Sending is Phase 3's business, not this module's. This asks the `sms`
-capability for a message and never learns which company carried it, what it
-cost, or how that company reports failure.
+Sending is Phase 3's business, not this module's. This asks the channel-
+agnostic messaging layer for a message — over whichever of `sms` or
+`whatsapp` the school has chosen — and never learns which company carried
+it, what it cost, or how that company reports failure.
 """
 
 from __future__ import annotations
