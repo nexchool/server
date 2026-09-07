@@ -208,6 +208,26 @@ def is_method_allowed(account, method_key: str, surface: str = SURFACE_ANY) -> b
     return method_key in allowed_methods(account, surface)
 
 
+def is_method_enabled_anywhere(tenant_id: str, method_key: str) -> bool:
+    """Whether any rule at this school currently permits that method.
+
+    Read by the settings that a live method depends on — the OTP delivery
+    channel is the first — so that changing one of them can be refused while
+    it would strand an enabled method, and left alone once nothing is
+    actually using it.
+    """
+    return (
+        db.session.query(TenantAuthPolicyRule)
+        .filter(
+            TenantAuthPolicyRule.tenant_id == tenant_id,
+            TenantAuthPolicyRule.method_key == method_key,
+            TenantAuthPolicyRule.is_enabled.is_(True),
+        )
+        .first()
+        is not None
+    )
+
+
 def ensure_default_policy(tenant_id: str, *, updated_by_user_id: str = None) -> TenantAuthPolicy:
     """Give this school the default policy if it has none.
 

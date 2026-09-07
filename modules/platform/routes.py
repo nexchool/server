@@ -537,6 +537,12 @@ def update_tenant_auth_policy(tenant_id):
 
     Both fields are optional; sending neither is a no-op that returns the
     current policy, which is what a client refreshing its view wants.
+
+    A third, `otp_delivery_channel`, moves alongside them. **Moving a school
+    onto a channel it has no working provider for is refused while
+    `mobile_otp` is switched on** — the same reason enabling the method
+    itself is refused without one — because an enabled method routed onto a
+    dead channel would fail silently for whoever tries to sign in next.
     """
     from core.models import Tenant
     from modules.auth import policy
@@ -548,6 +554,7 @@ def update_tenant_auth_policy(tenant_id):
     data = request.get_json(silent=True) or {}
     family_access_mode = (data.get("family_access_mode") or "").strip()
     credential_policy = (data.get("student_credential_policy") or "").strip()
+    otp_channel = (data.get("otp_delivery_channel") or "").strip()
 
     try:
         if family_access_mode:
@@ -557,6 +564,30 @@ def update_tenant_auth_policy(tenant_id):
         if credential_policy:
             policy.set_student_credential_policy(
                 tenant_id, credential_policy, updated_by_user_id=g.current_user.id
+            )
+        if otp_channel:
+            # Moving a school onto a channel it cannot send down would leave
+            # an enabled method that silently never delivers. Refused for the
+            # same reason enabling the method is — but only when the method
+            # is actually live, so a school may pre-select a channel before
+            # it has switched mobile_otp on at all.
+            if policy.is_method_enabled_anywhere(tenant_id, "mobile_otp"):
+                from modules.integrations.messaging import messaging_health
+
+                report = messaging_health(tenant_id, otp_channel)
+                if not report.ready:
+                    db.session.rollback()
+                    return validation_error_response(
+                        {
+                            "otp_delivery_channel": (
+                                f"Mobile OTP is switched on and this school has "
+                                f"no working {otp_channel} provider. "
+                                + (report.detail or "")
+                            ).strip()
+                        }
+                    )
+            policy.set_otp_delivery_channel(
+                tenant_id, otp_channel, updated_by_user_id=g.current_user.id
             )
         policy.ensure_default_policy(tenant_id, updated_by_user_id=g.current_user.id)
         db.session.commit()
@@ -578,11 +609,13 @@ def set_tenant_auth_method(tenant_id):
     because `mobile_otp` is the first method a school would plausibly want
     switched on and off and there was no way to do it but a Python shell.
 
-    **Enabling a method that cannot work is refused.** `mobile_otp` needs an
-    SMS provider, and a school switched on without one would present a sign-in
-    option whose codes silently never arrive. So the integration is checked
-    first and the operator is told what is missing — which, until a vendor is
-    selected, is every time.
+    **Enabling a method that cannot work is refused.** `mobile_otp` needs a
+    working provider for whichever channel this school has chosen — SMS by
+    default, or WhatsApp for a school that switched to it — and a school
+    switched on without one would present a sign-in option whose codes
+    silently never arrive. So the integration is checked first and the
+    operator is told what is missing — which, until a vendor is selected, is
+    every time.
     """
     from core.models import Tenant
     from modules.auth import policy
@@ -603,17 +636,18 @@ def set_tenant_auth_method(tenant_id):
             {"method_key": f"'{method_key}' is not a sign-in method this build has."}
         )
 
-    if enabled and _method_needs_sms(method_key):
-        from modules.integrations.capabilities import CAPABILITY_SMS
-        from modules.integrations.health import capability_health
+    if enabled and _method_needs_messaging(method_key):
+        from modules.auth.policy import otp_delivery_channel
+        from modules.integrations.messaging import messaging_health
 
-        report = capability_health(tenant_id=tenant_id, capability=CAPABILITY_SMS)
+        channel = otp_delivery_channel(tenant_id)
+        report = messaging_health(tenant_id, channel)
         if not report.ready:
             return validation_error_response(
                 {
                     "method_key": (
-                        "This method sends an SMS, and this school has no working "
-                        "SMS provider. " + (report.detail or "")
+                        f"This method sends a message, and this school has no "
+                        f"working {channel} provider. " + (report.detail or "")
                     ).strip()
                 }
             )
@@ -636,7 +670,7 @@ def set_tenant_auth_method(tenant_id):
     return success_response(data=policy.describe(tenant_id))
 
 
-def _method_needs_sms(method_key: str) -> bool:
+def _method_needs_messaging(method_key: str) -> bool:
     """Whether turning this method on commits a school to sending messages.
 
     Read from the strategy rather than a list kept here, so a future paid

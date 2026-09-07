@@ -291,24 +291,26 @@ def _create_challenge(
 
 
 def _deliver(*, tenant_id, challenge, destination, code, purpose) -> bool:
-    """Hand the message to Phase 3, and record what it said.
+    """Hand the message to Phase 3, down whichever wire the school chose.
 
     Marks the challenge `sent` only when a provider accepted it. A provider
     that refused means no code will ever arrive, so leaving the challenge
     verifiable would strand somebody waiting for a message that is not coming.
     """
-    from modules.integrations.sms import send_sms
+    from modules.integrations.messaging import send_message
 
     from .otp_message import build_otp_message, otp_variables
+    from .policy import otp_delivery_channel
 
-    result = send_sms(
+    result = send_message(
         tenant_id=tenant_id,
-        destination=destination,
-        body=build_otp_message(code),
+        channel=otp_delivery_channel(tenant_id),
         purpose=purpose,
+        destination=destination,
         variables=otp_variables(code),
+        body=build_otp_message(code),
         # One logical send. A retry carrying the same key must not become a
-        # second message — Phase 3 passes this to a provider that honours it.
+        # second message.
         idempotency_key=f"otp:{challenge.id}",
     )
 

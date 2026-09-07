@@ -147,7 +147,14 @@ def _mobile() -> str:
     return f"+9198{uuid.uuid4().int % 100000000:08d}"
 
 
-def _school(db_session, *, otp_enabled=True, sms_working=True):
+def _school(
+    db_session,
+    *,
+    otp_enabled=True,
+    sms_working=True,
+    whatsapp_working=False,
+    monkeypatch=None,
+):
     """A school that can send codes, unless the test says otherwise."""
     tenant = make_tenant(db_session)
     ensure_default_policy(tenant.id)
@@ -180,6 +187,31 @@ def _school(db_session, *, otp_enabled=True, sms_working=True):
             provider_key=provider.key,
             customer_unit_price=Decimal("0.05"),
         )
+
+    if whatsapp_working:
+        # No WhatsApp provider is registered in this build yet — Task 7 is
+        # where a fake one and the outbox that reads it are due — so there is
+        # nothing `configure_integration` can point a `whatsapp` capability
+        # row at the way `sms_working` does above. This patches the one seam
+        # both the delivery path (`otp._deliver`) and the readiness gates
+        # (`routes._method_needs_messaging`, the auth-policy PATCH guard)
+        # actually read: `messaging.messaging_health`. A caller must pass its
+        # own `monkeypatch` fixture so the patch unwinds with that test.
+        if monkeypatch is None:
+            raise TypeError("whatsapp_working needs the caller's monkeypatch fixture")
+        import modules.integrations.messaging as messaging_module
+        from modules.integrations.results import ProviderHealth
+
+        def _whatsapp_ready(asked_tenant_id, channel):
+            return ProviderHealth(
+                configured=True,
+                credentials_present=True,
+                provider_supported=True,
+                detail="A test double for a channel this build has no real provider for.",
+            )
+
+        monkeypatch.setattr(messaging_module, "messaging_health", _whatsapp_ready)
+
     db_session.flush()
     return tenant
 
