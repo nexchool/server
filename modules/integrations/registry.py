@@ -20,6 +20,7 @@ from typing import Dict, List
 from .base import ProviderClient
 from .capabilities import CAPABILITIES
 from .providers.fake import FakeSmsProvider, FakeWhatsAppProvider
+from .providers.meta_whatsapp import MetaWhatsAppProvider
 from .providers.msg91 import Msg91Provider
 
 
@@ -94,14 +95,22 @@ class ProviderRegistry:
 
 #: The registry this build runs with.
 #:
-#: MSG91 is the first real vendor registered, and it is registered without a
-#: commercial decision having been taken — no MSG91 account exists and no DLT
-#: paperwork has been started. That is safe because registering is not the
-#: same as being usable: `Msg91Provider.required_credentials` guarantees
-#: `capability_health` reports it unconfigured and `set_integration_status`
-#: refuses to enable it until `MSG91_AUTH_KEY` is set on the server. The
-#: remaining entries are test doubles, which the resolver refuses to hand out
-#: outside a test.
+#: MSG91 (SMS) and Meta's WhatsApp Cloud API are both registered without a
+#: commercial decision having been taken — no MSG91 account exists, and
+#: separately no Meta Business account exists and no WhatsApp template has
+#: been approved. That is safe because registering is not the same as being
+#: usable: `Msg91Provider.required_credentials` and
+#: `MetaWhatsAppProvider.required_credentials` each guarantee
+#: `capability_health` reports their provider unconfigured and
+#: `set_integration_status` refuses to enable either until its own
+#: credential (`MSG91_AUTH_KEY`, `META_WHATSAPP_ACCESS_TOKEN`) is set on the
+#: server. The remaining entries are test doubles, which the resolver
+#: refuses to hand out outside a test.
 registry = ProviderRegistry(
-    [FakeSmsProvider(), FakeWhatsAppProvider(), Msg91Provider()]
+    [
+        FakeSmsProvider(),
+        FakeWhatsAppProvider(),
+        Msg91Provider(),
+        MetaWhatsAppProvider(),
+    ]
 )
