@@ -927,7 +927,7 @@ In `policy_models.py`, beside the other constants:
 #: Which channel carries a sign-in code. Not a list of what a school *has* —
 #: one choice, deliberately. Automatic fallback between channels doubles the
 #: failure modes and the billing explanation for a reliability problem
-#: nobody has measured; see ADR-015.
+#: nobody has measured; see ADR-021.
 OTP_CHANNEL_SMS = "sms"
 OTP_CHANNEL_WHATSAPP = "whatsapp"
 OTP_DELIVERY_CHANNELS = (OTP_CHANNEL_SMS, OTP_CHANNEL_WHATSAPP)
@@ -1986,7 +1986,7 @@ EOF
 **Files:**
 - Modify: `server/docs/modules/integrations.md`, `server/docs/modules/mobile-otp-authentication.md`
 - Modify: `server/docs/architecture/identity-domain.md`, `server/docs/architecture/debt-register.md`
-- Create: `server/docs/architecture/adr/ADR-015-one-otp-channel-no-fallback.md`
+- Create: `server/docs/architecture/adr/ADR-021-one-otp-channel-no-fallback.md`
 
 - [ ] **Step 1: Write the ADR**
 
