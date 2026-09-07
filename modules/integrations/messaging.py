@@ -30,7 +30,7 @@ import time
 from typing import Optional
 
 from .capabilities import CAPABILITY_SMS, MESSAGING_CAPABILITIES
-from .errors import IntegrationError, UnknownCapability
+from .errors import CONFIGURATION_ERROR, IntegrationError, UnknownCapability
 from .operations import new_operation_id, redact_destination
 from .resolver import resolve_provider
 from .results import MessageSendResult, ProviderHealth
@@ -72,6 +72,27 @@ def send_message(
     try:
         resolved = resolve_provider(tenant_id=tenant_id, capability=channel)
         template = template_for(resolved.configuration, purpose)
+        if channel == CAPABILITY_SMS:
+            values = list(variables or [])
+            if len(values) != len(template.variables):
+                # Zipping without this check would silently truncate to the
+                # shorter side — an SMS reading "your code is" — and the only
+                # way to learn that would be a vendor's rejection or, worse,
+                # the message a person actually received. CONFIGURATION_ERROR
+                # because a school's own template registration is what is
+                # wrong (too few — or, for a vendor like MSG91 that has no
+                # free-text field at all, too many — named slots), not the
+                # request: the same request will fail identically until an
+                # operator fixes the template, so it is not retryable and it
+                # belongs in the same operator-facing bucket as a missing
+                # template rather than in the vendor-weather bucket a 4xx
+                # would otherwise land in.
+                raise IntegrationError(
+                    CONFIGURATION_ERROR,
+                    f"This school's '{purpose}' SMS template names "
+                    f"{len(template.variables)} variable(s) but {len(values)} "
+                    "were supplied.",
+                )
     except IntegrationError as exc:
         logger.warning(
             "message not sent: %s (tenant=%s channel=%s purpose=%s operation=%s)",
@@ -93,18 +114,22 @@ def send_message(
     started = time.monotonic()
     try:
         if channel == CAPABILITY_SMS:
+            # Named, not positional: MSG91's Flow API (Task 8b) matches a
+            # flow's placeholders by name. The count is already proven equal
+            # above, so this zip loses nothing.
             result = resolved.client.send(
                 destination=destination,
                 body=body or "",
-                template_id=template,
+                template_id=template.id,
                 configuration=resolved.configuration,
+                variables=dict(zip(template.variables, variables or [])),
                 idempotency_key=idempotency_key,
                 operation_id=operation_id,
             )
         else:
             result = resolved.client.send(
                 destination=destination,
-                template_name=template,
+                template_name=template.id,
                 variables=list(variables or []),
                 configuration=resolved.configuration,
                 idempotency_key=idempotency_key,

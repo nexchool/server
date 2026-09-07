@@ -46,8 +46,13 @@ FAKE = FakeSmsProvider.key
 #: `send_sms` now stops at `template_for` before it ever reaches a provider —
 #: every school routed through the test double needs a template registered
 #: for `PURPOSE_AUTHENTICATION`, the purpose every OTP send in this suite
-#: goes under.
-SMS_TEMPLATES = {"templates": {PURPOSE_AUTHENTICATION: "test-template-1"}}
+#: goes under. Named (Task 8b) — see `test_mobile_otp.py` for why a bare
+#: string would now be refused as a variable-count mismatch.
+SMS_TEMPLATES = {
+    "templates": {
+        PURPOSE_AUTHENTICATION: {"id": "test-template-1", "variables": ["OTP", "MINUTES"]},
+    }
+}
 
 
 @pytest.fixture(autouse=True)

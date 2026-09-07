@@ -25,16 +25,45 @@ def test_the_dlt_template_id_is_sent(monkeypatch):
             body="418302 is your NexSchool sign-in code.",
             template_id="1707169900000000000",
             configuration={"sender_id": "NEXSCH"},
+            variables={"OTP": "418302", "MINUTES": "5"},
         )
 
     assert "1707169900000000000" in str(captured["payload"])
+
+
+def test_msg91_forwards_each_value_under_its_configured_name(monkeypatch):
+    """Task 8b — MSG91's Flow API has no field for free text: the wording
+    lives in the flow already, and a send fills the flow's own named slots.
+    `messaging.send_message` is what zips a template's declared names onto
+    the caller's positional values; this client's only job is to forward the
+    resulting mapping unchanged, under each recipient's own key."""
+    monkeypatch.setenv("MSG91_AUTH_KEY", "test-key")
+    captured = {}
+
+    def fake_post(url, payload, headers=None, timeout=15):
+        captured["payload"] = payload
+        return _ok()
+
+    with patch("modules.integrations.providers.msg91.post_json", fake_post):
+        Msg91Provider().send(
+            destination="+919876543210",
+            body="418302 is your NexSchool sign-in code.",
+            template_id="1707169900000000000",
+            configuration={"sender_id": "NEXSCH"},
+            variables={"OTP": "418302", "MINUTES": "5"},
+        )
+
+    recipient = captured["payload"]["recipients"][0]
+    assert recipient["OTP"] == "418302"
+    assert recipient["MINUTES"] == "5"
+    assert recipient["mobiles"] == "919876543210"
 
 
 def test_a_missing_credential_is_a_configuration_error_not_a_crash(monkeypatch):
     monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
     result = Msg91Provider().send(
         destination="+919876543210", body="x", template_id="t",
-        configuration={"sender_id": "NEXSCH"},
+        configuration={"sender_id": "NEXSCH"}, variables={},
     )
     assert result.success is False
     assert result.error_code == errors.CONFIGURATION_ERROR
@@ -48,7 +77,7 @@ def test_a_rejected_credential_is_normalized(monkeypatch):
     ):
         result = Msg91Provider().send(
             destination="+919876543210", body="x", template_id="t",
-            configuration={"sender_id": "NEXSCH"},
+            configuration={"sender_id": "NEXSCH"}, variables={},
         )
     assert result.error_code == errors.AUTHENTICATION_ERROR
     assert result.retryable is False
@@ -62,7 +91,7 @@ def test_a_timeout_is_not_retryable_because_the_message_may_have_gone(monkeypatc
     ):
         result = Msg91Provider().send(
             destination="+919876543210", body="x", template_id="t",
-            configuration={"sender_id": "NEXSCH"},
+            configuration={"sender_id": "NEXSCH"}, variables={},
         )
     assert result.error_code == errors.TIMEOUT
     assert result.retryable is False
@@ -82,6 +111,6 @@ def test_it_does_not_claim_delivery(monkeypatch):
     with patch("modules.integrations.providers.msg91.post_json", lambda *a, **k: _ok()):
         result = Msg91Provider().send(
             destination="+919876543210", body="x", template_id="t",
-            configuration={"sender_id": "NEXSCH"},
+            configuration={"sender_id": "NEXSCH"}, variables={},
         )
     assert result.status == "accepted"

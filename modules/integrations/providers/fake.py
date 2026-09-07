@@ -67,9 +67,15 @@ class FakeSmsProvider(SmsProvider):
         body: str,
         template_id: Optional[str],
         configuration: dict,
+        variables: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,
     ) -> MessageSendResult:
+        # `variables` is accepted, per the interface, and otherwise unused:
+        # `body` already carries the rendered text this fake exists to make
+        # visible, and `messaging.send_message` records that same `body` to
+        # the outbox after this returns — a developer reading a code still
+        # reads the wording, not a name -> value mapping.
         behaviour = (configuration or {}).get(BEHAVIOUR_KEY, BEHAVIOUR_SUCCESS)
 
         if behaviour in _FAILURES:

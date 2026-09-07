@@ -89,6 +89,7 @@ class SmsProvider(MessagingProvider):
         body: str,
         template_id: Optional[str],
         configuration: dict,
+        variables: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,
     ) -> MessageSendResult:
@@ -97,7 +98,20 @@ class SmsProvider(MessagingProvider):
         `body` is the rendered text and `template_id` the registration it
         matches. Under India's DLT regime the second is what makes the first
         deliverable: an operator registers the wording, and every send names
-        the registration. A provider outside that regime may ignore it.
+        the registration. A provider outside that regime may ignore either —
+        MSG91's Flow API (Task 8b) ignores `body` entirely and needs
+        `variables` instead, because its templates carry their own wording
+        and only take fill-in values.
+
+        `variables` is a name -> value mapping — **not** positional, unlike
+        `WhatsAppProvider.send` below. `messaging.send_message` builds it by
+        zipping the school's registered template names
+        (`templates.MessageTemplate.variables`) onto the purpose's positional
+        values, and has already refused a count mismatch before this is ever
+        called — a provider may assume every key it declared a template
+        variable for is present. A provider with no notion of named
+        variables (there is none in this build yet) is free to ignore it, the
+        same way a provider outside DLT is free to ignore `template_id`.
 
         Returns a result rather than raising, including on failure: "the
         message did not send" is an outcome the caller has to handle, not a

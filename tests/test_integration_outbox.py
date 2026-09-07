@@ -46,7 +46,13 @@ def enabled_fake_sms(db_session, tenant):
         tenant.id,
         capability="sms",
         provider_key="fake_sms",
-        configuration={"templates": {"authentication_otp": "test-template-1"}},
+        # Named — Task 8b — so the two-value OTP send below (code, minutes)
+        # matches the template's declared slots instead of being refused.
+        configuration={
+            "templates": {
+                "authentication_otp": {"id": "test-template-1", "variables": ["OTP", "MINUTES"]},
+            }
+        },
     )
     set_integration_status(tenant.id, capability="sms", status="enabled")
     db.session.commit()

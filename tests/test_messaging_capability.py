@@ -26,13 +26,24 @@ def test_a_whatsapp_provider_declares_its_capability_without_being_told():
 
 def test_the_two_send_signatures_differ_because_the_channels_do():
     """WhatsApp never receives a body. Collapsing these into one `message`
-    parameter would hide that, and the hiding is where the bug would live."""
+    parameter would hide that, and the hiding is where the bug would live.
+
+    Task 8b gave both channels a `variables` parameter, but not the same
+    *kind* — SMS's is named (a flow's own variable names), WhatsApp's stays
+    positional (slot order). Presence alone no longer tells them apart, so
+    this also checks the annotation, which is what actually differs now."""
     import inspect
 
-    sms = set(inspect.signature(SmsProvider.send).parameters)
-    whatsapp = set(inspect.signature(WhatsAppProvider.send).parameters)
-    assert "body" in sms and "body" not in whatsapp
-    assert "variables" in whatsapp and "variables" not in sms
+    sms_params = inspect.signature(SmsProvider.send).parameters
+    whatsapp_params = inspect.signature(WhatsAppProvider.send).parameters
+
+    assert "body" in sms_params and "body" not in whatsapp_params
+    assert "variables" in sms_params and "variables" in whatsapp_params
+    assert sms_params["variables"].annotation == "dict"
+    # Written as a quoted string literal in `base.py`, so with postponed
+    # evaluation (`from __future__ import annotations`) this stringifies to
+    # the quoted form, not the bare type name `sms` compares against above.
+    assert "list[str]" in whatsapp_params["variables"].annotation
 
 
 def test_the_registry_still_validates_with_a_second_capability():
@@ -62,6 +73,27 @@ def enabled_fake_sms(db_session, tenant):
         capability="sms",
         provider_key="fake_sms",
         configuration={"templates": {"authentication_otp": "test-template-1"}},
+    )
+    set_integration_status(tenant.id, capability="sms", status="enabled")
+    db.session.commit()
+
+
+@pytest.fixture
+def enabled_fake_sms_with_single_variable(db_session, tenant):
+    """A school whose SMS template names one variable — Task 8b. Enough to
+    prove a count mismatch, not enough for the two-value OTP send below."""
+    from core.database import db
+    from modules.integrations.services import configure_integration, set_integration_status
+
+    configure_integration(
+        tenant.id,
+        capability="sms",
+        provider_key="fake_sms",
+        configuration={
+            "templates": {
+                "authentication_otp": {"id": "test-template-1", "variables": ["OTP"]},
+            }
+        },
     )
     set_integration_status(tenant.id, capability="sms", status="enabled")
     db.session.commit()
@@ -124,3 +156,71 @@ def test_the_channels_resolve_independently(flask_app, tenant, enabled_fake_sms)
 
     assert messaging_health(tenant.id, "sms").ready is True
     assert messaging_health(tenant.id, "whatsapp").ready is False
+
+
+# ---------------------------------------------------------------------------
+# Task 8b — a template names its variables, and a send has to match them
+# ---------------------------------------------------------------------------
+
+
+def test_a_variable_count_mismatch_stops_the_send_before_the_provider(
+    flask_app, tenant, enabled_fake_sms_with_single_variable
+):
+    """Zipping names to values without checking lengths first would silently
+    truncate to the shorter side — an SMS reading "your code is" is worse
+    than a refusal, and it would still have cost a message to learn that."""
+    from modules.integrations.messaging import send_message
+
+    result = send_message(
+        tenant_id=tenant.id,
+        channel="sms",
+        purpose="authentication_otp",
+        destination="+919876543210",
+        variables=["418302", "5"],
+        body="418302 is your NexSchool sign-in code.",
+    )
+    assert result.success is False
+    assert result.error_code == "configuration_error"
+    assert result.retryable is False
+    assert result.billable_units == 0
+
+
+def test_an_sms_template_naming_no_variables_refuses_a_send_that_needs_any(
+    flask_app, tenant, enabled_fake_sms
+):
+    """`enabled_fake_sms` registers a bare-string template — zero named
+    variables, which resolves fine (Task 8b keeps every existing row
+    working). It is exactly the sharp edge of the mismatch check: zero names
+    against two values would zip into an empty dict, and MSG91 would be
+    asked to send a flow with none of its variables filled in. Refused
+    before that request is ever built."""
+    from modules.integrations.messaging import send_message
+
+    result = send_message(
+        tenant_id=tenant.id,
+        channel="sms",
+        purpose="authentication_otp",
+        destination="+919876543210",
+        variables=["418302", "5"],
+        body="418302 is your NexSchool sign-in code.",
+    )
+    assert result.success is False
+    assert result.error_code == "configuration_error"
+
+
+def test_a_matching_count_of_zero_is_not_a_mismatch(
+    flask_app, tenant, enabled_fake_sms
+):
+    """The zero-names case above is only refused because the purpose supplied
+    values to fill. A purpose that genuinely needs none is not an error."""
+    from modules.integrations.messaging import send_message
+
+    result = send_message(
+        tenant_id=tenant.id,
+        channel="sms",
+        purpose="authentication_otp",
+        destination="+919876543210",
+        variables=[],
+        body="hi",
+    )
+    assert result.error_code != "configuration_error"

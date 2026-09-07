@@ -90,8 +90,15 @@ FAKE = FakeSmsProvider.key
 #: `send_sms` now stops at `template_for` before it ever reaches a provider —
 #: every school routed through the test double needs a template registered
 #: for `PURPOSE_AUTHENTICATION`, the purpose every OTP send in this suite
-#: goes under.
-SMS_TEMPLATES = {"templates": {PURPOSE_AUTHENTICATION: "test-template-1"}}
+#: goes under. Named (Task 8b), because `_deliver` always calls `send_sms`
+#: with `otp_variables(code)` — two positional values (code, minutes) — and
+#: `messaging.send_message` refuses a count that does not match a template's
+#: declared names before any provider is called.
+SMS_TEMPLATES = {
+    "templates": {
+        PURPOSE_AUTHENTICATION: {"id": "test-template-1", "variables": ["OTP", "MINUTES"]},
+    }
+}
 
 
 @pytest.fixture(autouse=True)

@@ -8,19 +8,21 @@ than an afterthought — which is what India's Flow API actually enforces: a
 send names a `flow_id` (a template MSG91 has itself DLT-registered) and fills
 in that template's own variables, rather than accepting arbitrary text.
 
-**That is a real gap against this codebase's `SmsProvider.send` contract, not
-just a note.** The interface hands a provider a fully rendered `body` string;
-the Flow API has no field for one — the wording lives in the flow MSG91
-already has on file, and a send can only supply the *values* for the
-variables that flow defines (e.g. `##OTP##`), not the sentence around them.
-`body` is accepted here for interface conformance and otherwise unused: this
-client cannot forward free text to a variable-driven vendor endpoint, and
-guessing at a variable name (`VAR1`, `OTP`, …) that happens to match whatever
-a school's operator typed into the MSG91 dashboard would be worse than
-sending nothing. Getting the rendered text into the right named variable is
-product work — matching each purpose's flow to its variable name — that
-belongs with whoever does the DLT paperwork, not invented here. This is
-recorded, not solved, because no account exists yet to test against.
+**Task 8 recorded that as a gap against `SmsProvider.send`'s contract; Task 8b
+closed it.** The interface hands a provider a fully rendered `body` string,
+and the Flow API has no field for one — the wording lives in the flow MSG91
+already has on file. What it does take is a `variables` mapping, name to
+value, and that mapping is not this client's to invent: `templates.py` lets a
+school register a template as `{"id": ..., "variables": ["OTP", "MINUTES"]}`
+— the flow's own variable names, in the order the calling code's positional
+values arrive in — and `messaging.send_message` zips the two together and
+refuses a count mismatch before any provider is ever called (see that
+module). By the time `variables` reaches here, every key it contains is a
+name the school's own flow declared, and this client's only job is to put
+each one in the recipient object under that name. `body` is still accepted,
+for interface conformance and because a bare-string template (no declared
+variables) is still valid configuration, but it is never sent: there remains
+no field in this API for free text, named-variable or not.
 
 **No account exists and no DLT paperwork has been started.** This client
 registers so the machinery around it (the registry, `capability_health`,
@@ -150,6 +152,7 @@ class Msg91Provider(SmsProvider):
         body: str,
         template_id: Optional[str],
         configuration: dict,
+        variables: dict,
         idempotency_key: Optional[str] = None,
         operation_id: Optional[str] = None,
     ) -> MessageSendResult:
@@ -166,10 +169,16 @@ class Msg91Provider(SmsProvider):
 
         # `idempotency_key` is accepted for interface conformance and dropped:
         # the Flow API has no parameter for it (see `supports_idempotency`).
+        # `body` is likewise accepted and dropped — see the module docstring.
+        # Each entry in `variables` is forwarded verbatim under its own name;
+        # `messaging.send_message` already proved it matches the school's
+        # registered flow, so there is nothing here to validate again.
+        recipient = {"mobiles": _destination_for_msg91(destination)}
+        recipient.update(variables or {})
         payload = {
             "flow_id": template_id,
             "sender": (configuration or {}).get("sender_id"),
-            "recipients": [{"mobiles": _destination_for_msg91(destination)}],
+            "recipients": [recipient],
         }
 
         response, error_code = post_json(
