@@ -77,6 +77,13 @@ from tests.auth._characterization import make_tenant
 
 FAKE = FakeSmsProvider.key
 
+#: `send_sms` now stops at `template_for` before it ever reaches a provider
+#: (see `test_messaging_capability.py`), so every school this suite routes
+#: through the test double needs a template registered for whichever purpose
+#: its tests send under. Merged into whatever configuration a test supplies,
+#: never overriding a `templates` key a test provides for itself.
+SMS_TEMPLATES = {"templates": {"login_otp": "test-template-1", "test": "test-template-2"}}
+
 
 def _key(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
@@ -88,7 +95,7 @@ def _routed(db_session, tenant, *, configuration=None, status=STATUS_ENABLED):
         tenant.id,
         capability=CAPABILITY_SMS,
         provider_key=FAKE,
-        configuration=configuration or {},
+        configuration={**SMS_TEMPLATES, **(configuration or {})},
     )
     if status == STATUS_ENABLED:
         set_integration_status(
@@ -209,7 +216,10 @@ def test_two_schools_may_use_different_providers(db_session):
     set_integration_status(theirs.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
     db_session.flush()
 
-    assert resolve_provider(tenant_id=ours.id, capability=CAPABILITY_SMS).configuration == {}
+    assert (
+        resolve_provider(tenant_id=ours.id, capability=CAPABILITY_SMS).configuration
+        == SMS_TEMPLATES
+    )
     assert resolve_provider(
         tenant_id=theirs.id, capability=CAPABILITY_SMS
     ).configuration == {"sender_id": "THEIRS"}
@@ -286,7 +296,7 @@ def test_a_send_returns_a_normalized_result(db_session):
     result = send_sms(
         tenant_id=tenant.id,
         destination="+919876500000",
-        message="Your code is 123456",
+        body="Your code is 123456", variables=[],
         purpose="login_otp",
     )
 
@@ -306,7 +316,7 @@ def test_acceptance_is_not_called_delivery(db_session):
     _billable(db_session, tenant)
 
     result = send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="test"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="test"
     )
 
     assert result.status == STATUS_ACCEPTED
@@ -330,7 +340,7 @@ def test_a_provider_failure_is_normalized_not_raised(db_session, behaviour, expe
     _billable(db_session, tenant)
 
     result = send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="test"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="test"
     )
 
     assert result.success is False
@@ -365,7 +375,7 @@ def test_a_school_with_no_provider_gets_a_result_not_an_exception(db_session):
     tenant = make_tenant(db_session)
 
     result = send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="test"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="test"
     )
 
     assert result.success is False
@@ -383,7 +393,7 @@ def test_a_provider_that_raises_does_not_become_a_server_error(db_session, monke
     monkeypatch.setattr(registry.get(FAKE), "send", explode)
 
     result = send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="test"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="test"
     )
 
     assert result.success is False
@@ -468,7 +478,7 @@ def test_the_message_body_and_the_number_stay_out_of_the_log(db_session, caplog)
         send_sms(
             tenant_id=tenant.id,
             destination="+919876512345",
-            message="Your NexSchool code is 483920",
+            body="Your NexSchool code is 483920", variables=[],
             purpose="login_otp",
         )
 
@@ -491,7 +501,7 @@ def test_a_successful_send_reaches_the_usage_ledger(db_session):
     _billable(db_session, tenant)
 
     send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="login_otp"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
     )
     db_session.flush()
 
@@ -507,7 +517,7 @@ def test_a_failed_send_is_not_billed(db_session):
     _billable(db_session, tenant)
 
     send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="login_otp"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
     )
     db_session.flush()
 
@@ -525,7 +535,7 @@ def test_the_provider_reference_is_what_makes_a_send_billed_once(db_session):
         send_sms(
             tenant_id=tenant.id,
             destination="+919876500000",
-            message="hi",
+            body="hi", variables=[],
             purpose="login_otp",
             idempotency_key="one-logical-send",
         )
@@ -542,7 +552,7 @@ def test_two_separate_sends_stay_two(db_session):
 
     for parent in ("+919876500001", "+919876500002"):
         send_sms(
-            tenant_id=tenant.id, destination=parent, message="hi", purpose="login_otp"
+            tenant_id=tenant.id, destination=parent, body="hi", variables=[], purpose="login_otp"
         )
     db_session.flush()
 
@@ -557,7 +567,7 @@ def test_a_send_a_school_has_no_terms_for_is_reported_not_lost(db_session, caplo
 
     with caplog.at_level("ERROR"):
         result = send_sms(
-            tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="login_otp"
+            tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
         )
     db_session.flush()
 
@@ -768,7 +778,7 @@ def test_disabling_keeps_the_configuration_and_the_history(db_session):
     _routed(db_session, tenant, configuration={"sender_id": "SCHOOL"})
     _billable(db_session, tenant)
     send_sms(
-        tenant_id=tenant.id, destination="+919876500000", message="hi", purpose="login_otp"
+        tenant_id=tenant.id, destination="+919876500000", body="hi", variables=[], purpose="login_otp"
     )
     db_session.flush()
 
@@ -778,7 +788,7 @@ def test_disabling_keeps_the_configuration_and_the_history(db_session):
     db_session.flush()
 
     row = TenantIntegration.query.filter_by(tenant_id=tenant.id).first()
-    assert row.configuration == {"sender_id": "SCHOOL"}
+    assert row.configuration == {**SMS_TEMPLATES, "sender_id": "SCHOOL"}
     assert ServiceUsageRecord.query.filter_by(tenant_id=tenant.id).count() == 1
 
 

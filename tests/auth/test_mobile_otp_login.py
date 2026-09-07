@@ -22,7 +22,7 @@ from core.database import db
 from modules.auth.identifiers import normalize_mobile
 from modules.auth.models import AccountIdentifier, Session
 from modules.auth.otp import request_otp
-from modules.auth.otp_models import MobileOtpChallenge
+from modules.auth.otp_models import PURPOSE_AUTHENTICATION, MobileOtpChallenge
 from modules.auth.otp_throttle import clear_for_tests, hash_value
 from modules.auth.policy import ensure_default_policy, set_method
 from modules.auth.provisioning import issue_mobile_identifier
@@ -42,6 +42,12 @@ from tests.auth._characterization import (
 
 METHOD = MobileOtpStrategy.key
 FAKE = FakeSmsProvider.key
+
+#: `send_sms` now stops at `template_for` before it ever reaches a provider —
+#: every school routed through the test double needs a template registered
+#: for `PURPOSE_AUTHENTICATION`, the purpose every OTP send in this suite
+#: goes under.
+SMS_TEMPLATES = {"templates": {PURPOSE_AUTHENTICATION: "test-template-1"}}
 
 
 @pytest.fixture(autouse=True)
@@ -101,7 +107,12 @@ def _school(db_session):
     for kind in ("student", "staff"):
         set_method(tenant.id, kind, METHOD, enabled=True)
 
-    configure_integration(tenant.id, capability=CAPABILITY_SMS, provider_key=FAKE)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=FAKE,
+        configuration=SMS_TEMPLATES,
+    )
     set_integration_status(tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
     provider = upsert_provider(key=FAKE, name="A Vendor")
     service = upsert_service(

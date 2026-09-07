@@ -48,6 +48,7 @@ from modules.auth.otp import (
     verify_code,
 )
 from modules.auth.otp_models import (
+    PURPOSE_AUTHENTICATION,
     STATUS_CONSUMED,
     STATUS_FAILED,
     STATUS_SENT,
@@ -85,6 +86,12 @@ from tests.auth._characterization import (
 
 METHOD = MobileOtpStrategy.key
 FAKE = FakeSmsProvider.key
+
+#: `send_sms` now stops at `template_for` before it ever reaches a provider —
+#: every school routed through the test double needs a template registered
+#: for `PURPOSE_AUTHENTICATION`, the purpose every OTP send in this suite
+#: goes under.
+SMS_TEMPLATES = {"templates": {PURPOSE_AUTHENTICATION: "test-template-1"}}
 
 
 @pytest.fixture(autouse=True)
@@ -149,7 +156,12 @@ def _school(db_session, *, otp_enabled=True, sms_working=True):
             set_method(tenant.id, kind, METHOD, enabled=True)
 
     if sms_working:
-        configure_integration(tenant.id, capability=CAPABILITY_SMS, provider_key=FAKE)
+        configure_integration(
+            tenant.id,
+            capability=CAPABILITY_SMS,
+            provider_key=FAKE,
+            configuration=SMS_TEMPLATES,
+        )
         set_integration_status(
             tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED
         )
@@ -848,7 +860,7 @@ def test_a_provider_that_refuses_creates_no_usage_and_no_live_challenge(db_sessi
         tenant.id,
         capability=CAPABILITY_SMS,
         provider_key=FAKE,
-        configuration={BEHAVIOUR_KEY: BEHAVIOUR_REJECTED},
+        configuration={**SMS_TEMPLATES, BEHAVIOUR_KEY: BEHAVIOUR_REJECTED},
     )
     set_integration_status(tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
     user, number = _member(db_session, tenant)
@@ -872,7 +884,7 @@ def test_a_timeout_does_not_send_a_second_message(db_session):
         tenant.id,
         capability=CAPABILITY_SMS,
         provider_key=FAKE,
-        configuration={BEHAVIOUR_KEY: BEHAVIOUR_TIMEOUT},
+        configuration={**SMS_TEMPLATES, BEHAVIOUR_KEY: BEHAVIOUR_TIMEOUT},
     )
     set_integration_status(tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
     user, number = _member(db_session, tenant)

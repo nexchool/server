@@ -299,13 +299,14 @@ def _deliver(*, tenant_id, challenge, destination, code, purpose) -> bool:
     """
     from modules.integrations.sms import send_sms
 
-    from .otp_message import build_otp_message
+    from .otp_message import build_otp_message, otp_variables
 
     result = send_sms(
         tenant_id=tenant_id,
         destination=destination,
-        message=build_otp_message(code),
+        body=build_otp_message(code),
         purpose=purpose,
+        variables=otp_variables(code),
         # One logical send. A retry carrying the same key must not become a
         # second message — Phase 3 passes this to a provider that honours it.
         idempotency_key=f"otp:{challenge.id}",
