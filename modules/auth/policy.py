@@ -420,6 +420,19 @@ def set_method(
     A disabled rule is written rather than deleted, so the record of somebody
     having decided against a method survives — which is most of what makes
     this a table rather than a JSON bag.
+
+    **Enabling a method for a subject kind it cannot serve is refused.**
+    `mobile_pin` is students-only — its module docstring says so, and its own
+    `resolve()` enforces it independently — so a rule granting it to staff or
+    parents would offer a switch that turns on, reports success, and never
+    lets anyone through. That is the same shape of mistake this phase already
+    refuses for a paid method with no working channel
+    (`_method_needs_messaging` in `modules/platform/routes.py`): the UI
+    should not be the only thing standing between an operator and an
+    impossible configuration, because the API underneath it is reachable on
+    its own. Disabling is never refused, even for a pairing that could not
+    have been enabled today — the remediation path for a row an earlier bug
+    or a direct write already created has to stay open.
     """
     from core.school_time import utc_now
 
@@ -433,6 +446,14 @@ def set_method(
             f"Unknown authentication method {method_key!r}. "
             f"Known: {registry.keys()}."
         )
+
+    if enabled:
+        strategy = registry.get(method_key)
+        if subject_kind not in strategy.subject_kinds:
+            raise ValueError(
+                f"{method_key!r} does not serve {subject_kind!r} accounts; "
+                f"it applies to {list(strategy.subject_kinds)}."
+            )
 
     # A school being given its first explicit rule needs the policy row that
     # says it has been configured at all — see `allowed_methods`.

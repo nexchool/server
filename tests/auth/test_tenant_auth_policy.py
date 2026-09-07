@@ -31,6 +31,7 @@ from modules.auth.policy import (
     family_access_mode,
     is_method_allowed,
     policy_for,
+    set_method,
     student_credential_policy,
     subject_kinds,
 )
@@ -634,6 +635,65 @@ def test_a_school_holds_one_policy_row(db_session):
     db_session.add(TenantAuthPolicy(tenant_id=tenant.id))
     with pytest.raises(IntegrityError):
         db_session.flush()
+
+
+# ---------------------------------------------------------------------------
+# A method must be able to serve the subject kind a rule grants it to
+# (Task 13b's fix). `mobile_pin` is declared students-only —
+# `modules/auth/strategies/mobile_pin.py`'s docstring says so outright, and
+# `resolve()` enforces it independently — so a rule enabling it for staff or
+# parents would offer a switch that can never resolve an account, exactly
+# the failure this phase already refuses for a paid method with no working
+# channel (`_method_needs_messaging` in `modules/platform/routes.py`).
+# ---------------------------------------------------------------------------
+
+
+def test_set_method_refuses_a_method_for_a_subject_kind_it_does_not_serve(
+    db_session, tenant
+):
+    with pytest.raises(ValueError) as refused:
+        set_method(tenant.id, "staff", "mobile_pin", enabled=True)
+    message = str(refused.value)
+    assert "mobile_pin" in message
+    assert "staff" in message
+
+
+def test_set_method_refuses_the_pairing_for_parents_too(db_session, tenant):
+    with pytest.raises(ValueError) as refused:
+        set_method(tenant.id, "parent", "mobile_pin", enabled=True)
+    assert "mobile_pin" in str(refused.value)
+    assert "parent" in str(refused.value)
+
+
+def test_set_method_allows_a_method_for_a_subject_kind_it_serves(db_session, tenant):
+    rule = set_method(tenant.id, "student", "mobile_pin", enabled=True)
+    assert rule.is_enabled is True
+
+
+def test_set_method_still_allows_disabling_an_impossible_pairing(db_session, tenant):
+    """Turning a method off must never be refused, even for a pairing that
+    could not have been turned on today — the remediation path for a row an
+    earlier bug (or a direct write) already created has to stay open, or the
+    fix that closes the hole would also weld it shut from the inside."""
+    rule = set_method(tenant.id, "staff", "mobile_pin", enabled=False)
+    assert rule.is_enabled is False
+
+
+def test_the_route_refuses_the_pairing_with_a_validation_error_not_a_crash(
+    client, policed_tenant, platform_admin
+):
+    """The API is reachable without the panel, so the refusal has to live in
+    `set_method` itself and the route has to turn it into 400, not 500."""
+    response = client.patch(
+        f"/api/platform/tenants/{policed_tenant.id}/auth-policy/methods",
+        headers=_platform_headers(platform_admin),
+        json={"method_key": "mobile_pin", "subject_kind": "staff", "enabled": True},
+    )
+
+    assert response.status_code == 400
+    message = response.get_json()["details"]["policy"]
+    assert "mobile_pin" in message
+    assert "staff" in message
 
 
 # ---------------------------------------------------------------------------

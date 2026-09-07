@@ -32,6 +32,7 @@ from typing import List, Optional
 from core.database import db
 
 from ..identifiers import IDENTIFIER_TYPE_MOBILE, normalize_mobile
+from ..policy_models import SUBJECT_STUDENT
 from .base import AccountMatch, AuthenticationStrategy, ThrottledOut
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,12 @@ class MobilePinStrategy(AuthenticationStrategy):
     counts_toward_account_lockout = False
     #: Nothing is sent. A PIN sign-in costs nothing and touches no provider.
     is_paid = False
+    #: Belt and braces with the check inside `resolve()` below — the module
+    #: docstring's "Students only" now has somewhere declarative to live, so
+    #: `set_method` can refuse a staff or parent rule for this method before
+    #: it is ever written, instead of leaving a school to discover the limit
+    #: from a switch that flips on and does nothing.
+    subject_kinds = (SUBJECT_STUDENT,)
 
     def resolve(self, value: str, tenant_id: Optional[str]) -> List[AccountMatch]:
         """The student account this school issued that number to.
@@ -69,7 +76,6 @@ class MobilePinStrategy(AuthenticationStrategy):
         from core.models import TENANT_STATUS_ACTIVE, Tenant
 
         from ..models import AccountIdentifier, User
-        from ..policy_models import SUBJECT_STUDENT
 
         if not tenant_id:
             return []

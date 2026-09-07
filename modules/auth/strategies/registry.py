@@ -125,6 +125,13 @@ class AuthenticationStrategyRegistry:
         with no row for `mobile_otp` would otherwise make `mobile_otp` invisible
         rather than merely off. A method appears here by being registered, so
         a fifth strategy is covered without editing this method.
+
+        `subject_kinds` is here for the same reason `is_paid` is: a caller
+        that only sees a method's key has no way to know it cannot serve
+        staff or parents, and would otherwise learn that from a login that
+        silently never resolves. Reading it here, off the strategy, is what
+        lets `set_method` (`modules/auth/policy.py`) refuse an impossible
+        pairing before it is ever written.
         """
         return [
             {
@@ -134,6 +141,7 @@ class AuthenticationStrategyRegistry:
                 "requires_tenant": strategy.requires_tenant,
                 "is_paid": strategy.is_paid,
                 "counts_toward_account_lockout": strategy.counts_toward_account_lockout,
+                "subject_kinds": list(strategy.subject_kinds),
             }
             for _, strategy in sorted(self._by_key.items())
         ]

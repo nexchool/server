@@ -93,6 +93,30 @@ def test_describe_methods_reads_the_strategy_s_own_declared_attributes():
     assert otp["counts_toward_account_lockout"] is False
 
 
+def test_describe_methods_reports_subject_kinds_truthfully():
+    """`mobile_pin` is students-only in code and in prose
+    (`modules/auth/strategies/mobile_pin.py`'s docstring: "Students only.").
+    Every other method today applies to every subject kind."""
+    described = {m["key"]: m for m in registry.describe_methods()}
+
+    assert described["mobile_pin"]["subject_kinds"] == ["student"]
+    assert described["email_password"]["subject_kinds"] == [
+        "student",
+        "staff",
+        "parent",
+    ]
+    assert described["admission_id_password"]["subject_kinds"] == [
+        "student",
+        "staff",
+        "parent",
+    ]
+    assert described["mobile_otp"]["subject_kinds"] == [
+        "student",
+        "staff",
+        "parent",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # The route
 # ---------------------------------------------------------------------------
@@ -127,6 +151,19 @@ def test_the_route_reports_is_paid_truthfully(client, db_session):
     by_key = {m["key"]: m for m in response.get_json()["data"]["methods"]}
     assert by_key["mobile_otp"]["is_paid"] is True
     assert by_key["email_password"]["is_paid"] is False
+
+
+def test_the_route_reports_subject_kinds_truthfully(client, db_session):
+    """The catalog must say `mobile_pin` is students-only, not just leave the
+    panel to find that out from a login that never works."""
+    tenant = make_tenant(db_session)
+    headers = _platform_admin(db_session, tenant)
+
+    response = client.get("/api/platform/auth-methods", headers=headers)
+
+    by_key = {m["key"]: m for m in response.get_json()["data"]["methods"]}
+    assert by_key["mobile_pin"]["subject_kinds"] == ["student"]
+    assert by_key["email_password"]["subject_kinds"] == ["student", "staff", "parent"]
 
 
 def test_a_school_cannot_see_the_catalog(client, db_session):

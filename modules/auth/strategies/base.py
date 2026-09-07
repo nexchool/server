@@ -23,7 +23,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+from ..policy_models import SUBJECT_KINDS
 
 
 class ThrottledOut(Exception):
@@ -93,6 +95,21 @@ class AuthenticationStrategy(ABC):
     #: `pin_throttle`). A lock earned elsewhere still applies here — this
     #: governs only what *earns* one.
     counts_toward_account_lockout: bool = True
+    #: Which `SUBJECT_KINDS` this method can ever resolve an account for.
+    #:
+    #: Defaults to every kind, because most methods have no such limit. A
+    #: method that does — `mobile_pin` is the first — has to be able to say
+    #: so *here*, declaratively, rather than leave an operator to discover it
+    #: from a login that quietly never works. Before this attribute existed
+    #: that was exactly what happened: the panel offered every method under
+    #: every subject kind because nothing recorded the restriction anywhere
+    #: it could be read, so switching Mobile PIN on for Staff produced a
+    #: success toast and a method nobody staff could ever use. `set_method`
+    #: (`modules/auth/policy.py`) reads this to refuse that pairing before it
+    #: is written, the same way it already refuses a paid method with no
+    #: working channel — the API is reachable without the panel, so the
+    #: refusal has to live here, not only in a UI that happens to check.
+    subject_kinds: Tuple[str, ...] = SUBJECT_KINDS
 
     @abstractmethod
     def resolve(self, value: str, tenant_id: Optional[str]) -> List[AccountMatch]:
