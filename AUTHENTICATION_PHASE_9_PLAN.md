@@ -1694,6 +1694,50 @@ EOF
 
 ---
 
+## Task 8b: A template names its variables
+
+**Found by Task 8, decided by the project owner.** MSG91's Flow API has no field
+for message text: the wording lives in a flow registered on their dashboard, and a
+send supplies values for that flow's own **named** variables. Meta's WhatsApp
+templates take their variables **positionally**. A bare template id is therefore
+enough for one vendor and not the other.
+
+Ruling: a template entry carries its variable names; the WhatsApp client ignores
+them. `{"templates": {"authentication_otp": {"id": "flow_x", "variables": ["OTP", "MINUTES"]}}}`.
+
+**Files:** `templates.py`, `messaging.py`, `base.py`, `providers/msg91.py`,
+`providers/fake.py`, and the tests that configure templates.
+
+**Interfaces:**
+- `MessageTemplate(id: str, variables: tuple[str, ...])`, returned by `template_for`
+- `SmsProvider.send(..., variables: dict)` — **named**, built by the messaging layer
+- `WhatsAppProvider.send(..., variables: list)` — positional, unchanged
+
+- [ ] **Step 1: Failing tests.** A template configured as a bare string still resolves
+  (id, no names) — existing configurations must not break. One configured as an object
+  yields both. A send whose value count does not match its name count is refused as a
+  configuration error *before* the provider is called. MSG91 forwards each value under
+  its configured name. A school whose SMS template names no variables gets a clear
+  refusal rather than a silent empty send.
+
+- [ ] **Step 2: `template_for` returns `MessageTemplate`.** Normalize both shapes. A
+  bare string keeps working because that is what every existing row and fixture holds.
+
+- [ ] **Step 3: `messaging.send_message` zips names to values for SMS** and passes a
+  dict; WhatsApp keeps its list. Refuse a length mismatch with `CONFIGURATION_ERROR` —
+  a send that silently drops a variable produces an SMS reading "your code is".
+
+- [ ] **Step 4: `SmsProvider.send` takes `variables: dict`.** Update the fake, which
+  keeps recording the rendered `body` to the outbox — that is still what a developer
+  reads.
+
+- [ ] **Step 5: MSG91 forwards the named variables** into its recipient object, and its
+  docstring's "real gap" paragraph is replaced by what it now does.
+
+- [ ] **Step 6: Commit.**
+
+---
+
 ## Task 9: The Meta WhatsApp Cloud API adapter
 
 **Files:**
