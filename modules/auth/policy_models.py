@@ -57,6 +57,16 @@ SUBJECT_STAFF = "staff"
 SUBJECT_PARENT = "parent"
 SUBJECT_KINDS = (SUBJECT_STUDENT, SUBJECT_STAFF, SUBJECT_PARENT)
 
+# --- which wire a school's sign-in codes go down ----------------------------
+
+#: Which channel carries a sign-in code. Not a list of what a school *has* —
+#: one choice, deliberately. Automatic fallback between channels doubles the
+#: failure modes and the billing explanation for a reliability problem
+#: nobody has measured; see ADR-015.
+OTP_CHANNEL_SMS = "sms"
+OTP_CHANNEL_WHATSAPP = "whatsapp"
+OTP_DELIVERY_CHANNELS = (OTP_CHANNEL_SMS, OTP_CHANNEL_WHATSAPP)
+
 #: A rule that applies wherever the account signs in from. Every seeded rule
 #: uses this: surface is recorded but narrows nothing until a school asks it
 #: to. Deliberately not a closed list — a surface is a client application, and
@@ -91,6 +101,16 @@ class TenantAuthPolicy(TenantBaseModel):
         nullable=False,
         default=CREDENTIAL_FORCE_CHANGE,
         server_default=CREDENTIAL_FORCE_CHANGE,
+    )
+
+    #: Which messaging capability carries this school's sign-in codes.
+    #: Defaults to SMS, which is what every existing school gets, so the
+    #: migration that adds this changes nothing for anybody.
+    otp_delivery_channel = db.Column(
+        db.String(20),
+        nullable=False,
+        default=OTP_CHANNEL_SMS,
+        server_default=OTP_CHANNEL_SMS,
     )
 
     updated_by_user_id = db.Column(

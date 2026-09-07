@@ -32,6 +32,8 @@ from .policy_models import (
     FAMILY_ACCESS_MODES,
     FAMILY_ACCESS_SEPARATE,
     FAMILY_ACCESS_SHARED,
+    OTP_CHANNEL_SMS,
+    OTP_DELIVERY_CHANNELS,
     SUBJECT_KINDS,
     SUBJECT_PARENT,
     SUBJECT_STAFF,
@@ -65,6 +67,12 @@ def family_access_mode(tenant_id: str) -> str:
 def student_credential_policy(tenant_id: str) -> str:
     policy = policy_for(tenant_id)
     return policy.student_credential_policy if policy else CREDENTIAL_FORCE_CHANGE
+
+
+def otp_delivery_channel(tenant_id: str) -> str:
+    """Which channel carries this school's sign-in codes."""
+    policy = policy_for(tenant_id)
+    return policy.otp_delivery_channel if policy else OTP_CHANNEL_SMS
 
 
 def subject_kinds(account) -> Set[str]:
@@ -271,6 +279,9 @@ def describe(tenant_id: str) -> dict:
         "student_credential_policy": (
             policy.student_credential_policy if policy else CREDENTIAL_FORCE_CHANGE
         ),
+        "otp_delivery_channel": (
+            policy.otp_delivery_channel if policy else OTP_CHANNEL_SMS
+        ),
         # True when the school has no row of its own and is being described by
         # the defaults — which the panel says out loud rather than implying.
         "is_configured": policy is not None,
@@ -345,6 +356,27 @@ def set_student_credential_policy(
     policy.student_credential_policy = mode
     policy.updated_by_user_id = updated_by_user_id
     policy.updated_at = utc_now()
+    db.session.flush()
+    return policy
+
+
+def set_otp_delivery_channel(
+    tenant_id: str, channel: str, *, updated_by_user_id: str = None
+) -> TenantAuthPolicy:
+    """Choose the wire, not the method.
+
+    The method stays `mobile_otp` whichever channel carries it. Changing this
+    is a routing decision and provisions nothing, revokes nothing and ends no
+    session — a code in flight down the old channel is still a valid code.
+    """
+    if channel not in OTP_DELIVERY_CHANNELS:
+        raise ValueError(
+            f"Unknown OTP delivery channel {channel!r}. "
+            f"Known: {list(OTP_DELIVERY_CHANNELS)}."
+        )
+    policy = ensure_default_policy(tenant_id, updated_by_user_id=updated_by_user_id)
+    policy.otp_delivery_channel = channel
+    policy.updated_by_user_id = updated_by_user_id
     db.session.flush()
     return policy
 

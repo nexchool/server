@@ -684,6 +684,7 @@ def test_the_response_carries_only_policy_fields(
         "tenant_id",
         "family_access_mode",
         "student_credential_policy",
+        "otp_delivery_channel",
         "is_configured",
         "updated_at",
         "rules",
