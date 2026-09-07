@@ -49,6 +49,7 @@ from modules.integrations.errors import (
     NoIntegrationConfigured,
     UnknownCapability,
 )
+from modules.integrations.health import capability_health
 from modules.integrations.models import TenantIntegration
 from modules.integrations.providers.fake import (
     BEHAVIOUR_KEY,
@@ -800,6 +801,126 @@ def test_health_does_not_claim_delivery_was_verified(db_session):
     assert "not verified" in report.detail
 
 
+def test_a_stored_reference_that_resolves_to_the_wrong_variable_is_not_credentials(
+    db_session, monkeypatch
+):
+    """Task 14b. MSG91's client never looks at `credential_references` — it
+    calls `resolve_secret(AUTH_KEY_REFERENCE)`, a name baked into
+    `msg91.py`, not whatever purpose/name pair a school's row happens to
+    carry. A row naming some other variable, even one that is set, says
+    nothing about whether a send will work, so it must not be read as
+    "credentials present" — including in `checks`, the per-fact breakdown
+    the panel renders directly (`panel/hooks/useApi.ts`): before this fix
+    `checks["credentials_present"]` came straight from the stored
+    reference and disagreed with the (accidentally correct, because
+    `Msg91Provider.health` re-checks its own real variable) top-level
+    field — a breakdown that told an operator the opposite of the truth.
+    """
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
+    monkeypatch.setenv("SOME_OTHER_VAR", "a-value-that-is-set-but-irrelevant")
+
+    tenant = make_tenant(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=Msg91Provider.key,
+        configuration={"sender_id": "NEXSCH"},
+        credential_references={"api_key": "SOME_OTHER_VAR"},
+    )
+    db_session.flush()
+
+    report = capability_health(tenant_id=tenant.id, capability=CAPABILITY_SMS)
+
+    assert report.credentials_present is False
+    assert report.ready is False
+    assert report.checks["credentials_present"] is False
+
+
+def test_the_provider_s_own_required_variable_is_what_makes_it_ready(
+    db_session, monkeypatch
+):
+    """The other half: once `MSG91_AUTH_KEY` — the name `msg91.py` actually
+    reads — is set, the integration is ready, whatever the school's stored
+    `credential_references` says or fails to say.
+
+    `ready` also requires `configured` (the row must be enabled, not just
+    present — see `configure_integration`'s "never enables it" contract), so
+    this enables it first. Health, not enablement, is this test's subject —
+    `test_set_integration_status_refuses_using_the_providers_own_credential`
+    below is what actually exercises the enable gate.
+    """
+    monkeypatch.setenv("MSG91_AUTH_KEY", "a-real-looking-key")
+
+    tenant = make_tenant(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=Msg91Provider.key,
+        configuration={"sender_id": "NEXSCH"},
+        credential_references={"api_key": "SOME_OTHER_VAR"},
+    )
+    set_integration_status(tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
+    db_session.flush()
+
+    report = capability_health(tenant_id=tenant.id, capability=CAPABILITY_SMS)
+
+    assert report.credentials_present is True
+    assert report.ready is True
+
+
+def test_set_integration_status_refuses_using_the_providers_own_credential(
+    db_session, monkeypatch
+):
+    """The gate in `set_integration_status` has to consult the same fact as
+    `capability_health` — otherwise an operator could enable an integration
+    whose row merely *looks* credentialed."""
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
+    monkeypatch.setenv("SOME_OTHER_VAR", "a-value-that-is-set-but-irrelevant")
+
+    tenant = make_tenant(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=Msg91Provider.key,
+        configuration={"sender_id": "NEXSCH"},
+        credential_references={"api_key": "SOME_OTHER_VAR"},
+    )
+    db_session.flush()
+
+    with pytest.raises(IntegrationConfigurationError):
+        set_integration_status(
+            tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED
+        )
+
+
+def test_a_provider_that_needs_nothing_is_unaffected_by_a_stray_reference(
+    db_session, monkeypatch
+):
+    """The test doubles declare `required_credentials = ()`. A school's row
+    naming a credential reference that does not resolve must not count
+    against a provider that was never going to read it."""
+    monkeypatch.delenv("AN_UNRELATED_UNSET_VAR", raising=False)
+
+    tenant = make_tenant(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=FAKE,
+        credential_references={"api_key": "AN_UNRELATED_UNSET_VAR"},
+    )
+    db_session.flush()
+
+    report = capability_health(tenant_id=tenant.id, capability=CAPABILITY_SMS)
+
+    assert report.credentials_present is True
+
+    set_integration_status(tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
+    db_session.flush()
+
+    ready_report = capability_health(tenant_id=tenant.id, capability=CAPABILITY_SMS)
+    assert ready_report.ready is True
+
+
 # ---------------------------------------------------------------------------
 # Configuring it
 # ---------------------------------------------------------------------------
@@ -841,14 +962,27 @@ def test_disabling_keeps_the_configuration_and_the_history(db_session):
 
 def test_enabling_something_that_cannot_work_is_refused(db_session, monkeypatch):
     """An integration switched on without its credentials produces a school
-    whose messages fail silently."""
+    whose messages fail silently.
+
+    Task 14b: this used to configure the FAKE provider with a stray,
+    unresolved `credential_references` entry and rely on that to trigger the
+    refusal. That was testing the wrong fact — the test double declares
+    `required_credentials = ()` and never reads a stored reference at all,
+    so a school's row naming a bogus reference was never actually why this
+    integration could not work; see
+    `test_a_provider_that_needs_nothing_is_unaffected_by_a_stray_reference`
+    for the corrected version of that scenario. The real vendor client
+    (Msg91) is what needs a credential — `MSG91_AUTH_KEY`, the name
+    `msg91.py` itself resolves — and its absence is what a refusal should
+    actually be standing on.
+    """
     tenant = make_tenant(db_session)
-    monkeypatch.delenv("A_MISSING_CREDENTIAL", raising=False)
+    monkeypatch.delenv("MSG91_AUTH_KEY", raising=False)
     configure_integration(
         tenant.id,
         capability=CAPABILITY_SMS,
-        provider_key=FAKE,
-        credential_references={"api_key": "A_MISSING_CREDENTIAL"},
+        provider_key=Msg91Provider.key,
+        configuration={"sender_id": "NEXSCH"},
     )
     db_session.flush()
 
