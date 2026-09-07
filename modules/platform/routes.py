@@ -853,11 +853,31 @@ def test_send_integration(tenant_id, capability):
     evade one keyed on the address instead.
     """
     from core.models import Tenant
+    from modules.integrations.capabilities import MESSAGING_CAPABILITIES
     from modules.integrations.messaging import send_message
     from modules.integrations.templates import PURPOSE_INTEGRATION_TEST
 
     if not Tenant.query.get(tenant_id):
         return not_found_response("Tenant")
+
+    # `capability` is a URL segment, not a value this build already validated
+    # — unlike `sms.py`/`whatsapp.py`, which hardcode the channel, or
+    # `otp.py`, which reads it from stored policy. Left unchecked, a garbage
+    # value reaches `send_message`, which raises `UnknownCapability` for
+    # exactly this case — the right contract for a programming error, but
+    # this route hands it untrusted input, so the boundary check belongs
+    # here rather than loosening what `send_message` may assume of its
+    # callers. Same idiom `configure_tenant_integration` uses for the same
+    # field.
+    if capability not in MESSAGING_CAPABILITIES:
+        return validation_error_response(
+            {
+                "capability": (
+                    f"'{capability}' is not a capability this build has. "
+                    "Expected one of: " + ", ".join(MESSAGING_CAPABILITIES)
+                )
+            }
+        )
 
     data = request.get_json(silent=True) or {}
     destination = (data.get("destination") or "").strip()

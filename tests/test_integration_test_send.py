@@ -177,3 +177,22 @@ def test_a_missing_destination_is_refused(
     )
 
     assert response.status_code == 400
+
+
+def test_an_unrecognised_capability_is_a_client_mistake_not_a_server_error(
+    flask_app, db_session, tenant, client
+):
+    """`capability` is a URL segment, not something this build already
+    validated — unlike `sms.py`/`whatsapp.py`, which hardcode the channel.
+    Before the boundary check, this reached `messaging.send_message`, which
+    raises `UnknownCapability` for exactly this case, uncaught by the route —
+    a 500 for what is, from the caller's side, a bad request."""
+    headers = _platform_admin(db_session, tenant)
+
+    response = client.post(
+        f"/api/platform/tenants/{tenant.id}/integrations/not-a-real-capability/test-send",
+        json={"destination": "+919876543210"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
