@@ -188,6 +188,50 @@ integration ready.
 
 ---
 
+# A working integration still will not bill — the billing catalog is a separate step
+
+Getting a provider to `ready` (the section above) makes it able to **send**.
+It says nothing about whether sending is **billed**, and nothing in this
+build's health check, `set_integration_status`, or `set_tenant_auth_method`
+checks the billing half at all.
+
+`record_usage` (`modules/billing/usage.py`) looks up the school's
+`TenantService` for the capability being sent on, and raises `UnknownService`
+if none exists. `usage_recorder.record_provider_usage` catches exactly that
+exception, logs it once at `ERROR`, and returns — deliberately: a failure to
+record billing must not turn an already-sent message into a reported
+failure, or a caller would retry it and the school would be charged twice
+for one message. That is the right call for the send path, and it has a
+real cost here: **an unbilled message looks identical to a billed one to
+everybody except whoever is watching the error log.**
+
+Neither `sms` nor `whatsapp` has a billing catalog entry on a fresh
+deployment. Nothing seeds one — no migration, no seeder, no onboarding step
+creates a `ProviderService` or a `TenantService` for either capability — so
+this is not a WhatsApp-specific gap: it is true of SMS as well, on every
+environment where an operator has not done the two steps below by hand. See
+debt 61 in `../architecture/debt-register.md`.
+
+**Before the first billable message on either channel, for every school
+using it:**
+
+1. `POST /platform/service-catalog/services` (`upsert_provider_service`) —
+   register the capability (`sms` or `whatsapp`) as something the provider
+   sells, with a rate. Once per provider, not once per school.
+2. `POST /platform/tenants/<id>/services` (`configure_tenant_service`) —
+   subscribe that specific school to it.
+
+Skipping either step is invisible at every point that would normally catch a
+misconfiguration: the integration enables cleanly, the health check reports
+ready, `test-send` succeeds, and real OTPs or WhatsApp messages go out and
+arrive. The only trace is the `ERROR` log line `record_provider_usage`
+writes on every send — nothing pages on it, and nothing on any screen tells
+an operator the catalog is missing. Confirm the subscription exists (`GET
+/platform/tenants/<id>/services`) as part of standing up either channel, not
+only when a bill looks short.
+
+---
+
 # The paperwork gates the feature, not the code
 
 `set_tenant_auth_method` (`modules/platform/routes.py`) refuses to enable
