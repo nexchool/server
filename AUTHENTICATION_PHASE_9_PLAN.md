@@ -1483,6 +1483,58 @@ EOF
 
 ---
 
+## Task 7b: Widen the stored capability constraint
+
+**Found during Task 7, not anticipated by this plan.** `tenant_integrations` carries
+`ck_tenant_integrations_capability`, created by migration 129 as
+`f"capability IN {CAPABILITIES}"` — an f-string interpolating the live Python
+constant. When 129 ran, `CAPABILITIES` was `('sms',)`, so every database that has
+already applied it permits **only** `sms`. The model builds the same constraint
+dynamically and now claims `('sms', 'whatsapp')`, so model and database disagree,
+and a fresh database replaying 129 today would get a constraint production does not
+have. No school can be stored with a WhatsApp integration until this is fixed, which
+blocks Tasks 9, 10, 14, 15 and 16.
+
+**Files:**
+- Create: `server/migrations/versions/135_a_school_may_be_configured_for_whatsapp.py`
+- Test: `server/tests/test_integration_capability_constraint.py`
+
+**Interfaces:**
+- Consumes: `MESSAGING_CAPABILITIES`
+- Produces: a database that accepts `capability = 'whatsapp'`
+
+- [ ] **Step 1: Write the failing test** — configure a real `whatsapp` integration row
+  through `configure_integration` and flush. Against a database carrying the narrow
+  constraint this raises `IntegrityError`; against a corrected one it succeeds. Also
+  assert the constraint's stored definition covers every value in
+  `MESSAGING_CAPABILITIES`, so a third channel added later fails here rather than in
+  production — the same guard Task 5 added for `tenant_auth_policies`.
+
+- [ ] **Step 2: Run it and watch it fail** (on a database that has applied 129).
+
+- [ ] **Step 3: Write migration 135**, `down_revision = "134_which_wire_a_schools_codes_go_down"`.
+  Drop `ck_tenant_integrations_capability` and recreate it with **literal** values —
+  `capability IN ('sms', 'whatsapp')` — never an interpolated constant. The docstring
+  must say why the literal is deliberate: a migration is a record of one change at one
+  moment, and one that reads a live constant changes meaning as the code moves, so
+  replaying it does not reproduce the database it originally produced.
+
+- [ ] **Step 4: Fix the same latent bug in the model.** `modules/integrations/models.py`
+  builds both its check constraints by string-formatting `CAPABILITIES` / `STATUSES`.
+  That is what keeps model and database in step *now*, but it is the mechanism that
+  made 129 wrong. Leave the model dynamic — it is correct for a model — and rely on
+  Step 1's test to catch divergence.
+
+- [ ] **Step 5: Verify the round trip** — upgrade → downgrade → upgrade against a
+  **confirmed-local** database only.
+
+- [ ] **Step 6: Register the lesson** in `docs/architecture/debt-register.md`: migrations
+  must never interpolate a live application constant into DDL. Note 129 as the instance.
+
+- [ ] **Step 7: Commit.**
+
+---
+
 ## Task 8: The MSG91 adapter
 
 **Files:**
