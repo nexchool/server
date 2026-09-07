@@ -989,3 +989,126 @@ def test_no_vendor_name_appears_anywhere_in_authentication():
                         "http.client",
                     )
                 ), f"{path} calls out directly instead of using the sms capability"
+
+
+# ---------------------------------------------------------------------------
+# The commit boundary — POST /otp/request, not just the service function
+#
+# Every test above calls `request_otp()` directly and inspects `db_session`
+# right afterwards. That proves the service layer flushes the rows it should;
+# it proves nothing about the route that fronts it in production, because
+# `request_otp` follows this codebase's flush-in-service, commit-in-route
+# convention (see `policy.set_method`, `configure_integration`) and never
+# commits itself. A route that forgets the commit sends a real SMS and then
+# discards the one thing that could verify it — which is exactly the defect
+# task 16b fixes in `request_mobile_otp`. These two tests go through the real
+# HTTP route and a real request boundary to check the commit is actually
+# there, and that both the success and failure branches leave behind rows an
+# operator can find.
+# ---------------------------------------------------------------------------
+
+def _cross_the_request_boundary():
+    """Do, on demand, what Flask does for free between two real requests.
+
+    In production, Flask pops the app context at the end of every request and
+    Flask-SQLAlchemy's `teardown_appcontext` hook calls `db.session.remove()`
+    — discarding anything left uncommitted and handing the next piece of code
+    a brand-new `Session` with an empty identity map. That is the mechanism
+    this bug slipped through: nothing before task 16b asserted that a row
+    survived it.
+
+    This test harness cannot be relied on to do that between two
+    `client.post()` calls in the *same* test. `db_session` (conftest.py) opens
+    one `flask_app.app_context()` for the whole test, and Flask's test client
+    reuses an app context already on the stack rather than pushing its own —
+    the same quirk `test_admission_id_login.py` and `test_mobile_otp_login.py`
+    document as `_fresh_request`, there for `flask.g` rather than the session.
+    Because of it, `teardown_appcontext` never runs between one request and
+    the next inside a single test, so a plain query right after `client.post`
+    would just read back the same identity-mapped session the route itself
+    wrote to — which would pass whether or not the route committed, and is
+    exactly the kind of assertion this task warns against.
+
+    Calling `db.session.remove()` here is not a weaker stand-in for that
+    boundary — it is the literal call Flask-SQLAlchemy makes at it. Closing
+    the current `Session` rolls back anything still pending on it, and
+    discarding it means the next `db.session.<anything>` builds a genuinely
+    new `Session` — still bound to this test's own transactional connection
+    (`db_session` keeps everything, committed or not, off the real database
+    until the test ends), so what is being asked is exactly "did the route
+    commit", not "did this reach production Postgres".
+    """
+    db.session.remove()
+
+
+def test_a_sent_challenge_survives_the_request_that_created_it(client, db_session):
+    """The defect this guards against: `request_otp` flushed a challenge and
+    the route returned `sent: true` without committing, so the code went out
+    over SMS while the challenge that could verify it was rolled back the
+    moment the request ended. The follow-up `POST /login` then failed with
+    the same `InvalidCredentials` a wrong code produces — indistinguishable
+    from the caller's point of view, and from an operator's unless they know
+    to check whether a challenge row exists at all.
+    """
+    tenant = _school(db_session)
+    user, number = _member(db_session, tenant)
+
+    response = client.post(
+        "/api/auth/otp/request",
+        json={"mobile": number, "tenant_id": tenant.id},
+    )
+
+    assert response.status_code == 200
+    challenge_id = response.get_json()["data"]["challenge_id"]
+    assert challenge_id
+
+    _cross_the_request_boundary()
+
+    challenge = MobileOtpChallenge.query.get(challenge_id)
+    assert challenge is not None, (
+        "the challenge the route said it sent does not exist once the "
+        "request that created it is over — a correct code could never verify"
+    )
+    assert challenge.status == STATUS_SENT
+
+
+def test_a_failed_delivery_still_leaves_what_an_operator_needs(client, db_session):
+    """The same commit covers the unhappy path, deliberately. A provider that
+    refuses to send must still leave the challenge marked `failed` and its
+    `otp_delivery_failed` audit event behind — that pair is how "the code
+    never arrived" gets diagnosed after the fact, and both are only flushed
+    by `otp.py`, never committed by it.
+    """
+    from modules.auth.event_models import AuthEvent
+
+    tenant = _school(db_session)
+    configure_integration(
+        tenant.id,
+        capability=CAPABILITY_SMS,
+        provider_key=FAKE,
+        configuration={**SMS_TEMPLATES, BEHAVIOUR_KEY: BEHAVIOUR_REJECTED},
+    )
+    set_integration_status(tenant.id, capability=CAPABILITY_SMS, status=STATUS_ENABLED)
+    user, number = _member(db_session, tenant)
+
+    response = client.post(
+        "/api/auth/otp/request",
+        json={"mobile": number, "tenant_id": tenant.id},
+    )
+
+    assert response.status_code == 200
+    # Same answer as a genuine send — see `request_mobile_otp`'s docstring on
+    # the enumeration oracle this endpoint is shaped to avoid.
+    assert response.get_json()["data"] == {"sent": True}
+
+    _cross_the_request_boundary()
+
+    challenge = MobileOtpChallenge.query.filter_by(tenant_id=tenant.id).first()
+    assert challenge is not None, "the failed challenge itself did not survive"
+    assert challenge.status == STATUS_FAILED
+    assert (
+        AuthEvent.query.filter_by(
+            tenant_id=tenant.id, event_type="otp_delivery_failed"
+        ).count()
+        == 1
+    ), "the audit event that explains the failure did not survive"

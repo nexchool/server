@@ -161,6 +161,20 @@ def _login_through_pipeline():
     attempt = AuthenticationRequest.from_flask(request)
     outcome = AuthenticationService().authenticate(attempt)
 
+    # `AuthenticationService._record` writes the one `AuthEvent` this attempt
+    # will ever get — success, failure or tenant-choice alike — but only
+    # flushes it (flush-in-service, commit-in-route, same convention as
+    # `otp.py`). Without this commit, every outcome that returns below without
+    # reaching `_finalize_login` (wrong password, locked account, denied
+    # method, unresolved tenant, tenant choice required) discards its audit
+    # row the moment this request ends: the caller sees the right 401, but
+    # nobody investigating a lockout or a spray of failed attempts finds any
+    # record of it. A successful sign-in commits again anyway, inside
+    # `_finalize_login`'s `user.save()`, so this is never a wasted round trip
+    # on that path — it just moves the one row that must survive every other
+    # path earlier than the return statements that follow.
+    db.session.commit()
+
     if outcome.needs_tenant_choice:
         return success_response(
             data={
@@ -1459,6 +1473,20 @@ def request_mobile_otp():
         ip_address=request.remote_addr,
         client_surface=(request.headers.get('X-Client-Surface') or '').strip()[:30] or None,
     )
+
+    # `request_otp` follows this codebase's flush-in-service, commit-in-route
+    # convention — every row it touches (a new challenge, one marked `failed`
+    # after a delivery error, or a bare audit event on a throttled attempt) is
+    # only flushed. Without this commit the whole request rolls back at the
+    # end of the app context: the caller is told a code is on its way, but
+    # nothing exists for `/login` to verify against, and a genuinely failed
+    # delivery leaves no `failed` challenge or `otp_delivery_failed` event for
+    # an operator to find. Every branch above either wrote rows that must
+    # survive or wrote nothing (no_account / ambiguous / method_not_allowed /
+    # account_unusable), so one unconditional commit — never a rollback — is
+    # correct for all of them; `request_otp` raises only on a genuine bug, in
+    # which case Flask's teardown discards whatever was flushed, as it should.
+    db.session.commit()
 
     # One response for every outcome — with one exception. Being throttled is
     # told plainly, because a client that does not know it is rate limited

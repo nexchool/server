@@ -23,6 +23,7 @@ from modules.auth.event_models import (
     REASON_CREDENTIAL_MISMATCH,
     REASON_NO_IDENTIFIER_MATCH,
     REASON_POLICY_DENIED,
+    REASON_TENANT_CHOICE_REQUIRED,
     AuthEvent,
     hash_identifier,
 )
@@ -621,6 +622,86 @@ def test_a_failed_sign_in_is_recorded_with_its_reason(
     event = _events_for(account.id)[-1]
     assert event.event_type == EVENT_LOGIN_FAILURE
     assert event.reason == REASON_CREDENTIAL_MISMATCH
+
+
+# ---------------------------------------------------------------------------
+# The commit boundary — the test above proves nothing about it
+#
+# `test_a_failed_sign_in_is_recorded_with_its_reason` calls `_events_for`
+# straight after `client.post`, inside the same `db_session` app context — so
+# it reads back the identity-mapped `AuthEvent` the request itself just added
+# to the session, not a row that has actually reached the database. `_record`
+# (`pipeline.py`) only flushes that row — flush-in-service, commit-in-route,
+# same convention `otp.py` follows — and `_login_through_pipeline` used to
+# commit only via `_finalize_login`'s `user.save()`, which runs on success
+# alone. Every non-success outcome (wrong password, locked account, denied
+# method, unresolved tenant, tenant-choice-required) returned straight from
+# the route with nothing committed, so the one thing an operator would check
+# after a lockout or a spray of failed attempts — the `AuthEvent` trail —
+# never survived the request that generated it. This test crosses a real
+# request boundary to catch that regression; the one above cannot.
+# ---------------------------------------------------------------------------
+
+def _cross_the_request_boundary():
+    """Do, on demand, what Flask does for free between two real requests.
+
+    `db_session` (conftest.py) holds one `flask_app.app_context()` open for
+    the whole test, and the test client reuses it rather than pushing its own,
+    so `teardown_appcontext` — the `db.session.remove()` Flask-SQLAlchemy runs
+    at the end of every real request — never fires between two `client.post()`
+    calls here. Calling it directly is not a weaker stand-in for that
+    boundary; it is the same call, closing the current `Session` (rolling back
+    anything still only flushed on it) and handing the next
+    `db.session.<anything>` a genuinely new one — still bound to this test's
+    own transactional connection, so what is being asked is "did the route
+    commit", not "did this reach production Postgres".
+    """
+    db.session.remove()
+
+
+def test_a_failed_sign_ins_audit_row_survives_the_request_that_wrote_it(
+    client, db_session, policed_tenant, account
+):
+    account_id = account.id
+
+    response = login(
+        client, email=account.email, password="wrong", tenant_id=policed_tenant.id
+    )
+    assert response.status_code == 401
+
+    _cross_the_request_boundary()
+
+    event = _events_for(account_id)[-1]
+    assert event.event_type == EVENT_LOGIN_FAILURE
+    assert event.reason == REASON_CREDENTIAL_MISMATCH
+
+
+def test_a_tenant_choice_outcomes_audit_row_also_survives(client, db_session):
+    """Ambiguous outcomes are refused nowhere — `_login_through_pipeline`
+    returns straight from `if outcome.needs_tenant_choice:` — so this path is
+    the other one the old, always-inside-`_finalize_login` commit never
+    reached.
+
+    Looked up by identifier rather than account: a tenant-choice outcome
+    names no single account (that is the point — the pipeline found more than
+    one and is asking which), so `_record` writes the event with
+    `account_id=None`.
+    """
+    first = make_tenant(db_session, subdomain_prefix="p0d-commit-a")
+    second = make_tenant(db_session, subdomain_prefix="p0d-commit-b")
+    ensure_default_policy(first.id)
+    ensure_default_policy(second.id)
+    shared = f"twin-{uuid.uuid4().hex[:8]}@test.school"
+    make_account(db_session, first, password=PASSWORD, email=shared)
+    make_account(db_session, second, password=PASSWORD, email=shared)
+
+    response = login(client, email=shared, password=PASSWORD)
+    assert response.get_json()["data"]["requires_tenant_choice"] is True
+
+    _cross_the_request_boundary()
+
+    event = _events_for(identifier=shared)[-1]
+    assert event.reason == REASON_TENANT_CHOICE_REQUIRED
 
 
 def test_an_attempt_on_an_unknown_address_is_recorded_without_an_account(
