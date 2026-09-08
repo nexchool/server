@@ -224,3 +224,79 @@ def test_a_matching_count_of_zero_is_not_a_mismatch(
         body="hi",
     )
     assert result.error_code != "configuration_error"
+
+
+# ---------------------------------------------------------------------------
+# `template_purpose` — which template to resolve, versus what to bill it as
+# ---------------------------------------------------------------------------
+
+
+def test_with_no_template_purpose_the_send_behaves_exactly_as_before(
+    flask_app, tenant, enabled_fake_sms_without_templates
+):
+    """Every test above this one calls `send_message` without
+    `template_purpose` and must keep working unchanged — the parameter is
+    additive, not a replacement for the existing single-purpose contract."""
+    from modules.integrations.messaging import send_message
+
+    result = send_message(
+        tenant_id=tenant.id,
+        channel="sms",
+        purpose="authentication_otp",
+        destination="+919876543210",
+        variables=["418302", "5"],
+        body="418302 is your NexSchool sign-in code.",
+    )
+    assert result.success is False
+    assert result.error_code == "template_not_configured"
+
+
+def test_template_purpose_picks_the_template_while_purpose_stays_the_bill_label(
+    flask_app, db_session, tenant, enabled_fake_sms
+):
+    """The split this earns: `purpose` never stops meaning "what to bill and
+    log this as" — only which template gets resolved can differ, and only a
+    caller that explicitly asks for that split gets it."""
+    from modules.billing.models import ServiceUsageRecord
+    from modules.integrations.messaging import send_message
+
+    # `enabled_fake_sms` registers a bare-string `authentication_otp`
+    # template — zero named variables (Task 8b) — so `variables=[]` is the
+    # matching count; the point of this test is the purpose split, not the
+    # variable-count check that `test_message_templates.py` already covers.
+    result = send_message(
+        tenant_id=tenant.id,
+        channel="sms",
+        purpose="integration_test",
+        template_purpose="authentication_otp",
+        destination="+919876543210",
+        variables=[],
+        body="418302 is your NexSchool sign-in code.",
+    )
+
+    assert result.success is True
+    record = ServiceUsageRecord.query.filter_by(tenant_id=tenant.id).first()
+    if record is not None:
+        assert record.usage_type == "integration_test"
+
+
+def test_an_unresolvable_template_purpose_is_refused_even_with_a_billable_purpose(
+    flask_app, tenant, enabled_fake_sms_without_templates
+):
+    """A `template_purpose` that names a template the school never
+    registered fails the same way a bare `purpose` lookup would — the split
+    changes which purpose selects the template, not whether a missing one is
+    still caught."""
+    from modules.integrations.messaging import send_message
+
+    result = send_message(
+        tenant_id=tenant.id,
+        channel="sms",
+        purpose="integration_test",
+        template_purpose="authentication_otp",
+        destination="+919876543210",
+        variables=["418302", "5"],
+        body="418302 is your NexSchool sign-in code.",
+    )
+    assert result.success is False
+    assert result.error_code == "template_not_configured"

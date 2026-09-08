@@ -44,10 +44,17 @@ def _school_user(db_session, tenant, *, permissions=("subscription.read",)):
 
 @pytest.fixture
 def enabled_fake_sms(db_session, tenant):
-    """A school configured onto the SMS test double, enabled, with templates
-    for both a real send's purpose and this route's."""
+    """A school configured onto the SMS test double, enabled, with **only**
+    its sign-in (OTP) template registered.
+
+    This is deliberately the exact shape the product owner hit: a school that
+    registered the one template that actually matters — the one a real person
+    signs in with — and nothing else. There is no `integration_test` entry
+    here on purpose: nobody registers a template for a purpose that only
+    exists to be tested, and the fix under test is that the button no longer
+    requires one.
+    """
     from core.database import db
-    from modules.integrations.templates import PURPOSE_INTEGRATION_TEST
 
     configure_integration(
         tenant.id,
@@ -55,13 +62,33 @@ def enabled_fake_sms(db_session, tenant):
         provider_key="fake_sms",
         configuration={
             "templates": {
-                "authentication_otp": "test-template-1",
-                PURPOSE_INTEGRATION_TEST: {
-                    "id": "test-template-integration-test",
-                    "variables": ["MESSAGE"],
+                "authentication_otp": {
+                    "id": "test-template-otp",
+                    "variables": ["OTP", "MINUTES"],
                 },
             }
         },
+    )
+    set_integration_status(tenant.id, capability="sms", status="enabled")
+    db.session.commit()
+
+
+@pytest.fixture
+def enabled_fake_sms_without_otp_template(db_session, tenant):
+    """The same school, enabled, with no OTP template registered either.
+
+    The failure that matters — an operator never having wired up the
+    template a real sign-in depends on — must still be caught, loudly, by
+    this button. Fixing the false failure for the common case must not turn
+    this into a silent no-op for the case that is a genuine misconfiguration.
+    """
+    from core.database import db
+
+    configure_integration(
+        tenant.id,
+        capability="sms",
+        provider_key="fake_sms",
+        configuration={"templates": {}},
     )
     set_integration_status(tenant.id, capability="sms", status="enabled")
     db.session.commit()
@@ -95,11 +122,18 @@ def sms_service_configured(db_session, tenant):
     db.session.commit()
 
 
-def test_a_test_send_goes_through_the_template_path(
+def test_a_test_send_goes_through_the_otp_template_path(
     flask_app, db_session, tenant, client, enabled_fake_sms
 ):
     """A test that bypassed templates would prove nothing about the case
-    that actually fails."""
+    that actually fails.
+
+    This is the case the product owner hit: a school with only its OTP
+    template registered must be able to complete a test send, because the
+    test now exercises exactly that template — with a placeholder code —
+    rather than one nobody would ever register.
+    """
+    from modules.auth.otp_message import build_otp_message
     from modules.integrations import outbox
 
     outbox.clear()
@@ -112,7 +146,31 @@ def test_a_test_send_goes_through_the_template_path(
     )
 
     assert response.status_code == 200
-    assert outbox.recent()[0]["purpose"] == "integration_test"
+    assert response.get_json()["data"]["sent"] is True
+    sent = outbox.recent()[0]
+    # Billing label stays "integration_test" even though the OTP template's
+    # wording is what actually went out — see the usage-record test below.
+    assert sent["purpose"] == "integration_test"
+    assert sent["body"] == build_otp_message("000000")
+
+
+def test_a_test_send_without_an_otp_template_is_refused_clearly(
+    flask_app, db_session, tenant, client, enabled_fake_sms_without_otp_template
+):
+    """The failure that matters is still caught: a school that never
+    registered a sign-in template gets told exactly that, not a false
+    success and not a generic 500."""
+    response = client.post(
+        f"/api/platform/tenants/{tenant.id}/integrations/sms/test-send",
+        json={"destination": "+919876543210"},
+        headers=_platform_admin(db_session, tenant),
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()["data"]
+    assert body["sent"] is False
+    assert body["error_code"] == "template_not_configured"
+    assert "authentication_otp" in body["error_message"]
 
 
 def test_a_test_send_is_recorded_as_usage(

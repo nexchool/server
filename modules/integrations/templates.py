@@ -56,8 +56,21 @@ TEMPLATES_KEY = "templates"
 #: opposed to `authentication_otp`, which nobody asks for on purpose. It
 #: lives here rather than in `otp_models.py` because, unlike the OTP
 #: purpose, nothing else owns this one: no column defaults to it, no
-#: challenge is looked up by it. It is only ever a `messaging.send_message`
-#: argument and a usage-ledger `usage_type`.
+#: challenge is looked up by it.
+#:
+#: **No longer a template-lookup purpose — a billing label only.** It used
+#: to double as both: `messaging.send_message`'s `purpose` argument and the
+#: string `template_for` looked a template up by. That coupling is exactly
+#: the flaw a real deployment hit — nobody registers a template for a
+#: purpose that exists only to be tested, and on a DLT-regulated vendor an
+#: operator would have to file one purely to make the test-send button work.
+#: `modules/platform/routes.py::test_send_integration` now passes this as
+#: `purpose` (so a bill still tells a test apart from a real sign-in code)
+#: and `otp_models.PURPOSE_AUTHENTICATION` as `send_message`'s
+#: `template_purpose` (so the template resolved is the one that actually has
+#: to work). Nothing calls `template_for` with this string anymore, and
+#: nothing should: do not register a `"integration_test"` entry in a
+#: school's `templates` configuration — it would never be read.
 PURPOSE_INTEGRATION_TEST = "integration_test"
 
 

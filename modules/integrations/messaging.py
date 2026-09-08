@@ -49,13 +49,28 @@ def send_message(
     variables: list,
     body: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    template_purpose: Optional[str] = None,
 ) -> MessageSendResult:
     """Ask this school's provider for `channel` to send one message.
 
-    `purpose` is what the message is for — `authentication_otp`, `fee_reminder`. It
-    selects the registered template and becomes the usage record's
-    `usage_type`, so a bill can be explained back to the feature that caused
-    it.
+    `purpose` is what the message is for — `authentication_otp`,
+    `fee_reminder`. It becomes the usage record's `usage_type` and the log
+    line's label, so a bill (or a log) can be explained back to the feature
+    that caused it. Until `template_purpose` existed, `purpose` also picked
+    the registered template — the two questions ("what is this for" and
+    "which wording does it use") happened to always have the same answer.
+
+    `template_purpose` breaks that coincidence apart for the one caller that
+    needs it to: the integration test-send earned this parameter, not the
+    other way around. It sends under `purpose="integration_test"`, so a bill
+    can still tell a test apart from a real sign-in code, but it resolves the
+    *school's own OTP template* — because a template registered for
+    "integration_test" would never be exercised by anything else, and a
+    school's operator would have to file a DLT registration purely to make
+    this button work. Inventing the split before that caller existed would
+    have been speculative; a caller that needs it earns it. Defaults to
+    `purpose`, so every existing call — one purpose, one template — is
+    unchanged.
 
     `body` is the rendered text, needed by SMS and ignored by WhatsApp, which
     takes only the template name and the variables.
@@ -65,13 +80,14 @@ def send_message(
     somebody to wait should not have to catch an exception to find out.
     """
     operation_id = new_operation_id()
+    resolved_template_purpose = template_purpose or purpose
 
     if channel not in MESSAGING_CAPABILITIES:
         raise UnknownCapability(channel)
 
     try:
         resolved = resolve_provider(tenant_id=tenant_id, capability=channel)
-        template = template_for(resolved.configuration, purpose)
+        template = template_for(resolved.configuration, resolved_template_purpose)
         if channel == CAPABILITY_SMS:
             values = list(variables or [])
             if len(values) != len(template.variables):
@@ -89,9 +105,9 @@ def send_message(
                 # would otherwise land in.
                 raise IntegrationError(
                     CONFIGURATION_ERROR,
-                    f"This school's '{purpose}' SMS template names "
-                    f"{len(template.variables)} variable(s) but {len(values)} "
-                    "were supplied.",
+                    f"This school's '{resolved_template_purpose}' SMS template "
+                    f"names {len(template.variables)} variable(s) but "
+                    f"{len(values)} were supplied.",
                 )
     except IntegrationError as exc:
         logger.warning(

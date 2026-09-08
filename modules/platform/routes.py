@@ -863,9 +863,21 @@ def test_send_integration(tenant_id, capability):
     quietly does that is a trap. So health stays free and silent, and this is
     a separate action whose screen says what it costs.
 
-    It goes through the same template path as a real send. A test that
-    bypassed templates would prove nothing about the case that actually
-    fails, which is a template that was never registered.
+    **Sends the school's own sign-in (OTP) template, with a placeholder
+    code — not a template registered for this route.** Nobody registers a
+    template for `integration_test`: it has no real-world counterpart, and
+    on a real Indian vendor an operator would have to file a separate DLT
+    template purely to make this button work. A test that exercised such a
+    template would also prove nothing about the template that actually has
+    to work — a missing or mis-registered OTP template is exactly the
+    failure an operator needs to catch here, before a student hits it at
+    sign-in. So this resolves `otp_models.PURPOSE_AUTHENTICATION`'s template
+    (via `send_message`'s `template_purpose`) and builds the message with
+    `otp_message.build_otp_message` / `otp_variables`, the same functions a
+    real OTP send uses — guaranteeing the same variable count reaches the
+    same template. `purpose` stays `PURPOSE_INTEGRATION_TEST` throughout, so
+    the usage ledger still tells a test apart from a real sign-in code on a
+    bill.
 
     Rate-limited on the acting operator, not the caller's address — the
     decorator sits below `auth_required` so `actor_rate_key` sees
@@ -874,6 +886,8 @@ def test_send_integration(tenant_id, capability):
     evade one keyed on the address instead.
     """
     from core.models import Tenant
+    from modules.auth.otp_message import build_otp_message, otp_variables
+    from modules.auth.otp_models import PURPOSE_AUTHENTICATION
     from modules.integrations.capabilities import MESSAGING_CAPABILITIES
     from modules.integrations.messaging import send_message
     from modules.integrations.templates import PURPOSE_INTEGRATION_TEST
@@ -907,13 +921,24 @@ def test_send_integration(tenant_id, capability):
             {"destination": "A number to send the test message to is required."}
         )
 
+    # An obviously-fake code, never one that could be mistaken for a real
+    # challenge. A hand-written test string ("This is a NexSchool test
+    # message...") would not prove anything about a real OTP send — its
+    # variable count is whatever we typed, not what `build_otp_message` and
+    # `otp_variables` actually produce, so a template that happens to accept
+    # that count would still fail the moment a genuine sign-in used it. Using
+    # the real builders means a successful test send proves the same
+    # template, the same wording and the same variable count that a real OTP
+    # send will use — the whole point of the fix.
+    placeholder_code = "000000"
     result = send_message(
         tenant_id=tenant_id,
         channel=capability,
         purpose=PURPOSE_INTEGRATION_TEST,
+        template_purpose=PURPOSE_AUTHENTICATION,
         destination=destination,
-        variables=["test"],
-        body="This is a NexSchool test message. No action is needed.",
+        variables=otp_variables(placeholder_code),
+        body=build_otp_message(placeholder_code),
     )
     db.session.commit()
 
