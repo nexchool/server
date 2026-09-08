@@ -197,3 +197,88 @@ def test_a_sub_admin_with_no_modules_gets_nothing():
 
     assert expand_selection([]) == set()
     assert expand_selection([{"key": "finance", "level": "none"}]) == set()
+
+
+# ---------------------------------------------------------------------------
+# Regressions found reviewing the commit above
+# ---------------------------------------------------------------------------
+
+def test_a_platform_admin_is_not_locked_out_by_the_scoping(client, db_session, tenant):
+    """God mode has to survive the composer, not just the route guard.
+
+    `has_permission` short-circuits True for a platform admin before it reads
+    any role; `get_user_permissions`, which the composer resolves instead, has
+    no such branch. So the first cut of this feature filtered a platform admin
+    by their (empty) tenant role set while `@require_permission` waved them
+    through — a 200 with every section withheld, which is the failure nobody
+    reports because it does not look like an error.
+
+    Sharpened by login-as-tenant: a platform admin operating inside a school
+    has their User row in their *home* tenant and no roles in this one at all.
+    """
+    user, token = _account_with(db_session, tenant, name="Platform Admin")
+    user.is_platform_admin = True
+    db_session.flush()
+
+    data = _payload(client, tenant, token)
+
+    for section in ("overview", "finance", "transport", "today", "actions"):
+        assert data[section].get("visible") is not False, (
+            f"{section} was withheld from a platform admin"
+        )
+    assert data["overview"]["total_students"] is not None
+
+
+def test_a_forbidden_alert_is_never_computed(client, db_session, tenant, monkeypatch):
+    """The filter runs before the query, not after it.
+
+    Scoping that computes everything and discards most of it still makes a
+    fees desk pay for the timetable join and both class/subject scans on every
+    dashboard load. `students_without_class` is the cheapest of those to prove
+    it with: no `student.read.all`, no COUNT.
+    """
+    from modules.dashboard import service
+
+    calls: list[str] = []
+    original = service._count_students_on_inactive_routes
+    monkeypatch.setattr(
+        service,
+        "_count_students_on_inactive_routes",
+        lambda tenant_id: (calls.append("transport"), original(tenant_id))[1],
+    )
+
+    _user, token = _account_with(
+        db_session, tenant, "dashboard.read", "finance.read", name="Fees Desk"
+    )
+    _payload(client, tenant, token)
+
+    assert calls == [], "transport alert was computed for a caller who cannot see it"
+
+
+def test_holiday_read_alone_does_not_reveal_pending_leave(client, db_session, tenant):
+    """`actions` carries two unrelated things and gates them apart.
+
+    Holidays are the school calendar and nearly everyone may read them; how
+    many teachers are waiting on a leave decision is staff business. Gating the
+    pair on "either permission" handed the second to anyone holding the first.
+    """
+    _user, token = _account_with(
+        db_session, tenant, "dashboard.read", "holiday.read", name="Calendar Reader"
+    )
+
+    actions = _payload(client, tenant, token)["actions"]
+
+    assert "upcoming_holidays" in actions
+    assert "pending_leave_requests" not in actions
+
+
+def test_leave_manage_alone_does_not_reveal_the_calendar(client, db_session, tenant):
+    """The same split, from the other side."""
+    _user, token = _account_with(
+        db_session, tenant, "dashboard.read", "teacher.leave.manage", name="Leave Desk"
+    )
+
+    actions = _payload(client, tenant, token)["actions"]
+
+    assert "pending_leave_requests" in actions
+    assert "upcoming_holidays" not in actions

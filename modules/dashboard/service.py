@@ -77,6 +77,20 @@ ALERT_PERMISSIONS: Dict[str, Tuple[str, ...]] = {
 }
 
 
+#: Stands for "every permission", and cannot collide with a real one — a
+#: permission name is always `<resource>.<action>`.
+#:
+#: `has_permission` short-circuits True for a platform admin before it looks at
+#: any role (rbac/services.py). `get_user_permissions` has no such branch: it
+#: traverses roles and nothing else. So resolving the set directly and asking
+#: it questions silently loses god-mode, and because the route's own
+#: `dashboard.read` check still passes, the result was a 200 with every section
+#: withheld rather than an error anybody would notice. A platform admin
+#: entering a tenant has no roles *in* that tenant at all, which is exactly
+#: when they most need this.
+GOD_MODE = "*"
+
+
 def _granted() -> set:
     """The caller's permission names, fetched once for the whole dashboard.
 
@@ -88,6 +102,8 @@ def _granted() -> set:
     user = getattr(g, "current_user", None)
     if user is None:
         return set()
+    if getattr(user, "is_platform_admin", False):
+        return {GOD_MODE}
     from modules.rbac.services import get_user_permissions
 
     return set(get_user_permissions(user.id))
@@ -97,9 +113,12 @@ def _can(granted: set, *permissions: str) -> bool:
     """True if any permission is held, honouring the `<resource>.manage` rule.
 
     Mirrors `rbac.services.has_permission` rather than calling it, so the whole
-    dashboard costs one permission lookup instead of a dozen. The rule it
-    mirrors is one line and is asserted by tests/test_dashboard_scoping.py.
+    dashboard costs one permission lookup instead of a dozen. Both halves of
+    that mirror matter — the manage rule *and* the god-mode short-circuit —
+    and both are asserted by tests/test_dashboard_scoping.py.
     """
+    if GOD_MODE in granted:
+        return True
     for permission in permissions:
         if permission in granted:
             return True
@@ -282,19 +301,33 @@ def _alerts(
 ) -> Dict[str, Any]:
     timetable_enabled = is_feature_enabled(tenant_id, "timetable")
 
+    def want(key: str) -> bool:
+        """Whether this caller gets this row — asked BEFORE it is computed.
+
+        The filter used to run at the end, so a fees desk paid for the
+        timetable-conflict join, both class/subject scans and the
+        students-without-class count in order to be handed one row about
+        overdue fees. On a 15,000-student tenant that is the difference
+        between a dashboard and a complaint.
+        """
+        return _can(granted, *ALERT_PERMISSIONS.get(key, ()))
+
     # Every class the school runs. Needed by two unrelated alerts below, so it
-    # is read here rather than inside either — a school that does not use
+    # is read once here rather than inside either — a school that does not use
     # timetables still has classes, and still wants to know which have no
-    # subjects on them.
-    all_class_ids = [
-        c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()
-    ]
+    # subjects on them. Skipped when neither alert is going out.
+    needs_classes = want("classes_without_timetable") or want("classes_without_subjects")
+    all_class_ids = (
+        [c.id for c in Class.query.filter_by(tenant_id=tenant_id).with_entities(Class.id).all()]
+        if needs_classes
+        else []
+    )
 
     # Timetable conflicts: same teacher, same dow, same period in two active timetables.
     # Skipped entirely when timetable is off — disabled feature shouldn't surface alerts.
     timetable_conflicts = 0
     classes_without_timetable = 0
-    if timetable_enabled:
+    if timetable_enabled and (want("timetable_conflicts") or want("classes_without_timetable")):
         conflict_rows = (
             db.session.query(
                 TimetableEntry.teacher_id,
@@ -336,55 +369,61 @@ def _alerts(
         )
 
     # Class subjects without primary teacher
-    active_subject_ids = [
-        cs.id
-        for cs in ClassSubject.query.filter(
-            ClassSubject.tenant_id == tenant_id,
-            ClassSubject.deleted_at.is_(None),
-            ClassSubject.status == "active",
+    subjects_without_teacher = 0
+    if want("subjects_without_teacher"):
+        active_subject_ids = [
+            cs.id
+            for cs in ClassSubject.query.filter(
+                ClassSubject.tenant_id == tenant_id,
+                ClassSubject.deleted_at.is_(None),
+                ClassSubject.status == "active",
+            )
+            .with_entities(ClassSubject.id)
+            .all()
+        ]
+        assigned_subject_ids = {
+            row[0]
+            for row in db.session.query(ClassSubjectTeacher.class_subject_id)
+            .filter(
+                ClassSubjectTeacher.tenant_id == tenant_id,
+                ClassSubjectTeacher.role == "primary",
+                ClassSubjectTeacher.is_active.is_(True),
+                ClassSubjectTeacher.deleted_at.is_(None),
+            )
+            .all()
+        }
+        subjects_without_teacher = sum(
+            1 for sid in active_subject_ids if sid not in assigned_subject_ids
         )
-        .with_entities(ClassSubject.id)
-        .all()
-    ]
-    assigned_subject_ids = {
-        row[0]
-        for row in db.session.query(ClassSubjectTeacher.class_subject_id)
-        .filter(
-            ClassSubjectTeacher.tenant_id == tenant_id,
-            ClassSubjectTeacher.role == "primary",
-            ClassSubjectTeacher.is_active.is_(True),
-            ClassSubjectTeacher.deleted_at.is_(None),
-        )
-        .all()
-    }
-    subjects_without_teacher = sum(
-        1 for sid in active_subject_ids if sid not in assigned_subject_ids
-    )
 
     # Classes without subjects
-    classes_with_subjects = {
-        row[0]
-        for row in db.session.query(ClassSubject.class_id)
-        .filter(
-            ClassSubject.tenant_id == tenant_id,
-            ClassSubject.deleted_at.is_(None),
-            ClassSubject.status == "active",
+    classes_without_subjects = 0
+    if want("classes_without_subjects"):
+        classes_with_subjects = {
+            row[0]
+            for row in db.session.query(ClassSubject.class_id)
+            .filter(
+                ClassSubject.tenant_id == tenant_id,
+                ClassSubject.deleted_at.is_(None),
+                ClassSubject.status == "active",
+            )
+            .all()
+        }
+        classes_without_subjects = sum(
+            1 for cid in all_class_ids if cid not in classes_with_subjects
         )
-        .all()
-    }
-    classes_without_subjects = sum(
-        1 for cid in all_class_ids if cid not in classes_with_subjects
-    )
 
     # Students without class
-    students_without_class = Student.query.filter(
-        Student.tenant_id == tenant_id,
-        Student.class_id.is_(None),
-    ).count()
+    students_without_class = 0
+    if want("students_without_class"):
+        students_without_class = Student.query.filter(
+            Student.tenant_id == tenant_id,
+            Student.class_id.is_(None),
+        ).count()
 
     # Overdue fee students — only counted when finance is enabled.
     overdue_fees_students = 0
-    if finance_enabled:
+    if finance_enabled and want("overdue_fees_students"):
         overdue_fees_students = (
             db.session.query(func.count(StudentFee.id))
             .filter(
@@ -397,7 +436,7 @@ def _alerts(
 
     # Transport issues
     transport_issues = 0
-    if transport_enabled:
+    if transport_enabled and want("transport_issues"):
         students_inactive = _count_students_on_inactive_routes(tenant_id)
         buses_near = _count_buses_near_capacity(tenant_id)
 
@@ -416,11 +455,7 @@ def _alerts(
     # Only the rows this caller could actually open. `total_issues` is then a
     # count of what they were shown — a badge reading 7 above a list of 2 is
     # worse than no badge, and the two they cannot see are not their problem.
-    visible = {
-        key: value
-        for key, value in counts.items()
-        if _can(granted, *ALERT_PERMISSIONS.get(key, ()))
-    }
+    visible = {key: value for key, value in counts.items() if want(key)}
     visible["total_issues"] = sum(visible.values())
     return visible
 
@@ -545,10 +580,25 @@ def _transport(tenant_id: str) -> Dict[str, Any]:
     }
 
 
-def _actions(tenant_id: str) -> Dict[str, Any]:
-    pending_leave_requests = TeacherLeave.query.filter_by(
-        tenant_id=tenant_id, status=TeacherLeave.STATUS_PENDING
-    ).count()
+def _actions(tenant_id: str, granted: set) -> Dict[str, Any]:
+    """Two unrelated things that share a card, so they are gated separately.
+
+    `pending_leave_requests` is staff business; `upcoming_holidays` is the
+    school calendar, which nearly everyone may read. Gating the pair on
+    "either permission" meant `holiday.read` alone — held by anyone granted
+    the academic calendar — also returned how many teachers are waiting on a
+    leave decision. That is the same mistake in miniature that this whole
+    change exists to fix: one gate over a mixed aggregate.
+    """
+    result: Dict[str, Any] = {}
+
+    if _can(granted, "teacher.leave.manage"):
+        result["pending_leave_requests"] = TeacherLeave.query.filter_by(
+            tenant_id=tenant_id, status=TeacherLeave.STATUS_PENDING
+        ).count()
+
+    if not _can(granted, "holiday.read"):
+        return result
 
     today = _today()
     upcoming_holidays_rows = (
@@ -566,10 +616,8 @@ def _actions(tenant_id: str) -> Dict[str, Any]:
         for h in upcoming_holidays_rows
     ]
 
-    return {
-        "pending_leave_requests": pending_leave_requests,
-        "upcoming_holidays": upcoming_holidays,
-    }
+    result["upcoming_holidays"] = upcoming_holidays
+    return result
 
 
 def build_dashboard() -> Dict[str, Any]:
@@ -607,7 +655,7 @@ def build_dashboard() -> Dict[str, Any]:
     )
     finance = section("finance", lambda: _finance(tenant_id), finance_enabled)
     transport = section("transport", lambda: _transport(tenant_id), transport_enabled)
-    actions = section("actions", lambda: _actions(tenant_id))
+    actions = section("actions", lambda: _actions(tenant_id, granted))
 
     health_score = _health_score(alerts, today_ops)
 
