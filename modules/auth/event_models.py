@@ -58,6 +58,12 @@ EVENT_REFRESH_SUCCESS = "refresh_success"
 EVENT_REFRESH_FAILURE = "refresh_failure"
 EVENT_REFRESH_ROTATED = "refresh_token_rotated"
 EVENT_REFRESH_REUSE = "refresh_token_reuse_detected"
+#: Two of one client's own contexts renewed at the same moment — the second
+#: presented a token the first had just spent. It reads exactly like a replay
+#: and is not one, so it is refused without ending the session, and recorded
+#: here so that "how often does this happen" is a question with an answer.
+#: See `_is_a_race` in `tokens.py` for what separates the two.
+EVENT_REFRESH_RACE = "refresh_race_detected"
 # --- the account lifecycle ---
 EVENT_ACCOUNT_SUSPENDED = "account_suspended"
 EVENT_ACCOUNT_REACTIVATED = "account_reactivated"
@@ -87,6 +93,7 @@ EVENT_TYPES = (
     EVENT_REFRESH_FAILURE,
     EVENT_REFRESH_ROTATED,
     EVENT_REFRESH_REUSE,
+    EVENT_REFRESH_RACE,
     EVENT_ACCOUNT_SUSPENDED,
     EVENT_ACCOUNT_REACTIVATED,
     EVENT_ACCOUNT_LOCKED,

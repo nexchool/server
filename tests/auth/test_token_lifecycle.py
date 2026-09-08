@@ -66,6 +66,25 @@ def _sign_in(client, flask_app, tenant, account):
     return response.get_json()["data"]
 
 
+def _long_enough_ago_to_be_a_theft(token):
+    """Push a token's spending outside the rotation grace window.
+
+    A token presented moments after it was spent is one client racing itself —
+    two browser tabs renewing at once — and is refused without ending the
+    session (`modules.auth.tokens._is_a_race`). A *theft* does not look like
+    that: the copy surfaces long after the real client moved on. These tests
+    are about the theft, so they age the consumption rather than replaying
+    instantly and testing the other case by accident.
+    """
+    from datetime import timedelta
+
+    from modules.auth.tokens import ROTATION_GRACE_SECONDS
+
+    row = RefreshToken.query.filter_by(token_hash=hash_refresh_token(token)).one()
+    row.consumed_at = utc_now() - timedelta(seconds=ROTATION_GRACE_SECONDS + 60)
+    db.session.commit()
+
+
 def _headers(tenant, tokens):
     return {
         "Authorization": f"Bearer {tokens['access_token']}",
@@ -180,7 +199,9 @@ def test_a_replayed_refresh_token_ends_the_whole_family(
         json={"refresh_token": tokens["refresh_token"]},
     ).get_json()["data"]["refresh_token"]
 
-    # The thief replays the token the real client already rotated past.
+    # The thief replays the token the real client already rotated past — long
+    # enough after the fact that it cannot be the real client's second tab.
+    _long_enough_ago_to_be_a_theft(tokens["refresh_token"])
     _fresh(flask_app)
     replay = client.post(
         "/api/auth/refresh",
@@ -209,6 +230,7 @@ def test_a_reuse_is_written_down(client, db_session, flask_app):
     _fresh(flask_app)
     client.post("/api/auth/refresh", headers={"X-Tenant-ID": tenant.id},
                 json={"refresh_token": tokens["refresh_token"]})
+    _long_enough_ago_to_be_a_theft(tokens["refresh_token"])
     _fresh(flask_app)
     client.post("/api/auth/refresh", headers={"X-Tenant-ID": tenant.id},
                 json={"refresh_token": tokens["refresh_token"]})
@@ -248,7 +270,14 @@ def test_another_device_is_unaffected_by_one_family_ending(
 
 
 def test_two_clients_racing_on_one_token_produce_one_winner(db_session, flask_app):
-    """The consuming UPDATE carries its conditions, so a race resolves to one."""
+    """The consuming UPDATE carries its conditions, so a race resolves to one.
+
+    The loser is refused — a token is spendable once and that is not
+    negotiable. What it is *not* is punished: a person with two tabs open has
+    not stolen anything, so the session survives and their next request renews
+    normally. The theft case, which looks identical at this instant and only
+    differs in when it arrives, is covered above.
+    """
     tenant = make_tenant(db_session)
     account = _account(db_session, tenant)
     from modules.auth.services import create_session
@@ -261,7 +290,8 @@ def test_two_clients_racing_on_one_token_produce_one_winner(db_session, flask_ap
         outcomes = [rotate(token)[0], rotate(token)[0]]
 
     assert outcomes.count(RefreshOutcome.OK) == 1
-    assert RefreshOutcome.REUSED in outcomes
+    assert RefreshOutcome.RACED in outcomes
+    assert Session.query.filter_by(id=session.id).first().revoked is False
 
 
 # ---------------------------------------------------------------------------

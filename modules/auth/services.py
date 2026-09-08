@@ -184,57 +184,6 @@ def validate_jwt_token(token: str, token_type: str = "access") -> Optional[Dict]
         return None
 
 
-def refresh_access_token(refresh_token: str, request: Request = None) -> Optional[str]:
-    """
-    Generate a new access token using a refresh token.
-    
-    Args:
-        refresh_token: JWT refresh token
-        request: Flask request object (for updating session metadata)
-        
-    Returns:
-        New access token if refresh is valid, None otherwise
-        
-    Process:
-        1. Validate refresh token
-        2. Check if session exists and is not revoked
-        3. Check if refresh token hasn't expired
-        4. Generate new access token
-        5. Update session last_accessed_at
-    """
-    # Validate refresh token
-    payload = validate_jwt_token(refresh_token, "refresh")
-    if not payload:
-        return None
-
-    # Check if session exists and is valid
-    session = Session.query.filter_by(
-        refresh_token=refresh_token,
-        revoked=False
-    ).first()
-
-    if not session or session.refresh_token_expires_at < utc_now():
-        return None
-
-    # Generate new access token, carrying the method that opened the session
-    # so `amr` survives a refresh rather than silently disappearing.
-    new_access_token = generate_access_token(
-        session.user,
-        tenant_id=session.tenant_id,
-        method=session.login_method,
-    )
-
-    # Update session metadata
-    session.last_accessed_at = utc_now()
-    if request:
-        session.ip_address = request.remote_addr
-        session.user_agent = request.headers.get("User-Agent")
-
-    session.save()
-
-    return new_access_token
-
-
 # ==================== Session Management ====================
 
 def create_session(
@@ -273,11 +222,16 @@ def create_session(
     # Create session (tenant-scoped). The refresh token is no longer a column
     # on this row: it lives in `refresh_tokens`, hashed, unique and rotating,
     # and is minted below once the session has an id to belong to.
+    # How long this session may live is a property of where it was opened, not
+    # a constant: a phone in a pocket and a platform operator's console are not
+    # the same risk and no longer get the same window. See `session_policy`.
+    from .session_policy import initial_expiry
+
     session = Session(
         user_id=user.id,
         tenant_id=user.tenant_id,
         refresh_token=None,
-        refresh_token_expires_at=utc_now() + timedelta(days=JWT_REFRESH_DAYS)
+        refresh_token_expires_at=initial_expiry(client_surface),
     )
     if login_method:
         session.login_method = login_method
@@ -292,14 +246,28 @@ def create_session(
         session.user_agent = request.headers.get("User-Agent", "")
         session.device_info = request.headers.get("User-Agent", "")
     
-    session.save()
+    # One transaction, both rows — and this is the whole of it.
+    #
+    # `session.save()` used to stand here, and it commits. The refresh token was
+    # then minted below with `add` + `flush` and nothing ever committed again on
+    # the login path, so the token's verifier row was discarded when the session
+    # was removed at teardown. The client walked away holding a refresh token
+    # the database had never heard of: every session died with its first access
+    # token, fifteen minutes in, on every surface at once.
+    #
+    # The flush is what gives the session its id, which the token has to name.
+    # The commit that follows carries both or neither, which is the only
+    # correct relationship between a session and the credential that renews it.
+    db.session.add(session)
+    db.session.flush()
 
-    # Minted after the row exists, and carried back on the object rather than
-    # stored — `session.issued_refresh_token` is read once by the caller that
-    # builds the login response and is never persisted.
+    # Carried back on the object rather than stored — `issued_refresh_token` is
+    # read once by the caller that builds the login response, and the plaintext
+    # is never persisted anywhere.
     from .tokens import issue_refresh_token
 
     session.issued_refresh_token = issue_refresh_token(session)
+    db.session.commit()
 
     # So that an access token minted later in this same request can name the
     # session it belongs to.

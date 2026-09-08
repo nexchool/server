@@ -27,6 +27,7 @@ unknowable from here, so the family is ended and both must sign in again.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import timedelta
 from typing import Optional, Tuple
@@ -50,9 +51,27 @@ class RefreshOutcome:
     UNKNOWN = "unknown_token"
     EXPIRED = "expired"
     REUSED = "reuse_detected"
+    #: Refused, but nothing revoked — see `_is_a_race`.
+    RACED = "rotation_raced"
     SESSION_REVOKED = "session_revoked"
     ACCOUNT_INACTIVE = "account_inactive"
     TENANT_INACTIVE = "tenant_inactive"
+
+
+#: How long after a token is spent its presentation is read as one client
+#: racing itself rather than as a thief replaying a stolen token.
+#:
+#: Two tabs of one browser share a refresh token but not the promise that
+#: renews it, so when an access token expires they can start two renewals
+#: milliseconds apart. The loser presents a token the winner has just spent,
+#: which is byte-for-byte what a replay looks like — and ending the session for
+#: it signs the person out of both tabs for the crime of leaving two open.
+#:
+#: Fifteen seconds is chosen against what the two cases actually look like: a
+#: racing tab is *always* inside it, because it began before the winner
+#: finished; a thief working from a copied token is almost never inside it, and
+#: gains nothing when they are, because the answer is still a refusal.
+ROTATION_GRACE_SECONDS = int(os.getenv("REFRESH_ROTATION_GRACE_SECONDS", 15))
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +84,15 @@ def issue_refresh_token(session, *, generation: int = 1, replaces=None) -> str:
     The plaintext is returned to the caller and never written anywhere — not a
     column, not a log, not an event. It exists in the client's storage and
     nowhere else.
-    """
-    from .services import JWT_REFRESH_DAYS
 
+    **A token expires with its session, never after it.** Taking the session's
+    own expiry rather than a constant is what keeps the absolute cap in
+    `session_policy` absolute: a token minted with an independent window could
+    outlive the ceiling it was supposed to be bounded by, and renewing with it
+    would quietly extend a session past the point where its holder is meant to
+    prove who they are again. Callers therefore slide the session first and
+    mint second.
+    """
     token = new_refresh_token()
     row = RefreshToken(
         tenant_id=session.tenant_id,
@@ -76,7 +101,7 @@ def issue_refresh_token(session, *, generation: int = 1, replaces=None) -> str:
         token_hash=hash_refresh_token(token),
         generation=generation,
         issued_at=utc_now(),
-        expires_at=utc_now() + timedelta(days=JWT_REFRESH_DAYS),
+        expires_at=session.refresh_token_expires_at,
     )
     db.session.add(row)
     db.session.flush()
@@ -139,6 +164,14 @@ def rotate(token: str) -> Tuple[str, Optional[object], Optional[str]]:
     )
 
     if row.consumed_at is not None:
+        if _is_a_race(row):
+            # One client's second context, moments behind its own first. Refuse
+            # it — the successor's plaintext exists only in the winner's
+            # storage and cannot be handed out twice — but do not end the
+            # session over it.
+            _record_race(row, session)
+            return RefreshOutcome.RACED, session, None
+
         # Somebody is replaying a token the family already rotated past. Which
         # party is the thief cannot be known from here, so the family ends and
         # both sign in again.
@@ -176,12 +209,26 @@ def rotate(token: str) -> Tuple[str, Optional[object], Optional[str]]:
         .values(consumed_at=utc_now())
     )
     if consumed.rowcount != 1:
-        # Lost the race. The winner has already rotated, so this presentation
-        # is of a spent token — the same situation as a replay.
-        _end_the_family(row, session)
-        return RefreshOutcome.REUSED, session, None
+        # Lost the race by microseconds: between the check above and this
+        # UPDATE, somebody else consumed the row. That is the same situation
+        # `_is_a_race` describes, caught at the only other place it can be
+        # caught, and it gets the same answer — refuse, revoke nothing. A
+        # replay old enough to be a theft cannot arrive here, because it would
+        # have been consumed long ago and taken the branch above.
+        _record_race(row, session)
+        return RefreshOutcome.RACED, session, None
 
     db.session.refresh(row)
+
+    # Using a session is what keeps it alive — the idle limit slides forward
+    # from now, and the absolute cap does not move, so a session in daily use
+    # stays open until the cap reaches it and not one renewal longer. This
+    # happens *before* the replacement is minted, because the token takes its
+    # expiry from the session it belongs to.
+    from .session_policy import slid_expiry
+
+    session.refresh_token_expires_at = slid_expiry(session)
+
     replacement = issue_refresh_token(
         session, generation=row.generation + 1, replaces=row
     )
@@ -189,6 +236,56 @@ def rotate(token: str) -> Tuple[str, Optional[object], Optional[str]]:
     db.session.flush()
 
     return RefreshOutcome.OK, session, replacement
+
+
+def _is_a_race(row) -> bool:
+    """Whether a spent token is one client overtaking itself, not a replay.
+
+    All three conditions have to hold, and each rules out a different way of
+    being wrong:
+
+    **Spent moments ago.** Outside `ROTATION_GRACE_SECONDS` there is no race
+    left to lose — the winner finished long since — so a presentation that late
+    is somebody working from a copy.
+
+    **Its successor exists.** A consumed row with nothing recorded as replacing
+    it was consumed by something other than a rotation, and nothing here should
+    be forgiving about that.
+
+    **The successor is itself unspent.** This is the condition that matters. If
+    the successor has already been used, the real client has moved on, and
+    whoever is holding this older generation is not merely behind — they are
+    somewhere the real client no longer is. That is a theft, and it ends the
+    family.
+    """
+    from core.authentication import load_without_tenant_scope
+
+    if row.consumed_at is None or not row.replaced_by_id:
+        return False
+
+    if utc_now() - row.consumed_at > timedelta(seconds=ROTATION_GRACE_SECONDS):
+        return False
+
+    successor = load_without_tenant_scope(
+        lambda: RefreshToken.query.filter_by(id=row.replaced_by_id).first()
+    )
+    return successor is not None and successor.consumed_at is None
+
+
+def _record_race(row, session) -> None:
+    """Write down that a client raced itself. Never the token itself."""
+    from .event_models import EVENT_REFRESH_RACE, record_event
+
+    try:
+        record_event(
+            event_type=EVENT_REFRESH_RACE,
+            tenant_id=row.tenant_id,
+            account_id=row.user_id,
+            session_id=row.session_id,
+            reason=f"generation:{row.generation}",
+        )
+    except Exception:  # noqa: BLE001 - an unwritten audit line must not mask this
+        logger.exception("could not record refresh rotation race")
 
 
 def _end_the_family(row, session) -> None:

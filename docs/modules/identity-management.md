@@ -54,6 +54,14 @@ their own organization — never for another organization, and never for a
 platform operator working inside theirs. Ending one session ends only that
 one; ending all of them is a deliberate, separate act that is recorded.
 
+**How long a session lasts depends on where it was opened.** Using it keeps it
+alive, and a separate limit ends it regardless of use — so a teacher who opens
+the app daily is not signed out mid-week, while no session lasts forever on any
+device. A platform operator's console is the strictest of them: idle for half an
+hour, and over within a working day. See
+`architecture/adr/ADR-022-session-lifetime-by-surface.md` for the limits and the
+reasoning.
+
 ---
 
 ## Parent
