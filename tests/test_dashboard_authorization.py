@@ -7,8 +7,10 @@ outstanding, overdue) and transport. It carried `@tenant_required` and
 read the school's money: a pupil's account, or a household sharing one
 (ADR-011).
 
-`build_dashboard()` contains no authorization of its own — only tenant and
-feature gates — so the route decorator is the only place this can be said.
+This file is about *who may ask*. `build_dashboard()` now also scopes *what
+comes back* per caller — a finance officer holding `dashboard.read` receives
+the finance section and not the roll counts — which is asserted separately in
+tests/test_dashboard_scoping.py.
 """
 
 from __future__ import annotations

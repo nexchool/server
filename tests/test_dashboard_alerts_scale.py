@@ -113,8 +113,18 @@ def _enrol(db_session, tenant, year, bus, route, *, status="active"):
     return enrolment
 
 
+# These tests are about the counting, not the authorization, so they ask as
+# somebody who may see every row. Scoping is covered in
+# tests/test_dashboard_scoping.py.
+ALL_ALERT_PERMS = {
+    perm
+    for perms in dashboard.ALERT_PERMISSIONS.values()
+    for perm in perms
+}
+
+
 def _alerts(tenant):
-    return dashboard._alerts(tenant.id, True, finance_enabled=False)
+    return dashboard._alerts(tenant.id, True, ALL_ALERT_PERMS, finance_enabled=False)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +206,7 @@ def _queries_for_alerts(tenant):
 
     event.listen(db.engine, "before_cursor_execute", record)
     try:
-        dashboard._alerts(tenant.id, True, finance_enabled=False)
+        dashboard._alerts(tenant.id, True, ALL_ALERT_PERMS, finance_enabled=False)
     finally:
         event.remove(db.engine, "before_cursor_execute", record)
     return len(seen)

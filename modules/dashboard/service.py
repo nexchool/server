@@ -9,7 +9,7 @@ All queries use COUNT/GROUP BY to avoid loading full row sets.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from sqlalchemy import and_, cast, func, Date
 
@@ -37,6 +37,76 @@ from modules.transport.models import (
 )
 from core.school_time import utc_now
 from core.school_time import school_today
+
+
+# ---------------------------------------------------------------------------
+# Who may see which section
+# ---------------------------------------------------------------------------
+# A school admin sees the whole dashboard. A sub-admin does not: a finance
+# officer has no business reading roll counts or hostel occupancy, and until
+# now this endpoint answered one coarse `dashboard.read` and returned every
+# section to whoever passed it — so hiding a card in the browser would have
+# left the data sitting in the response.
+#
+# `visible: False` is deliberately NOT `enabled: False`. The latter already
+# means "this school is not on that plan", and the UI answers it with an
+# upsell placeholder. Telling a finance officer that Transport is not part of
+# their plan would be a lie about the school in order to describe a fact about
+# them. Two different absences, two different keys, two different renderings.
+
+SECTION_PERMISSIONS: Dict[str, Tuple[str, ...]] = {
+    # Any one of these is enough to see the section (ANY-of, like the nav).
+    "overview": ("student.read.all", "teacher.read", "class.read"),
+    "today": ("attendance.read.all",),
+    "finance": ("finance.read",),
+    "transport": ("transport.dashboard.read",),
+    "actions": ("teacher.leave.manage", "holiday.read"),
+}
+
+# Each alert row carries its own domain, because "Attention Required" is a
+# list of other people's problems: a finance officer should see overdue fees
+# and not a timetable clash they cannot act on or even open.
+ALERT_PERMISSIONS: Dict[str, Tuple[str, ...]] = {
+    "timetable_conflicts": ("timetable.read",),
+    "classes_without_timetable": ("timetable.read",),
+    "subjects_without_teacher": ("subject.read", "class.read"),
+    "classes_without_subjects": ("subject.read", "class.read"),
+    "students_without_class": ("student.read.all",),
+    "overdue_fees_students": ("finance.read",),
+    "transport_issues": ("transport.dashboard.read",),
+}
+
+
+def _granted() -> set:
+    """The caller's permission names, fetched once for the whole dashboard.
+
+    `has_permission` is Redis-cached but still resolves the set per call, and
+    this endpoint asks a dozen questions of it. One read, then string work.
+    """
+    from flask import g
+
+    user = getattr(g, "current_user", None)
+    if user is None:
+        return set()
+    from modules.rbac.services import get_user_permissions
+
+    return set(get_user_permissions(user.id))
+
+
+def _can(granted: set, *permissions: str) -> bool:
+    """True if any permission is held, honouring the `<resource>.manage` rule.
+
+    Mirrors `rbac.services.has_permission` rather than calling it, so the whole
+    dashboard costs one permission lookup instead of a dozen. The rule it
+    mirrors is one line and is asserted by tests/test_dashboard_scoping.py.
+    """
+    for permission in permissions:
+        if permission in granted:
+            return True
+        resource = permission.split(".")[0]
+        if f"{resource}.manage" in granted:
+            return True
+    return False
 
 
 def _today() -> date:
@@ -204,7 +274,12 @@ def _count_buses_near_capacity(tenant_id: str, threshold: float = 0.85) -> int:
     )
 
 
-def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = True) -> Dict[str, Any]:
+def _alerts(
+    tenant_id: str,
+    transport_enabled: bool,
+    granted: set,
+    finance_enabled: bool = True,
+) -> Dict[str, Any]:
     timetable_enabled = is_feature_enabled(tenant_id, "timetable")
 
     # Every class the school runs. Needed by two unrelated alerts below, so it
@@ -328,7 +403,7 @@ def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = Tru
 
         transport_issues = students_inactive + buses_near
 
-    return {
+    counts = {
         "timetable_conflicts": timetable_conflicts,
         "classes_without_timetable": classes_without_timetable,
         "subjects_without_teacher": subjects_without_teacher,
@@ -336,16 +411,18 @@ def _alerts(tenant_id: str, transport_enabled: bool, finance_enabled: bool = Tru
         "students_without_class": students_without_class,
         "overdue_fees_students": overdue_fees_students,
         "transport_issues": transport_issues,
-        "total_issues": (
-            timetable_conflicts
-            + classes_without_timetable
-            + subjects_without_teacher
-            + classes_without_subjects
-            + students_without_class
-            + overdue_fees_students
-            + transport_issues
-        ),
     }
+
+    # Only the rows this caller could actually open. `total_issues` is then a
+    # count of what they were shown — a badge reading 7 above a list of 2 is
+    # worse than no badge, and the two they cannot see are not their problem.
+    visible = {
+        key: value
+        for key, value in counts.items()
+        if _can(granted, *ALERT_PERMISSIONS.get(key, ()))
+    }
+    visible["total_issues"] = sum(visible.values())
+    return visible
 
 
 def _finance(tenant_id: str) -> Dict[str, Any]:
@@ -511,12 +588,26 @@ def build_dashboard() -> Dict[str, Any]:
     attendance_enabled = is_feature_enabled(tenant_id, "attendance")
     finance_enabled = is_feature_enabled(tenant_id, "fees_management")
 
-    overview = _overview(tenant_id)
-    today_ops = _today_ops(tenant_id) if attendance_enabled else {"enabled": False}
-    alerts = _alerts(tenant_id, transport_enabled, finance_enabled=finance_enabled)
-    finance = _finance(tenant_id) if finance_enabled else {"enabled": False}
-    transport = _transport(tenant_id) if transport_enabled else {"enabled": False}
-    actions = _actions(tenant_id)
+    # Two independent gates per section, and they mean different things:
+    # the feature flag asks whether the *school* bought this, the permission
+    # asks whether *this person* may see it. A section fails on either.
+    granted = _granted()
+
+    def section(name: str, build, feature_on: bool = True):
+        if not _can(granted, *SECTION_PERMISSIONS[name]):
+            return {"visible": False}
+        if not feature_on:
+            return {"enabled": False}
+        return build()
+
+    overview = section("overview", lambda: _overview(tenant_id))
+    today_ops = section("today", lambda: _today_ops(tenant_id), attendance_enabled)
+    alerts = _alerts(
+        tenant_id, transport_enabled, granted, finance_enabled=finance_enabled
+    )
+    finance = section("finance", lambda: _finance(tenant_id), finance_enabled)
+    transport = section("transport", lambda: _transport(tenant_id), transport_enabled)
+    actions = section("actions", lambda: _actions(tenant_id))
 
     health_score = _health_score(alerts, today_ops)
 

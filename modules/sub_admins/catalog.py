@@ -266,6 +266,18 @@ def get_catalog() -> List[dict]:
     return catalog
 
 
+# Granted to every sub-admin who holds any module at all, regardless of which.
+#
+# `dashboard.read` guards GET /api/dashboard/, and no module in this catalog
+# granted it — so every sub-admin ever created got a 403 on the one screen the
+# app opens on, while the sidebar cheerfully showed them the link. It is safe
+# to hand out because the dashboard now composes itself per caller: a finance
+# officer holding it sees the finance card and nothing else
+# (`modules/dashboard/service.py`, SECTION_PERMISSIONS). Without that
+# composition this constant would be a leak, so the two belong together.
+BASELINE_PERMISSIONS: Set[str] = {"dashboard.read"}
+
+
 def expand_selection(selection: List[dict]) -> Set[str]:
     """
     Expand a sub-admin module selection into a flat set of permission strings.
@@ -311,6 +323,11 @@ def expand_selection(selection: List[dict]) -> Set[str]:
         # finance full-access "manage" toggle
         if item.get(LEVEL_MANAGE) and LEVEL_MANAGE in toggles:
             permissions.update(toggles[LEVEL_MANAGE])
+
+    # A sub-admin with no module at all gets nothing, not even the baseline —
+    # there would be no dashboard for them to read.
+    if permissions:
+        permissions |= BASELINE_PERMISSIONS
 
     # Defence in depth: never let a forbidden permission slip through.
     return permissions - FORBIDDEN_PERMISSIONS
