@@ -53,7 +53,7 @@ from shared.helpers import (
     success_response,
     validation_error_response,
 )
-from core.school_time import utc_now
+from core.school_time import school_timezone, utc_now
 
 
 # ============================================================================
@@ -72,9 +72,16 @@ def _parse_datetime(value, field_name: str) -> datetime:
         raise ValueError(f"{field_name} is required (ISO 8601 datetime)")
     # Accept "...Z" by converting to "+00:00"
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(f"{field_name} must be a valid ISO 8601 datetime") from exc
+    # A stamp with no offset is a wall-clock time the warden typed — 18:00 at
+    # the hostel, not in Greenwich. Left naive it was stored as UTC (five and
+    # a half hours late) and could not even be compared with the aware clock
+    # that decides whether a pass is overdue.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=school_timezone())
+    return parsed
 
 
 def _attach_student_info(items: list[dict]) -> list[dict]:
