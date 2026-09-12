@@ -8,7 +8,7 @@ All queries use COUNT/GROUP BY to avoid loading full row sets.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Tuple
 
 from sqlalchemy import and_, cast, func, Date
@@ -35,8 +35,7 @@ from modules.transport.models import (
     TransportEnrollment,
     TransportRoute,
 )
-from core.school_time import utc_now
-from core.school_time import school_today
+from core.school_time import school_timezone, school_today
 
 
 # ---------------------------------------------------------------------------
@@ -487,20 +486,35 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
         round(100.0 * total_collected / total_expected, 1) if total_expected > 0 else 0.0
     )
 
-    # Last 7 days collection grouped by date
-    cutoff = utc_now() - timedelta(days=6)
+    # The last seven days *at the school*.
+    #
+    # The labels below were already school days (`school_today`), but the
+    # buckets were `cast(created_at, Date)` — which Postgres evaluates in the
+    # session's zone, UTC. A fee paid at 02:30 on Saturday in Ahmedabad is
+    # 21:00 Friday in UTC, so it was summed into Friday's bar while the tile
+    # for Saturday read ₹0: the money looked lost, and it had merely been
+    # filed under yesterday. Both the bucket and the window are now drawn in
+    # the school's own zone, so a day means the same thing everywhere here.
+    zone = school_timezone(tenant_id)
+    today = school_today(tenant_id)
+    local_day = cast(func.timezone(zone.key, Payment.created_at), Date)
+
+    def day_start(d: date) -> datetime:
+        return datetime.combine(d, time.min, tzinfo=zone)
+
+    window_start = day_start(today - timedelta(days=6))
     rows = (
         db.session.query(
-            cast(Payment.created_at, Date).label("pay_date"),
+            local_day.label("pay_date"),
             func.coalesce(func.sum(Payment.amount), 0).label("total"),
         )
         .filter(
             Payment.tenant_id == tenant_id,
             Payment.status == PaymentStatus.success.value,
-            Payment.created_at >= cutoff,
+            Payment.created_at >= window_start,
         )
-        .group_by(cast(Payment.created_at, Date))
-        .order_by(cast(Payment.created_at, Date))
+        .group_by(local_day)
+        .order_by(local_day)
         .all()
     )
 
@@ -508,7 +522,6 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
     collected_by_date: Dict[str, float] = {
         str(row.pay_date): float(row.total) for row in rows
     }
-    today = _today()
     last_7: List[Dict[str, Any]] = []
     for offset in range(6, -1, -1):
         d = (today - timedelta(days=offset)).isoformat()
@@ -516,9 +529,9 @@ def _finance(tenant_id: str) -> Dict[str, Any]:
 
     current_7_total = sum(d["amount"] for d in last_7)
 
-    # Previous week window (days 8–14 ago) for trend comparison
-    prev_start = utc_now() - timedelta(days=14)
-    prev_end = utc_now() - timedelta(days=7)
+    # The seven school days before those, for the trend comparison.
+    prev_start = day_start(today - timedelta(days=13))
+    prev_end = window_start
     prev_total_row = (
         db.session.query(func.coalesce(func.sum(Payment.amount), 0))
         .filter(

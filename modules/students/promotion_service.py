@@ -23,7 +23,7 @@ from modules.academics.backbone.models import (
 from modules.classes.models import Class
 from modules.students.models import EVENT_GRADUATED, Student, StudentPromotionBatch
 from modules.students.lifecycle_service import STATUS_GRADUATED, record_event
-from core.school_time import utc_now
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +455,10 @@ def execute_promotion(
         len(placements),
     )
 
-    today = utc_now().date()
+    # The school's today, not the server's: between midnight and 05:30 IST
+    # a UTC clock is still on yesterday, and an enrolment dated by it
+    # started the day before the person asked for.
+    today = school_today(tenant_id)
     promoted_count = 0
     repeated_count = 0
     graduated_count = 0

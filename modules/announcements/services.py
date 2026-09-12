@@ -19,6 +19,7 @@ from modules.announcements.models import (
     AUDIENCE_SCOPES,
     KNOWN_AUDIENCE_ROLES,
 )
+from core.school_time import school_timezone, utc_now
 
 
 REVISION_CAP = 10
@@ -138,9 +139,12 @@ def schedule(announcement_id: str, *, actor_user_id: str, scheduled_at: str) -> 
         when = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
     except (ValueError, TypeError, AttributeError):
         raise ValidationError("scheduled_at must be ISO-8601")
+    # A stamp with no offset is a wall-clock time somebody typed — 10:00 at
+    # the school, not in Greenwich. Reading it as UTC sent it five and a half
+    # hours late for every Indian school.
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    if when <= datetime.now(timezone.utc):
+        when = when.replace(tzinfo=school_timezone())
+    if when <= utc_now():
         raise ValidationError("scheduled_at must be in the future")
 
     a.status = "scheduled"

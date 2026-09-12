@@ -25,7 +25,7 @@ from modules.academics.backbone.models import (
 )
 from modules.classes.models import Class
 from modules.students.models import Student
-from core.school_time import school_today, utc_now
+from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,10 @@ def assign_student_to_class(
     if not student:
         return {"success": False, "error": "Student not found"}
 
-    today = utc_now().date()
+    # The school's today, not the server's: between midnight and 05:30 IST
+    # a UTC clock is still on yesterday, and an enrolment dated by it
+    # started the day before the person asked for.
+    today = school_today(tenant_id)
 
     def _run() -> Optional[str]:
         err = _assign_student_to_class_impl(

@@ -180,8 +180,14 @@ def test_update_tenant_feature_flags_drops_core_keys(monkeypatch):
     fake_tenant_model.query = fake_tenant_query
     monkeypatch.setattr(platform_services, "Tenant", fake_tenant_model)
     monkeypatch.setattr(platform_services.db, "session", MagicMock())
+    # `platform_admin_id` is a foreign key to `users.id`. Nothing here reaches
+    # the database — the session and the audit writer are both stubbed — so a
+    # bare string cannot trip it; but a value that is never looked at is dead
+    # weight, so the stub records what it was handed and the test asserts the
+    # operator is passed through to the audit entry unchanged.
+    audit_calls: list[dict] = []
     monkeypatch.setattr(
-        platform_services, "log_platform_action", lambda **_kw: None
+        platform_services, "log_platform_action", lambda **kw: audit_calls.append(kw)
     )
     monkeypatch.setattr(
         platform_services,
@@ -189,12 +195,15 @@ def test_update_tenant_feature_flags_drops_core_keys(monkeypatch):
         lambda _tenant_id: {"students": True, "attendance": False},
     )
 
+    operator_id = "pa-0123456789ab"
     result = platform_services.update_tenant_feature_flags(
         tenant_id="t1",
-        platform_admin_id="admin",
+        platform_admin_id=operator_id,
         flags={"students": False, "attendance": False, "junk_key": True},
     )
     assert result["success"] is True
+    assert audit_calls and audit_calls[0]["platform_admin_id"] == operator_id
+    assert audit_calls[0]["action"] == "tenant.features.updated"
     assert "students" not in tenant.feature_flags  # core key dropped
     assert "junk_key" not in tenant.feature_flags  # unknown key dropped
     assert tenant.feature_flags["attendance"] is False

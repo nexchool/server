@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import joinedload
 
 from core.database import db
-from core.school_time import school_today, utc_now
+from core.school_time import school_timezone, school_today, utc_now
 from modules.academics.backbone.models import AttendanceRecord, AttendanceSession
 
 from .models import (
@@ -74,10 +74,19 @@ def is_locked(session: AttendanceSession) -> bool:
     window = lock_after_hours(session.tenant_id)
     if not window:
         return False
+    # The window counts from midnight *at the school*. `session_date` is a
+    # calendar day in the school's zone, so its midnight is 18:30 UTC the
+    # evening before — anchoring it there and comparing two aware instants
+    # lets Python do the conversion. This used to build a naive midnight and
+    # compare it against a naive UTC clock, which silently read the school's
+    # midnight as UTC midnight and held every register open five and a half
+    # hours past the deadline the school had set.
     deadline = datetime.datetime.combine(
-        session.session_date, datetime.time.min
+        session.session_date,
+        datetime.time.min,
+        tzinfo=school_timezone(session.tenant_id),
     ) + datetime.timedelta(hours=int(window))
-    return utc_now().replace(tzinfo=None) > deadline
+    return utc_now() > deadline
 
 
 def _refuse(code: str, message: str) -> Dict[str, Any]:

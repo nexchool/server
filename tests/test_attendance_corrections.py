@@ -8,7 +8,7 @@ For a record a school may have to produce, that is the wrong shape.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from flask import g
@@ -326,6 +326,39 @@ def test_without_a_deadline_only_finalising_closes_it(
     db_session.flush()
 
     assert is_locked(session) is False
+
+
+def test_the_deadline_is_midnight_at_the_school_not_in_london(
+    ctx, tenant, db_session, marked, settings, people, monkeypatch
+):
+    """A 24-hour window on the 12th closes at midnight on the 12th *in
+    Ahmedabad* — 18:30 UTC — not at midnight UTC, which is 05:30 the next
+    morning at the school. The register was staying open five and a half
+    hours past the deadline the school set, and no test noticed because
+    the ones above measure in days."""
+    from modules.attendance import correction_service
+    from modules.attendance.correction_service import is_locked
+
+    _record, session = marked
+    session.status = "draft"
+    session.session_date = date(2026, 9, 12)
+    settings.attendance_lock_after_hours = 24
+    db_session.flush()
+
+    # 23:30 IST on the 12th: the day is not over at the school.
+    monkeypatch.setattr(
+        correction_service, "utc_now",
+        lambda: datetime(2026, 9, 12, 18, 0, tzinfo=timezone.utc),
+    )
+    assert is_locked(session) is False
+
+    # 00:30 IST on the 13th: it is. (Still 19:00 on the 12th in UTC — the
+    # old code, comparing against UTC midnight, said the register was open.)
+    monkeypatch.setattr(
+        correction_service, "utc_now",
+        lambda: datetime(2026, 9, 12, 19, 0, tzinfo=timezone.utc),
+    )
+    assert is_locked(session) is True
 
 
 def test_a_settled_register_is_not_marked_again(

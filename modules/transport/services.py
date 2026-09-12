@@ -42,7 +42,7 @@ from .models import (
     TransportStaff,
     TransportStop,
 )
-from core.school_time import utc_now
+from core.school_time import school_now, utc_now
 from core.school_time import school_today
 
 TRANSPORT_FS_NAME = "Transport (monthly)"
@@ -85,7 +85,10 @@ def _deactivate_future_schedules_for_inactive_route(route_id: str, tenant_id: st
     started yet (start_time > now). Leaves in-progress windows (start <= now <= end) unchanged
     so the current run can finish. Does not change rows for windows already completed today.
     """
-    now_t = datetime.now().time()
+    # The school's clock, not the server's: ours runs UTC, five and a half
+    # hours behind every bus in India, so "has this run started yet" was
+    # being answered for the wrong afternoon.
+    now_t = school_now(tenant_id).time()
     rows = TransportRouteSchedule.query.filter_by(
         tenant_id=tenant_id, route_id=route_id, is_active=True
     ).all()
@@ -3432,7 +3435,7 @@ def get_driver_workload(
     bus_ids: set[str] = set()
     route_ids: set[str] = set()
     total_minutes = 0
-    now_t = datetime.now().time()
+    now_t = school_now().time()
     upcoming_count = 0
     for seg in schedules_today:
         stp = _parse_hhmm(seg["start_time"])

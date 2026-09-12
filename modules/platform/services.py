@@ -41,7 +41,7 @@ from modules.students.models import Student
 from modules.teachers.models import Teacher
 from modules.platform.audit import log_platform_action
 from core.theme import DEFAULT_SEEDS, resolve_theme, validate_seeds
-from core.school_time import is_valid_timezone, utc_now
+from core.school_time import is_valid_timezone, school_timezone, utc_now
 from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
@@ -446,6 +446,26 @@ def get_tenant_subscription(tenant_id: str) -> Dict[str, Any]:
     }
 
 
+def _parse_trial_end(raw: str, tenant_id: str) -> datetime:
+    """When a tenant's trial ends, as an instant.
+
+    The panel sends either "YYYY-MM-DD" or an ISO datetime. The column is
+    `DateTime(timezone=True)`, so what is stored must carry its offset: a naive
+    value handed to Postgres is read as UTC, and this used to *strip* the
+    offset the operator sent — an Indian trial set to end at 10:00 was stored
+    as 10:00 UTC, five and a half hours late.
+
+    An offset in the string is kept. A wall-clock time with none, and a bare
+    date, mean what the operator would mean by them: the school's own clock,
+    and midnight at the start of that day there.
+    """
+    zone = school_timezone(tenant_id)
+    if "T" in raw:
+        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return moment if moment.tzinfo is not None else moment.replace(tzinfo=zone)
+    return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=zone)
+
+
 def update_tenant_subscription(
     tenant_id: str,
     platform_admin_id: str,
@@ -482,17 +502,8 @@ def update_tenant_subscription(
             if trial_ends_at == "":
                 tenant.trial_ends_at = None
             else:
-                # Accept "YYYY-MM-DD" or full ISO datetime.
-                from datetime import datetime as _dt
-
-                raw = str(trial_ends_at)
                 try:
-                    if "T" in raw:
-                        tenant.trial_ends_at = _dt.fromisoformat(
-                            raw.replace("Z", "+00:00")
-                        ).replace(tzinfo=None)
-                    else:
-                        tenant.trial_ends_at = _dt.strptime(raw, "%Y-%m-%d")
+                    tenant.trial_ends_at = _parse_trial_end(str(trial_ends_at), tenant.id)
                 except ValueError:
                     return {
                         "success": False,

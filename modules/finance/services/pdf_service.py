@@ -28,7 +28,7 @@ except (ImportError, OSError):
     HTML = None  # type: ignore[assignment,misc]
 
 from .student_fee_service import get_student_fee
-from core.school_time import utc_now
+from core.school_time import to_school_time, utc_now
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +128,17 @@ def _resolve_student_context(student_id: Optional[str]) -> dict:
     return result
 
 
+def _receipt_day(created_at: Optional[str]) -> str:
+    """`created_at` as a calendar date in the school's zone, or an em dash."""
+    if not created_at:
+        return "—"
+    try:
+        moment = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "—"
+    return to_school_time(moment).date().isoformat()
+
+
 def _fmt(amount) -> str:
     """Format a numeric amount with comma-separated thousands."""
     try:
@@ -176,7 +187,10 @@ def _build_receipt_context(payment_id: str, show_note: bool = True) -> Optional[
     paid = float(sf.get("paid_amount") or 0)
     balance = total - paid
 
-    payment_date = data.get("created_at", "")[:10] if data.get("created_at") else "—"
+    # The day the school would write on the receipt, not the UTC day. Slicing
+    # the ISO string took the first ten characters of a UTC stamp, so a fee
+    # paid at 02:30 on Saturday printed Friday's date on a school document.
+    payment_date = _receipt_day(data.get("created_at"))
 
     items = []
     for it in sf.get("items") or []:
