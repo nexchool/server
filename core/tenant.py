@@ -13,6 +13,19 @@ from typing import Optional, Tuple, Any, Dict
 from flask import g, request, jsonify, current_app
 
 
+#: What a suspended school may still reach. Suspension is a billing state, not
+#: a deletion: a school suspended for non-payment (ADR-023) has to be able to
+#: sign in and see what is owed and what it has paid, or the only thing the
+#: platform tells them is that their school does not exist. Everything outside
+#: these prefixes is refused, and every write is refused anyway by
+#: `require_active_subscription`. A deleted tenant reaches none of it.
+SUSPENDED_TENANT_ALLOWED_PREFIXES = ("/api/auth/", "/api/subscription")
+
+
+def _is_reachable_while_suspended(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in SUSPENDED_TENANT_ALLOWED_PREFIXES)
+
+
 def get_tenant_id():
     """Return current request's tenant_id from g. None if not in tenant context."""
     return getattr(g, "tenant_id", None)
@@ -44,19 +57,22 @@ def find_tenant(
             resolved, regardless of Host shape.
     """
     from core.models import Tenant
-    from core.models import TENANT_STATUS_ACTIVE
 
-    def _active_by_subdomain(value: Optional[str]):
+    def _by_subdomain(value: Optional[str]):
+        """Look a school up by slug, whatever its status.
+
+        Deliberately unfiltered: this used to require `status=active`, which
+        made a suspended school resolve to nothing and answer "tenant not
+        found" at its own login. Status is the callers' decision, as the
+        docstring above has always claimed.
+        """
         subdomain = (value or "").strip().lower()
         if not subdomain:
             return None
-        return Tenant.query.filter_by(
-            subdomain=subdomain,
-            status=TENANT_STATUS_ACTIVE,
-        ).first()
+        return Tenant.query.filter_by(subdomain=subdomain).first()
 
     def _default_tenant():
-        return _active_by_subdomain(
+        return _by_subdomain(
             current_app.config.get("DEFAULT_TENANT_SUBDOMAIN") or "default"
         )
 
@@ -66,7 +82,7 @@ def find_tenant(
     tenant_id_from_body = body.get("tenant_id") or body.get("tenantId")
     tenant = Tenant.query.get(tenant_id_from_body) if tenant_id_from_body else None
     if tenant is None:
-        tenant = _active_by_subdomain(body.get("subdomain"))
+        tenant = _by_subdomain(body.get("subdomain"))
 
     # 2. Header — X-Tenant-ID (UUID) or X-Tenant-Subdomain (slug)
     if tenant is None:
@@ -76,13 +92,13 @@ def find_tenant(
             # inactive tenants after resolution.
             tenant = Tenant.query.get(tenant_id_header)
     if tenant is None:
-        tenant = _active_by_subdomain(request.headers.get("X-Tenant-Subdomain"))
+        tenant = _by_subdomain(request.headers.get("X-Tenant-Subdomain"))
 
     # 3. Subdomain from Host
     if tenant is None and request.host:
         parts = request.host.lower().split(".")
         if len(parts) >= 2 and parts[0] not in ("www", "api"):
-            tenant = _active_by_subdomain(parts[0])
+            tenant = _by_subdomain(parts[0])
         elif len(parts) == 1 and allow_default:
             tenant = _default_tenant()
 
@@ -91,6 +107,35 @@ def find_tenant(
         tenant = _default_tenant()
 
     return tenant
+
+
+def _reject_inactive_tenant(tenant):
+    """The refusal for a tenant that is not active, or None to let it through.
+
+    A suspended school is let through on the paths it needs to understand and
+    fix its suspension (see SUSPENDED_TENANT_ALLOWED_PREFIXES); anything else
+    is refused, and a deleted tenant is refused everywhere.
+    """
+    from core.models import TENANT_STATUS_ACTIVE, TENANT_STATUS_SUSPENDED
+
+    if tenant.status == TENANT_STATUS_ACTIVE:
+        return None
+    if tenant.status == TENANT_STATUS_SUSPENDED and _is_reachable_while_suspended(
+        request.path or ""
+    ):
+        return None
+    if tenant.status == TENANT_STATUS_SUSPENDED:
+        return jsonify(
+            success=False,
+            error="TenantSuspended",
+            message=(
+                "This school's subscription is suspended. Sign in and open "
+                "Subscription to see what is outstanding."
+            ),
+        )
+    return jsonify(
+        success=False, error="TenantUnavailable", message="Tenant is not available"
+    )
 
 
 def resolve_tenant_for_auth(
@@ -125,11 +170,9 @@ def resolve_tenant_for_auth(
             ),
         )
 
-    if tenant.status != TENANT_STATUS_ACTIVE:
-        code = 403
-        msg = "Tenant is suspended" if tenant.status == "suspended" else "Tenant is not available"
-        err = "TenantSuspended" if tenant.status == "suspended" else "TenantUnavailable"
-        return (code, jsonify(success=False, error=err, message=msg))
+    rejection = _reject_inactive_tenant(tenant)
+    if rejection is not None:
+        return (403, rejection)
 
     g.tenant_id = tenant.id
     g.tenant = tenant
@@ -165,18 +208,9 @@ def resolve_tenant():
             404,
         )
 
-    # Block suspended and deleted tenants (only active can access)
-    if tenant.status != TENANT_STATUS_ACTIVE:
-        error_code = "TenantSuspended" if tenant.status == "suspended" else "TenantUnavailable"
-        message = "Tenant is suspended" if tenant.status == "suspended" else "Tenant is not available"
-        return (
-            jsonify(
-                success=False,
-                error=error_code,
-                message=message,
-            ),
-            403,
-        )
+    rejection = _reject_inactive_tenant(tenant)
+    if rejection is not None:
+        return (rejection, 403)
 
     g.tenant_id = tenant.id
     g.tenant = tenant

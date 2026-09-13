@@ -523,9 +523,33 @@ def test_suspending_in_one_school_leaves_the_other_alone(
     ).status_code == 200
 
 
-def test_a_tenant_that_is_not_active_cannot_be_refreshed_into(
-    client, db_session, flask_app
-):
+def test_a_closed_tenant_cannot_be_refreshed_into(client, db_session, flask_app):
+    """A deleted school is gone, and a token from before does not reopen it."""
+    from core.models import TENANT_STATUS_DELETED
+
+    tenant = make_tenant(db_session)
+    account = _account(db_session, tenant)
+    tokens = _sign_in(client, flask_app, tenant, account)
+
+    tenant.status = TENANT_STATUS_DELETED
+    db_session.flush()
+
+    _fresh(flask_app)
+    response = client.post(
+        "/api/auth/refresh",
+        headers={"X-Tenant-ID": tenant.id},
+        json={"refresh_token": tokens["refresh_token"]},
+    )
+    assert response.status_code == 401
+
+
+def test_a_suspended_tenant_can_still_be_refreshed_into(client, db_session, flask_app):
+    """Changed deliberately (ADR-023): suspension is arrears, not deletion.
+
+    Ending the session would sign an administrator out of the one page that
+    tells them what is owed. The session survives; the tenant middleware
+    keeps them to auth and /api/subscription, and writes stay refused.
+    """
     from core.models import TENANT_STATUS_SUSPENDED
 
     tenant = make_tenant(db_session)
@@ -541,4 +565,4 @@ def test_a_tenant_that_is_not_active_cannot_be_refreshed_into(
         headers={"X-Tenant-ID": tenant.id},
         json={"refresh_token": tokens["refresh_token"]},
     )
-    assert response.status_code == 401
+    assert response.status_code == 200

@@ -137,21 +137,28 @@ def test_one_match_signs_straight_in_without_a_chooser(client, account, tenant):
     assert data["tenant_id"] == str(tenant.id)
 
 
-def test_a_suspended_school_is_left_out_of_the_chooser(
+def test_a_suspended_school_is_still_offered_in_the_chooser(
     client, db_session, twin_accounts
 ):
+    """Changed deliberately (ADR-023): a suspended school is still a school.
+
+    It used to be dropped from the chooser, so a person who works at two
+    schools was signed straight into the paid one — and the school in arrears,
+    whose administrator is precisely who needs to go and look at it, could not
+    be reached at all. Both are offered now; what the suspended one lets that
+    person do is decided after they are in, not by hiding it.
+    """
     from core.models import TENANT_STATUS_SUSPENDED
 
-    email, (tenant_a, first), (tenant_b, _) = twin_accounts
+    email, (tenant_a, _), (tenant_b, _) = twin_accounts
     tenant_b.status = TENANT_STATUS_SUSPENDED
     db_session.flush()
 
     data = login(client, email=email, password=PASSWORD).get_json()["data"]
 
-    # One live school left, so there is nothing to choose between.
-    assert "requires_tenant_choice" not in data
-    assert data["tenant_id"] == str(tenant_a.id)
-    assert data["user"]["id"] == first.id
+    assert data.get("requires_tenant_choice") is True
+    offered = {str(choice["id"]) for choice in data["tenants"]}
+    assert offered == {str(tenant_a.id), str(tenant_b.id)}
 
 
 # ---------------------------------------------------------------------------

@@ -454,7 +454,17 @@ def test_an_unknown_subdomain_also_falls_back_rather_than_refusing(
     assert response.get_json()["error"] == "InvalidCredentials"
 
 
-def test_a_suspended_tenant_refuses_everyone(client, db_session, account):
+def test_a_suspended_tenant_still_lets_its_people_sign_in(client, db_session, account):
+    """Changed deliberately (ADR-023): suspension is arrears, not deletion.
+
+    This used to refuse the login with 403 TenantSuspended. Once the platform
+    began suspending schools by itself when a payment grace period ran out,
+    that refusal became the only thing an unpaid school was ever told — it
+    could not reach the page showing what was owed and what it had paid. The
+    door is now open; every write is still refused by the subscription gate,
+    and every read outside auth and /api/subscription is still refused by the
+    tenant middleware.
+    """
     from core.models import TENANT_STATUS_SUSPENDED
 
     suspended = make_tenant(db_session, subdomain_prefix="chz-susp")
@@ -466,5 +476,4 @@ def test_a_suspended_tenant_refuses_everyone(client, db_session, account):
         client, email=guest.email, password=PASSWORD, tenant_id=suspended.id
     )
 
-    assert response.status_code == 403
-    assert response.get_json()["error"] == "TenantSuspended"
+    assert response.status_code == 200, response.get_json()

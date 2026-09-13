@@ -145,7 +145,17 @@ def test_deleted_account_can_do_nothing(client, db_session, flask_app):
     _sign_in(client, flask_app, tenant, account, expect=401)
 
 
-def test_suspended_school_stops_everyone_in_it(client, db_session, flask_app):
+def test_suspended_school_keeps_its_people_signed_in_but_shut_out(
+    client, db_session, flask_app
+):
+    """Changed deliberately (ADR-023): suspension is arrears, not deletion.
+
+    Signing in and refreshing used to be refused outright. That was tenable
+    while only an operator ever suspended a school; now the platform does it
+    for an unpaid subscription, and a school that cannot sign in cannot see
+    what it owes or what it has paid. So the session survives and the login
+    works — and everything the school came to do is still refused.
+    """
     tenant = make_tenant(db_session)
     account = _account(db_session, tenant)
     tokens = _sign_in(client, flask_app, tenant, account)
@@ -153,11 +163,19 @@ def test_suspended_school_stops_everyone_in_it(client, db_session, flask_app):
     tenant.status = TENANT_STATUS_SUSPENDED
     db_session.flush()
 
-    assert _refresh(client, flask_app, tenant, tokens).status_code == 401
+    assert _refresh(client, flask_app, tenant, tokens).status_code == 200
     _fresh(flask_app)
     assert client.post("/api/auth/login", json={
         "email": account.email, "password": PASSWORD,
-        "tenant_id": tenant.id}).status_code in (401, 403)
+        "tenant_id": tenant.id}).status_code == 200
+
+    # The rest of the app stays shut: this school is in arrears, not open.
+    _fresh(flask_app)
+    blocked = client.get("/api/students", headers={
+        "Authorization": f"Bearer {tokens['access_token']}",
+        "X-Tenant-ID": tenant.id})
+    assert blocked.status_code == 403
+    assert blocked.get_json()["error"] == "TenantSuspended"
 
 
 def test_a_revoked_session_is_the_end_of_that_session_only(

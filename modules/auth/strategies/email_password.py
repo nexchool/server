@@ -92,16 +92,24 @@ class EmailPasswordStrategy(AuthenticationStrategy):
         return [(account, None) for account in query.all()]
 
     def _as_matches(self, pairs, tenant_id, Tenant, active_status) -> List[AccountMatch]:
-        """Attach each account's school, keeping only the live ones.
+        """Attach each account's school, keeping only the ones still standing.
 
-        A suspended school blocks sign-in for everybody, so an account inside
-        one is not a candidate — which is also what the legacy cross-tenant
-        search did.
+        A suspended school *is* still standing. This used to refuse it, on the
+        reasoning that suspension blocks sign-in for everybody — true while
+        suspension was only ever an operator's manual act. Since the platform
+        began suspending schools itself for an unpaid subscription (ADR-023),
+        refusing the login is refusing the school any way to see what it owes;
+        `core/tenant.py` lets it reach auth and its Subscription page and
+        nothing else, and every write stays refused. A deleted school, and a
+        school still on trial, are unchanged.
         """
+        from core.models import TENANT_STATUS_SUSPENDED
+
+        may_sign_in = {active_status, TENANT_STATUS_SUSPENDED}
         matches: List[AccountMatch] = []
         for account, identifier in pairs:
             tenant = db.session.get(Tenant, account.tenant_id)
-            if tenant is None or tenant.status != active_status:
+            if tenant is None or tenant.status not in may_sign_in:
                 continue
             matches.append(
                 AccountMatch(account=account, tenant=tenant, identifier=identifier)

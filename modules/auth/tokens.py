@@ -195,9 +195,18 @@ def rotate(token: str) -> Tuple[str, Optional[object], Optional[str]]:
     tenant = load_without_tenant_scope(
         lambda: Tenant.query.filter_by(id=row.tenant_id).first()
     )
-    if tenant is None or tenant.status != TENANT_STATUS_ACTIVE:
-        # A school that has been suspended cannot be re-entered by anybody
-        # holding a token from before. Refresh is not a loophole around it.
+    from core.models import TENANT_STATUS_SUSPENDED
+
+    if tenant is None or tenant.status not in (
+        TENANT_STATUS_ACTIVE,
+        TENANT_STATUS_SUSPENDED,
+    ):
+        # A closed school cannot be re-entered by anybody holding a token from
+        # before. A *suspended* one can: since the platform started suspending
+        # schools for an unpaid subscription (ADR-023), ending their sessions
+        # would log an administrator out of the only page that explains why.
+        # They keep the session; `core/tenant.py` keeps them to auth and
+        # /api/subscription, and every write stays refused.
         return RefreshOutcome.TENANT_INACTIVE, session, None
 
     consumed = db.session.execute(
