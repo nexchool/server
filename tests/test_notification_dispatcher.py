@@ -100,3 +100,33 @@ def test_dispatcher_strategy_exception_isolates_channels(monkeypatch):
         title="Hi",
     )
     assert result == {"EMAIL": False, "IN_APP": True}
+
+
+def test_dispatcher_logs_the_strategy_that_raised(monkeypatch, caplog):
+    """A channel that blows up must leave a trace naming the channel.
+
+    The bare `except Exception: results[ch] = False` here is why a completely
+    broken push pipeline — every send raising ImportError — looked like a
+    working one from the caller's side for weeks. Absorbing the exception is
+    correct; absorbing it silently is not.
+    """
+    d = dispatcher_mod.NotificationDispatcher()
+    exploding = MagicMock()
+    exploding.send.side_effect = RuntimeError("provider is on fire")
+    d._strategies = dict(d._strategies)
+    d._strategies["EMAIL"] = exploding
+
+    _set_feature(monkeypatch, True)
+
+    with caplog.at_level("ERROR"):
+        result = d.dispatch(
+            user_id="user-1",
+            tenant_id="tenant-1",
+            notification_type="FEE_REMINDER",
+            channels=["EMAIL"],
+            title="Hi",
+        )
+
+    assert result == {"EMAIL": False}
+    assert "EMAIL" in caplog.text
+    assert "provider is on fire" in caplog.text

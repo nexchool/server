@@ -34,9 +34,6 @@ def _send_one(row: DeviceToken, title: str, body: str, data: Dict[str, str]) -> 
             body=body,
             data=data or None,
         )
-    if not is_fcm_configured():
-        logger.warning("FCM token skipped (not configured): user device id=%s", row.id)
-        return False, False
     return send_fcm_v1(
         device_token=row.device_token,
         title=title,
@@ -57,11 +54,28 @@ def deliver_to_tokens(
 
     Returns counts: ok, failed, deactivated.
     """
-    ok = failed = deactivated = 0
+    ok = failed = deactivated = skipped = 0
     if not tokens:
-        return {"ok": 0, "failed": 0, "deactivated": 0}
+        return {"ok": 0, "failed": 0, "deactivated": 0, "skipped": 0}
+
+    # Checked once, not per token per attempt. A missing service account is a
+    # deployment fact, not a transient failure: retrying it cannot help, and
+    # warning twice for every token buried the one line that explains why
+    # nothing is arriving.
+    fcm_ready = is_fcm_configured()
+    fcm_tokens = sum(1 for row in tokens if row.provider != "expo")
+    if fcm_tokens and not fcm_ready:
+        logger.error(
+            "FCM not configured (set FIREBASE_SERVICE_ACCOUNT_JSON or "
+            "FIREBASE_SERVICE_ACCOUNT_PATH) — skipping %s FCM token(s)",
+            fcm_tokens,
+        )
 
     for row in tokens:
+        if row.provider != "expo" and not fcm_ready:
+            skipped += 1
+            continue
+
         success, deact = _send_one(row, title, body, data)
         if success:
             ok += 1
@@ -79,4 +93,4 @@ def deliver_to_tokens(
         else:
             failed += 1
 
-    return {"ok": ok, "failed": failed, "deactivated": deactivated}
+    return {"ok": ok, "failed": failed, "deactivated": deactivated, "skipped": skipped}

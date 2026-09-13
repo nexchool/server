@@ -11,6 +11,27 @@ from core.database import db
 from modules.announcements.models import Announcement, AnnouncementAttachment, AnnouncementRevision
 from modules.notifications import notification_service
 from modules.notifications.enums import NotificationChannel
+from modules.notifications.realtime_pub import InboxRealtimeEvent, publish_inbox_event
+
+
+def _deliver(notification, user_ids) -> None:
+    """Commit the fan-out rows, then hand them to the dispatch worker.
+
+    Both halves matter and neither is optional. `create_notification` +
+    `create_recipients` only write rows, and this runs inside a Celery task
+    whose app context tears the session down with a rollback — so without the
+    commit the announcement is discarded entirely. And `dispatch_notification_task`
+    runs in a *different process*: enqueue before committing and it queries for
+    a notification its own transaction cannot see.
+    """
+    db.session.commit()
+    notification_service.send_notification(notification.id)
+    publish_inbox_event(
+        notification.tenant_id,
+        list(user_ids),
+        InboxRealtimeEvent.INBOX_CREATED,
+        {"notification_id": notification.id},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +67,7 @@ def announcement_fan_out(announcement_id: str) -> None:
         user_id=None,
     )
     notification_service.create_recipients(n.id, list(user_ids))
+    _deliver(n, user_ids)
 
 
 @shared_task(name="announcements.recall_fan_out")
@@ -69,6 +91,7 @@ def announcement_recall_fan_out(announcement_id: str, reason: str) -> None:
         user_id=None,
     )
     notification_service.create_recipients(n.id, list(user_ids))
+    _deliver(n, user_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +113,6 @@ def process_scheduled_announcements() -> int:
         .limit(100)
         .all()
     )
-    fired = 0
     for a in rows:
         a.status = "published"
         a.published_at = now
@@ -108,9 +130,19 @@ def process_scheduled_announcements() -> int:
             ))
             a.revision_count = 1
         db.session.flush()
-        announcement_fan_out.delay(a.id)
-        fired += 1
+
+    # Commit the whole batch before enqueueing any of it. The worker runs in
+    # another process and opens with `if a.status != "published": return`, so
+    # a fan-out queued against an uncommitted flip is dropped — and dropped
+    # quietly, as a routine "skipped" log line. This also releases the
+    # SELECT FOR UPDATE locks before the workers start reading these rows.
+    published_ids = [a.id for a in rows]
     db.session.commit()
+
+    for announcement_id in published_ids:
+        announcement_fan_out.delay(announcement_id)
+
+    fired = len(published_ids)
     if fired:
         current_app.logger.info("process_scheduled_announcements fired %d", fired)
     return fired

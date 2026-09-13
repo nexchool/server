@@ -52,8 +52,13 @@ def notify_calendar_change(
 ) -> None:
     """Create an in-app notification for admins, teachers, students, parents."""
     try:
+        from core.database import db
         from modules.notifications import notification_service
         from modules.notifications import notification_targeting_service as targeting
+        from modules.notifications.realtime_pub import (
+            InboxRealtimeEvent,
+            publish_inbox_event,
+        )
 
         user_ids: List[str] = []
         for role in NOTIFY_ROLES:
@@ -73,6 +78,17 @@ def notify_calendar_change(
             user_id=None,
         )
         notification_service.create_recipients(notification.id, user_ids)
+        # Recipient rows are not a delivery. Commit them so the dispatch worker
+        # — a separate process — can see them, then enqueue it. Without this
+        # the rows sit at `pending` forever and nothing reaches anyone.
+        db.session.commit()
+        notification_service.send_notification(notification.id)
+        publish_inbox_event(
+            tenant_id,
+            user_ids,
+            InboxRealtimeEvent.INBOX_CREATED,
+            {"notification_id": notification.id},
+        )
     except Exception as exc:
         current_app.logger.warning(
             "academic_calendar notification failed: %s", exc, exc_info=True

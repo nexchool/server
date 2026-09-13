@@ -10,6 +10,9 @@ Beat:   celery -A celery_app:celery beat -l info
 import os
 
 from celery import Celery
+from celery.schedules import crontab
+
+from core.school_time import DEFAULT_SCHOOL_TIMEZONE
 
 _celery = None
 
@@ -37,27 +40,39 @@ def make_celery(app):
             "modules.announcements.tasks",
         ],
     )
+    # Crontab hours below are read in this timezone. Every school on the
+    # platform is in India (see core.school_time), and a UTC reading would put
+    # every one of them 5h30m out — which is how a fee reminder scheduled for
+    # "daily" reached parents at 23:01 local.
+    celery.conf.timezone = DEFAULT_SCHOOL_TIMEZONE
+
     # Use new lowercase config keys; avoid celery.conf.update(app.config) to prevent old-key conflicts
+    #
+    # Anything rarer than hourly is a `crontab`, never an interval. An interval
+    # counts from when beat last started, and beat's state file lives in /tmp
+    # inside a container that every deploy replaces — so `86400.0` meant "a day
+    # after the last deploy", and `604800` meant "never" on any repo that
+    # deploys more than weekly. Production had not run either weekly job.
     celery.conf.beat_schedule = {
         "process-overdue-fees-daily": {
             "task": "process_overdue_fees_task",
-            "schedule": 86400.0,  # 24 hours
+            "schedule": crontab(hour=9, minute=0),
         },
         "retention-purge-notification-logs": {
             "task": "retention.purge_notification_logs",
-            "schedule": 86400,
+            "schedule": crontab(hour=1, minute=15),
         },
         "retention-purge-expired-sessions": {
             "task": "retention.purge_expired_sessions",
-            "schedule": 86400,
+            "schedule": crontab(hour=1, minute=30),
         },
         "retention-purge-audit-logs": {
             "task": "retention.purge_audit_logs",
-            "schedule": 604800,
+            "schedule": crontab(hour=2, minute=0, day_of_week=0),
         },
         "retention-advance-offboarding": {
             "task": "retention.advance_offboarding_stage",
-            "schedule": 604800,
+            "schedule": crontab(hour=2, minute=30, day_of_week=0),
         },
         # Hostel: detect gatepasses past expected return + grace period.
         # Every 5 minutes is responsive enough for warden alerts without
@@ -67,14 +82,16 @@ def make_celery(app):
             "schedule": 300.0,  # 5 minutes
         },
         # Subscription: suspend schools whose payment grace period has run out.
+        # Overnight — a school should not lose access mid-working-day.
         "subscription-suspend-after-grace": {
             "task": "subscription.suspend_after_grace",
-            "schedule": 86400.0,  # daily
+            "schedule": crontab(hour=3, minute=0),
         },
-        # Subscription: remind schools with an outstanding payment, once a day.
+        # Subscription: remind schools with an outstanding payment, once a day,
+        # at an hour when somebody is at the desk to act on it.
         "subscription-send-payment-reminders": {
             "task": "subscription.send_payment_reminders",
-            "schedule": 86400.0,  # daily
+            "schedule": crontab(hour=9, minute=30),
         },
         "announcements-process-scheduled": {
             "task": "announcements.process_scheduled",
@@ -82,7 +99,7 @@ def make_celery(app):
         },
         "announcements-sweep-orphan-attachments": {
             "task": "announcements.sweep_orphan_attachments",
-            "schedule": 86400.0,  # daily
+            "schedule": crontab(hour=2, minute=45),
         },
     }
     # Default cwd is /app (owned by app) but a root-owned celerybeat-schedule from an old run breaks beat.

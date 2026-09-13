@@ -5,6 +5,7 @@ Creates a Notification record in the database for in-app display.
 Bulk sends use a parent Notification + notification_recipients (no duplicate row).
 """
 
+import logging
 from typing import Any, Dict, Optional
 
 from core.database import db
@@ -12,6 +13,8 @@ from modules.notifications.models import Notification
 from modules.notifications.enums import NotificationChannel
 
 from .base import NotificationStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class InAppStrategy(NotificationStrategy):
@@ -55,4 +58,10 @@ class InAppStrategy(NotificationStrategy):
             return True
         except Exception:
             db.session.rollback()
+            logger.exception(
+                "In-app notification insert failed for user=%s tenant=%s type=%s",
+                user_id,
+                tenant_id,
+                notification_type,
+            )
             return False

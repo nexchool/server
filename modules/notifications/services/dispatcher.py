@@ -97,7 +97,18 @@ class NotificationDispatcher:
                         parent_notification_id=parent_notification_id,
                     )
                 except Exception:
-                    # Never let a strategy exception break other channels
+                    # Never let a strategy exception break other channels —
+                    # but never absorb it silently either. An unlogged failure
+                    # here is indistinguishable from a delivery, which is how a
+                    # push pipeline that raised on every single send went
+                    # unnoticed for weeks.
+                    logger.exception(
+                        "Notification channel %s failed for user=%s tenant=%s type=%s",
+                        ch,
+                        user_id,
+                        tenant_id,
+                        notification_type,
+                    )
                     results[ch] = False
             else:
                 results[ch] = False

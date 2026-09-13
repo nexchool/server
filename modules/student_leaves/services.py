@@ -60,6 +60,10 @@ def _notify(
     try:
         from modules.notifications import notification_service
         from modules.notifications.enums import NotificationChannel
+        from modules.notifications.realtime_pub import (
+            InboxRealtimeEvent,
+            publish_inbox_event,
+        )
         if not recipient_user_ids:
             return
         # Default to in-app + push so the student/teacher/admin gets a phone alert.
@@ -68,7 +72,7 @@ def _notify(
         if not clean_ids:
             return
         if len(clean_ids) == 1:
-            notification_service.create_notification(
+            n = notification_service.create_notification(
                 tenant_id=tenant_id,
                 notification_type=notification_type,
                 title=title,
@@ -88,6 +92,20 @@ def _notify(
                 user_id=None,
             )
             notification_service.create_recipients(n.id, clean_ids)
+
+        # `ch` asks for PUSH, but writing the rows does not send anything. The
+        # dispatch worker is a separate process, so the rows have to be
+        # committed before it is enqueued or it queries for a notification it
+        # cannot see. (`send_notification` fills in the recipient row for the
+        # single-recipient branch.)
+        db.session.commit()
+        notification_service.send_notification(n.id)
+        publish_inbox_event(
+            tenant_id,
+            clean_ids,
+            InboxRealtimeEvent.INBOX_CREATED,
+            {"notification_id": n.id},
+        )
     except Exception as exc:
         from flask import current_app
         current_app.logger.warning("student_leaves notification failed: %s", exc, exc_info=True)

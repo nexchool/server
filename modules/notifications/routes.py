@@ -91,18 +91,42 @@ def _notifications_scope_query(tenant_id: str, user_id: str, unread_only: bool):
     return q
 
 
-def _serialize_list_item(n: Notification, user_id: str) -> dict:
+def _merge_recipient_state(n: Notification, nr: NotificationRecipient | None) -> dict:
     """Merge legacy per-user row with bulk parent + recipient read state."""
     data = n.to_dict(strip_internal_extra=True)
-    nr = NotificationRecipient.query.filter_by(
-        notification_id=n.id,
-        user_id=user_id,
-    ).first()
     if nr:
         data["read_at"] = nr.read_at.isoformat() if nr.read_at else None
         data["recipient_id"] = nr.id
         data["recipient_status"] = nr.status
     return data
+
+
+def _serialize_list_item(n: Notification, user_id: str) -> dict:
+    """Serialize one notification. For a page of them, use `_serialize_page`."""
+    nr = NotificationRecipient.query.filter_by(
+        notification_id=n.id,
+        user_id=user_id,
+    ).first()
+    return _merge_recipient_state(n, nr)
+
+
+def _serialize_page(rows: list[Notification], user_id: str) -> list[dict]:
+    """Serialize a page of notifications, reading recipient state in one query.
+
+    Doing this per row cost one query per notification on every inbox load —
+    up to the 100-item page maximum, for every signed-in user, on a request
+    that is already the most frequently polled in the app.
+    """
+    if not rows:
+        return []
+    recipients = {
+        nr.notification_id: nr
+        for nr in NotificationRecipient.query.filter(
+            NotificationRecipient.notification_id.in_([n.id for n in rows]),
+            NotificationRecipient.user_id == user_id,
+        ).all()
+    }
+    return [_merge_recipient_state(n, recipients.get(n.id)) for n in rows]
 
 
 def _paging_arg(raw, *, default: int, minimum: int, maximum: int | None = None) -> int:
@@ -152,7 +176,7 @@ def list_notifications():
         .offset(offset)
         .all()
     )
-    data = [_serialize_list_item(n, user_id) for n in rows]
+    data = _serialize_page(rows, user_id)
     has_more = offset + len(data) < total
     return success_response(
         data={

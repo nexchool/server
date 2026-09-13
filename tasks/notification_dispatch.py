@@ -96,16 +96,22 @@ def process_notification_chunk(self, notification_id: str, user_ids: List[str]) 
     users = get_users_by_ids(user_ids, tenant_id)
     user_map = {u.id: u for u in users}
 
+    # One query for the whole chunk. Fetching per user made a fan-out cost one
+    # round trip per recipient — 15,000 for a single announcement at the top of
+    # the scale contract.
+    recipient_map = {
+        rec.user_id: rec
+        for rec in NotificationRecipient.query.filter(
+            NotificationRecipient.notification_id == notification_id,
+            NotificationRecipient.user_id.in_(user_ids),
+        ).all()
+    }
+
     sent_ok = 0
     sent_fail = 0
 
     for uid in user_ids:
-        rec = (
-            NotificationRecipient.query.filter_by(
-                notification_id=notification_id,
-                user_id=uid,
-            ).first()
-        )
+        rec = recipient_map.get(uid)
         if not rec:
             continue
 

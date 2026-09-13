@@ -118,6 +118,25 @@ def unregister_device_token(
     return True, None
 
 
+def list_active_tokens_for_user(tenant_id: str, user_id: str) -> List[DeviceToken]:
+    """All active tokens for user within tenant (single query).
+
+    Read by `send_push_task` through a function-local import, which is why the
+    v2 dead-code sweep could not see the call site and deleted this. Every push
+    then raised ImportError, retried three times and gave up — silently, for
+    every notification in every environment. Keep the reference greppable.
+    """
+    return (
+        DeviceToken.query.filter(
+            DeviceToken.tenant_id == tenant_id,
+            DeviceToken.user_id == user_id,
+            DeviceToken.is_active.is_(True),
+        )
+        .order_by(DeviceToken.last_used_at.desc())
+        .all()
+    )
+
+
 def summarize_tokens_for_user(tenant_id: str, user_id: str) -> List[Dict[str, Any]]:
     """
     All device rows for this user (active and inactive), for debugging / GET /api/devices.

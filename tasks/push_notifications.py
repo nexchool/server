@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 from typing import Any, Optional
 
 from celery_app import get_celery
+from core.school_time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,10 @@ def send_push_task(
         logger.info("send_push_task: user not found user=%s tenant=%s", user_id, tenant_id)
         return {"skipped": True, "reason": "no_user"}
 
-    if user.login_locked_until and user.login_locked_until > datetime.utcnow():
+    # `login_locked_until` is TIMESTAMPTZ, so it reads back timezone-aware. A
+    # naive utcnow() here raises TypeError, and a lockout timestamp is never
+    # cleared — so one comparison would end push for that user permanently.
+    if user.login_locked_until and user.login_locked_until > utc_now():
         logger.info("send_push_task: user locked user=%s", user_id)
         return {"skipped": True, "reason": "user_locked"}
 
@@ -90,11 +93,12 @@ def send_push_task(
         raise
 
     logger.info(
-        "send_push_task user=%s tenant=%s ok=%s failed=%s deactivated=%s",
+        "send_push_task user=%s tenant=%s ok=%s failed=%s deactivated=%s skipped=%s",
         user_id,
         tenant_id,
         counts.get("ok"),
         counts.get("failed"),
         counts.get("deactivated"),
+        counts.get("skipped"),
     )
     return counts
