@@ -1,9 +1,9 @@
-"""What NexSchool buys from other people, and what it charges schools for it.
+"""What Nexchool buys from other people, and what it charges schools for it.
 
 Four tables, in the order the money moves:
 
     ServiceProvider   — the vendor. An SMS company.
-    ProviderService   — the thing NexSchool buys from them. SMS. Transactional
+    ProviderService   — the thing Nexchool buys from them. SMS. Transactional
                         email. One provider may sell several.
     TenantService     — this school uses that service, at these prices.
     ServiceUsageRecord— this much of it was actually consumed, this once.
@@ -17,7 +17,7 @@ unscoped, however it is annotated.
 Two things are deliberately kept apart everywhere below.
 
 **Provider cost and customer price are separate columns and never derived from
-each other.** NexSchool may absorb a cost, mark it up, charge a flat fee, or
+each other.** Nexchool may absorb a cost, mark it up, charge a flat fee, or
 change provider without changing what a school pays. A model that stored one
 number and a margin would make each of those a migration.
 
@@ -42,9 +42,9 @@ def _new_id() -> str:
 
 
 class ServiceProvider(db.Model):
-    """An outside company NexSchool buys something from.
+    """An outside company Nexchool buys something from.
 
-    Global on purpose: which vendor NexSchool uses is NexSchool's business
+    Global on purpose: which vendor Nexchool uses is Nexchool's business
     decision, not a per-school setting, and two schools on the same SMS
     provider should not produce two rows that can disagree about its name.
     """
@@ -90,7 +90,7 @@ class ProviderService(db.Model):
     that did not carry its unit would be a number nobody could price.
 
     `provider_unit_cost` is the catalog rate: what the provider charges
-    NexSchool. It is the default a school's configuration may override, and it
+    Nexchool. It is the default a school's configuration may override, and it
     is **never** shown to a school (see `billing/calculation.py`).
     """
 
@@ -113,7 +113,7 @@ class ProviderService(db.Model):
         default=PRICING_METERED,
         server_default=PRICING_METERED,
     )
-    #: What the provider charges NexSchool per unit. Internal.
+    #: What the provider charges Nexchool per unit. Internal.
     provider_unit_cost = db.Column(db.Numeric(12, 4), nullable=True)
     currency = db.Column(
         db.String(3), nullable=False, default=DEFAULT_CURRENCY,
@@ -142,7 +142,7 @@ class ProviderService(db.Model):
         """The catalog entry.
 
         `include_provider_cost` defaults to **False**, and that default is the
-        safety property: what NexSchool pays its vendor is not something a
+        safety property: what Nexchool pays its vendor is not something a
         school is entitled to see, and a serializer that included it by
         accident would leak it everywhere at once.
         """
@@ -175,7 +175,7 @@ class TenantService(TenantBaseModel):
     Every price here is nullable and every one falls back to the catalog,
     because the common case is a school on standard rates and the interesting
     case is the one school that negotiated something. What is *not* nullable
-    is the distinction: `provider_unit_cost` is what NexSchool pays, and
+    is the distinction: `provider_unit_cost` is what Nexchool pays, and
     `customer_unit_price` / `customer_fixed_price` are what the school pays.
     Neither is ever computed from the other unless `pass_through` says so, and
     `pass_through` says so out loud.
@@ -200,7 +200,7 @@ class TenantService(TenantBaseModel):
     customer_unit_price = db.Column(db.Numeric(12, 4), nullable=True)
     #: What this school pays per year, when fixed.
     customer_fixed_price = db.Column(db.Numeric(12, 2), nullable=True)
-    #: What the provider charges NexSchool for this school, if not the catalog rate.
+    #: What the provider charges Nexchool for this school, if not the catalog rate.
     provider_unit_cost = db.Column(db.Numeric(12, 4), nullable=True)
     #: How much an operator expects this school to use in a year. When set, it
     #: is what the annual estimate stands on; when not, the estimate says it is
@@ -226,7 +226,7 @@ class TenantService(TenantBaseModel):
 class ServiceUsageRecord(TenantBaseModel):
     """This much was consumed, this once.
 
-    A ledger, not a counter. `tenant_usage` — the only usage NexSchool tracked
+    A ledger, not a counter. `tenant_usage` — the only usage Nexchool tracked
     before this — holds one row per school and overwrites it, so there is no
     record of what was true last month and no way to bill for a past period.
     Metered services cannot work that way: the whole question is how much was

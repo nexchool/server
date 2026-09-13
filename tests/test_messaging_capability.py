@@ -142,7 +142,7 @@ def test_a_missing_template_stops_the_send_before_the_provider(
         purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
     )
     assert result.success is False
     assert result.error_code == "template_not_configured"
@@ -177,7 +177,7 @@ def test_a_variable_count_mismatch_stops_the_send_before_the_provider(
         purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
     )
     assert result.success is False
     assert result.error_code == "configuration_error"
@@ -202,7 +202,7 @@ def test_an_sms_template_naming_no_variables_refuses_a_send_that_needs_any(
         purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
     )
     assert result.success is False
     assert result.error_code == "configuration_error"
@@ -245,7 +245,7 @@ def test_with_no_template_purpose_the_send_behaves_exactly_as_before(
         purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
     )
     assert result.success is False
     assert result.error_code == "template_not_configured"
@@ -271,7 +271,7 @@ def test_template_purpose_picks_the_template_while_purpose_stays_the_bill_label(
         template_purpose="authentication_otp",
         destination="+919876543210",
         variables=[],
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
     )
 
     assert result.success is True
@@ -296,7 +296,7 @@ def test_an_unresolvable_template_purpose_is_refused_even_with_a_billable_purpos
         template_purpose="authentication_otp",
         destination="+919876543210",
         variables=["418302", "5"],
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
     )
     assert result.success is False
     assert result.error_code == "template_not_configured"

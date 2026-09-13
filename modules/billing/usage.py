@@ -7,13 +7,13 @@ in place, no history. This one is a **ledger**: every consumption event is its
 own row, kept, and answerable between two dates. A metered service cannot be
 billed from a counter that forgets.
 
-Nothing in NexSchool emits usage yet. This is the mechanism a future
+Nothing in Nexchool emits usage yet. This is the mechanism a future
 integration will call — when OTP is built it will record `sms_otp_sent` here
 and stop, and this module will do the arithmetic. The authentication code will
 never multiply a rate by a quantity.
 
 There is deliberately **no HTTP endpoint** for writing usage. Usage is written
-by NexSchool's own subsystems inside a request that is already authenticated
+by Nexchool's own subsystems inside a request that is already authenticated
 and already tenant-scoped; an endpoint would be a way to write billing data
 from outside, and nothing needs one yet.
 """

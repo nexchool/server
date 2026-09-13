@@ -9,7 +9,7 @@ Written against Meta's own developer documentation, read 2026-09-07:
     id is `messages[0].id`. (`v25.0` is what that page's own example uses
     today; the Graph API changelog lists `v26.0` as the newest version as of
     this read — both are live, and `GRAPH_VERSION` below is the one seam to
-    touch when NexSchool moves onto the newer one.)
+    touch when Nexchool moves onto the newer one.)
   * Template message body shape —
     https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
     confirms the `template` message envelope: `type: "template"`,

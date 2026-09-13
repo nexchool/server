@@ -1,8 +1,8 @@
 """Phase 3 — who may configure a school's providers, over HTTP.
 
-One rule: **which vendor NexSchool buys from is not a school's setting.** It
+One rule: **which vendor Nexchool buys from is not a school's setting.** It
 is the same boundary Phase 2 drew around pricing, for the same reason — the
-commercial relationship is NexSchool's, and a school that could point its own
+commercial relationship is Nexchool's, and a school that could point its own
 SMS at a vendor could point it anywhere.
 
 And one property: **no endpoint here returns a credential.** Not because every

@@ -1,19 +1,19 @@
 """What a school pays for, and what it costs us.
 
-NexSchool has always billed one thing — students, once a year, at one rate.
+Nexchool has always billed one thing — students, once a year, at one rate.
 That model has no room for a service bought by the unit from somebody else,
-and OTP is about to be the first of those: a provider charges NexSchool per
-message, NexSchool may charge the school something different, and the two
+and OTP is about to be the first of those: a provider charges Nexchool per
+message, Nexchool may charge the school something different, and the two
 numbers have to be able to move independently.
 
 Four tables, in the order the money moves:
 
     service_providers      the vendor
-    provider_services      what NexSchool buys from them, and by what unit
+    provider_services      what Nexchool buys from them, and by what unit
     tenant_services        this school uses that, at these prices
     service_usage_records  this much was used, this once
 
-The catalog (the first two) is global — which vendor NexSchool uses is not a
+The catalog (the first two) is global — which vendor Nexchool uses is not a
 per-school setting. The last two are tenant-owned and carry `tenant_id`.
 
 Purely additive. Nothing existing is altered, nothing is backfilled, and no
@@ -75,7 +75,7 @@ def upgrade():
         sa.Column(
             "pricing_mode", sa.String(30), nullable=False, server_default="metered"
         ),
-        # What the provider charges NexSchool. Internal; never returned to a
+        # What the provider charges Nexchool. Internal; never returned to a
         # school by any customer-facing payload.
         sa.Column("provider_unit_cost", sa.Numeric(12, 4), nullable=True),
         sa.Column("currency", sa.String(3), nullable=False, server_default="INR"),
@@ -124,7 +124,7 @@ def upgrade():
             "is_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")
         ),
         sa.Column("pricing_mode", sa.String(30), nullable=True),
-        # The school's price and NexSchool's cost, side by side and separate.
+        # The school's price and Nexchool's cost, side by side and separate.
         sa.Column("customer_unit_price", sa.Numeric(12, 4), nullable=True),
         sa.Column("customer_fixed_price", sa.Numeric(12, 2), nullable=True),
         sa.Column("provider_unit_cost", sa.Numeric(12, 4), nullable=True),

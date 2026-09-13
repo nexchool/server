@@ -22,7 +22,7 @@ def test_the_dlt_template_id_is_sent(monkeypatch):
     with patch("modules.integrations.providers.msg91.post_json", fake_post):
         Msg91Provider().send(
             destination="+919876543210",
-            body="418302 is your NexSchool sign-in code.",
+            body="418302 is your Nexchool sign-in code.",
             template_id="1707169900000000000",
             configuration={"sender_id": "NEXSCH"},
             variables={"OTP": "418302", "MINUTES": "5"},
@@ -47,7 +47,7 @@ def test_msg91_forwards_each_value_under_its_configured_name(monkeypatch):
     with patch("modules.integrations.providers.msg91.post_json", fake_post):
         Msg91Provider().send(
             destination="+919876543210",
-            body="418302 is your NexSchool sign-in code.",
+            body="418302 is your Nexchool sign-in code.",
             template_id="1707169900000000000",
             configuration={"sender_id": "NEXSCH"},
             variables={"OTP": "418302", "MINUTES": "5"},

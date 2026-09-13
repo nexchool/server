@@ -106,7 +106,7 @@ def hash_value(value: str) -> str:
     import hmac
 
     return hmac.new(
-        secret.encode() or b"nexschool", (value or "").encode(), hashlib.sha256
+        secret.encode() or b"Nexchool", (value or "").encode(), hashlib.sha256
     ).hexdigest()
 
 

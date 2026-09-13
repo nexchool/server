@@ -7,7 +7,7 @@ written out as a literal in two functions that were meant to agree.
 
 from __future__ import annotations
 
-#: NexSchool bills Indian schools in rupees. A currency column would be a
+#: Nexchool bills Indian schools in rupees. A currency column would be a
 #: product decision (multi-currency pricing, FX, rounding rules) that nobody
 #: has taken; until somebody does, this is the one place the answer lives
 #: rather than two string literals that could drift.
@@ -40,7 +40,7 @@ ESTIMATE_BASIS_OBSERVED = "observed"
 #: no configured figure and nothing recorded — the honest answer is zero
 ESTIMATE_BASIS_NONE = "none"
 
-#: A billing component that is the NexSchool subscription itself, as opposed
+#: A billing component that is the Nexchool subscription itself, as opposed
 #: to a third-party service. Kept as a key so a reader of a component list
 #: does not have to recognise it by its label.
 COMPONENT_SUBSCRIPTION = "subscription"

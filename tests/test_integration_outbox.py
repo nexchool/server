@@ -153,7 +153,7 @@ def test_a_fake_send_reaches_the_outbox(flask_app, tenant, enabled_fake_sms):
     outbox.clear()
     send_sms(
         tenant_id=tenant.id, destination="+919876543210",
-        body="418302 is your NexSchool sign-in code.",
+        body="418302 is your Nexchool sign-in code.",
         purpose="authentication_otp", variables=["418302", "5"],
     )
     assert "418302" in outbox.recent()[0]["body"]
@@ -208,13 +208,13 @@ def test_a_message_recorded_by_one_worker_is_read_by_another(
         worker_a.clear()
         worker_a.record(
             tenant_id="t", channel="sms", destination="+919876543210",
-            body="817263 is your NexSchool sign-in code.", purpose="authentication_otp",
+            body="817263 is your Nexchool sign-in code.", purpose="authentication_otp",
         )
 
         messages = worker_b.recent()
 
     assert messages, "a message recorded by one worker must be readable by another"
-    assert messages[0]["body"] == "817263 is your NexSchool sign-in code."
+    assert messages[0]["body"] == "817263 is your Nexchool sign-in code."
 
 
 def test_the_buffer_stays_bounded_when_backed_by_redis(flask_app, _reachable_redis):

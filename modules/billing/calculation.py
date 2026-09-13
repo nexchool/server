@@ -1,4 +1,4 @@
-"""What a school owes NexSchool. One definition of it.
+"""What a school owes Nexchool. One definition of it.
 
 Before this file the arithmetic existed three times: `calculate_tenant_billing`
 in the platform service, `_bill_summary` in the tenant-facing subscription
@@ -23,7 +23,7 @@ component entirely, so a route that forgets is still safe.
 **An estimate says it is an estimate.** Every annual figure carries the basis
 it stands on — an operator's configured number, an annualisation of what was
 actually recorded, or nothing at all. There is no path in this file that
-produces an invoice, because NexSchool does not have invoices.
+produces an invoice, because Nexchool does not have invoices.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _money(value) -> Decimal:
 
 
 # ---------------------------------------------------------------------------
-# The NexSchool subscription itself
+# The Nexchool subscription itself
 # ---------------------------------------------------------------------------
 
 def subscription_component(
@@ -109,7 +109,7 @@ def monthly_run_rate(annual_total) -> float:
 
     Named rather than written inline so that the platform dashboard's
     "monthly revenue" tile has somewhere to be argued with. It is a run rate,
-    not a bill: nothing in NexSchool bills monthly (`BILLING_CYCLES` has one
+    not a bill: nothing in Nexchool bills monthly (`BILLING_CYCLES` has one
     member), no proration exists, and a school that joins in November is
     counted here as if it had been paying all year. Kept exactly as it was so
     the number on the dashboard does not move; see the debt register.
@@ -139,7 +139,7 @@ def annual_estimate(
     """What this service will cost, roughly, over a year.
 
     Three numbers that must not be confused with each other: how much will be
-    used, what NexSchool will pay its provider for it, and what the school
+    used, what Nexchool will pay its provider for it, and what the school
     will be charged. Each is computed from its own inputs.
 
     The quantity comes from whichever basis is available, most authoritative
@@ -236,7 +236,7 @@ def annual_statement(subscription: Dict, service_components: Iterable[Dict]) -> 
         "services": components,
         "subscription_total": float(subscription_total),
         "services_total": float(services_total),
-        # Internal: what NexSchool spends to serve this school.
+        # Internal: what Nexchool spends to serve this school.
         "provider_cost_total": float(provider_total),
         "estimated_annual_total": float(
             (subscription_total + services_total).quantize(TWO_PLACES)
@@ -255,11 +255,11 @@ PROVIDER_COST_FIELDS = (
 
 
 def customer_facing(payload):
-    """The same figures with NexSchool's own costs taken out.
+    """The same figures with Nexchool's own costs taken out.
 
-    A school is entitled to know what it is charged. What NexSchool pays its
+    A school is entitled to know what it is charged. What Nexchool pays its
     vendor is a supplier negotiation, and a school that could read it would
-    know NexSchool's margin on every service.
+    know Nexchool's margin on every service.
 
     This strips by field name, recursively, rather than rebuilding a payload
     field by field — a whitelist would be safer against a leak but would drop

@@ -2,7 +2,7 @@
 
 A provider's own response shape stops here. Nothing above this line ever sees
 a vendor's JSON, its status strings or its exception types — that is what lets
-NexSchool change provider without touching a feature.
+Nexchool change provider without touching a feature.
 
 The care in this file is mostly about **not claiming more than the provider
 gave us**. See `MessageSendResult.status`.

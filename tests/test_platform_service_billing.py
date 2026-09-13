@@ -1,8 +1,8 @@
-"""Phase 2 — billing for things NexSchool buys from somebody else.
+"""Phase 2 — billing for things Nexchool buys from somebody else.
 
-NexSchool has always billed one thing: students, once a year, at one rate.
+Nexchool has always billed one thing: students, once a year, at one rate.
 This is the foundation for the second kind of charge — a service bought by the
-unit from a vendor, where what NexSchool pays and what the school pays are two
+unit from a vendor, where what Nexchool pays and what the school pays are two
 different numbers that move independently.
 
 Nothing here authenticates anybody or sends anything. OTP is the use case that
@@ -14,7 +14,7 @@ The assertions worth reading first:
 
   * `test_what_we_pay_our_vendor_is_not_what_the_school_is_charged` — the
     distinction the whole model exists for.
-  * `test_a_school_never_sees_what_nexschool_pays_its_provider` — and that it
+  * `test_a_school_never_sees_what_Nexchool_pays_its_provider` — and that it
     survives a component gaining new fields.
   * `test_the_same_provider_event_twice_is_one_usage_row` — a replayed webhook
     must not double a bill.
@@ -77,7 +77,7 @@ def _key(prefix: str) -> str:
 
 @pytest.fixture
 def sms(db_session):
-    """A vendor selling SMS at 2 paise a message, NexSchool's cost."""
+    """A vendor selling SMS at 2 paise a message, Nexchool's cost."""
     provider = upsert_provider(key=_key("smsco"), name="An SMS Company")
     service = upsert_service(
         provider_key=provider.key,
@@ -159,8 +159,8 @@ def test_a_service_needs_a_unit_and_a_pricing_mode_that_exists(db_session, sms):
 def test_what_we_pay_our_vendor_is_not_what_the_school_is_charged(db_session, sms):
     """The distinction the whole model exists for.
 
-    NexSchool pays 2 paise and charges 5. Neither number is computed from the
-    other, so NexSchool can change vendor without changing what a school pays,
+    Nexchool pays 2 paise and charges 5. Neither number is computed from the
+    other, so Nexchool can change vendor without changing what a school pays,
     and can discount a school without renegotiating with a vendor.
     """
     tenant = _school(db_session)
@@ -212,7 +212,7 @@ def test_a_fixed_price_ignores_how_much_was_used(db_session, sms):
     estimate = annual_estimate(configuration)
 
     assert estimate["estimated_annual_customer_charge"] == 9999.0
-    # The cost still tracks usage — that is what NexSchool actually spends.
+    # The cost still tracks usage — that is what Nexchool actually spends.
     assert estimate["estimated_annual_provider_cost"] == 10000.0
 
 
@@ -552,7 +552,7 @@ def test_the_usage_ledger_is_tenant_scoped_by_the_orm_not_only_by_hand(
 # What a school is allowed to see
 # ---------------------------------------------------------------------------
 
-def test_a_school_never_sees_what_nexschool_pays_its_provider(db_session, sms):
+def test_a_school_never_sees_what_Nexchool_pays_its_provider(db_session, sms):
     tenant = _school(db_session, price_per_student_per_year=Decimal("1000"))
     configure_tenant_service(
         tenant.id,

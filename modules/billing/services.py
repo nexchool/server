@@ -2,7 +2,7 @@
 
 The one function everything else should call is `tenant_annual_statement`. It
 is the authoritative answer to "what will this school pay over a year", and it
-is additive: the NexSchool subscription, then one component per third-party
+is additive: the Nexchool subscription, then one component per third-party
 service the school uses. A school using none gets a total identical to its
 subscription — which is what keeps every existing tenant's bill exactly where
 it was before this module existed.
@@ -82,7 +82,7 @@ def tenant_service_components(tenant_id: str) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
-# The catalog — what NexSchool buys, and from whom
+# The catalog — what Nexchool buys, and from whom
 # ---------------------------------------------------------------------------
 
 def list_providers(*, include_inactive: bool = False) -> List[Dict]:
@@ -208,7 +208,7 @@ def configure_tenant_service(
     """Sign a school up to a service, or change its terms.
 
     Every price is optional and falls back to the catalog. What is not
-    negotiable is that the school's price and NexSchool's cost are set
+    negotiable is that the school's price and Nexchool's cost are set
     separately — there is no argument here that derives one from the other.
 
     `provider_key` names the vendor. A service key is unique per provider

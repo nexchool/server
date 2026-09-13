@@ -3,14 +3,14 @@
 The model tests prove the arithmetic. These prove the boundary around it, and
 there are only two rules to remember:
 
-  * **What NexSchool pays its vendors is platform-admin only.** It is a
+  * **What Nexchool pays its vendors is platform-admin only.** It is a
     supplier negotiation, and a school that could read it would know
-    NexSchool's margin on every service.
+    Nexchool's margin on every service.
   * **What a school is charged is the school's own business**, behind the
     permission that already guards the rest of its commercials.
 
 There is deliberately no endpoint that writes usage. Usage is written by
-NexSchool's own subsystems inside a request that is already authenticated and
+Nexchool's own subsystems inside a request that is already authenticated and
 already tenant-scoped; an HTTP surface would be a way to write billing data
 from outside, and nothing needs one yet.
 """
@@ -74,7 +74,7 @@ def _school_user(db_session, tenant, *, permissions):
 
 
 # ---------------------------------------------------------------------------
-# The catalog is NexSchool's, not a school's
+# The catalog is Nexchool's, not a school's
 # ---------------------------------------------------------------------------
 
 def test_a_platform_operator_can_read_the_catalog_with_our_costs_in_it(

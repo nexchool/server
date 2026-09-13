@@ -62,7 +62,7 @@ def capability_health(*, tenant_id: str, capability: str) -> ProviderHealth:
     # downstream would have consulted it anyway.
     #
     # There is also no live case left where a stored reference *should* mean
-    # something: since Phase 2/9's commercial model, NexSchool owns one
+    # something: since Phase 2/9's commercial model, Nexchool owns one
     # vendor account per capability, with its secret set once on the server —
     # not a secret a school brings, and not one a per-tenant reference could
     # name today. Weighing the stored value in here regardless — ANDed, so it

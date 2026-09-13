@@ -506,7 +506,7 @@ def test_the_message_body_and_the_number_stay_out_of_the_log(db_session, caplog)
         _, code = _issue(tenant, number)
 
     assert code not in caplog.text
-    assert "is your NexSchool sign-in code" not in caplog.text
+    assert "is your Nexchool sign-in code" not in caplog.text
     assert normalize_mobile(number) not in caplog.text
 
 

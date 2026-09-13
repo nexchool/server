@@ -27,7 +27,7 @@ from .results import ProviderHealth, MessageSendResult
 
 
 class ProviderClient(ABC):
-    """How NexSchool actually calls one external service.
+    """How Nexchool actually calls one external service.
 
     Not to be confused with Phase 2's `ServiceProvider`, which is the same
     vendor's *commercial* record — what it sells and what it costs. That model

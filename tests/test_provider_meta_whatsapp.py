@@ -4,7 +4,7 @@ Nothing here reaches a network — see `test_provider_msg91.py`, which this
 file mirrors. The one structural difference is `test_the_variables_are_sent_
 positionally`: WhatsApp's `variables` is an ordered list, not a name -> value
 mapping, because a template's slot order belongs to the template and not to
-NexSchool (see `modules/integrations/base.py::WhatsAppProvider.send`).
+Nexchool (see `modules/integrations/base.py::WhatsAppProvider.send`).
 """
 
 from unittest.mock import patch
@@ -33,14 +33,14 @@ def test_the_variables_are_sent_positionally(monkeypatch):
     with patch("modules.integrations.providers.meta_whatsapp.post_json", fake_post):
         MetaWhatsAppProvider().send(
             destination="+919876543210",
-            template_name="nexschool_login_code",
+            template_name="Nexchool_login_code",
             variables=["418302", "5"],
             configuration={"phone_number_id": "123456", "language": "en"},
         )
 
     body = captured["payload"]
     assert body["type"] == "template"
-    assert body["template"]["name"] == "nexschool_login_code"
+    assert body["template"]["name"] == "Nexchool_login_code"
     parameters = body["template"]["components"][0]["parameters"]
     assert [p["text"] for p in parameters] == ["418302", "5"]
     assert "123456" in captured["url"]

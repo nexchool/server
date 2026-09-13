@@ -28,7 +28,7 @@ def build_otp_message(code: str) -> str:
     """
     minutes = max(OTP_TTL_SECONDS // 60, 1)
     return (
-        f"{code} is your NexSchool sign-in code. "
+        f"{code} is your Nexchool sign-in code. "
         f"It expires in {minutes} minutes. Do not share it with anyone."
     )
 

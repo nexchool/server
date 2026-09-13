@@ -8,7 +8,7 @@ point of these tests: a new method must not be a second copy of the gates.
 
 Only the *request* half is new, and it is shaped almost entirely by one
 requirement: it must not become a way to find out whether a phone number
-belongs to a NexSchool customer.
+belongs to a Nexchool customer.
 """
 
 from __future__ import annotations

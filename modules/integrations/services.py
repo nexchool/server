@@ -1,8 +1,8 @@
 """Configuring which provider carries a school's work.
 
 Platform-administrator operations. A school does not choose its own vendor for
-the same reason it does not set its own price: which company NexSchool buys
-from, and on what terms, is NexSchool's commercial decision.
+the same reason it does not set its own price: which company Nexchool buys
+from, and on what terms, is Nexchool's commercial decision.
 """
 
 from __future__ import annotations

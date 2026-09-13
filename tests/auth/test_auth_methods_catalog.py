@@ -168,7 +168,7 @@ def test_the_route_reports_subject_kinds_truthfully(client, db_session):
 
 def test_a_school_cannot_see_the_catalog(client, db_session):
     """The same boundary Phase 2 drew around pricing and Phase 3 drew around
-    integrations: which methods exist is NexSchool's to know, not a school's
+    integrations: which methods exist is Nexchool's to know, not a school's
     setting to read."""
     tenant = make_tenant(db_session)
     headers = _school_user(db_session, tenant)

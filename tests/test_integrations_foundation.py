@@ -591,12 +591,12 @@ def test_the_message_body_and_the_number_stay_out_of_the_log(db_session, caplog)
         send_sms(
             tenant_id=tenant.id,
             destination="+919876512345",
-            body="Your NexSchool code is 483920", variables=[],
+            body="Your Nexchool code is 483920", variables=[],
             purpose="authentication_otp",
         )
 
     assert "483920" not in caplog.text
-    assert "Your NexSchool code" not in caplog.text
+    assert "Your Nexchool code" not in caplog.text
     assert "+919876512345" not in caplog.text
     assert "9876512345" not in caplog.text
     # The last two digits survive, so a support engineer with the number in

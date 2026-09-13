@@ -338,7 +338,7 @@ class AccountIdentifier(TenantBaseModel):
     #: The comparison key. Every uniqueness and lookup question uses this.
     identifier_value_normalized = db.Column(db.Text, nullable=False)
 
-    #: Whether NexSchool has evidence the human controls this identifier. An
+    #: Whether Nexchool has evidence the human controls this identifier. An
     #: email is verified by the existing verification flow; an admission
     #: number is verified by the school having issued it.
     is_verified = db.Column(

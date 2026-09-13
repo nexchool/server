@@ -1414,7 +1414,7 @@ def request_mobile_otp():
     nobody, a school that has not enabled the method, a suspended account, a
     number shared by two people and a code that was genuinely sent all produce
     one response. Anything else would answer, for free, the question an
-    attacker is asking: *is this number a NexSchool customer?*
+    attacker is asking: *is this number a Nexchool customer?*
 
     The precise reason is recorded internally — see `otp.py` — so an operator
     investigating can tell those cases apart. The caller cannot.
