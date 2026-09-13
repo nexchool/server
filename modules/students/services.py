@@ -95,20 +95,33 @@ def _resolve_student_academic_year_id(
     return None
 
 
+def plan_student_headroom(tenant_id: str) -> Optional[int]:
+    """Student seats left under the tenant's limit, or None when there is none.
+
+    Counts active students only — the same definition billing uses — so a
+    school is not held to its licence for students who have graduated,
+    transferred or dropped out.
+    """
+    from modules.subscription.usage import count_active_students
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant or tenant.max_active_students is None:
+        return None
+    return tenant.max_active_students - count_active_students(tenant_id)
+
+
 def _check_student_plan_limit(tenant_id: str) -> tuple:
     """
     Enforce plan max_students. Returns (True, None) if allowed, (False, message) if limit exceeded.
     If tenant has no plan, allow (no limit).
     """
-    tenant = Tenant.query.get(tenant_id)
-    if not tenant or not tenant.plan_id:
-        return True, None
-    plan = tenant.plan
-    if not plan:
-        return True, None
-    current = Student.query.filter_by(tenant_id=tenant_id).count()
-    if current >= plan.max_students:
-        return False, f"Student limit reached for your plan (max {plan.max_students}). Contact support to upgrade."
+    headroom = plan_student_headroom(tenant_id)
+    if headroom is not None and headroom <= 0:
+        tenant = Tenant.query.get(tenant_id)
+        return False, (
+            f"Student limit reached for your plan (max {tenant.max_active_students} "
+            f"active students). Contact support to upgrade."
+        )
     return True, None
 
 

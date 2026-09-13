@@ -22,6 +22,7 @@ from modules.rbac.role_seeder import seed_roles_for_tenant
 from modules.students.models import Student
 from modules.students.services import (
     _check_student_plan_limit,
+    plan_student_headroom,
     _clean_bool,
     _clean_decimal,
     _clean_int,
@@ -743,28 +744,27 @@ def import_students_from_rows(
             "error": limit_msg,
         }
 
-    tenant = Tenant.query.get(tenant_id)
-    if tenant and tenant.plan_id and tenant.plan:
-        cap = tenant.plan.max_students
-        current = Student.query.filter_by(tenant_id=tenant_id).count()
-        if current + len(new_student_rows) > cap:
-            return {
-                "total": total,
-                "success": 0,
-                "failed": total,
-                "failed_rows": [
-                    {
-                        "row_number": rn,
-                        "email": "",
-                        "errors": [
-                            f"Would exceed plan student limit ({cap}). "
-                            f"Current: {current}, importing: {len(validated)}."
-                        ],
-                    }
-                    for rn in row_numbers
-                ],
-                "error": "Student plan limit",
-            }
+    headroom = plan_student_headroom(tenant_id)
+    if headroom is not None and len(new_student_rows) > headroom:
+        cap = Tenant.query.get(tenant_id).max_active_students
+        return {
+            "total": total,
+            "success": 0,
+            "failed": total,
+            "failed_rows": [
+                {
+                    "row_number": rn,
+                    "email": "",
+                    "errors": [
+                        f"Would exceed plan student limit ({cap} active students). "
+                        f"Active now: {cap - headroom}, new in this file: "
+                        f"{len(new_student_rows)}."
+                    ],
+                }
+                for rn in row_numbers
+            ],
+            "error": "Student plan limit",
+        }
 
     _preassign_admission_numbers(new_student_rows, tenant_id)
 

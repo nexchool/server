@@ -16,6 +16,7 @@ from core.decorators import (
     tenant_required,
     get_subscription_state,
 )
+from core.decorators.rbac import require_permission
 from core.models import Tenant
 from shared.helpers import error_response, success_response
 
@@ -95,16 +96,53 @@ def state():
     from modules.rbac.services import has_permission
 
     if has_permission(g.current_user.id, PERM_READ_BILLING):
+        from modules.teachers.services import count_employed_teachers
+
+        # The term — start, due date, grace — is part of the contract, so it
+        # sits behind the same gate as the bill. Standing itself (allow_writes,
+        # reason, message) is above, for everybody.
+        payload["term"] = sub.get("term")
         usage = get_tenant_usage(tenant_id)
         payload["usage"] = usage
         payload["billing"] = _bill_summary(
             tenant, usage.get("active_students_count", 0)
         )
+        # Where the school stands against the seat limits the operator set —
+        # the same counts the create guards refuse on, so the screen and the
+        # refusal can never disagree. A null limit is no ceiling.
+        payload["seats"] = {
+            "students": {
+                "used": usage.get("active_students_count", 0),
+                "limit": tenant.max_active_students,
+            },
+            "teachers": {
+                "used": count_employed_teachers(tenant_id),
+                "limit": tenant.max_employed_teachers,
+            },
+        }
         # Third-party services the school is signed up to, as separate line
-        # items. `customer_facing` removes what NexSchool pays its providers —
-        # a school is entitled to know what it is charged, not NexSchool's
+        # items. `customer_facing` removes what Nexchool pays its providers —
+        # a school is entitled to know what it is charged, not Nexchool's
         # margin — and it strips by field name wherever it appears, so a
         # component that later gains a cost field is still safe here.
         payload["services"] = customer_facing(tenant_service_components(tenant_id))
 
     return success_response(data=payload)
+
+
+@subscription_bp.route("/payments", methods=["GET"], strict_slashes=False)
+@tenant_required
+@auth_required
+@require_permission(PERM_READ_BILLING)
+def payments():
+    """GET /api/subscription/payments — what the school has paid, read-only.
+
+    Nexchool records these from the panel; a school can see them and quote
+    them, never change them. Voided payments stay on the list with their
+    reason, so the school sees the same trail the operator does.
+    """
+    from modules.subscription.term import list_payments
+
+    return success_response(
+        data={"payments": [p.to_dict() for p in list_payments(g.tenant_id)]}
+    )

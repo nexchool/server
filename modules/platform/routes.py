@@ -51,7 +51,8 @@ def create_tenant():
     POST /platform/tenants
     Body: name, subdomain, contact_email?, phone?, address?, admin_email,
           admin_name?, price_per_student_per_year?, discount_percentage?,
-          discount_start_date?, discount_end_date?, feature_flags?
+          discount_start_date?, discount_end_date?, feature_flags?,
+          max_active_students?, max_employed_teachers?
     """
     data = request.get_json() or {}
     required = ["name", "subdomain", "admin_email"]
@@ -74,6 +75,8 @@ def create_tenant():
         feature_flags=data.get("feature_flags"),
         platform_admin_id=g.current_user.id,
         login_url=data.get("login_url"),
+        max_active_students=data.get("max_active_students"),
+        max_employed_teachers=data.get("max_employed_teachers"),
     )
     if not result["success"]:
         return error_response("CreationError", result["error"], 400)
@@ -112,7 +115,8 @@ def update_tenant_pricing(tenant_id):
     """
     PATCH /platform/tenants/<id>/pricing
     Body: price_per_student_per_year?, discount_percentage?,
-          discount_start_date?, discount_end_date?
+          discount_start_date?, discount_end_date?,
+          max_active_students?, max_employed_teachers?
     Field omitted -> unchanged. Field set to "" -> cleared.
     """
     data = request.get_json() or {}
@@ -130,6 +134,12 @@ def update_tenant_pricing(tenant_id):
         ),
         discount_end_date=(
             data["discount_end_date"] if "discount_end_date" in data else None
+        ),
+        max_active_students=(
+            data["max_active_students"] if "max_active_students" in data else None
+        ),
+        max_employed_teachers=(
+            data["max_employed_teachers"] if "max_employed_teachers" in data else None
         ),
     )
     if not result["success"]:
@@ -250,6 +260,10 @@ def update_tenant_subscription(tenant_id):
         discount_percentage          0-100 or "" to clear
         discount_start_date          YYYY-MM-DD or "" to clear
         discount_end_date            YYYY-MM-DD or "" to clear
+        subscription_starts_on       YYYY-MM-DD or "" to clear
+        subscription_due_on          YYYY-MM-DD or "" to clear (no term)
+        grace_days                   whole number of days, 0 or more
+        auto_suspend_after_grace     bool
     """
     data = request.get_json() or {}
     fields = (
@@ -260,6 +274,10 @@ def update_tenant_subscription(tenant_id):
         "discount_percentage",
         "discount_start_date",
         "discount_end_date",
+        "subscription_starts_on",
+        "subscription_due_on",
+        "grace_days",
+        "auto_suspend_after_grace",
     )
     kwargs = {f: data[f] for f in fields if f in data}
     result = services.update_tenant_subscription(
@@ -274,6 +292,67 @@ def update_tenant_subscription(tenant_id):
     return success_response(
         data=result["subscription"], message="Subscription updated"
     )
+
+
+@platform_bp.route("/tenants/<tenant_id>/payments", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def list_tenant_payments(tenant_id):
+    """GET /platform/tenants/<id>/payments — every payment on record, voided included."""
+    result = services.list_tenant_payments(tenant_id)
+    if not result["success"]:
+        return not_found_response("Tenant")
+    return success_response(data={"payments": result["payments"]})
+
+
+@platform_bp.route("/tenants/<tenant_id>/payments", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def record_tenant_payment(tenant_id):
+    """
+    POST /platform/tenants/<id>/payments
+
+    Body: amount, paid_on (YYYY-MM-DD), method (bank_transfer | upi | cheque |
+    cash | other), reference?, covers_from?, covers_to?, note?,
+    next_due_on? — when given, the term moves on and a suspended school is
+    reactivated.
+    """
+    result = services.record_tenant_payment(
+        tenant_id=tenant_id,
+        platform_admin_id=g.current_user.id,
+        payload=request.get_json() or {},
+    )
+    if not result["success"]:
+        if result["error"] == "Tenant not found":
+            return not_found_response("Tenant")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(
+        data={"payment": result["payment"], "subscription": result["subscription"]},
+        message="Payment recorded",
+        status_code=201,
+    )
+
+
+@platform_bp.route("/tenants/<tenant_id>/payments/<payment_id>/void", methods=["POST"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def void_tenant_payment(tenant_id, payment_id):
+    """POST /platform/tenants/<id>/payments/<pid>/void — body: reason."""
+    data = request.get_json() or {}
+    result = services.void_tenant_payment(
+        tenant_id=tenant_id,
+        payment_id=payment_id,
+        platform_admin_id=g.current_user.id,
+        reason=str(data.get("reason") or ""),
+    )
+    if not result["success"]:
+        if result["error"] == "Payment not found":
+            return not_found_response("Payment")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(data={"payment": result["payment"]}, message="Payment voided")
 
 
 @platform_bp.route("/tenants/<tenant_id>/auth-policy", methods=["GET"])
@@ -338,10 +417,10 @@ def get_tenant_billing(tenant_id):
 
 
 # ---------------------------------------------------------------------------
-# Third-party services — what NexSchool buys, and what it charges for it
+# Third-party services — what Nexchool buys, and what it charges for it
 #
 # Platform-admin only, and that is the authorization story in full: the
-# catalog holds what NexSchool pays its vendors, which is a supplier
+# catalog holds what Nexchool pays its vendors, which is a supplier
 # negotiation and not a school's business. The school's own view of what it is
 # charged is on `/api/subscription/state`, with the costs stripped out.
 # ---------------------------------------------------------------------------
@@ -479,9 +558,9 @@ def configure_tenant_service(tenant_id):
 def get_tenant_annual_statement(tenant_id):
     """GET /platform/tenants/<id>/annual-statement?on_date=YYYY-MM-DD
 
-    The whole year in one answer: the NexSchool subscription, one component per
+    The whole year in one answer: the Nexchool subscription, one component per
     third-party service, and what they add to. An **estimate** — the payload
-    says so in a field — because NexSchool has no invoices and this must not be
+    says so in a field — because Nexchool has no invoices and this must not be
     mistaken for one.
     """
     from modules.billing.services import tenant_annual_statement
@@ -513,7 +592,7 @@ def get_tenant_annual_statement(tenant_id):
 # Integrations — whose wire a school's work goes down
 #
 # Platform-admin only, the same boundary Phase 2 drew around pricing: which
-# vendor NexSchool uses, and on what terms, is a commercial decision and not a
+# vendor Nexchool uses, and on what terms, is a commercial decision and not a
 # school's setting. Nothing here returns a credential; the configuration holds
 # the *names* of environment variables and never their values.
 # ---------------------------------------------------------------------------
@@ -922,7 +1001,7 @@ def test_send_integration(tenant_id, capability):
         )
 
     # An obviously-fake code, never one that could be mistaken for a real
-    # challenge. A hand-written test string ("This is a NexSchool test
+    # challenge. A hand-written test string ("This is a Nexchool test
     # message...") would not prove anything about a real OTP send — its
     # variable count is whatever we typed, not what `build_otp_message` and
     # `otp_variables` actually produce, so a template that happens to accept

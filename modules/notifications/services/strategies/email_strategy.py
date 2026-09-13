@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from .base import NotificationStrategy
-from modules.notifications.enums import NotificationType
+from modules.notifications.enums import NotificationType, PLATFORM_ACCOUNT_NOTIFICATIONS
 from modules.notifications.template_service import (
     get_and_render_notification_template,
     TemplateNotFoundError,
@@ -75,7 +75,7 @@ class EmailStrategy(NotificationStrategy):
                     NotificationType.TEACHER_LEAVE_REQUEST.value,
                     NotificationType.TEACHER_LEAVE_APPROVED.value,
                     NotificationType.TEACHER_LEAVE_REJECTED.value,
-                ):
+                ) or notification_type in PLATFORM_ACCOUNT_NOTIFICATIONS:
                     # System events: prefer delivery over strict templating.
                     subject = title or "Teacher leave update"
                     safe_body = (body or "").strip()

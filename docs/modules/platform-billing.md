@@ -51,6 +51,27 @@ service the school uses is another. They add up; none is folded into another.
 
 ---
 
+## Term and grace
+
+A school's subscription has a start date and a due date on the tenant
+(`subscription_starts_on`, `subscription_due_on`), a grace period after the
+due date (`grace_days`, seven by default) and a switch for whether the platform
+suspends the school itself when grace runs out. Standing — current, payment
+due, grace expired — is derived in `modules/subscription/term.py` and read by
+the write gate, the nightly `subscription.suspend_after_grace` task, the panel
+and the school's Subscription page, so all four agree. ADR-023 has the
+reasoning.
+
+## Payments
+
+NexSchool has no invoices and no gateway. The operator records each payment a
+school makes on the panel (`POST /platform/tenants/<id>/payments`): amount,
+date, method, reference, period covered. Recording one with `next_due_on`
+renews the term and reactivates a suspended school. A payment is never edited
+or deleted; a wrong one is voided with a reason and stays on the list. The
+school reads the same list at `GET /api/subscription/payments` behind
+`subscription.read`.
+
 # Provider cost is not customer charge
 
 The two are separate columns, and **neither is ever derived from the other**
@@ -125,6 +146,27 @@ What the consolidation deliberately did **not** do is make every caller ask
 the same question. The platform view counting live and the school's own
 dashboard reading its snapshot are both defensible, and both still do it. The
 inputs stay each caller's own; only the sum is shared.
+
+Who counts as an active student is one definition, though:
+`INACTIVE_STUDENT_STATUSES` in `modules/subscription/usage.py`, read by the
+invoice, the usage snapshot and the school's student seat limit alike. A
+school is limited by the same number it is billed for, so a graduated or
+transferred student neither costs the school nor holds a seat. The teacher
+seat limit follows the same principle with employment as the test
+(`EMPLOYED_STATUSES` in `modules/people/employment.py`): a teacher who has
+resigned, retired or been let go no longer holds a seat.
+
+The seat limits themselves live on the tenant (`tenants.max_active_students`,
+`tenants.max_employed_teachers`; null means no ceiling), set by the operator
+on the same panel card as the price (`PATCH /platform/tenants/<id>/pricing`)
+and shown there against the live active and employed counts. Charging is by
+actual active count; the limits are ceilings on what the school may add, not
+a price. A limit set below current use blocks the next admission or hire and
+touches no existing record. Migration 137 moved them off the retired `plans`
+table (debt 64). The school sees the same numbers on its own Subscription
+page (`seats` in `GET /api/subscription/state`, behind `subscription.read`),
+so the first it hears of a ceiling is that tile rather than a refused
+admission.
 
     subscription_component(tenant, active_students, on_date)   the subscription
     annual_estimate(tenant_service, ...)                       one service

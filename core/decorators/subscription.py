@@ -26,7 +26,7 @@ from core.models import (
     TENANT_STATUS_SUSPENDED,
     TENANT_STATUS_DELETED,
 )
-from core.school_time import utc_now
+from core.school_time import school_today, utc_now
 
 
 def _subscription_state(tenant_id: str) -> dict:
@@ -44,7 +44,13 @@ def _subscription_state(tenant_id: str) -> dict:
         return cached
 
     row = (
-        db.session.query(Tenant.status, Tenant.trial_ends_at)
+        db.session.query(
+            Tenant.status,
+            Tenant.trial_ends_at,
+            Tenant.subscription_starts_on,
+            Tenant.subscription_due_on,
+            Tenant.grace_days,
+        )
         .filter(Tenant.id == tenant_id)
         .first()
     )
@@ -59,7 +65,19 @@ def _subscription_state(tenant_id: str) -> dict:
         g._subscription_state = state
         return state
 
-    status, trial_ends_at = row[0], row[1]
+    status, trial_ends_at, starts_on, due_on, grace_days = row
+    # The subscription term, derived once here so the gate, the banner and
+    # the panel cannot disagree about where a school stands (ADR-023).
+    from modules.subscription.term import (
+        STANDING_GRACE_EXPIRED,
+        STANDING_PAYMENT_DUE,
+        term_view,
+    )
+
+    term = term_view(
+        starts_on=starts_on, due_on=due_on, grace_days=grace_days or 0,
+        today=school_today(tenant_id),
+    )
 
     if status == TENANT_STATUS_SUSPENDED:
         state = {
@@ -100,6 +118,30 @@ def _subscription_state(tenant_id: str) -> dict:
                     trial_ends_at.isoformat() if trial_ends_at else None
                 ),
             }
+    elif status == TENANT_STATUS_ACTIVE and term["standing"] == STANDING_GRACE_EXPIRED:
+        # Fail closed as soon as grace runs out, whether or not the nightly
+        # job has written the suspension down yet.
+        state = {
+            "tenant_id": tenant_id,
+            "status": status,
+            "allow_writes": False,
+            "reason": "GracePeriodExpired",
+            "message": (
+                f"Payment was due on {term['due_on']} and the grace period has "
+                f"ended. Contact Nexchool to restore your subscription."
+            ),
+        }
+    elif status == TENANT_STATUS_ACTIVE and term["standing"] == STANDING_PAYMENT_DUE:
+        state = {
+            "tenant_id": tenant_id,
+            "status": status,
+            "allow_writes": True,
+            "reason": "PaymentDue",
+            "message": (
+                f"Payment was due on {term['due_on']}. Your school keeps working "
+                f"until {term['grace_ends_on']}."
+            ),
+        }
     elif status == TENANT_STATUS_ACTIVE:
         state = {
             "tenant_id": tenant_id,
@@ -118,6 +160,7 @@ def _subscription_state(tenant_id: str) -> dict:
             "message": "Subscription state is unknown. Contact support.",
         }
 
+    state["term"] = term
     g._subscription_state = state
     return state
 

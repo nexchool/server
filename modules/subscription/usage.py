@@ -40,7 +40,12 @@ INACTIVE_STUDENT_STATUSES = (
 )
 
 
-def _count_active_students(tenant_id: str) -> int:
+def count_active_students(tenant_id: str) -> int:
+    """Students the school is teaching: every row not in an inactive status.
+
+    Shared by usage, billing and the plan's student limit, so the number a
+    school is limited by is the number it is billed for.
+    """
     # Local import keeps this module light at import time and avoids an
     # import cycle with the students module.
     from modules.students.models import Student
@@ -71,7 +76,7 @@ def recompute_tenant_usage(tenant_id: str, *, commit: bool = True) -> Optional[i
         return None
 
     try:
-        count = _count_active_students(tenant_id)
+        count = count_active_students(tenant_id)
         row = TenantUsage.query.filter_by(tenant_id=tenant_id).first()
         if row is None:
             row = TenantUsage(

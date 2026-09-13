@@ -32,6 +32,7 @@ def make_celery(app):
             "tasks.notification_dispatch",
             "tasks.push_notifications",
             "tasks.hostel",
+            "tasks.subscription",
             "modules.school_setup.retention_tasks",
             "modules.announcements.tasks",
         ],
@@ -64,6 +65,16 @@ def make_celery(app):
         "hostel-mark-overdue-gatepasses": {
             "task": "hostel.mark_overdue_gatepasses",
             "schedule": 300.0,  # 5 minutes
+        },
+        # Subscription: suspend schools whose payment grace period has run out.
+        "subscription-suspend-after-grace": {
+            "task": "subscription.suspend_after_grace",
+            "schedule": 86400.0,  # daily
+        },
+        # Subscription: remind schools with an outstanding payment, once a day.
+        "subscription-send-payment-reminders": {
+            "task": "subscription.send_payment_reminders",
+            "schedule": 86400.0,  # daily
         },
         "announcements-process-scheduled": {
             "task": "announcements.process_scheduled",

@@ -8,7 +8,7 @@ SQLAlchemy session to avoid Flask app-context.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -17,9 +17,15 @@ from core.school_time import utc_now
 
 
 def _install_tenant_lookup(monkeypatch, status, trial_ends_at):
-    """Stub `db.session.query(Tenant.status, Tenant.trial_ends_at)` to
-    return (status, trial_ends_at) — or None if status is `None`."""
-    row = (status, trial_ends_at) if status is not None or trial_ends_at is not None else None
+    """Stub the tenant row the resolver reads — status, trial end, and the
+    subscription term (no term set here, so the term never decides anything
+    in these tests) — or None if status is `None`."""
+    row = (
+        (status, trial_ends_at, None, None, 7)
+        if status is not None or trial_ends_at is not None
+        else None
+    )
+    monkeypatch.setattr(subscription_module, "school_today", lambda tenant_id=None: date(2026, 9, 13))
     fake_query = MagicMock()
     fake_query.filter.return_value.first.return_value = row
     fake_session = MagicMock()

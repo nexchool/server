@@ -22,6 +22,7 @@ from modules.students.utils.excel_parser import parse_xlsx_to_rows
 from modules.teachers.models import Teacher
 from modules.teachers.services import (
     _check_teacher_plan_limit,
+    plan_teacher_headroom,
     _resolve_department,
     generate_employee_id,
     generate_teacher_password,
@@ -321,28 +322,26 @@ def import_teachers_from_rows(
             "error": limit_msg,
         }
 
-    tenant = Tenant.query.get(tenant_id)
-    if tenant and tenant.plan_id and tenant.plan:
-        cap = tenant.plan.max_teachers
-        current = Teacher.query.filter_by(tenant_id=tenant_id).count()
-        if current + len(validated) > cap:
-            return {
-                "total": total,
-                "success": 0,
-                "failed": total,
-                "failed_rows": [
-                    {
-                        "row_number": rn,
-                        "email": "",
-                        "errors": [
-                            f"Would exceed plan teacher limit ({cap}). "
-                            f"Current: {current}, importing: {len(validated)}."
-                        ],
-                    }
-                    for rn in row_numbers
-                ],
-                "error": "Teacher plan limit",
-            }
+    headroom = plan_teacher_headroom(tenant_id)
+    if headroom is not None and len(validated) > headroom:
+        cap = Tenant.query.get(tenant_id).max_employed_teachers
+        return {
+            "total": total,
+            "success": 0,
+            "failed": total,
+            "failed_rows": [
+                {
+                    "row_number": rn,
+                    "email": "",
+                    "errors": [
+                        f"Would exceed plan teacher limit ({cap} employed teachers). "
+                        f"Employed now: {cap - headroom}, in this file: {len(validated)}."
+                    ],
+                }
+                for rn in row_numbers
+            ],
+            "error": "Teacher plan limit",
+        }
 
     _preassign_employee_ids(validated, tenant_id)
 

@@ -98,6 +98,25 @@ class Tenant(db.Model):
     )  # active | suspended
 
     # Per-tenant subscription model (replaces shared Plan).
+    # Seat limits, per school (migration 043 moved the subscription onto the
+    # tenant; these are the last thing the old plans table carried). Null means
+    # the school has no ceiling. Enforced on student and teacher creation
+    # against the same active/employed counts the invoice uses.
+    max_active_students = db.Column(db.Integer, nullable=True)
+    max_employed_teachers = db.Column(db.Integer, nullable=True)
+    # The subscription term. Null due date = no term set, never suspended by
+    # it. After the due date the school keeps working for `grace_days`, then
+    # is suspended unless a payment has moved the due date on (see
+    # modules/subscription/term.py, ADR-023).
+    subscription_starts_on = db.Column(db.Date, nullable=True)
+    subscription_due_on = db.Column(db.Date, nullable=True)
+    grace_days = db.Column(db.Integer, nullable=False, default=7, server_default="7")
+    auto_suspend_after_grace = db.Column(
+        db.Boolean, nullable=False, default=True, server_default=db.text("true")
+    )
+    #: The day the last payment reminder went out, so the daily job can be
+    #: re-run without a school hearing from us twice in one day.
+    last_payment_reminder_on = db.Column(db.Date, nullable=True)
     price_per_student_per_year = db.Column(db.Numeric(12, 2), nullable=True)
     discount_percentage = db.Column(db.Numeric(5, 2), nullable=True)
     discount_start_date = db.Column(db.Date, nullable=True)

@@ -64,8 +64,13 @@ class NotificationDispatcher:
             Dict mapping channel -> success (True/False).
         """
         from core.feature_flags import is_feature_enabled
+        from modules.notifications.enums import PLATFORM_ACCOUNT_NOTIFICATIONS
 
-        if tenant_id and not is_feature_enabled(tenant_id, "notifications"):
+        if (
+            tenant_id
+            and notification_type not in PLATFORM_ACCOUNT_NOTIFICATIONS
+            and not is_feature_enabled(tenant_id, "notifications")
+        ):
             logger.debug(
                 "Notifications disabled for tenant %s; skipping dispatch (type=%s)",
                 tenant_id,

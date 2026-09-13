@@ -75,8 +75,67 @@ def _to_date(value: Any) -> Optional[date]:
         raise ValueError(f"Invalid date (expected YYYY-MM-DD): {value}")
 
 
+def _to_seat_limit(value: Any) -> Optional[int]:
+    """A seat limit from the panel: a whole number of at least 1, or None.
+
+    An empty string is how the panel says "no limit", the same convention the
+    pricing fields use. Zero is refused rather than stored: a school with no
+    seats at all is a suspension, not a limit.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("Seat limit must be a whole number of at least 1")
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Seat limit must be a whole number of at least 1")
+    if limit < 1:
+        raise ValueError("Seat limit must be a whole number of at least 1")
+    return limit
+
+
+def _to_grace_days(value: Any) -> int:
+    """Days a school keeps working after its due date: a whole number, zero or more."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("grace_days must be a whole number of days, zero or more")
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("grace_days must be a whole number of days, zero or more")
+    if days < 0:
+        raise ValueError("grace_days must be a whole number of days, zero or more")
+    return days
+
+
+def _term_fields(tenant: Tenant) -> Dict[str, Any]:
+    """The subscription term as the panel reads it, with the derived standing."""
+    from core.school_time import school_today
+    from modules.subscription.term import term_view
+
+    return {
+        "subscription_starts_on": (
+            tenant.subscription_starts_on.isoformat() if tenant.subscription_starts_on else None
+        ),
+        "subscription_due_on": (
+            tenant.subscription_due_on.isoformat() if tenant.subscription_due_on else None
+        ),
+        "grace_days": tenant.grace_days,
+        "auto_suspend_after_grace": bool(tenant.auto_suspend_after_grace),
+        "term": term_view(
+            starts_on=tenant.subscription_starts_on,
+            due_on=tenant.subscription_due_on,
+            grace_days=tenant.grace_days or 0,
+            today=school_today(tenant.id),
+        ),
+    }
+
+
 def _serialize_tenant(tenant: Tenant) -> Dict[str, Any]:
     """Common tenant serializer used by detail and list endpoints."""
+    from modules.subscription.usage import count_active_students
+    from modules.teachers.services import count_employed_teachers
+
     student_count = Student.query.filter_by(tenant_id=tenant.id).count()
     teacher_count = Teacher.query.filter_by(tenant_id=tenant.id).count()
     return {
@@ -111,6 +170,13 @@ def _serialize_tenant(tenant: Tenant) -> Dict[str, Any]:
         "feature_flags": get_tenant_feature_flags(tenant.id),
         "student_count": student_count,
         "teacher_count": teacher_count,
+        # The counts the seat limits are measured against — the same ones the
+        # invoice and the create guards use — beside the limits themselves.
+        "active_student_count": count_active_students(tenant.id),
+        "employed_teacher_count": count_employed_teachers(tenant.id),
+        "max_active_students": tenant.max_active_students,
+        "max_employed_teachers": tenant.max_employed_teachers,
+        **_term_fields(tenant),
         "created_at": tenant.created_at.isoformat() if tenant.created_at else None,
     }
 
@@ -186,6 +252,8 @@ def create_tenant(
     discount_end_date: Optional[Any] = None,
     feature_flags: Optional[Dict[str, bool]] = None,
     login_url: Optional[str] = None,
+    max_active_students: Optional[Any] = None,
+    max_employed_teachers: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Create tenant with per-tenant pricing and feature flags, seed roles,
@@ -200,6 +268,8 @@ def create_tenant(
         discount = _to_decimal(discount_percentage)
         d_start = _to_date(discount_start_date)
         d_end = _to_date(discount_end_date)
+        student_seats = _to_seat_limit(max_active_students)
+        teacher_seats = _to_seat_limit(max_employed_teachers)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -221,6 +291,8 @@ def create_tenant(
         discount_start_date=d_start,
         discount_end_date=d_end,
         feature_flags=flags,
+        max_active_students=student_seats,
+        max_employed_teachers=teacher_seats,
     )
     db.session.add(tenant)
     db.session.flush()
@@ -358,10 +430,12 @@ def update_tenant_pricing(
     discount_percentage: Optional[Any] = None,
     discount_start_date: Optional[Any] = None,
     discount_end_date: Optional[Any] = None,
+    max_active_students: Optional[Any] = None,
+    max_employed_teachers: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
-    Patch a tenant's pricing & discount window. None means "leave unchanged";
-    explicit empty string clears the field.
+    Patch a tenant's pricing, discount window and seat limits. None means
+    "leave unchanged"; explicit empty string clears the field.
     """
     tenant = Tenant.query.get(tenant_id)
     if not tenant:
@@ -379,6 +453,10 @@ def update_tenant_pricing(
             tenant.discount_start_date = _to_date(discount_start_date)
         if discount_end_date is not None:
             tenant.discount_end_date = _to_date(discount_end_date)
+        if max_active_students is not None:
+            tenant.max_active_students = _to_seat_limit(max_active_students)
+        if max_employed_teachers is not None:
+            tenant.max_employed_teachers = _to_seat_limit(max_employed_teachers)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -403,6 +481,8 @@ def update_tenant_pricing(
                 float(tenant.discount_percentage)
                 if tenant.discount_percentage is not None else None
             ),
+            "max_active_students": tenant.max_active_students,
+            "max_employed_teachers": tenant.max_employed_teachers,
         },
     )
     return {"success": True, "tenant": _serialize_tenant(tenant)}
@@ -442,6 +522,7 @@ def get_tenant_subscription(tenant_id: str) -> Dict[str, Any]:
                 if tenant.discount_end_date
                 else None
             ),
+            **_term_fields(tenant),
         },
     }
 
@@ -476,6 +557,10 @@ def update_tenant_subscription(
     discount_percentage: Optional[Any] = None,
     discount_start_date: Optional[Any] = None,
     discount_end_date: Optional[Any] = None,
+    subscription_starts_on: Optional[Any] = None,
+    subscription_due_on: Optional[Any] = None,
+    grace_days: Optional[Any] = None,
+    auto_suspend_after_grace: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Single PATCH that covers everything the super-admin panel needs to
@@ -535,8 +620,28 @@ def update_tenant_subscription(
             tenant.discount_start_date = _to_date(discount_start_date)
         if discount_end_date is not None:
             tenant.discount_end_date = _to_date(discount_end_date)
+        # The term (ADR-023). "" clears a date; a school with no due date has
+        # no term and is never suspended by it.
+        if subscription_starts_on is not None:
+            tenant.subscription_starts_on = _to_date(subscription_starts_on)
+        if subscription_due_on is not None:
+            tenant.subscription_due_on = _to_date(subscription_due_on)
+        if grace_days is not None:
+            tenant.grace_days = _to_grace_days(grace_days)
+        if auto_suspend_after_grace is not None:
+            tenant.auto_suspend_after_grace = bool(auto_suspend_after_grace)
     except ValueError as e:
         return {"success": False, "error": str(e)}
+
+    if (
+        tenant.subscription_starts_on
+        and tenant.subscription_due_on
+        and tenant.subscription_starts_on > tenant.subscription_due_on
+    ):
+        return {
+            "success": False,
+            "error": "subscription_starts_on must be on or before subscription_due_on",
+        }
 
     if (
         tenant.discount_start_date
@@ -560,6 +665,16 @@ def update_tenant_subscription(
                 tenant.trial_ends_at.isoformat() if tenant.trial_ends_at else None
             ),
             "billing_cycle": tenant.billing_cycle,
+            "subscription_starts_on": (
+                tenant.subscription_starts_on.isoformat()
+                if tenant.subscription_starts_on else None
+            ),
+            "subscription_due_on": (
+                tenant.subscription_due_on.isoformat()
+                if tenant.subscription_due_on else None
+            ),
+            "grace_days": tenant.grace_days,
+            "auto_suspend_after_grace": bool(tenant.auto_suspend_after_grace),
         },
     )
     return get_tenant_subscription(tenant_id)
@@ -811,6 +926,44 @@ def reset_tenant_admin(tenant_id: str, platform_admin_id: str) -> Dict[str, Any]
     return {"success": True, "message": "Password reset and email sent"}
 
 
+def _active_student_counts_by_tenant(tenant_ids: list) -> dict:
+    """Active students per tenant, by the definition billing uses."""
+    from modules.subscription.usage import INACTIVE_STUDENT_STATUSES
+
+    if not tenant_ids:
+        return {}
+    rows = (
+        db.session.query(Student.tenant_id, db.func.count(Student.id))
+        .filter(
+            Student.tenant_id.in_(tenant_ids),
+            (Student.student_status.is_(None))
+            | (~Student.student_status.in_(INACTIVE_STUDENT_STATUSES)),
+        )
+        .group_by(Student.tenant_id)
+        .all()
+    )
+    return {tenant_id: count for tenant_id, count in rows}
+
+
+def _employed_teacher_counts_by_tenant(tenant_ids: list) -> dict:
+    """Employed teachers per tenant, by the rule the teachers list uses."""
+    from modules.people.employment import EMPLOYED_STATUSES, Staff
+
+    if not tenant_ids:
+        return {}
+    rows = (
+        db.session.query(Teacher.tenant_id, db.func.count(Teacher.id))
+        .join(Staff, Staff.id == Teacher.staff_id)
+        .filter(
+            Teacher.tenant_id.in_(tenant_ids),
+            Staff.employment_status.in_(EMPLOYED_STATUSES),
+        )
+        .group_by(Teacher.tenant_id)
+        .all()
+    )
+    return {tenant_id: count for tenant_id, count in rows}
+
+
 def _counts_by_tenant(model, tenant_ids: list) -> dict:
     """How many rows of `model` each of these tenants holds.
 
@@ -859,6 +1012,8 @@ def list_tenants(
     page_tenant_ids = [t.id for t in pagination.items]
     student_counts = _counts_by_tenant(Student, page_tenant_ids)
     teacher_counts = _counts_by_tenant(Teacher, page_tenant_ids)
+    active_student_counts = _active_student_counts_by_tenant(page_tenant_ids)
+    employed_teacher_counts = _employed_teacher_counts_by_tenant(page_tenant_ids)
 
     items = []
     for t in pagination.items:
@@ -880,6 +1035,10 @@ def list_tenants(
             ),
             "student_count": student_count,
             "teacher_count": teacher_count,
+            "active_student_count": active_student_counts.get(t.id, 0),
+            "employed_teacher_count": employed_teacher_counts.get(t.id, 0),
+            "max_active_students": t.max_active_students,
+            "max_employed_teachers": t.max_employed_teachers,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         })
     return {
@@ -1579,3 +1738,101 @@ def update_platform_settings(updates: Dict[str, Any], platform_admin_id: Optiona
             metadata={"keys": list(updates.keys())},
         )
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Subscription payments (ADR-023): the operator's record of what a school paid
+# ---------------------------------------------------------------------------
+
+def record_tenant_payment(
+    tenant_id: str, platform_admin_id: str, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Write a payment down for a school, optionally moving its term on."""
+    from decimal import Decimal, InvalidOperation
+
+    from modules.subscription.term import record_payment
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+    operator = User.query.get(platform_admin_id)
+    try:
+        try:
+            amount = Decimal(str(payload.get("amount", "")))
+        except (InvalidOperation, ValueError):
+            raise ValueError("Payment amount must be a number greater than zero")
+        paid_on = _to_date(payload.get("paid_on"))
+        if paid_on is None:
+            raise ValueError("paid_on is required (YYYY-MM-DD)")
+        payment = record_payment(
+            tenant=tenant,
+            recorded_by=operator,
+            amount=amount,
+            paid_on=paid_on,
+            method=str(payload.get("method") or ""),
+            reference=payload.get("reference"),
+            covers_from=_to_date(payload.get("covers_from")),
+            covers_to=_to_date(payload.get("covers_to")),
+            note=payload.get("note"),
+            next_due_on=_to_date(payload.get("next_due_on")),
+        )
+    except ValueError as e:
+        db.session.rollback()
+        return {"success": False, "error": str(e)}
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="tenant.payment.recorded",
+        tenant_id=tenant_id,
+        metadata={
+            "payment_id": payment.id,
+            "amount": float(payment.amount),
+            "paid_on": payment.paid_on.isoformat(),
+            "method": payment.method,
+            "next_due_on": (
+                tenant.subscription_due_on.isoformat() if tenant.subscription_due_on else None
+            ),
+        },
+    )
+    return {
+        "success": True,
+        "payment": payment.to_dict(),
+        "subscription": get_tenant_subscription(tenant_id)["subscription"],
+    }
+
+
+def void_tenant_payment(
+    tenant_id: str, payment_id: str, platform_admin_id: str, reason: str
+) -> Dict[str, Any]:
+    """Strike a payment through with a reason; it stays on the record."""
+    from modules.subscription.models import SubscriptionPayment
+    from modules.subscription.term import void_payment
+
+    payment = (
+        db.session.query(SubscriptionPayment)
+        .filter(SubscriptionPayment.id == payment_id, SubscriptionPayment.tenant_id == tenant_id)
+        .first()
+    )
+    if payment is None:
+        return {"success": False, "error": "Payment not found"}
+    operator = User.query.get(platform_admin_id)
+    try:
+        void_payment(payment=payment, voided_by=operator, reason=reason)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    db.session.commit()
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="tenant.payment.voided",
+        tenant_id=tenant_id,
+        metadata={"payment_id": payment.id, "reason": payment.void_reason},
+    )
+    return {"success": True, "payment": payment.to_dict()}
+
+
+def list_tenant_payments(tenant_id: str) -> Dict[str, Any]:
+    from modules.subscription.term import list_payments
+
+    if not Tenant.query.get(tenant_id):
+        return {"success": False, "error": "Tenant not found"}
+    return {"success": True, "payments": [p.to_dict() for p in list_payments(tenant_id)]}
