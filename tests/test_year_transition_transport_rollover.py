@@ -81,6 +81,7 @@ def test_transport_happy_path(monkeypatch):
         ],
     )
     # Only STU-PROMOTED has an is_current row in to_year — STU-GRADUATED does not.
+    install_fake_model(monkeypatch, tr, "TransportBus", queue=[[row(id="B1", capacity=50)]])
     install_fake_model(
         monkeypatch, tr, "StudentClassEnrollment",
         queue=[[row(student_id="STU-PROMOTED")]],
@@ -124,6 +125,7 @@ def test_existing_target_enrollment_blocks_clone(monkeypatch):
             [row(student_id="STU-1")],   # already has a row in to_year
         ],
     )
+    install_fake_model(monkeypatch, tr, "TransportBus", queue=[[row(id="B1", capacity=50)]])
     install_fake_model(
         monkeypatch, tr, "StudentClassEnrollment",
         queue=[[row(student_id="STU-1")]],
@@ -173,6 +175,7 @@ def test_copy_fee_plans_disabled_skips_plans(monkeypatch):
         monkeypatch, tr, "TransportEnrollment",
         queue=[[_enrollment("STU-1")], []],
     )
+    install_fake_model(monkeypatch, tr, "TransportBus", queue=[[row(id="B1", capacity=50)]])
     install_fake_model(
         monkeypatch, tr, "StudentClassEnrollment",
         queue=[[row(student_id="STU-1")]],
@@ -277,6 +280,7 @@ def test_to_year_with_no_start_date_falls_back_to_today(monkeypatch):
         monkeypatch, tr, "TransportEnrollment",
         queue=[[_enrollment("STU-1")], []],
     )
+    install_fake_model(monkeypatch, tr, "TransportBus", queue=[[row(id="B1", capacity=50)]])
     install_fake_model(
         monkeypatch, tr, "StudentClassEnrollment",
         queue=[[row(student_id="STU-1")]],
@@ -287,3 +291,65 @@ def test_to_year_with_no_start_date_falls_back_to_today(monkeypatch):
     result = tr.rollover_transport("Y-1", "Y-2")
     assert result["enrollments_created"] == 1
     assert sess.added[0].start_date == fixed_today
+
+
+def test_a_full_bus_takes_no_more_seats_on_rollover(monkeypatch):
+    """Two promoted students rode bus B1 last year, but B1 only seats one
+    (its capacity was cut over the summer). One is carried over, the other is
+    reported as skipped for a full bus rather than overflowing it."""
+    _patch_tenant(monkeypatch)
+    sess = install_fake_session(monkeypatch, tr)
+
+    fy = row(id="Y-2025", start_date=date(2025, 6, 1))
+    ty = row(id="Y-2026", start_date=date(2026, 6, 1))
+    install_fake_model(monkeypatch, tr, "AcademicYear", queue=[fy, ty])
+    install_fake_model(monkeypatch, tr, "TransportFeePlan", queue=[[], []])
+    install_fake_model(
+        monkeypatch, tr, "TransportEnrollment",
+        queue=[
+            [_enrollment("STU-A"), _enrollment("STU-B")],  # source enrollments
+            [],                                             # existing target rows for these students
+            [],                                             # seats already taken on B1 in to_year
+        ],
+    )
+    install_fake_model(
+        monkeypatch, tr, "StudentClassEnrollment",
+        queue=[[row(student_id="STU-A"), row(student_id="STU-B")]],
+    )
+    install_fake_model(monkeypatch, tr, "TransportBus", queue=[[row(id="B1", capacity=1)]])
+
+    result = tr.rollover_transport("Y-2025", "Y-2026", copy_fee_plans=False)
+
+    assert result["success"] is True
+    assert result["enrollments_created"] == 1
+    assert result["enrollments_skipped_bus_full"] == 1
+    assert [e.student_id for e in sess.added] == ["STU-A"]
+
+
+def test_seats_already_taken_in_the_new_year_count_against_the_bus(monkeypatch):
+    _patch_tenant(monkeypatch)
+    sess = install_fake_session(monkeypatch, tr)
+
+    fy = row(id="Y-2025", start_date=date(2025, 6, 1))
+    ty = row(id="Y-2026", start_date=date(2026, 6, 1))
+    install_fake_model(monkeypatch, tr, "AcademicYear", queue=[fy, ty])
+    install_fake_model(monkeypatch, tr, "TransportFeePlan", queue=[[], []])
+    install_fake_model(
+        monkeypatch, tr, "TransportEnrollment",
+        queue=[
+            [_enrollment("STU-A")],
+            [],
+            [row(bus_id="B1", student_id="STU-NEW")],  # a new admission already booked B1
+        ],
+    )
+    install_fake_model(
+        monkeypatch, tr, "StudentClassEnrollment", queue=[[row(student_id="STU-A")]],
+    )
+    install_fake_model(monkeypatch, tr, "TransportBus", queue=[[row(id="B1", capacity=1)]])
+
+    result = tr.rollover_transport("Y-2025", "Y-2026", copy_fee_plans=False)
+
+    assert result["success"] is True
+    assert result["enrollments_created"] == 0
+    assert result["enrollments_skipped_bus_full"] == 1
+    assert sess.added == []

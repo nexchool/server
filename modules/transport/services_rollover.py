@@ -11,6 +11,9 @@ Rules:
   - The new transport enrollment copies bus / route / stops / monthly_fee /
     fee_cycle from the source. `student_fee_id` is left null — admin generates
     fees via the existing finance flow.
+  - A bus is never carried past its capacity: seats already booked in to_year
+    count first, then source enrollments are carried in order until the bus is
+    full; the rest are reported as skipped_bus_full for the admin to reseat.
   - The whole batch runs in a single transaction.
 """
 
@@ -20,6 +23,7 @@ from shared.safe_error import safe_error
 import logging
 import uuid
 from datetime import date
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from core.database import db
@@ -30,7 +34,7 @@ from modules.academics.backbone.models import (
     StudentClassEnrollment,
 )
 
-from .models import TransportEnrollment, TransportFeePlan
+from .models import TransportBus, TransportEnrollment, TransportFeePlan
 from core.school_time import school_today
 
 logger = logging.getLogger(__name__)
@@ -67,6 +71,7 @@ def rollover_transport(
     enrollments_created = 0
     enrollments_skipped_graduated = 0
     enrollments_skipped_existing = 0
+    enrollments_skipped_bus_full = 0
 
     new_enrollment_start = to_year.start_date or _today()
 
@@ -128,12 +133,36 @@ def rollover_transport(
                 ).all()
                 existing_target_student_ids = {r.student_id for r in rows}
 
+            # Seats the buses can still give out in to_year. The capacity may
+            # have been cut since last year, and new admissions may already
+            # hold seats, so count what is booked before carrying anyone over.
+            bus_ids = list({e.bus_id for e in src_enrollments if e.bus_id})
+            capacity_by_bus: Dict[str, int] = {}
+            seats_taken: Counter = Counter()
+            if bus_ids:
+                buses = TransportBus.query.filter(
+                    TransportBus.tenant_id == tenant_id,
+                    TransportBus.id.in_(bus_ids),
+                ).all()
+                capacity_by_bus = {b.id: b.capacity for b in buses}
+                booked = TransportEnrollment.query.filter(
+                    TransportEnrollment.tenant_id == tenant_id,
+                    TransportEnrollment.academic_year_id == to_year_id,
+                    TransportEnrollment.status == "active",
+                    TransportEnrollment.bus_id.in_(bus_ids),
+                ).all()
+                seats_taken = Counter(r.bus_id for r in booked)
+
             for src in src_enrollments:
                 if src.student_id not in promoted_student_ids:
                     enrollments_skipped_graduated += 1
                     continue
                 if src.student_id in existing_target_student_ids:
                     enrollments_skipped_existing += 1
+                    continue
+                capacity = capacity_by_bus.get(src.bus_id)
+                if capacity is not None and seats_taken[src.bus_id] >= capacity:
+                    enrollments_skipped_bus_full += 1
                     continue
 
                 db.session.add(
@@ -157,6 +186,7 @@ def rollover_transport(
                     )
                 )
                 existing_target_student_ids.add(src.student_id)
+                seats_taken[src.bus_id] += 1
                 enrollments_created += 1
 
         db.session.commit()
@@ -172,4 +202,5 @@ def rollover_transport(
         "enrollments_created": enrollments_created,
         "enrollments_skipped_graduated": enrollments_skipped_graduated,
         "enrollments_skipped_existing": enrollments_skipped_existing,
+        "enrollments_skipped_bus_full": enrollments_skipped_bus_full,
     }

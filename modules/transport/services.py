@@ -469,6 +469,32 @@ def count_enrollment_seats_on_bus(
     return n
 
 
+def count_seats_committed_on_bus(bus_id: str, from_date: date) -> int:
+    """Active enrollments on the bus that have not ended by ``from_date``.
+
+    Unlike count_enrollment_seats_on_bus this includes seats that only begin
+    later — a booking from next month or next year's roll-over is still a seat
+    the bus has promised, so a shrink has to respect it.
+    """
+    tenant_id = get_tenant_id()
+    if not tenant_id:
+        return 0
+    return int(
+        db.session.query(func.count(TransportEnrollment.id))
+        .filter(
+            TransportEnrollment.tenant_id == tenant_id,
+            TransportEnrollment.bus_id == bus_id,
+            TransportEnrollment.status == "active",
+            or_(
+                TransportEnrollment.end_date.is_(None),
+                TransportEnrollment.end_date >= from_date,
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+
 def assert_bus_has_capacity(
     bus: TransportBus,
     on_date: date,
@@ -886,9 +912,12 @@ def update_bus(bus_id: str, payload: Dict[str, Any]) -> Tuple[Optional[Dict], Op
         b.vehicle_number = payload.get("vehicle_number")
     if payload.get("capacity") is not None:
         new_cap = payload["capacity"]
-        used = count_enrollment_seats_on_bus(b.id, _today())
-        if new_cap < used:
-            return None, f"Capacity cannot be below current occupancy ({used})"
+        promised = count_seats_committed_on_bus(b.id, _today())
+        if new_cap < promised:
+            return None, (
+                f"Capacity cannot be below the {promised} seats already booked "
+                f"on this bus (including bookings that start later)"
+            )
         b.capacity = new_cap
     if payload.get("status") is not None:
         b.status = payload["status"]

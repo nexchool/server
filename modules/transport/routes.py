@@ -1051,6 +1051,7 @@ def transport_rollover():
             "enrollments_created": result["enrollments_created"],
             "enrollments_skipped_graduated": result["enrollments_skipped_graduated"],
             "enrollments_skipped_existing": result["enrollments_skipped_existing"],
+            "enrollments_skipped_bus_full": result["enrollments_skipped_bus_full"],
         }
     )
 
