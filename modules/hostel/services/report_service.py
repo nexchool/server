@@ -43,6 +43,14 @@ class ReportService:
         Returns:
             List of dicts with keys: hostel_id, hostel_name, total_beds,
             active_allocations, vacant_beds, occupancy_pct, status.
+
+        ``total_beds`` is the number of places the hostel's rooms promise —
+        the sum of their capacities — not the number of bed rows that have
+        been entered. The rooms screen, the hostel's "is it full" check and
+        the capacity budget all reason in capacity; this used to count bed
+        rows instead, so a hostel whose seven rooms held 24 places but had no
+        bed rows yet reported 0 beds and 0 vacant while every one of its room
+        cards said "3 free".
         """
         hostels = (
             self.session.query(Hostel)
@@ -53,7 +61,7 @@ class ReportService:
 
         results: list[dict] = []
         for hostel in hostels:
-            total_beds = self._count_active_beds(hostel.id)
+            total_beds = self._places_in_rooms(hostel.id)
             active_allocs = self._count_active_allocations(hostel.id)
             vacant = max(total_beds - active_allocs, 0)
             pct = round((active_allocs / total_beds) * 100, 1) if total_beds else 0.0
@@ -148,15 +156,17 @@ class ReportService:
     # Internals
     # ------------------------------------------------------------------
 
-    def _count_active_beds(self, hostel_id: str) -> int:
-        """Number of active beds across all active rooms in the hostel."""
-        return (
-            self.session.query(func.count(HostelBed.id))
-            .join(HostelRoom, HostelBed.room_id == HostelRoom.id)
+    def _places_in_rooms(self, hostel_id: str) -> int:
+        """Sum of the capacities of the hostel's rooms that still exist.
+
+        The same measure as ``FacilityService.beds_promised_by_rooms``, so the
+        listing card and the capacity guard cannot disagree.
+        """
+        return int(
+            self.session.query(func.coalesce(func.sum(HostelRoom.capacity), 0))
             .filter(
                 HostelRoom.hostel_id == hostel_id,
                 HostelRoom.deleted_at.is_(None),
-                HostelBed.status == "active",
             )
             .scalar()
             or 0

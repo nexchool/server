@@ -338,3 +338,133 @@ def test_list_allocations_filter_by_hostel(
     assert len(rows) == 1
     rows = service.list_allocations(tenant_id=tenant.id, hostel_id="other-hostel-id")["items"]
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Move — one event, recorded as one
+# ---------------------------------------------------------------------------
+
+def _second_hostel(db_session, tenant, *, capacity: int):
+    """A second hostel with one room of one bed, for moves between hostels."""
+    import uuid
+    from modules.hostel.models import Hostel, HostelBed, HostelRoom
+
+    suffix = uuid.uuid4().hex[:10]
+    other = Hostel(id=f"h-{suffix}", tenant_id=tenant.id, name="Girls Hostel B", capacity=capacity)
+    db_session.add(other); db_session.flush()
+    other_room = HostelRoom(id=f"r-{suffix}", tenant_id=tenant.id, hostel_id=other.id,
+                            room_number="B101", floor="1st Floor", capacity=capacity)
+    db_session.add(other_room); db_session.flush()
+    other_beds = [HostelBed(tenant_id=tenant.id, room_id=other_room.id, bed_number=str(i + 1))
+                  for i in range(capacity)]
+    db_session.add_all(other_beds); db_session.flush()
+    return other, other_room, other_beds
+
+
+def _active_count(db_session, tenant, student) -> int:
+    from modules.hostel.models import HostelAllocation
+    return (
+        db_session.query(HostelAllocation)
+        .filter(HostelAllocation.tenant_id == tenant.id, HostelAllocation.student_id == student.id,
+                HostelAllocation.status == HostelAllocation.STATUS_ACTIVE)
+        .count()
+    )
+
+
+def test_a_move_closes_the_old_stay_as_moved_and_opens_the_new_one(
+    db_session, tenant, hostel, room, beds, student
+):
+    from datetime import datetime, timezone
+    from modules.hostel.models import HostelAllocation
+    from modules.hostel.services.allocation_service import AllocationService
+
+    service = AllocationService(db_session)
+    first = service.create_allocation(tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+                                      room_id=room.id, bed_id=beds[0].id, check_in_at=utc_now())
+    when = datetime(2026, 9, 13, 4, 30, tzinfo=timezone.utc)
+
+    closed, opened = service.move_allocation(first.id, tenant_id=tenant.id, room_id=room.id,
+                                             bed_id=beds[1].id, moved_at=when)
+
+    assert closed is first
+    assert closed.status == HostelAllocation.STATUS_MOVED
+    assert closed.check_out_at == when
+    assert opened.status == HostelAllocation.STATUS_ACTIVE
+    assert opened.check_in_at == when
+    assert (opened.student_id, opened.hostel_id, opened.room_id, opened.bed_id) == (
+        student.id, hostel.id, room.id, beds[1].id)
+    # The beds' denormalised flags followed the student.
+    assert beds[0].is_allocated is False and beds[0].allocated_to_student_id is None
+    assert beds[1].is_allocated is True and beds[1].allocated_to_student_id == student.id
+    # Exactly one active stay, and it is the new one.
+    assert _active_count(db_session, tenant, student) == 1
+    assert service.get_allocation_by_student(tenant_id=tenant.id, student_id=student.id).id == opened.id
+
+
+def test_a_move_to_an_occupied_bed_is_refused(db_session, tenant, hostel, room, beds, student, student2):
+    from modules.hostel.services.allocation_service import AllocationService
+
+    service = AllocationService(db_session)
+    mine = service.create_allocation(tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+                                     room_id=room.id, bed_id=beds[0].id, check_in_at=utc_now())
+    service.create_allocation(tenant_id=tenant.id, student_id=student2.id, hostel_id=hostel.id,
+                              room_id=room.id, bed_id=beds[1].id, check_in_at=utc_now())
+    with pytest.raises(ValueError, match="occupied"):
+        service.move_allocation(mine.id, tenant_id=tenant.id, room_id=room.id, bed_id=beds[1].id)
+    assert mine.status == "active" and mine.bed_id == beds[0].id
+
+
+def test_moving_to_the_bed_already_held_is_refused(db_session, tenant, hostel, room, beds, student):
+    from modules.hostel.services.allocation_service import AllocationService
+
+    service = AllocationService(db_session)
+    mine = service.create_allocation(tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+                                     room_id=room.id, bed_id=beds[0].id, check_in_at=utc_now())
+    with pytest.raises(ValueError, match="already in that bed"):
+        service.move_allocation(mine.id, tenant_id=tenant.id, room_id=room.id, bed_id=beds[0].id)
+
+
+def test_only_an_active_stay_can_be_moved(db_session, tenant, hostel, room, beds, student):
+    from modules.hostel.services.allocation_service import AllocationService
+
+    service = AllocationService(db_session)
+    mine = service.create_allocation(tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+                                     room_id=room.id, bed_id=beds[0].id, check_in_at=utc_now())
+    service.checkout_allocation(mine.id)
+    with pytest.raises(ValueError, match="not active"):
+        service.move_allocation(mine.id, tenant_id=tenant.id, room_id=room.id, bed_id=beds[1].id)
+
+
+def test_a_move_into_a_full_hostel_is_refused(db_session, tenant, hostel, room, beds, student, student2):
+    """Between hostels the student does not yet hold a place, so a full
+    destination refuses them — as a fresh allocation would."""
+    from modules.hostel.services.allocation_service import AllocationService
+
+    service = AllocationService(db_session)
+    other, other_room, other_beds = _second_hostel(db_session, tenant, capacity=1)
+    service.create_allocation(tenant_id=tenant.id, student_id=student2.id, hostel_id=other.id,
+                              room_id=other_room.id, bed_id=other_beds[0].id, check_in_at=utc_now())
+    mine = service.create_allocation(tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+                                     room_id=room.id, bed_id=beds[0].id, check_in_at=utc_now())
+    # The only bed there is taken; the capacity guard fires before the bed check.
+    with pytest.raises(ValueError, match="is full"):
+        service.move_allocation(mine.id, tenant_id=tenant.id, room_id=other_room.id, bed_id=other_beds[0].id)
+
+
+def test_a_move_between_hostels_takes_a_place_there_and_frees_one_here(
+    db_session, tenant, hostel, room, beds, student
+):
+    from modules.hostel.services.allocation_service import AllocationService
+
+    service = AllocationService(db_session)
+    other, other_room, other_beds = _second_hostel(db_session, tenant, capacity=2)
+    mine = service.create_allocation(tenant_id=tenant.id, student_id=student.id, hostel_id=hostel.id,
+                                     room_id=room.id, bed_id=beds[0].id, check_in_at=utc_now())
+    assert service.count_active_residents(tenant_id=tenant.id, hostel_id=hostel.id) == 1
+
+    closed, opened = service.move_allocation(mine.id, tenant_id=tenant.id,
+                                             room_id=other_room.id, bed_id=other_beds[1].id)
+
+    assert opened.hostel_id == other.id and closed.status == "moved"
+    assert service.count_active_residents(tenant_id=tenant.id, hostel_id=hostel.id) == 0
+    assert service.count_active_residents(tenant_id=tenant.id, hostel_id=other.id) == 1

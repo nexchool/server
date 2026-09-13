@@ -330,6 +330,22 @@ def test_occupancy_stats_handles_zero_beds(db_session, tenant, hostel):
     assert row["occupancy_pct"] == 0.0
 
 
+def test_a_room_s_places_count_before_its_beds_are_entered(db_session, tenant, hostel, room):
+    """A hostel's vacancies are the places its rooms hold, which is what the
+    room cards and the capacity budget already say. The listing used to count
+    bed *rows* instead, so a hostel of seven rooms and 24 places with no bed
+    rows entered yet showed 0 beds and 0 vacant under cards reading "3 free"."""
+    from modules.hostel.services.report_service import ReportService
+
+    # `room` is capacity 4 and, unlike the `beds` fixture, has no bed rows.
+    stats = ReportService(db_session).occupancy_stats(tenant_id=tenant.id)
+    row = {h["hostel_id"]: h for h in stats}[hostel.id]
+    assert row["total_beds"] == room.capacity == 4
+    assert row["vacant_beds"] == 4
+    assert row["active_allocations"] == 0
+    assert row["occupancy_pct"] == 0.0
+
+
 def test_overdue_alerts_lists_overdue_gatepasses(
     db_session, tenant, hostel, student
 ):

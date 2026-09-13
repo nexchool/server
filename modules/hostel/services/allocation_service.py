@@ -4,6 +4,8 @@ Encapsulates the rules:
 - One active allocation per bed (also enforced at DB by partial unique index).
 - One active allocation per student.
 - Checkout marks status='completed', sets check_out_at, and frees the bed.
+- A move closes the old allocation as status='moved' and opens the new one
+  at the same instant, in one transaction.
 - All queries are tenant-scoped.
 
 The service operates on an injected SQLAlchemy session so callers can wrap
@@ -23,11 +25,13 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from modules.hostel.models import (
+    HostelRoom,
     Hostel,
     HostelAllocation,
     HostelBed,
 )
 from core.school_time import utc_now
+from modules.hostel.services.facility_service import BED_STATUS_ACTIVE
 
 
 class AllocationService:
@@ -61,6 +65,36 @@ class AllocationService:
         bed = self._get_bed(tenant_id=tenant_id, bed_id=bed_id)
         if bed is None:
             raise ValueError(f"Bed {bed_id!r} not found")
+
+        # A retired bed or one under maintenance is not a place to put a
+        # student, and the room and hostel named must be the bed's own:
+        # residents are counted per room_id and hostel_id, so an allocation
+        # filed under the wrong room lets that room carry more residents than
+        # it has beds.
+        if bed.deleted_at is not None or bed.status != BED_STATUS_ACTIVE:
+            raise ValueError(f"Bed {bed.bed_number} is not available")
+        if bed.room_id != room_id:
+            raise ValueError(f"Bed {bed.bed_number} is not in room {room_id!r}")
+        room = self.session.get(HostelRoom, room_id)
+        if room is None or room.deleted_at is not None:
+            raise ValueError(f"Room {room_id!r} not found")
+        if room.hostel_id != hostel_id:
+            raise ValueError(
+                f"Room {room.room_number} is not in hostel {hostel_id!r}"
+            )
+
+        # Direct check on the number the warden cares about. It follows from
+        # the room and bed budgets for rows written under them, but a hostel
+        # set up before those guards must still not take one student more
+        # than it holds.
+        hostel = self.session.get(Hostel, hostel_id)
+        if hostel is None or hostel.deleted_at is not None:
+            raise ValueError(f"Hostel {hostel_id!r} not found")
+        residents = self.count_active_residents(tenant_id=tenant_id, hostel_id=hostel_id)
+        if residents >= hostel.capacity:
+            raise ValueError(
+                f"{hostel.name} is full: all {hostel.capacity} places are taken"
+            )
 
         if self._is_bed_occupied(bed_id=bed_id):
             raise ValueError("Bed already occupied")
@@ -123,6 +157,110 @@ class AllocationService:
 
         self.session.flush()
         return allocation
+
+    # ------------------------------------------------------------------
+    # Move
+    # ------------------------------------------------------------------
+
+    def move_allocation(
+        self,
+        allocation_id: str,
+        *,
+        tenant_id: str,
+        room_id: str,
+        bed_id: str,
+        moved_at: Optional[datetime] = None,
+        notes: Optional[str] = None,
+    ) -> tuple[HostelAllocation, HostelAllocation]:
+        """Move a resident to another bed. Returns ``(closed, opened)``.
+
+        A move is one event, recorded as one: the allocation being left is
+        closed with ``status='moved'`` and the new one opens at the same
+        instant, in the same transaction. Recording it as a checkout and a
+        fresh admission — the only way a warden could do it before — said the
+        child had left the hostel, which they had not, and lost the fact that
+        the two rows were the same stay.
+
+        The destination is validated exactly as a new allocation would be:
+        the bed must exist, be active, and sit in the room named; the bed must
+        be free. Moving *between* hostels also checks the destination is not
+        full — the student does not yet hold a place there. Moving within a
+        hostel does not: they already hold one.
+
+        Raises:
+            ValueError: allocation not found / not active, destination
+                invalid, occupied, or the same bed; destination hostel full.
+        """
+        allocation = self.session.get(HostelAllocation, allocation_id)
+        if (
+            allocation is None
+            or allocation.deleted_at is not None
+            or allocation.tenant_id != tenant_id
+        ):
+            raise ValueError(f"Allocation {allocation_id!r} not found")
+        if allocation.status != HostelAllocation.STATUS_ACTIVE:
+            raise ValueError(
+                f"Allocation {allocation_id!r} is not active (status={allocation.status!r})"
+            )
+        if bed_id == allocation.bed_id:
+            raise ValueError("Student is already in that bed")
+
+        bed = self._get_bed(tenant_id=tenant_id, bed_id=bed_id)
+        if bed is None:
+            raise ValueError(f"Bed {bed_id!r} not found")
+        if bed.deleted_at is not None or bed.status != BED_STATUS_ACTIVE:
+            raise ValueError(f"Bed {bed.bed_number} is not available")
+        if bed.room_id != room_id:
+            raise ValueError(f"Bed {bed.bed_number} is not in room {room_id!r}")
+        room = self.session.get(HostelRoom, room_id)
+        if room is None or room.deleted_at is not None:
+            raise ValueError(f"Room {room_id!r} not found")
+        hostel = self.session.get(Hostel, room.hostel_id)
+        if hostel is None or hostel.deleted_at is not None:
+            raise ValueError(f"Hostel {room.hostel_id!r} not found")
+        # Same order as create_allocation: the building's capacity is checked
+        # before the bed, so a full hostel says "full" rather than pointing at
+        # whichever bed the warden happened to pick.
+        if hostel.id != allocation.hostel_id:
+            residents = self.count_active_residents(tenant_id=tenant_id, hostel_id=hostel.id)
+            if residents >= hostel.capacity:
+                raise ValueError(
+                    f"{hostel.name} is full: all {hostel.capacity} places are taken"
+                )
+
+        if self._is_bed_occupied(bed_id=bed_id):
+            raise ValueError("Bed already occupied")
+
+        when = moved_at or utc_now()
+
+        # Close first and flush, then open: the partial unique index that
+        # allows one active allocation per student is checked at flush, and
+        # the unit of work would otherwise INSERT the new row before it
+        # UPDATEd the old one.
+        allocation.status = HostelAllocation.STATUS_MOVED
+        allocation.check_out_at = when
+        old_bed = self.session.get(HostelBed, allocation.bed_id)
+        if old_bed is not None:
+            old_bed.is_allocated = False
+            old_bed.allocated_to_student_id = None
+        self.session.flush()
+
+        opened = HostelAllocation(
+            tenant_id=tenant_id,
+            student_id=allocation.student_id,
+            hostel_id=hostel.id,
+            room_id=room_id,
+            bed_id=bed_id,
+            academic_year_id=allocation.academic_year_id,
+            check_in_at=when,
+            status=HostelAllocation.STATUS_ACTIVE,
+            notes=notes,
+        )
+        self.session.add(opened)
+        bed.is_allocated = True
+        bed.allocated_to_student_id = allocation.student_id
+        self.session.flush()
+        return allocation, opened
 
     # ------------------------------------------------------------------
     # Queries

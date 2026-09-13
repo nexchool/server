@@ -297,6 +297,16 @@ def update_hostel(hostel_id: str):
         capacity = payload["capacity"]
         if not isinstance(capacity, int) or capacity <= 0:
             return validation_error_response({"capacity": "Must be a positive integer"})
+        facilities = FacilityService(db.session)
+        try:
+            facilities.assert_hostel_capacity_holds_residents(
+                tenant_id=_tenant_id(), hostel=hostel, new_capacity=capacity
+            )
+            facilities.assert_hostel_capacity_fits(
+                tenant_id=_tenant_id(), hostel=hostel, new_capacity=capacity
+            )
+        except ValueError as exc:
+            return validation_error_response({"capacity": str(exc)})
         hostel.capacity = capacity
 
     db.session.commit()
@@ -464,6 +474,13 @@ def create_room():
     if parent is None:
         return not_found_response("Hostel")
 
+    try:
+        FacilityService(db.session).assert_room_capacity_fits(
+            tenant_id=_tenant_id(), hostel=parent, room_capacity=capacity
+        )
+    except ValueError as exc:
+        return validation_error_response({"capacity": str(exc)})
+
     room = HostelRoom(
         tenant_id=_tenant_id(),
         hostel_id=hostel_id,
@@ -473,8 +490,12 @@ def create_room():
         status=payload.get("status", "active"),
     )
     db.session.add(room)
+    db.session.flush()
+    beds_created = FacilityService(db.session).provision_beds(tenant_id=_tenant_id(), room=room)
     db.session.commit()
-    return success_response(data={"room": room.to_dict()}, status_code=201)
+    return success_response(
+        data={"room": room.to_dict(), "beds_created": beds_created}, status_code=201
+    )
 
 
 @hostel_bp.route("/rooms/<string:room_id>", methods=["PATCH"])
@@ -507,7 +528,22 @@ def update_room(room_id: str):
         capacity = payload["capacity"]
         if not isinstance(capacity, int) or capacity <= 0:
             return validation_error_response({"capacity": "Must be a positive integer"})
+        facilities = FacilityService(db.session)
+        try:
+            facilities.assert_room_capacity_fits(
+                tenant_id=_tenant_id(),
+                hostel=room.hostel,
+                room_capacity=capacity,
+                exclude_room_id=room.id,
+            )
+            facilities.assert_room_capacity_holds_beds(
+                tenant_id=_tenant_id(), room=room, new_capacity=capacity
+            )
+        except ValueError as exc:
+            return validation_error_response({"capacity": str(exc)})
         room.capacity = capacity
+        # A bigger room has more places, and each needs a bed to allocate to.
+        facilities.provision_beds(tenant_id=_tenant_id(), room=room)
 
     db.session.commit()
     return success_response(data={"room": room.to_dict()})
@@ -588,6 +624,13 @@ def create_bed():
     if parent_room is None:
         return not_found_response("Room")
 
+    try:
+        FacilityService(db.session).assert_bed_fits_room(
+            tenant_id=_tenant_id(), room=parent_room
+        )
+    except ValueError as exc:
+        return validation_error_response({"room_id": str(exc)})
+
     bed = HostelBed(
         tenant_id=_tenant_id(),
         room_id=room_id,
@@ -621,7 +664,12 @@ def update_bed(bed_id: str):
     if "bed_number" in payload:
         bed.bed_number = payload["bed_number"]
     if "status" in payload:
-        bed.status = payload["status"]
+        try:
+            FacilityService(db.session).set_bed_status(
+                bed=bed, status=payload["status"]
+            )
+        except ValueError as exc:
+            return validation_error_response({"status": str(exc)})
 
     db.session.commit()
     return success_response(data={"bed": bed.to_dict()})
@@ -805,6 +853,66 @@ def checkout_allocation(allocation_id: str):
 
     db.session.commit()
     return success_response(data={"allocation": closed.to_dict()})
+
+
+@hostel_bp.route("/allocations/<string:allocation_id>/move", methods=["POST"])
+@tenant_required
+@auth_required
+@require_feature("hostel")
+@require_permission(HOSTEL_ALLOC_MANAGE)
+def move_allocation(allocation_id: str):
+    """POST /api/hostel/allocations/:id/move — move a resident to another bed.
+
+    Body: ``room_id``, ``bed_id`` (required); ``moved_at`` (ISO 8601,
+    defaults to now); ``notes``. Returns the new allocation and, as
+    ``previous``, the one it closed with ``status='moved'``.
+    """
+    allocation = (
+        db.session.query(HostelAllocation)
+        .filter(
+            HostelAllocation.id == allocation_id,
+            HostelAllocation.tenant_id == _tenant_id(),
+        )
+        .first()
+    )
+    if allocation is None:
+        return not_found_response("Allocation")
+
+    payload = request.get_json() or {}
+    errors = {}
+    if not payload.get("room_id"):
+        errors["room_id"] = "Required"
+    if not payload.get("bed_id"):
+        errors["bed_id"] = "Required"
+    if errors:
+        return validation_error_response(errors)
+
+    moved_at = None
+    if payload.get("moved_at"):
+        try:
+            moved_at = _parse_datetime(payload["moved_at"], "moved_at")
+        except ValueError as exc:
+            return validation_error_response({"moved_at": str(exc)})
+
+    service = AllocationService(db.session)
+    try:
+        closed, opened = service.move_allocation(
+            allocation_id,
+            tenant_id=_tenant_id(),
+            room_id=payload["room_id"],
+            bed_id=payload["bed_id"],
+            moved_at=moved_at,
+            notes=payload.get("notes"),
+        )
+    except ValueError as exc:
+        return error_response(
+            error="ValidationError", message=str(exc), status_code=400
+        )
+
+    db.session.commit()
+    return success_response(
+        data={"allocation": opened.to_dict(), "previous": closed.to_dict()}
+    )
 
 
 # ============================================================================
