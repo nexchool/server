@@ -749,6 +749,24 @@ def _page(query, *, page, per_page) -> dict:
     }
 
 
+# A school says "pending". The column says which of two desks the request is
+# sitting on, which is the school's business but not its vocabulary.
+_STATUS_FILTER_ALIASES = {
+    "pending": ("pending_class_teacher", "pending_admin"),
+}
+
+
+def _statuses_for_filter(status: str) -> tuple:
+    """Expand a filter word into the stored statuses it covers.
+
+    A screen offering "Pending" used to send `pending_class_teacher` verbatim,
+    so once a request moved on to the principal it disappeared from the
+    applicant's own list — alive, and invisible to the child who filed it.
+    Asking for a precise stage still works, and still means only that stage.
+    """
+    return _STATUS_FILTER_ALIASES.get(status, (status,))
+
+
 def list_visible_for_user(user, status: Optional[str] = None, page=None,
                           per_page=None) -> dict:
     """One page of the leaves ``user`` may see, as
@@ -766,7 +784,7 @@ def list_visible_for_user(user, status: Optional[str] = None, page=None,
     tenant_id = get_tenant_id()
     q = db.session.query(StudentLeave).filter(StudentLeave.tenant_id == tenant_id)
     if status:
-        q = q.filter(StudentLeave.status == status)
+        q = q.filter(StudentLeave.status.in_(_statuses_for_filter(status)))
 
     if has_permission(user.id, "student.leave.read.all"):
         # "All" means every leave the reader has authority over, not every

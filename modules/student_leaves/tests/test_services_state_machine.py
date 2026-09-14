@@ -501,3 +501,58 @@ def test_the_class_teacher_is_told_the_principal_refused(
 
     teacher_user_id = class_with_teacher.teacher_row.user_id
     assert any(teacher_user_id in n["recipient_user_ids"] for n in sent)
+
+
+# ---------------------------------------------------------------------------
+# "Pending" is a word a school uses, not a column value
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def _reads_own_leaves(monkeypatch):
+    """Grant `student.leave.read.own` for the list tests below.
+
+    The `student_user` fixture builds a person and a login, not an authority
+    profile, so `list_visible_for_user` would short-circuit to an empty page
+    and the filter under test would never run.
+    """
+    from modules.rbac import services as rbac
+
+    monkeypatch.setattr(
+        rbac, "has_permission",
+        lambda user_id, perm: perm == "student.leave.read.own",
+    )
+
+
+def test_pending_filter_covers_both_waiting_stages(
+    tenant_ctx, student_user, class_with_teacher, enable_admin_approval,
+    _reads_own_leaves,
+):
+    """A child whose request is with the principal is still waiting.
+
+    The filter used to take a status verbatim, so a screen offering "Pending"
+    sent `pending_class_teacher` and a request that had moved on to the
+    principal vanished from the applicant's own list — alive, and invisible to
+    the person who filed it.
+    """
+    from modules.student_leaves.services import list_visible_for_user
+
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+    assert leave.status == "pending_admin"
+
+    page = list_visible_for_user(student_user, status="pending")
+    assert [row.id for row in page["items"]] == [leave.id]
+
+
+def test_a_specific_stage_can_still_be_asked_for(
+    tenant_ctx, student_user, class_with_teacher, enable_admin_approval,
+    _reads_own_leaves,
+):
+    """The broad word does not take the precise one away."""
+    from modules.student_leaves.services import list_visible_for_user
+
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+
+    assert list_visible_for_user(student_user, status="pending_class_teacher")["items"] == []
+    assert [r.id for r in list_visible_for_user(student_user, status="pending_admin")["items"]] == [leave.id]
