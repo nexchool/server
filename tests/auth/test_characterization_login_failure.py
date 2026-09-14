@@ -477,3 +477,93 @@ def test_a_suspended_tenant_still_lets_its_people_sign_in(client, db_session, ac
     )
 
     assert response.status_code == 200, response.get_json()
+
+
+def _make_admin(db_session, tenant, *, password):
+    """An account holding the school's Admin profile, the way a real one does
+    (ADR-013: authority is held by the employment, not the login)."""
+    from modules.rbac.models import Role
+    from tests.conftest import grant_profile_to
+
+    role = Role.query.filter_by(name="Admin", tenant_id=tenant.id).first()
+    if role is None:
+        role = Role(id=f"r-{uuid.uuid4().hex[:12]}", tenant_id=tenant.id, name="Admin")
+        db_session.add(role)
+        db_session.flush()
+
+    user = make_account(db_session, tenant, password=password)
+    grant_profile_to(user, role.id, employee_number=f"EMP-{uuid.uuid4().hex[:8]}")
+    return user
+
+
+def test_a_suspended_tenant_blocks_a_mobile_non_admin_from_signing_in(
+    client, db_session
+):
+    """The mobile-only half of the same suspension: a teacher/student/parent
+    has no way to fix a billing problem, and a suspended school is exactly
+    the one that most needs to stop handing out sessions to everyone but the
+    person who can pay it. Scoped to the mobile surface header only — see the
+    two tests below for why the admin-web path is untouched.
+    """
+    from core.models import TENANT_STATUS_SUSPENDED
+
+    suspended = make_tenant(db_session, subdomain_prefix="chz-mobile-susp")
+    guest = make_account(db_session, suspended, password=PASSWORD)
+    suspended.status = TENANT_STATUS_SUSPENDED
+    db_session.flush()
+
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "email": guest.email,
+            "password": PASSWORD,
+            "tenant_id": suspended.id,
+        },
+        headers={"X-Client-Surface": "student-mobile"},
+    )
+
+    assert response.status_code == 403, response.get_json()
+    assert response.get_json()["error"] == "SubscriptionSuspended"
+
+
+def test_a_suspended_tenant_still_lets_a_mobile_admin_sign_in(client, db_session):
+    """The one role mobile keeps letting in while suspended: the admin who is
+    the only person able to see and resolve what is owed."""
+    from core.models import TENANT_STATUS_SUSPENDED
+
+    suspended = make_tenant(db_session, subdomain_prefix="chz-mobile-admin")
+    admin = _make_admin(db_session, suspended, password=PASSWORD)
+    suspended.status = TENANT_STATUS_SUSPENDED
+    db_session.flush()
+
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "email": admin.email,
+            "password": PASSWORD,
+            "tenant_id": suspended.id,
+        },
+        headers={"X-Client-Surface": "student-mobile"},
+    )
+
+    assert response.status_code == 200, response.get_json()
+
+
+def test_a_suspended_tenant_without_the_mobile_header_is_unaffected(
+    client, db_session
+):
+    """Same account, same suspended tenant, no `X-Client-Surface` header —
+    proves the new mobile-only gate above cannot regress ADR-023 for
+    admin-web (or any client that predates the header)."""
+    from core.models import TENANT_STATUS_SUSPENDED
+
+    suspended = make_tenant(db_session, subdomain_prefix="chz-web-susp")
+    guest = make_account(db_session, suspended, password=PASSWORD)
+    suspended.status = TENANT_STATUS_SUSPENDED
+    db_session.flush()
+
+    response = login(
+        client, email=guest.email, password=PASSWORD, tenant_id=suspended.id
+    )
+
+    assert response.status_code == 200, response.get_json()

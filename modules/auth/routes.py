@@ -16,6 +16,7 @@ from urllib.parse import quote
 import logging
 import os
 
+from core.models import TENANT_STATUS_SUSPENDED
 from core.tenant import get_tenant_id, resolve_tenant_for_auth
 from shared.s3_utils import (
     normalize_stored_file_value_for_db,
@@ -109,6 +110,11 @@ def tenant_branding():
         # anyway; which method a *particular* human may use is not, and is
         # never published here.
         'auth': {'methods': published_auth_methods(tenant.id)},
+        # Coarse and deliberately shallow: just enough for a signed-out screen
+        # to warn before anyone attempts to sign in. The due date and amount
+        # owed stay behind auth on /api/subscription — this is only whether
+        # the tenant is suspended, nothing about why or by how much.
+        'login_restricted': tenant.status == TENANT_STATUS_SUSPENDED,
         # The school's colours, resolved to the token set the mobile app draws
         # with. Null for a school that has never been themed, which the app
         # reads as "use the palette you shipped with" — see core/theme.py.
@@ -384,6 +390,28 @@ def _finalize_login(user, tenant, is_god_login):
     # verification and permission gates — their authority is the platform flag,
     # not a tenant role. is_platform_admin is authoritative here.
     is_platform_admin = getattr(user, 'is_platform_admin', False)
+
+    # ADR-023 lets every role sign in to a suspended tenant, because a school
+    # that cannot sign in cannot see what it owes. That stays true here — this
+    # narrows it for the mobile app only (X-Client-Surface: student-mobile,
+    # sent by every request from the Expo app regardless of role). Mobile has
+    # no billing screen for anyone but an admin, and no way for a teacher,
+    # student or parent to resolve a suspension, so mobile keeps only the
+    # admin able to act on it signed in; admin-web is untouched.
+    if (
+        not is_platform_admin
+        and request.headers.get('X-Client-Surface') == 'student-mobile'
+        and getattr(tenant, 'status', None) == TENANT_STATUS_SUSPENDED
+    ):
+        from modules.rbac.authority_service import user_ids_holding_profiles
+
+        if user.id not in user_ids_holding_profiles(tenant.id, ("Admin",)):
+            return error_response(
+                error='SubscriptionSuspended',
+                message='There is a pending action item from your school '
+                        'administrator. Login is unavailable right now.',
+                status_code=403
+            )
 
     if not is_platform_admin and not user.email_verified:
         return error_response(
