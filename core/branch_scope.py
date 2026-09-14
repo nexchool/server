@@ -256,6 +256,69 @@ def student_is_allowed(student_id: str) -> bool:
     return True
 
 
+def allowed_unit_ids_for_user(user_id: str) -> Optional[Set[str]]:
+    """The branches a *named* user is restricted to.
+
+    Every other helper here answers for whoever is making the request, reading
+    ``g.current_user``. That is the right question almost always and the wrong
+    one when you are choosing who to notify: there the subject is somebody
+    else, and borrowing the request-scoped answer quietly tells you about the
+    caller instead.
+
+    Same contract as ``get_allowed_unit_ids``: ``None`` means unrestricted.
+    Not cached on ``g`` — it is not about this request.
+    """
+    from modules.auth.models import User
+    from modules.sub_admins.models import UserSchoolUnit
+
+    user = User.query.filter(User.id == user_id).first()
+    if user is None:
+        return None
+    if getattr(user, "is_platform_admin", False):
+        return None
+
+    rows = (
+        UserSchoolUnit.query
+        .with_entities(UserSchoolUnit.school_unit_id)
+        .filter(UserSchoolUnit.user_id == user_id)
+        .all()
+    )
+    if not rows:
+        return None  # No rows = unrestricted (the default).
+    return {row[0] for row in rows}
+
+
+def user_may_act_on_student(user_id: str, student_id: str) -> bool:
+    """Branch authority over a student, for a named user.
+
+    The per-user counterpart of ``student_is_allowed``. Fails closed the same
+    way: an unrestricted user gets True, a restricted user gets False for a
+    classless student.
+    """
+    allowed = allowed_unit_ids_for_user(user_id)
+    if allowed is None:
+        return True
+
+    from modules.classes.models import Class
+    from modules.students.models import Student
+
+    row = (
+        Student.query.with_entities(Student.class_id)
+        .filter(Student.id == student_id)
+        .first()
+    )
+    if row is None or row[0] is None:
+        return False
+    class_row = (
+        Class.query.with_entities(Class.school_unit_id)
+        .filter(Class.id == row[0])
+        .first()
+    )
+    if class_row is None or class_row[0] is None:
+        return False
+    return class_row[0] in allowed
+
+
 def assert_student_allowed(student_id: str) -> None:
     """Assert the student's class is in an allowed branch.
 

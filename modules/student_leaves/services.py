@@ -276,7 +276,7 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
 
     # If it just transitioned to pending_admin, ping the admins.
     if leave.status == "pending_admin":
-        admin_ids = _admin_user_ids_for_tenant(leave.tenant_id)
+        admin_ids = _admin_user_ids_for_leave(leave)
         if admin_ids:
             student_name = (leave.student.display_name if leave.student else None) or "a student"
             _notify(
@@ -670,15 +670,21 @@ def _positive_int(value, *, default: int, maximum: Optional[int] = None) -> int:
 def eager_leaves(query):
     """Load what `StudentLeave.to_dict` reads, instead of a query per row.
 
-    It touches the student, the student's person and login (for the name and
-    admission number) and the deciding user — four lazy loads on every row of
-    an approval queue.
+    It touches the student, the student's person and login (for the name,
+    admission number and photo), the class with its campus and medium, and
+    both deciding users — eight lazy loads on every row of an approval queue
+    otherwise. At 15,000 students a head's queue must not issue a query per
+    row.
     """
     return query.options(
         selectinload(StudentLeave.student).selectinload(Student.person),
-        selectinload(StudentLeave.student).selectinload(Student.person),
         selectinload(StudentLeave.student).selectinload(Student.user),
+        # The applicant block names the class, its campus and its medium.
+        selectinload(StudentLeave.class_ref).selectinload(Class.school_unit),
+        selectinload(StudentLeave.class_ref).selectinload(Class.medium),
+        selectinload(StudentLeave.class_ref).selectinload(Class.grade),
         selectinload(StudentLeave.decided_by),
+        selectinload(StudentLeave.class_teacher_decided_by),
     )
 
 
@@ -819,11 +825,23 @@ def teacher_queue(user):
 
 
 def admin_fallback_queue(user):
-    """Pending leaves whose class teacher is on approved teacher-leave today —
-    surfaced to admins as the fallback approver queue.
+    """Everything a head is the right person to decide.
+
+    Two different jobs share this screen, and each row says which it is:
+
+      ``awaiting_head``  the class teacher approved and the school's rule sends
+                         the request on to the principal. This is the ordinary
+                         second stage, and it was invisible until now — the
+                         query selected only absent-teacher rows, so a leave
+                         the teacher had just approved appeared nowhere.
+      ``teacher_away``   the class teacher is on approved leave today, so the
+                         head stands in for them at the first stage.
+
+    Both are branch-scoped: a head sees only children at campuses they run.
     """
     tenant_id = get_tenant_id()
     today = school_today()
+
     unavailable_teacher_ids = (
         db.session.query(TeacherLeave.teacher_id)
         .filter(
@@ -834,21 +852,35 @@ def admin_fallback_queue(user):
         )
         .subquery()
     )
-    return (
-        filter_by_student_ids(
-            db.session.query(StudentLeave), StudentLeave.student_id
-        )
+
+    rows = eager_leaves(
+        filter_by_student_ids(db.session.query(StudentLeave), StudentLeave.student_id)
         .filter(
             StudentLeave.tenant_id == tenant_id,
-            StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),
             db.or_(
-                StudentLeave.status.in_(("pending_class_teacher", "pending_admin")),
-                StudentLeave.cancel_requested_at.isnot(None),
+                StudentLeave.status == "pending_admin",
+                db.and_(
+                    StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),
+                    db.or_(
+                        StudentLeave.status.in_(
+                            ("pending_class_teacher", "pending_admin")
+                        ),
+                        StudentLeave.cancel_requested_at.isnot(None),
+                    ),
+                ),
             ),
         )
         .order_by(StudentLeave.created_at.desc())
-        .all()
-    )
+    ).all()
+
+    for row in rows:
+        row.queue_reason = (
+            "awaiting_head" if row.status == "pending_admin" else "teacher_away"
+        )
+        # These queues exist only for people who may decide, so the rows carry
+        # the guardian's number.
+        row.viewer_may_decide = True
+    return rows
 
 
 def _admin_user_ids_for_tenant(tenant_id: str) -> list:
@@ -865,6 +897,23 @@ def _admin_user_ids_for_tenant(tenant_id: str) -> list:
         )
     except Exception:
         return []
+
+
+def _admin_user_ids_for_leave(leave: StudentLeave) -> list:
+    """Administrators who could actually decide this leave.
+
+    `_admin_user_ids_for_tenant` answers a different question — every admin in
+    the trust. For a trust running twenty campuses that means telling twenty
+    people about a child nineteen of them have no authority over, which is how
+    a notification list stops being read.
+    """
+    from core.branch_scope import user_may_act_on_student
+
+    return [
+        user_id
+        for user_id in _admin_user_ids_for_tenant(leave.tenant_id)
+        if user_may_act_on_student(user_id, leave.student_id)
+    ]
 
 
 def _class_teacher_unavailable_today(teacher_id: str, tenant_id: str) -> bool:

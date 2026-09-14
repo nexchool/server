@@ -209,6 +209,98 @@ def admin_user(db_session, tenant):
 
 
 @pytest.fixture
+def other_campus_admin_user(db_session, tenant, class_with_teacher):
+    """An administrator whose authority is a different campus.
+
+    Puts the leave's class on campus A and binds this admin to campus B, so a
+    test can tell the difference between "holds the permission" and "may act on
+    this child". `admin_user` deliberately has no UserSchoolUnit rows — no rows
+    means unrestricted, which is the default for a single-campus school.
+    """
+    from modules.auth.models import User
+    from modules.rbac.models import Role, Permission, RolePermission
+    from modules.school_units.models import SchoolUnit
+    from modules.sub_admins.models import UserSchoolUnit
+
+    campus_a = SchoolUnit(
+        id=_new_id("su-a-"),
+        tenant_id=tenant.id,
+        name="Main Campus",
+        code=f"MAIN{uuid.uuid4().hex[:4]}",
+        type="campus",
+        status="active",
+    )
+    campus_b = SchoolUnit(
+        id=_new_id("su-b-"),
+        tenant_id=tenant.id,
+        name="North Campus",
+        code=f"NRTH{uuid.uuid4().hex[:4]}",
+        type="campus",
+        status="active",
+    )
+    db_session.add_all([campus_a, campus_b])
+    db_session.flush()
+
+    # The child under test belongs to campus A.
+    class_with_teacher.school_unit_id = campus_a.id
+    db_session.flush()
+
+    user = User(
+        id=_new_id("u-a2-"),
+        tenant_id=tenant.id,
+        email=f"otheradmin-{uuid.uuid4().hex[:6]}@test.school",
+        password_hash="x" * 60,
+        name="North Campus Head",
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    role = Role(
+        id=_new_id("r-"),
+        tenant_id=tenant.id,
+        name=f"TestAdminB-{uuid.uuid4().hex[:6]}",
+        description="test admin, other campus",
+    )
+    db_session.add(role)
+    db_session.flush()
+
+    perm = (
+        db_session.query(Permission)
+        .filter(Permission.name == "student.leave.approve.all")
+        .first()
+    )
+    if perm is None:
+        perm = Permission(
+            id=_new_id("p-"),
+            name="student.leave.approve.all",
+            description="Approve any student leave",
+        )
+        db_session.add(perm)
+        db_session.flush()
+
+    db_session.add(
+        RolePermission(
+            id=_new_id("rp-"),
+            tenant_id=tenant.id,
+            role_id=role.id,
+            permission_id=perm.id,
+        )
+    )
+    db_session.add(
+        UserSchoolUnit(
+            id=_new_id("usu-"),
+            tenant_id=tenant.id,
+            user_id=user.id,
+            school_unit_id=campus_b.id,
+        )
+    )
+    db_session.flush()
+
+    grant_profile_to(user, role.id)
+    return user
+
+
+@pytest.fixture
 def enable_admin_approval(db_session, tenant):
     """Flip AcademicSettings.student_leave_admin_approval_required = True."""
     from modules.academics.backbone.models import AcademicSettings
