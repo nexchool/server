@@ -398,3 +398,106 @@ def _sample_payload(student_user):
         "end_date": school_days[-1].isoformat(),
         "reason": "x",
     }
+
+
+# ---------------------------------------------------------------------------
+# A section with nobody assigned to it
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def class_without_a_class_teacher(db_session, class_with_teacher):
+    """A section whose primary class teacher has left mid-year.
+
+    Ordinary in a trust of any size, and the leave module had no answer for
+    it: the request was accepted and then could not be decided by anybody.
+    """
+    from modules.academics.backbone.models import ClassTeacherAssignment
+
+    db_session.query(ClassTeacherAssignment).filter(
+        ClassTeacherAssignment.class_id == class_with_teacher.id
+    ).delete()
+    db_session.flush()
+    return class_with_teacher
+
+
+def test_a_leave_with_no_class_teacher_falls_to_the_head(
+    tenant_ctx, student_user, class_without_a_class_teacher, admin_user
+):
+    """A child's request must never be left with nobody able to answer it.
+
+    The school already agreed the head stands in while the class teacher is
+    away; a section with no class teacher at all is that situation, permanently.
+    """
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    assert leave.class_teacher_id is None
+
+    final = approve(leave.id, actor_user_id=admin_user.id)
+    assert final.status == "approved"
+
+
+def test_a_leave_with_no_class_teacher_reaches_the_head_queue(
+    tenant_ctx, student_user, class_without_a_class_teacher, admin_user
+):
+    from modules.student_leaves.services import admin_fallback_queue
+
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+
+    row = next(r for r in admin_fallback_queue(admin_user) if r.id == leave.id)
+    assert row.to_dict()["queue_reason"] == "no_class_teacher"
+
+
+def test_an_unrelated_teacher_still_cannot_decide_an_unassigned_leave(
+    tenant_ctx, student_user, class_without_a_class_teacher, other_teacher_user
+):
+    """Falling to the head is not the same as falling to anybody."""
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+
+    with pytest.raises(AuthorizationError):
+        approve(leave.id, actor_user_id=other_teacher_user.id)
+
+
+# ---------------------------------------------------------------------------
+# The class teacher hears the verdict
+# ---------------------------------------------------------------------------
+
+def test_the_class_teacher_is_told_the_principal_approved(
+    tenant_ctx, student_user, class_with_teacher, admin_user, enable_admin_approval,
+    monkeypatch,
+):
+    """They endorsed it and passed it up; they own the register it affects."""
+    from modules.student_leaves import services
+
+    sent = []
+    monkeypatch.setattr(
+        services, "_notify",
+        lambda **kw: sent.append(kw),
+    )
+
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+    sent.clear()
+    approve(leave.id, actor_user_id=admin_user.id)
+
+    teacher_user_id = class_with_teacher.teacher_row.user_id
+    assert any(
+        teacher_user_id in n["recipient_user_ids"] for n in sent
+    ), "the class teacher was not told the outcome of a leave they approved"
+
+
+def test_the_class_teacher_is_told_the_principal_refused(
+    tenant_ctx, student_user, class_with_teacher, admin_user, enable_admin_approval,
+    monkeypatch,
+):
+    """The child is expected in class on Monday, and the teacher marks that register."""
+    from modules.student_leaves import services
+
+    sent = []
+    monkeypatch.setattr(services, "_notify", lambda **kw: sent.append(kw))
+
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+    sent.clear()
+    reject(leave.id, actor_user_id=admin_user.id, rejection_reason="Exams week")
+
+    teacher_user_id = class_with_teacher.teacher_row.user_id
+    assert any(teacher_user_id in n["recipient_user_ids"] for n in sent)

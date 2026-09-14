@@ -208,18 +208,32 @@ def create_request(payload: Dict[str, Any], actor_user_id: str) -> StudentLeave:
     db.session.commit()
 
     # Notify class teacher of the new request.
+    student_display = student.display_name or "A student"
+    body = (
+        f"{student_display} applied for {leave_type} leave from {start_d} to {end_d}"
+    )
     if leave.class_teacher_id:
         teacher = db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
         if teacher and teacher.user_id:
-            student_display = student.display_name or "A student"
             _notify(
                 tenant_id=leave.tenant_id,
                 notification_type="student_leave.submitted",
                 title="New student leave request",
-                body=f"{student_display} applied for {leave_type} leave from {start_d} to {end_d}",
+                body=body,
                 recipient_user_ids=[teacher.user_id],
                 extra_data={"leave_id": leave.id, "kind": "student_leave.submitted"},
             )
+    else:
+        # Nobody holds the section, so the request would otherwise be filed in
+        # silence. The heads who can act on it are the ones to tell.
+        _notify(
+            tenant_id=leave.tenant_id,
+            notification_type="student_leave.submitted",
+            title="Leave request with no class teacher",
+            body=f"{body}. This section has no class teacher, so it needs you.",
+            recipient_user_ids=_admin_user_ids_for_leave(leave),
+            extra_data={"leave_id": leave.id, "kind": "student_leave.submitted"},
+        )
     return leave
 
 
@@ -274,6 +288,10 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
             extra_data={"leave_id": leave.id, "status": leave.status},
         )
 
+    # The class teacher who endorsed this and passed it up hears the outcome.
+    if leave.status == "approved" and leave.class_teacher_decided_at is not None:
+        _notify_class_teacher_of_outcome(leave, actor_user_id)
+
     # If it just transitioned to pending_admin, ping the admins.
     if leave.status == "pending_admin":
         admin_ids = _admin_user_ids_for_leave(leave)
@@ -314,6 +332,10 @@ def reject(leave_id: str, actor_user_id: str, rejection_reason: str) -> StudentL
             recipient_user_ids=[leave.student.user_id],
             extra_data={"leave_id": leave.id, "status": "rejected"},
         )
+
+    # A teacher who already approved this needs to know it was overturned.
+    if leave.class_teacher_decided_at is not None:
+        _notify_class_teacher_of_outcome(leave, actor_user_id)
     return leave
 
 
@@ -505,9 +527,16 @@ def _holds_head_authority(leave: StudentLeave, actor_user_id: str) -> bool:
 
 
 def can_act_as_class_teacher(leave: StudentLeave, actor_user_id: str) -> bool:
-    """The class teacher's stage — or a head standing in while they are away."""
+    """The class teacher's stage — or a head standing in for them."""
     if not leave.class_teacher_id:
-        return False
+        # The section has no primary class teacher: one left mid-year, or the
+        # assignment was never made. The request was accepted all the same, and
+        # without this it could be decided by nobody at all — it sat in
+        # `pending_class_teacher` forever, in no queue.
+        #
+        # The school already agreed the head stands in while a class teacher is
+        # away. No class teacher at all is that situation, permanently.
+        return _holds_head_authority(leave, actor_user_id)
 
     teacher = (
         db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
@@ -836,6 +865,8 @@ def admin_fallback_queue(user):
                          the teacher had just approved appeared nowhere.
       ``teacher_away``   the class teacher is on approved leave today, so the
                          head stands in for them at the first stage.
+      ``no_class_teacher`` the section has no primary class teacher at all, so
+                         there is no first stage to wait for.
 
     Both are branch-scoped: a head sees only children at campuses they run.
     """
@@ -860,7 +891,10 @@ def admin_fallback_queue(user):
             db.or_(
                 StudentLeave.status == "pending_admin",
                 db.and_(
-                    StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),
+                    db.or_(
+                        StudentLeave.class_teacher_id.in_(unavailable_teacher_ids),
+                        StudentLeave.class_teacher_id.is_(None),
+                    ),
                     db.or_(
                         StudentLeave.status.in_(
                             ("pending_class_teacher", "pending_admin")
@@ -874,9 +908,12 @@ def admin_fallback_queue(user):
     ).all()
 
     for row in rows:
-        row.queue_reason = (
-            "awaiting_head" if row.status == "pending_admin" else "teacher_away"
-        )
+        if row.status == "pending_admin":
+            row.queue_reason = "awaiting_head"
+        elif row.class_teacher_id is None:
+            row.queue_reason = "no_class_teacher"
+        else:
+            row.queue_reason = "teacher_away"
         # These queues exist only for people who may decide, so the rows carry
         # the guardian's number.
         row.viewer_may_decide = True
@@ -897,6 +934,47 @@ def _admin_user_ids_for_tenant(tenant_id: str) -> list:
         )
     except Exception:
         return []
+
+
+def _notify_class_teacher_of_outcome(leave: StudentLeave, actor_user_id: str) -> None:
+    """Tell the class teacher what the head decided about a leave they endorsed.
+
+    They approved it and passed it up, and without this they hear nothing back.
+    The class teacher owns the register: if the head refuses a leave the
+    teacher endorsed, the child is expected in class on Monday and the teacher
+    is the person who has to know that.
+
+    Skipped when the head *is* the person who cleared the first stage — nobody
+    needs telling what they just did.
+    """
+    if not leave.class_teacher_id:
+        return
+    teacher = (
+        db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
+    )
+    if not teacher or not teacher.user_id or teacher.user_id == actor_user_id:
+        return
+
+    student_display = (leave.student.display_name if leave.student else None) or "A student"
+    if leave.status == "approved":
+        title = "Leave you approved was granted"
+        body = f"{student_display}'s {leave.leave_type} leave was approved by the principal"
+    else:
+        reason = leave.rejection_reason or ""
+        title = "Leave you approved was refused"
+        body = (
+            f"{student_display}'s {leave.leave_type} leave was rejected by the "
+            f"principal: {reason}"
+        ).strip()
+
+    _notify(
+        tenant_id=leave.tenant_id,
+        notification_type="student_leave.status_changed",
+        title=title,
+        body=body,
+        recipient_user_ids=[teacher.user_id],
+        extra_data={"leave_id": leave.id, "status": leave.status},
+    )
 
 
 def _admin_user_ids_for_leave(leave: StudentLeave) -> list:
