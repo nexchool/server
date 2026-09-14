@@ -309,9 +309,17 @@ def get_frontend_url():
 
 
 def get_reset_password_url(token: str, email: str) -> str:
-    """Generates the password reset URL"""
+    """Generates the password reset deep link for the mobile app.
+
+    `get_frontend_url()` already ends in `scheme://`, so the path is appended
+    bare — no leading `/--/`. That segment is an Expo Go convention (it
+    disambiguates one project's links from another's behind Expo Go's shared
+    `exp://` scheme in development); a standalone build owns its scheme
+    outright and has no route registered under `/--/`, so a link carrying it
+    lands on "Unmatched Route" instead of app/(auth)/reset-password.tsx.
+    """
     base_url = get_frontend_url()
-    return f"{base_url}/--/reset-password?token={token}&email={email}"
+    return f"{base_url}reset-password?token={token}&email={email}"
 
 
 def get_admin_web_reset_url(token: str, email: str, subdomain: str = "") -> str:
@@ -357,12 +365,18 @@ def get_email_verification_url(token: str, email: str) -> str:
 
 
 def get_app_verification_success_url(access_token: str, refresh_token: str, user_id: str, email: str) -> str:
-    """Generates the app deep link URL for successful email verification"""
+    """Generates the app deep link URL for successful email verification.
+
+    See get_reset_password_url for why there is no `/--/` here.
+    """
     base_url = get_frontend_url()
-    return f"{base_url}/--/verify-email?status=success&access_token={access_token}&refresh_token={refresh_token}&user_id={user_id}&email={email}"
+    return f"{base_url}verify-email?status=success&access_token={access_token}&refresh_token={refresh_token}&user_id={user_id}&email={email}"
 
 
 def get_app_verification_error_url(error: str) -> str:
-    """Generates the app deep link URL for failed email verification"""
+    """Generates the app deep link URL for failed email verification.
+
+    See get_reset_password_url for why there is no `/--/` here.
+    """
     base_url = get_frontend_url()
-    return f"{base_url}/--/verify-email?status=error&error={error}"
+    return f"{base_url}verify-email?status=error&error={error}"
