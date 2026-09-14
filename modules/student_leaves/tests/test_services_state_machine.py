@@ -108,20 +108,129 @@ def test_approve_admin_required_routes_through_pending_admin(
     tenant_ctx,
     student_user,
     class_with_teacher,
-    admin_user,
     enable_admin_approval,
-    teacher_on_leave_today,
 ):
-    """Admin completing pending_admin → approved requires class teacher to be
-    on approved leave today (Task 5 tightened admin-fallback eligibility)."""
+    """With the rule on, the class teacher's approval escalates rather than grants.
+
+    This used to request `teacher_on_leave_today` and only passed because of it
+    — the admin could finish the leave solely because the class teacher was
+    away. That hid the fact that the principal's stage was unreachable in the
+    ordinary case. See the design doc, 2026-09-14.
+    """
     leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
     assert leave.requires_admin_approval is True
 
     after_teacher = approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
     assert after_teacher.status == "pending_admin"
+    assert after_teacher.class_teacher_decided_by_id == class_with_teacher.teacher_row.user_id
+    assert after_teacher.class_teacher_decided_at is not None
+
+
+def test_head_approves_pending_admin_with_class_teacher_present(
+    tenant_ctx,
+    student_user,
+    class_with_teacher,
+    admin_user,
+    enable_admin_approval,
+):
+    """The principal finishes the leave while the class teacher is at work.
+
+    This is the ordinary case — the teacher just approved, so they are plainly
+    not away — and it was impossible before the authority split: the request
+    sat at `pending_admin` with nobody able to move it.
+    """
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
 
     final = approve(leave.id, actor_user_id=admin_user.id)
     assert final.status == "approved"
+    assert final.decided_by_id == admin_user.id
+    # The class teacher's approval survives the principal's.
+    assert final.class_teacher_decided_by_id == class_with_teacher.teacher_row.user_id
+
+
+def test_class_teacher_cannot_approve_at_pending_admin(
+    tenant_ctx,
+    student_user,
+    class_with_teacher,
+    enable_admin_approval,
+):
+    """A teacher may not wave through the escalation they just created."""
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+
+    with pytest.raises(AuthorizationError):
+        approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+
+
+def test_head_approves_both_steps_when_class_teacher_away(
+    tenant_ctx,
+    student_user,
+    class_with_teacher,
+    admin_user,
+    enable_admin_approval,
+    teacher_on_leave_today,
+):
+    """Teacher away: one head action completes the request.
+
+    The head is senior to the teacher, so a second signature from the same
+    person is theatre — and a child's leave must not wait a week for somebody
+    to come back.
+    """
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    final = approve(leave.id, actor_user_id=admin_user.id)
+    assert final.status == "approved"
+    assert final.class_teacher_decided_by_id == admin_user.id
+
+
+def test_head_can_reject_at_pending_admin(
+    tenant_ctx,
+    student_user,
+    class_with_teacher,
+    admin_user,
+    enable_admin_approval,
+):
+    """Whoever may approve a stage may also refuse it."""
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+
+    result = reject(leave.id, actor_user_id=admin_user.id, rejection_reason="Exams week")
+    assert result.status == "rejected"
+    assert result.rejection_reason == "Exams week"
+
+
+def test_flag_flip_does_not_reroute_in_flight_request(
+    tenant_ctx,
+    student_user,
+    class_with_teacher,
+    db_session,
+):
+    """A request is judged by the rule in force when it was filed.
+
+    Turning the rule on must not reach back and re-route work a teacher is
+    already holding.
+    """
+    from modules.academics.backbone.models import AcademicSettings
+
+    leave = create_request(_sample_payload(student_user), actor_user_id=student_user.id)
+    assert leave.requires_admin_approval is False
+
+    settings = (
+        db_session.query(AcademicSettings)
+        .filter(AcademicSettings.tenant_id == leave.tenant_id)
+        .first()
+    )
+    if settings is None:
+        settings = AcademicSettings(
+            tenant_id=leave.tenant_id, student_leave_admin_approval_required=True
+        )
+        db_session.add(settings)
+    else:
+        settings.student_leave_admin_approval_required = True
+    db_session.flush()
+
+    result = approve(leave.id, actor_user_id=class_with_teacher.teacher_row.user_id)
+    assert result.status == "approved"
 
 
 def test_reject_with_reason(tenant_ctx, student_user, class_with_teacher):

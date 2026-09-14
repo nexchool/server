@@ -28,10 +28,17 @@ os.environ.setdefault(
 # Re-export the shared fixtures defined in tests/conftest.py.
 # Tests under modules/<x>/tests/ aren't descendants of tests/, so pytest
 # would not normally pick that conftest up — pull the fixtures up here.
+#
+# Autouse fixtures have to be named here too. They apply to everything below
+# the conftest that *defines* them, and a module test tree is not below
+# tests/ — so `_no_outbound_delivery` was silently inactive for every test
+# under modules/, which is how the student-leave suite came to spend twenty
+# seconds per test retrying a broker connection.
 from tests.conftest import (  # noqa: F401,E402
     flask_app,
     _db_engine,
     db_session,
+    _no_outbound_delivery,
     tenant,
     hostel,
     room,

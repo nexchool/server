@@ -67,6 +67,65 @@ def flask_app():
 
 
 @pytest.fixture(autouse=True)
+def _no_outbound_delivery(monkeypatch):
+    """Keep the suite off the network when a test creates a notification.
+
+    Two outbound calls sit behind `notification_service.send_notification`,
+    and any test that does something a school would notice reaches it —
+    applying for leave, marking attendance, publishing a result.
+
+      - **Celery.** `send_task` enqueues on `redis://redis:6379`, the docker
+        hostname, which does not resolve from a test run on the host. kombu
+        then retries with backoff for about twenty seconds *per call* before
+        giving up. That is what made the student-leave state machine look like
+        it was hanging: twenty-four tests, several notifications each.
+      - **Expo push.** `send_expo_push` POSTs to https://exp.host with a 30
+        second timeout.
+
+    Both are stubbed here rather than in one module's conftest because the
+    cost is paid by every notifying test in the suite, and because the
+    project's own testing rule is that tests do not call real external
+    services. A test that is *about* delivery patches these itself
+    (`test_notification_delivery_pipeline.py`) and is unaffected — this only
+    replaces the outbound hop.
+    """
+    import celery_app as celery_module
+    import modules.notifications.expo_push_service as expo
+    import modules.notifications.push_delivery as push_delivery
+
+    def _fake_send(*args, **kwargs):
+        # (delivered_ok, should_deactivate_token)
+        return True, False
+
+    monkeypatch.setattr(expo, "send_expo_push", _fake_send, raising=False)
+    # `push_delivery` binds both functions at import, so patching the source
+    # modules alone would leave the call sites pointing at the real ones.
+    monkeypatch.setattr(push_delivery, "send_expo_push", _fake_send, raising=False)
+    monkeypatch.setattr(push_delivery, "send_fcm_v1", _fake_send, raising=False)
+
+    real_get_celery = celery_module.get_celery
+
+    class _NoQueue:
+        """Accepts the dispatch and drops it, as an unreachable broker would —
+        without the twenty seconds of retries in between."""
+
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        def send_task(self, *args, **kwargs):
+            return None
+
+        def __getattr__(self, item):
+            return getattr(self._wrapped, item)
+
+    def _fake_get_celery():
+        wrapped = real_get_celery()
+        return _NoQueue(wrapped) if wrapped is not None else None
+
+    monkeypatch.setattr(celery_module, "get_celery", _fake_get_celery, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_throttling(flask_app):
     """Run the suite with rate limiting off.
 

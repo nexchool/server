@@ -55,6 +55,13 @@ class StudentLeave(TenantBaseModel):
 
     decided_by_id = db.Column(db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     decided_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # The class teacher's approval, kept apart so the principal's decision does
+    # not overwrite it. A school that asks for two signatures wants to see both.
+    # See migration 142.
+    class_teacher_decided_by_id = db.Column(
+        db.String(36), db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    class_teacher_decided_at = db.Column(db.DateTime(timezone=True), nullable=True)
     rejection_reason = db.Column(db.Text, nullable=True)
 
     cancel_requested_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -71,8 +78,25 @@ class StudentLeave(TenantBaseModel):
     class_teacher = db.relationship("Teacher", foreign_keys=[class_teacher_id])
     attachment = db.relationship("Document", foreign_keys=[attachment_document_id])
     decided_by = db.relationship("User", foreign_keys=[decided_by_id])
+    class_teacher_decided_by = db.relationship(
+        "User", foreign_keys=[class_teacher_decided_by_id]
+    )
+
+    # --- Transient, never persisted -----------------------------------------
+    # Why this row is in front of a head: "awaiting_head" (the school's rule
+    # sends it on) or "teacher_away" (the head is standing in). Set by
+    # `admin_fallback_queue`; None everywhere else.
+    queue_reason = None
+    # Whether the caller may decide this leave. Controls whether the applicant
+    # block carries the guardian's phone number — a list response should never
+    # hand out contact details the screen has no use for.
+    viewer_may_decide = False
 
     def to_dict(self):
+        # Imported here rather than at module load: `applicant` reads the
+        # student and class models, which import this one.
+        from modules.student_leaves.applicant import build_applicant
+
         return {
             "id": self.id,
             "tenant_id": self.tenant_id,
@@ -95,10 +119,20 @@ class StudentLeave(TenantBaseModel):
             "decided_by_id": self.decided_by_id,
             "decided_by_name": self.decided_by.name if self.decided_by else None,
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
+            "class_teacher_decided_by_name": (
+                self.class_teacher_decided_by.name if self.class_teacher_decided_by else None
+            ),
+            "class_teacher_decided_at": (
+                self.class_teacher_decided_at.isoformat()
+                if self.class_teacher_decided_at
+                else None
+            ),
             "rejection_reason": self.rejection_reason,
             "cancel_requested_at": self.cancel_requested_at.isoformat() if self.cancel_requested_at else None,
             "cancel_requested_reason": self.cancel_requested_reason,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "queue_reason": self.queue_reason,
+            "applicant": build_applicant(self, include_contact=self.viewer_may_decide),
         }
 
     def __repr__(self):

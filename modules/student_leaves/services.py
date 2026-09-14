@@ -234,12 +234,17 @@ def approve(leave_id: str, actor_user_id: str) -> StudentLeave:
     leave = _get_or_404(leave_id)
     if leave.status not in ("pending_class_teacher", "pending_admin"):
         raise StateError("Leave is not pending approval")
-    if not _actor_is_authorized_approver(leave, actor_user_id):
-        raise AuthorizationError("You are not authorized to approve this request")
 
+    finalises = _assert_may_decide(leave, actor_user_id)
     now = utc_now()
+
     if leave.status == "pending_class_teacher":
-        if leave.requires_admin_approval:
+        # Recorded whoever cleared this stage, including a head standing in for
+        # an absent teacher — the school wants to see who agreed, not the title
+        # the approval nominally belongs to.
+        leave.class_teacher_decided_by_id = actor_user_id
+        leave.class_teacher_decided_at = now
+        if leave.requires_admin_approval and not finalises:
             leave.status = "pending_admin"
         else:
             leave.status = "approved"
@@ -290,8 +295,7 @@ def reject(leave_id: str, actor_user_id: str, rejection_reason: str) -> StudentL
     leave = _get_or_404(leave_id)
     if leave.status not in ("pending_class_teacher", "pending_admin"):
         raise StateError("Leave is not pending approval")
-    if not _actor_is_authorized_approver(leave, actor_user_id):
-        raise AuthorizationError("You are not authorized to reject this request")
+    _assert_may_decide(leave, actor_user_id)
     if not rejection_reason or not rejection_reason.strip():
         raise ValidationError("rejection_reason is required")
 
@@ -353,7 +357,11 @@ def approve_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
     leave = _get_or_404(leave_id)
     if leave.cancel_requested_at is None:
         raise StateError("No cancellation has been requested for this leave")
-    if not _actor_is_authorized_approver(leave, actor_user_id):
+    # Cancellation stays the class teacher's call, exactly as before the
+    # approval stages were separated: they own the register this leave came
+    # out of. A head steps in only while that teacher is away — widening it to
+    # every head would be a change to who may act, and no one asked for one.
+    if not can_act_as_class_teacher(leave, actor_user_id):
         raise AuthorizationError("You are not authorized to approve this cancellation")
 
     was_approved = leave.status == "approved"
@@ -386,7 +394,7 @@ def reject_cancel(leave_id: str, actor_user_id: str) -> StudentLeave:
     leave = _get_or_404(leave_id)
     if leave.cancel_requested_at is None:
         raise StateError("No cancellation has been requested for this leave")
-    if not _actor_is_authorized_approver(leave, actor_user_id):
+    if not can_act_as_class_teacher(leave, actor_user_id):
         raise AuthorizationError("You are not authorized to reject this cancellation")
 
     leave.cancel_requested_at = None
@@ -479,41 +487,80 @@ def _read_tenant_setting_admin_approval(tenant_id: str) -> bool:
     return bool(s.student_leave_admin_approval_required)
 
 
-def _actor_is_authorized_approver(leave: StudentLeave, actor_user_id: str) -> bool:
-    """Class teacher always authorized; admin only when class teacher is on
-    approved teacher-leave overlapping today.
+def _holds_head_authority(leave: StudentLeave, actor_user_id: str) -> bool:
+    """Holds the school-wide leave permission *and* authority over this child.
 
-    Removes Task 4's loose admin shortcut (any holder of
-    student.leave.approve.all could approve). Admin fallback is now eligibility-
-    gated.
+    Both halves matter. The permission on its own would let the head of one
+    campus decide for a child at a campus they do not run — approval is
+    authority over the person, not a permission string (ADR-013).
     """
-    if not leave.class_teacher_id:
-        return False
-
-    teacher = (
-        db.session.query(Teacher)
-        .filter(Teacher.id == leave.class_teacher_id)
-        .first()
-    )
-    if teacher and teacher.user_id == actor_user_id:
-        return True
-
-    # Admin fallback — only when class teacher is unavailable today.
     try:
         from modules.rbac.services import has_permission
+
         if not has_permission(actor_user_id, "student.leave.approve.all"):
             return False
     except Exception:
         return False
-    if not _class_teacher_unavailable_today(leave.class_teacher_id, leave.tenant_id):
+    return student_is_allowed(leave.student_id)
+
+
+def can_act_as_class_teacher(leave: StudentLeave, actor_user_id: str) -> bool:
+    """The class teacher's stage — or a head standing in while they are away."""
+    if not leave.class_teacher_id:
         return False
 
-    # The fallback was gated on the teacher being away and nothing else, so a
-    # campus head could approve for a child at a campus they do not run. An
-    # approver needs authority over the child, not just the permission.
-    if not student_is_allowed(leave.student_id):
+    teacher = (
+        db.session.query(Teacher).filter(Teacher.id == leave.class_teacher_id).first()
+    )
+    if teacher and teacher.user_id == actor_user_id:
+        return True
+
+    # Admin fallback — only while the class teacher is actually unavailable.
+    if not _holds_head_authority(leave, actor_user_id):
         return False
-    return True
+    return _class_teacher_unavailable_today(leave.class_teacher_id, leave.tenant_id)
+
+
+def can_act_as_head(leave: StudentLeave, actor_user_id: str) -> bool:
+    """The principal's stage.
+
+    The class teacher has no standing here. They may not wave through the
+    escalation they themselves created — that is the whole point of a school
+    asking for a second signature.
+    """
+    return _holds_head_authority(leave, actor_user_id)
+
+
+def _assert_may_decide(leave: StudentLeave, actor_user_id: str) -> bool:
+    """Authorise the actor for the leave's *current* stage.
+
+    One predicate used to answer for both stages, which is why a leave that
+    reached `pending_admin` could not be finished by anybody: the head was
+    admitted only while the class teacher was away, and a teacher who has just
+    approved is plainly not away.
+
+    Returns True when this single action should finalise the leave — the head
+    acting for an absent teacher, who is senior to them and need not sign
+    twice.
+    """
+    if leave.status == "pending_admin":
+        if not can_act_as_head(leave, actor_user_id):
+            raise AuthorizationError("You are not authorized to decide this request")
+        return True
+
+    if not can_act_as_class_teacher(leave, actor_user_id):
+        raise AuthorizationError("You are not authorized to decide this request")
+
+    actor_is_the_class_teacher = (
+        db.session.query(Teacher)
+        .filter(
+            Teacher.id == leave.class_teacher_id,
+            Teacher.user_id == actor_user_id,
+        )
+        .first()
+        is not None
+    )
+    return not actor_is_the_class_teacher
 
 
 def _sync_attendance_rows(leave: StudentLeave, actor_user_id: str) -> int:
