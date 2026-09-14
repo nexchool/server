@@ -152,6 +152,10 @@ def list_leaves():
 @require_permission(PERM_STUDENT_LEAVE_APPROVE_CLASS)
 def queue_for_me():
     rows = services.teacher_queue(g.current_user)
+    # This queue exists only for the person who decides these requests, so the
+    # rows carry the guardian's number. `admin_fallback_queue` marks its own.
+    for row in rows:
+        row.viewer_may_decide = True
     return success_response(data=[r.to_dict() for r in rows])
 
 
@@ -174,4 +178,9 @@ def get_leave(leave_id):
         return error_response("AuthorizationError", str(e), 403)
     except services.ValidationError as e:
         return validation_error_response({"detail": str(e)})
+    # A student reading their own request does not need their parent's phone
+    # number handed back to them; an approver deciding it does.
+    leave.viewer_may_decide = services.can_act_as_class_teacher(
+        leave, g.current_user.id
+    ) or services.can_act_as_head(leave, g.current_user.id)
     return success_response(data=leave.to_dict())

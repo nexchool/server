@@ -160,6 +160,32 @@ def test_serialising_a_queue_does_not_cost_a_query_per_leave(
     )
 
 
+def test_the_approver_view_is_flat_too(ctx, db_session, tenant, klass):
+    """The applicant block names the class, its campus and its medium, and for
+    an approver it adds the guardian's contact. All of it has to come off the
+    rows already loaded — a head at a 15,000-student trust opens this queue."""
+    for _ in range(3):
+        _leave(db_session, tenant, _student(db_session, tenant, name="A Child"), klass)
+    db_session.expire_all()
+    small_rows = _rows(tenant)
+    for r in small_rows:
+        r.viewer_may_decide = True
+    small = _queries_to_serialise(small_rows)
+
+    for _ in range(15):
+        _leave(db_session, tenant, _student(db_session, tenant, name="A Child"), klass)
+    db_session.expire_all()
+    large_rows = _rows(tenant)
+    for r in large_rows:
+        r.viewer_may_decide = True
+    large = _queries_to_serialise(large_rows)
+
+    assert large - small <= 2, (
+        f"{small} queries for 3 leaves, {large} for 18 — the applicant block "
+        f"costs a query per row"
+    )
+
+
 def _rows(tenant):
     """The queue query, eager loads and all."""
     from modules.student_leaves.models import StudentLeave
