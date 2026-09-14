@@ -278,6 +278,10 @@ def test_the_public_branding_endpoint_resolves_a_school_before_sign_in(
         # Which ways in this school allows, so the sign-in screen can offer
         # them. Added when student admission sign-in arrived.
         "auth",
+        # Coarse and public on purpose: lets a signed-out mobile screen warn
+        # before anyone attempts to sign in. See test_tenant_branding.py for
+        # the behavior this field actually pins.
+        "login_restricted",
     }
     assert set(data["auth"]) == {"methods"}
 

@@ -109,6 +109,40 @@ def test_a_school_further_out_than_the_window_is_left_alone(db_session, sent):
     assert sent == []
 
 
+def test_a_school_a_month_out_gets_the_first_early_warning(db_session, sent):
+    tenant = _school(db_session, due_on=TODAY + timedelta(days=30))
+    _admin_of(db_session, tenant)
+
+    assert tenant.id in send_payment_reminders(today=TODAY)["reminded"]
+    assert "30 day" in sent[0]["body"].lower()
+
+
+def test_a_school_two_weeks_out_gets_the_second_early_warning(db_session, sent):
+    tenant = _school(db_session, due_on=TODAY + timedelta(days=15))
+    _admin_of(db_session, tenant)
+
+    assert tenant.id in send_payment_reminders(today=TODAY)["reminded"]
+    assert "15 day" in sent[0]["body"].lower()
+
+
+def test_a_school_29_days_out_is_left_alone(db_session, sent):
+    """One day short of the month-out tier — the tiers are exact days, not a
+    threshold, so nothing fires the day before or after."""
+    tenant = _school(db_session, due_on=TODAY + timedelta(days=29))
+    _admin_of(db_session, tenant)
+
+    assert send_payment_reminders(today=TODAY)["reminded"] == []
+    assert sent == []
+
+
+def test_a_school_16_days_out_is_left_alone(db_session, sent):
+    tenant = _school(db_session, due_on=TODAY + timedelta(days=16))
+    _admin_of(db_session, tenant)
+
+    assert send_payment_reminders(today=TODAY)["reminded"] == []
+    assert sent == []
+
+
 def test_a_school_in_its_grace_period_is_reminded(db_session, sent):
     tenant = _school(db_session, due_on=TODAY - timedelta(days=3))
     _admin_of(db_session, tenant)
@@ -184,3 +218,14 @@ def test_the_reminder_goes_out_by_email_as_well_as_in_the_app(db_session, sent):
 
     assert "EMAIL" in sent[0]["channels"]
     assert "IN_APP" in sent[0]["channels"]
+
+
+def test_the_reminder_goes_out_by_push_too(db_session, sent):
+    """A push notification, so an admin sees it the moment they unlock their
+    phone — not only once they next open their inbox."""
+    tenant = _school(db_session, due_on=TODAY + timedelta(days=1))
+    _admin_of(db_session, tenant)
+
+    send_payment_reminders(today=TODAY)
+
+    assert "PUSH" in sent[0]["channels"]

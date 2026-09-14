@@ -37,3 +37,24 @@ def test_branding_empty_flags_defaults_variant(flask_app, db_session, tenant):
     db_session.flush()
     resp = _get_branding(flask_app, tenant)
     assert resp.get_json()["data"]["login_variant"] == "default"
+
+
+def test_branding_reports_no_login_restriction_for_an_active_tenant(flask_app, tenant):
+    resp = _get_branding(flask_app, tenant)
+    assert resp.get_json()["data"]["login_restricted"] is False
+
+
+def test_branding_reports_login_restricted_for_a_suspended_tenant(
+    flask_app, db_session, tenant
+):
+    """Coarse and public on purpose: just enough for a signed-out mobile
+    screen to warn before anyone attempts to sign in, without publishing the
+    due date or amount owed a suspended tenant's commercial data stays behind
+    auth."""
+    from core.models import TENANT_STATUS_SUSPENDED
+
+    tenant.status = TENANT_STATUS_SUSPENDED
+    db_session.flush()
+
+    resp = _get_branding(flask_app, tenant)
+    assert resp.get_json()["data"]["login_restricted"] is True

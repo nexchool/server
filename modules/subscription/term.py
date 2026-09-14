@@ -30,10 +30,17 @@ STANDING_GRACE_EXPIRED = "grace_expired"
 
 DEFAULT_GRACE_DAYS = 7
 
-#: How long before the due date the school starts hearing about it. The same
-#: week its own Subscription page turns into a countdown, so the email and the
-#: screen begin speaking at the same moment.
+#: How long before the due date the daily reminder starts. The same week its
+#: own Subscription page turns into a countdown, so the email/push and the
+#: screen begin speaking at the same moment. Two earlier, one-off warnings
+#: land before this window opens — see EARLY_REMINDER_DAYS.
 REMINDER_WINDOW_DAYS = 7
+
+#: Two single-day warnings ahead of the daily window: a month out, then a
+#: fortnight out. Exact-day matches, not thresholds — each fires once, not
+#: "every day from here on," so a school hears from us three times before the
+#: daily run at T-7 even starts, not three weeks of email.
+EARLY_REMINDER_DAYS = (30, 15)
 
 
 def grace_ends_on(due_on: Optional[date], grace_days: int) -> Optional[date]:
@@ -183,10 +190,10 @@ def schools_needing_payment_reminder(*, today: date) -> list[Tenant]:
         )
         if standing == STANDING_NO_TERM:
             continue
-        if standing == STANDING_CURRENT and (
-            tenant.subscription_due_on - today
-        ).days > REMINDER_WINDOW_DAYS:
-            continue
+        if standing == STANDING_CURRENT:
+            days_until_due = (tenant.subscription_due_on - today).days
+            if days_until_due > REMINDER_WINDOW_DAYS and days_until_due not in EARLY_REMINDER_DAYS:
+                continue
         due_soon.append(tenant)
     return due_soon
 
@@ -232,6 +239,7 @@ def send_payment_reminders(*, today: Optional[date] = None) -> dict:
                     channels=[
                         NotificationChannel.IN_APP.value,
                         NotificationChannel.EMAIL.value,
+                        NotificationChannel.PUSH.value,
                     ],
                     title=title,
                     body=body,
