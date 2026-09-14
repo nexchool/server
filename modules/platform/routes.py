@@ -178,6 +178,47 @@ def update_tenant_features(tenant_id):
     )
 
 
+@platform_bp.route("/tenants/<tenant_id>/school-policies", methods=["GET"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def get_tenant_school_policies(tenant_id):
+    """
+    GET /platform/tenants/<id>/school-policies
+
+    How this school runs, as opposed to which modules it has.
+    """
+    result = services.get_tenant_school_policies(tenant_id)
+    if not result["success"]:
+        return not_found_response("Tenant")
+    return success_response(data=result["policies"])
+
+
+@platform_bp.route("/tenants/<tenant_id>/school-policies", methods=["PATCH"])
+@limiter.limit(PLATFORM_LIMIT)
+@auth_required
+@platform_admin_required
+def update_tenant_school_policies(tenant_id):
+    """
+    PATCH /platform/tenants/<id>/school-policies
+    Body: { student_leave_requires_principal_approval: bool }
+
+    Unrecognised keys are ignored. Leaves already in flight keep the rule they
+    were filed under.
+    """
+    data = request.get_json() or {}
+    result = services.update_tenant_school_policies(
+        tenant_id=tenant_id,
+        platform_admin_id=g.current_user.id,
+        policies=data,
+    )
+    if not result["success"]:
+        if result["error"] == "Tenant not found":
+            return not_found_response("Tenant")
+        return error_response("BadRequest", result["error"], 400)
+    return success_response(data=result["policies"], message="School policies updated")
+
+
 @platform_bp.route("/theme/preview", methods=["POST"])
 @limiter.limit(PLATFORM_LIMIT)
 @auth_required

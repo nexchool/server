@@ -680,6 +680,99 @@ def update_tenant_subscription(
     return get_tenant_subscription(tenant_id)
 
 
+# ---------------------------------------------------------------------------
+# School policies
+# ---------------------------------------------------------------------------
+#
+# How a school runs, as opposed to which modules it has. Schools genuinely
+# differ on these — in a small primary the class teacher's word is final, a
+# larger secondary wants the principal to see every absence — and the product
+# has no business imposing one answer.
+#
+# Deliberately not `tenants.feature_flags`. That column answers "does this
+# school have a hostel", and its double duty as a settings bag is recorded in
+# `update_tenant_feature_flags` as something to undo rather than extend.
+
+SCHOOL_POLICY_KEYS = ("student_leave_requires_principal_approval",)
+
+
+def get_tenant_school_policies(tenant_id: str) -> Dict[str, Any]:
+    """The per-client rules a school chooses for itself."""
+    from modules.academics.services.bell_schedules import (
+        get_or_create_academic_settings,
+    )
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+
+    settings = get_or_create_academic_settings(tenant_id)
+    return {
+        "success": True,
+        "tenant_id": tenant_id,
+        "policies": {
+            "student_leave_requires_principal_approval": bool(
+                settings.student_leave_admin_approval_required
+            ),
+        },
+    }
+
+
+def update_tenant_school_policies(
+    tenant_id: str,
+    platform_admin_id: str,
+    policies: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Apply the supplied policies to a school.
+
+    Unknown keys are ignored rather than stored, the same contract as feature
+    flags — a typo should not become a setting.
+
+    Values must be real booleans. A string "false" is truthy, and quietly
+    storing it as on would switch a school's approval chain by accident.
+
+    Requests already in flight are untouched. Each leave snapshots the rule it
+    was filed under at submit time, so turning this on does not reach back and
+    re-route work a teacher is already holding.
+    """
+    from modules.academics.services.bell_schedules import (
+        get_or_create_academic_settings,
+    )
+
+    tenant = Tenant.query.get(tenant_id)
+    if not tenant:
+        return {"success": False, "error": "Tenant not found"}
+    if not isinstance(policies, dict):
+        return {"success": False, "error": "policies must be an object"}
+
+    applied: Dict[str, Any] = {}
+    for key in SCHOOL_POLICY_KEYS:
+        if key not in policies:
+            continue
+        value = policies[key]
+        if not isinstance(value, bool):
+            return {"success": False, "error": f"{key} must be true or false"}
+        applied[key] = value
+
+    if applied:
+        settings = get_or_create_academic_settings(tenant_id)
+        if "student_leave_requires_principal_approval" in applied:
+            settings.student_leave_admin_approval_required = applied[
+                "student_leave_requires_principal_approval"
+            ]
+        settings.updated_at = utc_now()
+        db.session.commit()
+
+    # Who changed a school's approval chain, and when, is not a detail.
+    log_platform_action(
+        platform_admin_id=platform_admin_id,
+        action="tenant.school_policies.updated",
+        tenant_id=tenant_id,
+        metadata={"policies": applied},
+    )
+    return get_tenant_school_policies(tenant_id)
+
+
 def update_tenant_feature_flags(
     tenant_id: str,
     platform_admin_id: str,
