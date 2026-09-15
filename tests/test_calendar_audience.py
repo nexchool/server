@@ -136,3 +136,129 @@ def test_class_teacher_duty_counts_too(db_session, tenant, two_classes):
 
     assert reached == {owned.id}
     assert other.id not in reached
+
+
+def _a_student(db_session, tenant, class_id):
+    """An account with a studentship in `class_id`.
+
+    `Student.person_id` is filled by the before_flush listener that attaches
+    every arriving account and studentship to the person behind it, which is
+    also the chain `student_for_user` walks.
+    """
+    from modules.auth.models import User
+    from modules.students.models import Student
+
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        id=f"u-{suffix}", tenant_id=tenant.id, email=f"{suffix}@test.school",
+        password_hash="x" * 60, name="Student",
+    )
+    db_session.add(user)
+    db_session.flush()
+    student = Student(
+        id=_new_id("s-"), tenant_id=tenant.id, user_id=user.id,
+        admission_number=f"ADM-{suffix}", class_id=class_id,
+    )
+    db_session.add(student)
+    db_session.flush()
+    return user, student
+
+
+@pytest.fixture
+def teaching_user(db_session, tenant, two_classes):
+    """A signed-in teacher of the first of `two_classes`."""
+    from modules.academics.backbone.models import ClassTeacherAssignment
+
+    taught, _other = two_classes
+    user, teacher = _a_teacher(db_session, tenant)
+    db_session.add(
+        ClassTeacherAssignment(
+            id=_new_id("cta-"), tenant_id=tenant.id, class_id=taught.id,
+            teacher_id=teacher.id, role="primary", is_active=True,
+        )
+    )
+    db_session.flush()
+    return user, taught.id
+
+
+@pytest.fixture
+def studying_user(db_session, tenant, two_classes):
+    """A signed-in student of the first of `two_classes`."""
+    own, _other = two_classes
+    user, _student = _a_student(db_session, tenant, own.id)
+    return user, own.id
+
+
+# ---------------------------------------------------------------------------
+# Resolving an audience
+# ---------------------------------------------------------------------------
+
+def test_manage_holder_is_unrestricted(db_session, tenant):
+    """An admin sees the whole calendar — the shape admin-web has always had."""
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from tests.test_calendar_setup_graphql import _staff_with
+
+    user, _token = _staff_with(db_session, tenant, "academic_calendar.manage")
+
+    audience = resolve_calendar_audience(user)
+
+    assert audience.unrestricted is True
+    assert audience.class_ids is None
+
+
+def test_office_staff_without_teaching_are_unrestricted(db_session, tenant):
+    """A view-only sub-admin keeps the view they have on admin-web today.
+
+    Narrowing keys on being a teacher or a student, not on lacking `manage` —
+    otherwise this would silently take the calendar away from the office desk.
+    """
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from tests.test_calendar_setup_graphql import _staff_with
+
+    user, _token = _staff_with(db_session, tenant, "academic_calendar.read")
+
+    audience = resolve_calendar_audience(user)
+
+    assert audience.unrestricted is True
+
+
+def test_teacher_is_scoped_to_the_classes_they_teach(
+    db_session, tenant, two_classes, teaching_user
+):
+    from modules.academics.calendar.audience import resolve_calendar_audience
+
+    user, taught_class_id = teaching_user
+
+    audience = resolve_calendar_audience(user)
+
+    assert audience.unrestricted is False
+    assert audience.class_ids == {taught_class_id}
+    assert audience.applies_to == {"entire_school", "students", "teachers", "staff"}
+
+
+def test_student_is_scoped_to_their_class_and_hides_staff_audiences(
+    db_session, tenant, two_classes, studying_user
+):
+    from modules.academics.calendar.audience import resolve_calendar_audience
+
+    user, own_class_id = studying_user
+
+    audience = resolve_calendar_audience(user)
+
+    assert audience.unrestricted is False
+    assert audience.class_ids == {own_class_id}
+    assert audience.applies_to == {"entire_school", "students"}
+
+
+def test_no_caller_is_entitled_to_nothing(db_session, tenant):
+    """The permission classes reject this long before here.
+
+    Answering "everything" would make them the only thing standing in the way.
+    """
+    from modules.academics.calendar.audience import resolve_calendar_audience
+
+    audience = resolve_calendar_audience(user=None)
+
+    assert audience.unrestricted is False
+    assert audience.class_ids == frozenset()
+    assert audience.applies_to == frozenset()
