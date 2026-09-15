@@ -288,6 +288,10 @@ class CurrentCalendar:
     status: str
     academic_year_id: strawberry.ID
     academic_year_name: Optional[str] = None
+    # The year's own span. A reader wants to know the year runs to the 31st,
+    # which a name like "2026-2027" cannot tell them.
+    academic_year_start_date: Optional[datetime.date] = None
+    academic_year_end_date: Optional[datetime.date] = None
     summary: Optional[CalendarSummary] = None
     days: List[CalendarDay] = strawberry.field(default_factory=list)
     events: List[SchoolEvent] = strawberry.field(default_factory=list)

@@ -658,6 +658,7 @@ CURRENT = """
 query {
   currentAcademicCalendar {
     id status academicYearId academicYearName
+    academicYearStartDate academicYearEndDate
     summary { totalDays workingDays publicHolidayDays }
     days { date dayType hasExam hasEvent semesterStart }
     events { id name eventType eventDate appliesTo }
@@ -719,6 +720,9 @@ def test_current_calendar_answers_a_teacher_with_their_own_view(
     answer = body["data"]["currentAcademicCalendar"]
     assert answer is not None
     assert {w["name"] for w in answer["examWindows"]} == {"Std 8 Unit Test"}
+    # The subtitle reads the year's span, not its name.
+    assert answer["academicYearStartDate"] == "2026-06-01"
+    assert answer["academicYearEndDate"] == "2026-06-30"
     feed = {day["date"]: day for day in answer["days"]}
     assert feed["2026-06-08"]["hasExam"] is True
     assert feed["2026-06-22"]["hasExam"] is False

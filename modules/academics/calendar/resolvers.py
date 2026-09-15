@@ -310,6 +310,8 @@ class CalendarQuery:
             status=calendar.status,
             academic_year_id=strawberry.ID(year.id),
             academic_year_name=year.name,
+            academic_year_start_date=year.start_date,
+            academic_year_end_date=year.end_date,
             summary=summary_to_graphql(_computed(services, calendar, seen_by)),
             days=[
                 day_to_graphql(day)
