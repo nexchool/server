@@ -652,3 +652,93 @@ def test_a_term_boundary_names_the_term(
     assert feed["2026-06-01"]["semesterStart"] == "Term 1"
     assert feed["2026-06-30"]["semesterEnd"] == "Term 1"
     assert feed["2026-06-15"]["semesterStart"] is None
+
+
+CURRENT = """
+query {
+  currentAcademicCalendar {
+    id status academicYearId academicYearName
+    summary { totalDays workingDays publicHolidayDays }
+    days { date dayType hasExam hasEvent semesterStart }
+    events { id name eventType eventDate appliesTo }
+    examWindows { id name examType startDate endDate }
+  }
+}
+"""
+
+
+def test_current_calendar_answers_a_teacher_with_their_own_view(
+    client, db_session, tenant, academic_year, two_classes, request_ctx
+):
+    from modules.academics.backbone.models import ClassTeacherAssignment
+    from modules.academics.calendar import services
+    from modules.auth.models import User
+    from modules.auth.services import generate_access_token
+    from modules.teachers.models import Teacher
+    from tests.conftest import employ_for
+    from tests.test_academic_calendar import _configured_calendar
+    from tests.test_calendar_setup_graphql import _ask
+
+    taught, other = two_classes
+    cal = _configured_calendar(services, academic_year)
+    services.create_exam_window(
+        academic_year.id,
+        {"name": "Std 8 Unit Test", "start_date": "2026-06-08",
+         "end_date": "2026-06-09", "applicable_class_ids": [taught.id]},
+    )
+    services.create_exam_window(
+        academic_year.id,
+        {"name": "Std 12 Pre-Board", "start_date": "2026-06-22",
+         "end_date": "2026-06-23", "applicable_class_ids": [other.id]},
+    )
+    cal.status = "published"
+    db_session.flush()
+
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        id=f"u-{suffix}", tenant_id=tenant.id, email=f"{suffix}@test.school",
+        password_hash="x" * 60, name="Teacher",
+    )
+    db_session.add(user)
+    db_session.flush()
+    staff = employ_for(user, employee_number=f"EMP-{suffix}")
+    teacher = Teacher(id=_new_id("t-"), tenant_id=tenant.id, staff_id=staff.id)
+    db_session.add(teacher)
+    db_session.flush()
+    db_session.add(
+        ClassTeacherAssignment(
+            id=_new_id("cta-"), tenant_id=tenant.id, class_id=taught.id,
+            teacher_id=teacher.id, role="primary", is_active=True,
+        )
+    )
+    _authorize(db_session, tenant, staff, "academic_calendar.read")
+
+    body = _ask(client, tenant, generate_access_token(user), CURRENT)
+
+    assert body.get("errors") is None, body
+    answer = body["data"]["currentAcademicCalendar"]
+    assert answer is not None
+    assert {w["name"] for w in answer["examWindows"]} == {"Std 8 Unit Test"}
+    feed = {day["date"]: day for day in answer["days"]}
+    assert feed["2026-06-08"]["hasExam"] is True
+    assert feed["2026-06-22"]["hasExam"] is False
+
+
+def test_current_calendar_is_null_while_the_calendar_is_still_a_draft(
+    client, db_session, tenant, academic_year, request_ctx
+):
+    """A draft is the school still deciding.
+
+    Announcing dates that are going to move is worse than saying nothing.
+    """
+    from modules.academics.calendar import services
+    from tests.test_academic_calendar import _configured_calendar
+    from tests.test_calendar_setup_graphql import _ask, _staff_with
+
+    _configured_calendar(services, academic_year)
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.manage")
+
+    body = _ask(client, tenant, token, CURRENT)
+
+    assert body.get("errors") is None, body
+    assert body["data"]["currentAcademicCalendar"] is None

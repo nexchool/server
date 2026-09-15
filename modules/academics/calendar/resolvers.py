@@ -27,6 +27,7 @@ from graphql_api.permissions import (
 
 from .graphql.types import (
     AcademicCalendar,
+    CurrentCalendar,
     CalendarDay,
     CalendarSummary,
     ExamWindow,
@@ -275,6 +276,58 @@ class CalendarQuery:
                 str(academic_year_id), audience=_for_the_caller()
             )
         ]
+
+    @strawberry.field(
+        permission_classes=CALENDAR_READS,
+        description=(
+            "The published calendar for the school's active year, scoped to "
+            "what the caller may see, or null if there is not one. What a "
+            "phone opens the calendar screen with."
+        ),
+    )
+    def current_academic_calendar(
+        self, info: strawberry.Info
+    ) -> Optional[CurrentCalendar]:
+        from modules.academics.academic_year.models import AcademicYear
+
+        from . import services
+
+        year = AcademicYear.query.filter_by(
+            tenant_id=info.context.tenant_id, is_active=True
+        ).first()
+        if year is None:
+            return None
+
+        calendar = services.get_calendar_for_year(year.id)
+        # A draft is the school still deciding. Announcing dates that are going
+        # to move is worse than saying nothing.
+        if calendar is None or calendar.status != "published":
+            return None
+
+        seen_by = _for_the_caller()
+        return CurrentCalendar(
+            id=strawberry.ID(calendar.id),
+            status=calendar.status,
+            academic_year_id=strawberry.ID(year.id),
+            academic_year_name=year.name,
+            summary=summary_to_graphql(_computed(services, calendar, seen_by)),
+            days=[
+                day_to_graphql(day)
+                for day in services.get_days_feed(calendar, audience=seen_by)
+            ],
+            events=[
+                event_to_graphql(row.to_dict())
+                for row in services.list_school_events(
+                    year.id, active_only=True, audience=seen_by
+                )
+            ],
+            exam_windows=[
+                exam_window_to_graphql(row.to_dict())
+                for row in services.list_exam_windows(
+                    year.id, active_only=True, audience=seen_by
+                )
+            ],
+        )
 
     @strawberry.field(
         permission_classes=CALENDAR_READS,

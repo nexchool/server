@@ -278,6 +278,24 @@ class ExamWindow:
 
 @strawberry.type(
     description=(
+        "The calendar a school is running right now, with everything needed "
+        "to draw it. One answer, because a phone filling one screen from four "
+        "questions is four chances to be on a train."
+    )
+)
+class CurrentCalendar:
+    id: strawberry.ID
+    status: str
+    academic_year_id: strawberry.ID
+    academic_year_name: Optional[str] = None
+    summary: Optional[CalendarSummary] = None
+    days: List[CalendarDay] = strawberry.field(default_factory=list)
+    events: List[SchoolEvent] = strawberry.field(default_factory=list)
+    exam_windows: List[ExamWindow] = strawberry.field(default_factory=list)
+
+
+@strawberry.type(
+    description=(
         "A division of the academic year — a term or a semester. Ordered by "
         "`sequence`, because names do not order themselves."
     )
