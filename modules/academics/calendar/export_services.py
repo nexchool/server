@@ -17,6 +17,7 @@ from datetime import date, datetime
 from io import BytesIO, StringIO
 import csv
 import re
+from typing import Optional
 
 from flask import g, render_template_string
 
@@ -24,6 +25,7 @@ from modules.academics.academic_year.models import AcademicYear
 from modules.academics.backbone.models import AcademicTerm
 
 from . import services
+from .audience import UNRESTRICTED, CalendarAudience
 from .holidays import DAY_NAMES, Holiday
 from core.school_time import utc_now
 
@@ -77,13 +79,20 @@ def _weekly_lines(cal) -> list[str]:
     return lines
 
 
-def build_export_payload(cal) -> dict:
-    """Assemble every section's rows for one calendar (format-agnostic)."""
+def build_export_payload(cal, audience: Optional[CalendarAudience] = None) -> dict:
+    """Assemble every section's rows for one calendar (format-agnostic).
+
+    An export must not hand somebody a file listing rows their screen hides,
+    so the route passes the exporter's own audience. No audience means the
+    school's whole calendar, which is what an administrator — who is normally
+    who exports — is entitled to anyway.
+    """
     year = AcademicYear.query.filter(
         AcademicYear.tenant_id == g.tenant_id,
         AcademicYear.id == cal.academic_year_id,
     ).first()
-    summary = services.compute_summary(cal)
+    seen_by = audience or UNRESTRICTED
+    summary = services.compute_summary(cal, audience=seen_by)
 
     # Public holidays + vacations: dated (non-recurring) rows only; recurring
     # weekly-off rows are already represented in the Weekly Holidays section.
@@ -110,8 +119,12 @@ def build_export_payload(cal) -> dict:
         .order_by(AcademicTerm.sequence)
         .all()
     )
-    exams = services.list_exam_windows(cal.academic_year_id, active_only=True)
-    events = services.list_school_events(cal.academic_year_id, active_only=True)
+    exams = services.list_exam_windows(
+        cal.academic_year_id, active_only=True, audience=seen_by
+    )
+    events = services.list_school_events(
+        cal.academic_year_id, active_only=True, audience=seen_by
+    )
 
     year_label = year.name if year else cal.academic_year_id
 
@@ -407,14 +420,16 @@ def _to_pdf(payload: dict, sections: tuple[str, ...]) -> bytes:
     return HTML(string=html).write_pdf()
 
 
-def export_calendar(cal, fmt: str, sections=None) -> tuple[bytes, str, str]:
+def export_calendar(
+    cal, fmt: str, sections=None, audience: Optional[CalendarAudience] = None
+) -> tuple[bytes, str, str]:
     """Render one calendar as (content_bytes, mimetype, download_filename)."""
     fmt = (fmt or "").strip().lower()
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unsupported format '{fmt}'. Use one of: {', '.join(EXPORT_FORMATS)}")
 
     resolved = _resolve_sections(sections)
-    payload = build_export_payload(cal)
+    payload = build_export_payload(cal, audience=audience)
     if fmt == "csv":
         content = _to_csv(payload, resolved)
     elif fmt == "excel":

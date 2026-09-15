@@ -504,3 +504,109 @@ def test_student_and_parent_profiles_can_read_the_calendar():
 
     assert "academic_calendar.read" in DEFAULT_ROLES["Student"]["permissions"]
     assert "academic_calendar.read" in DEFAULT_ROLES["Parent"]["permissions"]
+
+
+# ---------------------------------------------------------------------------
+# Over the wire — the boundary that decides whose calendar this is
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def client(flask_app):
+    return flask_app.test_client()
+
+
+def _authorize(db_session, tenant, staff, *permission_keys):
+    """Give an already-employed person a role holding these permissions.
+
+    Authority is held by the employment, not the account (ADR-013), which is
+    why this takes the Staff row rather than the User.
+    """
+    from modules.rbac.authority_service import grant_authority
+    from modules.rbac.models import Permission, Role, RolePermission
+
+    suffix = uuid.uuid4().hex[:8]
+    role = Role(id=f"r-{suffix}", tenant_id=tenant.id, name=f"Role-{suffix}")
+    db_session.add(role)
+    db_session.flush()
+    for key in permission_keys:
+        permission = Permission.query.filter_by(name=key).first()
+        if permission is None:
+            permission = Permission(id=_new_id("perm-"), name=key)
+            db_session.add(permission)
+            db_session.flush()
+        db_session.add(
+            RolePermission(
+                tenant_id=tenant.id, role_id=role.id, permission_id=permission.id
+            )
+        )
+    db_session.flush()
+    grant_authority(staff.id, role.id)
+    db_session.flush()
+    return role
+
+
+EXAM_WINDOWS = """
+query E($yearId: ID!) {
+  examWindows(academicYearId: $yearId) { name }
+}
+"""
+
+
+def test_over_graphql_a_teacher_is_scoped_to_their_own_classes(
+    client, db_session, tenant, academic_year, two_classes, exams
+):
+    """The guard lets a teacher in; the resolver decides how much they get.
+
+    Without the resolver passing an audience this field answers with every
+    class's exam schedule to anyone holding `academic_calendar.read` — which
+    the Teacher role does.
+    """
+    from modules.auth.services import generate_access_token
+    from tests.conftest import employ_for
+    from tests.test_calendar_setup_graphql import _ask
+    from modules.academics.backbone.models import ClassTeacherAssignment
+    from modules.auth.models import User
+    from modules.teachers.models import Teacher
+
+    taught, _other = two_classes
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        id=f"u-{suffix}", tenant_id=tenant.id, email=f"{suffix}@test.school",
+        password_hash="x" * 60, name="Teacher",
+    )
+    db_session.add(user)
+    db_session.flush()
+    staff = employ_for(user, employee_number=f"EMP-{suffix}")
+    teacher = Teacher(id=_new_id("t-"), tenant_id=tenant.id, staff_id=staff.id)
+    db_session.add(teacher)
+    db_session.flush()
+    db_session.add(
+        ClassTeacherAssignment(
+            id=_new_id("cta-"), tenant_id=tenant.id, class_id=taught.id,
+            teacher_id=teacher.id, role="primary", is_active=True,
+        )
+    )
+    _authorize(db_session, tenant, staff, "academic_calendar.read")
+
+    body = _ask(
+        client, tenant, generate_access_token(user), EXAM_WINDOWS,
+        yearId=academic_year.id,
+    )
+
+    assert body.get("errors") is None, body
+    seen = {row["name"] for row in body["data"]["examWindows"]}
+    assert seen == {"Std 8 Unit Test", "Annual Exams"}
+
+
+def test_over_graphql_an_administrator_still_sees_everything(
+    client, db_session, tenant, academic_year, exams
+):
+    """The regression that matters: admin-web must be unchanged."""
+    from tests.test_calendar_setup_graphql import _ask, _staff_with
+
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.manage")
+
+    body = _ask(client, tenant, token, EXAM_WINDOWS, yearId=academic_year.id)
+
+    assert body.get("errors") is None, body
+    assert len(body["data"]["examWindows"]) == 3

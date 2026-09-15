@@ -103,7 +103,7 @@ def _filters_from(where: Optional[HolidayFilter]) -> Dict[str, Any]:
     }
 
 
-def _computed(services, calendar) -> Dict[str, Any]:
+def _computed(services, calendar, audience=None) -> Dict[str, Any]:
     """The summary, or the reason it cannot be computed.
 
     `compute_summary` raises when the calendar is inconsistent — a term that
@@ -113,9 +113,22 @@ def _computed(services, calendar) -> Dict[str, Any]:
     from .services import CalendarValidationError
 
     try:
-        return services.compute_summary(calendar)
+        return services.compute_summary(calendar, audience=audience)
     except CalendarValidationError as invalid:
         raise ValidationError(str(getattr(invalid, "errors", invalid)))
+
+
+def _for_the_caller():
+    """How much of the calendar the person asking is entitled to see.
+
+    The guards above answer *whether* somebody may open the calendar; this
+    answers *how much of it they get*, which `requires_any` says in so many
+    words is the resolver's job. Every calendar read below calls it — a field
+    that forgets answers a Std 8 teacher with the Std 12 board-exam schedule.
+    """
+    from .audience import resolve_calendar_audience
+
+    return resolve_calendar_audience()
 
 
 def _answered(result: Dict[str, Any]) -> Any:
@@ -224,7 +237,7 @@ class CalendarQuery:
         calendar = services.get_calendar(str(calendar_id))
         if calendar is None:
             return None
-        return summary_to_graphql(_computed(services, calendar))
+        return summary_to_graphql(_computed(services, calendar, _for_the_caller()))
 
     @strawberry.field(
         permission_classes=CALENDAR_READS,
@@ -242,7 +255,10 @@ class CalendarQuery:
         calendar = services.get_calendar(str(calendar_id))
         if calendar is None:
             return []
-        return [day_to_graphql(day) for day in services.get_days_feed(calendar)]
+        return [
+            day_to_graphql(day)
+            for day in services.get_days_feed(calendar, audience=_for_the_caller())
+        ]
 
     @strawberry.field(
         permission_classes=CALENDAR_READS,
@@ -255,7 +271,9 @@ class CalendarQuery:
 
         return [
             event_to_graphql(row.to_dict())
-            for row in services.list_school_events(str(academic_year_id))
+            for row in services.list_school_events(
+                str(academic_year_id), audience=_for_the_caller()
+            )
         ]
 
     @strawberry.field(
@@ -269,5 +287,7 @@ class CalendarQuery:
 
         return [
             exam_window_to_graphql(row.to_dict())
-            for row in services.list_exam_windows(str(academic_year_id))
+            for row in services.list_exam_windows(
+                str(academic_year_id), audience=_for_the_caller()
+            )
         ]

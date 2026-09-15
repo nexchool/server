@@ -39,6 +39,7 @@ from shared.helpers import (
 )
 
 from . import export_services, import_services, services
+from .audience import resolve_calendar_audience
 from .services import CalendarValidationError
 
 # Granular per-action permissions. `manage` is a superset of every
@@ -126,7 +127,11 @@ def export_calendar_document(calendar_id):
         sections = [s.strip() for s in sections[0].split(",")]
 
     try:
-        content, mimetype, filename = export_services.export_calendar(cal, fmt, sections)
+        # The file must match the screen: an exporter is handed their own
+        # view of the calendar, never rows their own dashboard hides.
+        content, mimetype, filename = export_services.export_calendar(
+            cal, fmt, sections, audience=resolve_calendar_audience()
+        )
     except ValueError as e:
         return validation_error_response({"format": str(e)})
     except export_services.ExportUnavailableError as e:
