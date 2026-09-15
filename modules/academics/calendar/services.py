@@ -28,6 +28,7 @@ from .activity import (
 # Fields whose changes are tracked in the audit "Previous/Updated Value" diff.
 _EXAM_DIFF_FIELDS = ("name", "exam_type", "status", "start_date", "end_date", "description")
 _EVENT_DIFF_FIELDS = ("name", "event_type", "status", "event_date", "applies_to", "description")
+from .audience import UNRESTRICTED, CalendarAudience
 from .models import (
     AcademicCalendar,
     EVENT_DESCRIPTION_MAX,
@@ -263,15 +264,35 @@ def _validate_name_status_description(
 # ---------------------------------------------------------------------------
 
 def list_exam_windows(
-    academic_year_id: str, active_only: bool = False
+    academic_year_id: str,
+    active_only: bool = False,
+    audience: Optional[CalendarAudience] = None,
 ) -> List[ExamWindow]:
+    """Exam windows for a year, narrowed to what `audience` may see.
+
+    No audience means the whole calendar, because that is what this service
+    describes. Identity is not read off the request here: deciding *whose*
+    calendar this is belongs at the authenticated boundary — see
+    `resolvers.CalendarQuery`, which resolves the caller's audience and passes
+    it to every read. A background job or a publish snapshot wants the school's
+    calendar and gets it by saying nothing.
+
+    Narrowed in Python rather than in the query because `applicable_class_ids`
+    is JSONB holding a list, and "any of these ids" is a containment test no
+    index here serves. A year holds tens of windows, not thousands.
+    """
     query = ExamWindow.query.filter(
         ExamWindow.tenant_id == g.tenant_id,
         ExamWindow.academic_year_id == academic_year_id,
     )
     if active_only:
         query = query.filter(ExamWindow.status == LIVE_STATUS)
-    return query.order_by(ExamWindow.start_date).all()
+    rows = query.order_by(ExamWindow.start_date).all()
+
+    seen_by = audience or UNRESTRICTED
+    if seen_by.unrestricted:
+        return rows
+    return [row for row in rows if seen_by.may_see_exam(row.applicable_class_ids)]
 
 
 def _validate_exam_payload(
@@ -437,15 +458,23 @@ def delete_exam_window(window_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def list_school_events(
-    academic_year_id: str, active_only: bool = False
+    academic_year_id: str,
+    active_only: bool = False,
+    audience: Optional[CalendarAudience] = None,
 ) -> List[SchoolEvent]:
+    """School events for a year, narrowed to what the caller may see."""
     query = SchoolEvent.query.filter(
         SchoolEvent.tenant_id == g.tenant_id,
         SchoolEvent.academic_year_id == academic_year_id,
     )
     if active_only:
         query = query.filter(SchoolEvent.status == LIVE_STATUS)
-    return query.order_by(SchoolEvent.event_date).all()
+    rows = query.order_by(SchoolEvent.event_date).all()
+
+    seen_by = audience or UNRESTRICTED
+    if seen_by.unrestricted:
+        return rows
+    return [row for row in rows if seen_by.may_see_audience(row.applies_to)]
 
 
 def _validate_event_payload(
@@ -626,13 +655,19 @@ def _nth_saturdays_in_range(start: date, end: date, nth: int) -> List[date]:
 
 
 def _collect_day_sets(
-    year: AcademicYear, cal: AcademicCalendar
+    year: AcademicYear,
+    cal: AcademicCalendar,
+    audience: Optional[CalendarAudience] = None,
 ) -> Tuple[Set[date], Dict[date, List[Dict]], Dict[date, List[Dict]], Set[date], Set[date]]:
     """Build the date sets used by both the summary and the days feed.
 
     Returns (weekly_off_dates, holiday_map, vacation_map, exam_dates, event_dates)
     where the maps carry the row payloads for the feed.
+
+    `audience` narrows all of it to one reader; no audience means the school's
+    own calendar (see `list_exam_windows`).
     """
+    seen_by = audience or UNRESTRICTED
     cfg = cal.weekly_config
     weekly_days = set(cfg["days"])
 
@@ -665,31 +700,45 @@ def _collect_day_sets(
                 if span_start <= d <= span_end:
                     weekly_off.add(d)
             continue
+        # A closure addressed to staff does not close school for a student, so
+        # it is not one of their non-working days. Weekly offs are handled
+        # above and deliberately reach everybody: they are the school's
+        # timetable, not an announcement, and carry no audience to narrow by.
+        if not seen_by.may_see_audience(h.applies_to):
+            continue
         info = {"id": h.id, "name": h.name, "holiday_type": h.holiday_type}
         for d in _iter_dates(h.start_date, end):
             if span_start <= d <= span_end:
                 target.setdefault(d, []).append(info)
 
     exam_dates: Set[date] = set()
-    for w in list_exam_windows(year.id, active_only=True):
+    for w in list_exam_windows(year.id, active_only=True, audience=seen_by):
         for d in _iter_dates(w.start_date, w.end_date):
             if span_start <= d <= span_end:
                 exam_dates.add(d)
 
     event_dates: Set[date] = {
         e.event_date
-        for e in list_school_events(year.id, active_only=True)
+        for e in list_school_events(year.id, active_only=True, audience=seen_by)
         if span_start <= e.event_date <= span_end
     }
 
     return weekly_off, holiday_map, vacation_map, exam_dates, event_dates
 
 
-def compute_summary(cal: AcademicCalendar) -> Dict[str, Any]:
-    """Review-step / dashboard stats. Working days = all days minus weekly
-    offs, public holidays, and vacation days (overlaps counted once)."""
+def compute_summary(
+    cal: AcademicCalendar, audience: Optional[CalendarAudience] = None
+) -> Dict[str, Any]:
+    """Review-step / dashboard stats, over `audience`'s view of the year.
+
+    Working days = all days minus weekly offs, public holidays, and vacation
+    days the audience can see (overlaps counted once).
+    """
     year = _get_year(cal.academic_year_id)
-    weekly_off, holiday_map, vacation_map, exam_dates, _ = _collect_day_sets(year, cal)
+    seen_by = audience or UNRESTRICTED
+    weekly_off, holiday_map, vacation_map, exam_dates, _ = _collect_day_sets(
+        year, cal, seen_by
+    )
 
     span_start, span_end = calendar_span(cal)
     total_days = (span_end - span_start).days + 1
@@ -698,8 +747,8 @@ def compute_summary(cal: AcademicCalendar) -> Dict[str, Any]:
     non_working = weekly_off | holiday_dates | vacation_dates
 
     terms = _list_terms(year.id)
-    events = list_school_events(year.id, active_only=True)
-    exam_windows = list_exam_windows(year.id, active_only=True)
+    events = list_school_events(year.id, active_only=True, audience=seen_by)
+    exam_windows = list_exam_windows(year.id, active_only=True, audience=seen_by)
 
     events_by_type: Dict[str, int] = {}
     for e in events:
@@ -733,7 +782,9 @@ def _list_terms(academic_year_id: str) -> List[AcademicTerm]:
     )
 
 
-def get_days_feed(cal: AcademicCalendar) -> List[Dict[str, Any]]:
+def get_days_feed(
+    cal: AcademicCalendar, audience: Optional[CalendarAudience] = None
+) -> List[Dict[str, Any]]:
     """Per-day classification for the calendar view, covering the whole year.
 
     day_type priority: vacation > public_holiday > weekly_holiday > working.
@@ -742,7 +793,7 @@ def get_days_feed(cal: AcademicCalendar) -> List[Dict[str, Any]]:
     """
     year = _get_year(cal.academic_year_id)
     weekly_off, holiday_map, vacation_map, exam_dates, event_dates = _collect_day_sets(
-        year, cal
+        year, cal, audience
     )
 
     semester_starts: Dict[date, str] = {}

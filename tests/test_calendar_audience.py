@@ -18,16 +18,30 @@ def _new_id(prefix: str = "") -> str:
 
 
 @pytest.fixture
-def academic_year(db_session, tenant):
-    from modules.academics.academic_year.models import AcademicYear
+def request_ctx(flask_app, tenant):
+    """Calendar services read `g.tenant_id`, so they run inside a request."""
+    from flask import g
 
-    ay = AcademicYear(
-        id=_new_id("ay-"), tenant_id=tenant.id, name="2026-2027",
-        start_date=date(2026, 6, 1), end_date=date(2027, 3, 31), is_active=True,
-    )
-    db_session.add(ay)
+    ctx = flask_app.test_request_context("/api/academics/calendar")
+    ctx.push()
+    g.tenant_id = tenant.id
+    yield
+    ctx.pop()
+
+
+@pytest.fixture
+def academic_year(db_session, tenant):
+    """June 2026: Mon 1st … Tue 30th. Sundays 7/14/21/28, 2nd Sat 13, 4th 27.
+
+    The same helper the calendar's own tests use, so the working-day
+    arithmetic asserted here is the arithmetic asserted there.
+    """
+    from tests.test_academic_calendar import _make_year
+
+    year = _make_year(db_session, tenant)
+    year.is_active = True
     db_session.flush()
-    return ay
+    return year
 
 
 @pytest.fixture
@@ -262,3 +276,213 @@ def test_no_caller_is_entitled_to_nothing(db_session, tenant):
     assert audience.unrestricted is False
     assert audience.class_ids == frozenset()
     assert audience.applies_to == frozenset()
+
+
+@pytest.fixture
+def exams(db_session, tenant, academic_year, two_classes):
+    """Three windows: one per class, and one for the whole school."""
+    from modules.academics.calendar.models import ExamWindow
+
+    taught, other = two_classes
+    rows = [
+        ExamWindow(
+            id=_new_id("ew-"), tenant_id=tenant.id, academic_year_id=academic_year.id,
+            name="Std 8 Unit Test", exam_type="unit_test", status="active",
+            start_date=date(2026, 8, 3), end_date=date(2026, 8, 7),
+            applicable_class_ids=[taught.id],
+        ),
+        ExamWindow(
+            id=_new_id("ew-"), tenant_id=tenant.id, academic_year_id=academic_year.id,
+            name="Std 12 Pre-Board", exam_type="pre_board", status="active",
+            start_date=date(2026, 9, 1), end_date=date(2026, 9, 10),
+            applicable_class_ids=[other.id],
+        ),
+        ExamWindow(
+            id=_new_id("ew-"), tenant_id=tenant.id, academic_year_id=academic_year.id,
+            name="Annual Exams", exam_type="final", status="active",
+            start_date=date(2027, 2, 1), end_date=date(2027, 2, 20),
+            applicable_class_ids=[],
+        ),
+    ]
+    db_session.add_all(rows)
+    db_session.flush()
+    return rows
+
+
+def _names(rows):
+    return {row.name for row in rows}
+
+
+def test_teacher_sees_own_class_exam_and_the_whole_school_one_only(
+    db_session, tenant, academic_year, exams, teaching_user, request_ctx
+):
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from modules.academics.calendar.services import list_exam_windows
+
+    user, _ = teaching_user
+    audience = resolve_calendar_audience(user)
+
+    seen = _names(list_exam_windows(academic_year.id, audience=audience))
+
+    assert seen == {"Std 8 Unit Test", "Annual Exams"}
+    assert "Std 12 Pre-Board" not in seen
+
+
+def test_student_sees_only_their_own_class_exam(
+    db_session, tenant, academic_year, exams, studying_user, request_ctx
+):
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from modules.academics.calendar.services import list_exam_windows
+
+    user, _ = studying_user
+    audience = resolve_calendar_audience(user)
+
+    seen = _names(list_exam_windows(academic_year.id, audience=audience))
+
+    assert seen == {"Std 8 Unit Test", "Annual Exams"}
+
+
+def test_admin_sees_every_exam_window(db_session, tenant, academic_year, exams, request_ctx):
+    from modules.academics.calendar.audience import UNRESTRICTED
+    from modules.academics.calendar.services import list_exam_windows
+
+    seen = _names(list_exam_windows(academic_year.id, audience=UNRESTRICTED))
+
+    assert len(seen) == 3
+
+
+def test_student_does_not_see_a_staff_only_event(
+    db_session, tenant, academic_year, studying_user, request_ctx
+):
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from modules.academics.calendar.models import SchoolEvent
+    from modules.academics.calendar.services import list_school_events
+
+    db_session.add_all([
+        SchoolEvent(
+            id=_new_id("se-"), tenant_id=tenant.id, academic_year_id=academic_year.id,
+            name="Staff Training", event_type="training", status="active",
+            event_date=date(2026, 7, 10), applies_to="staff",
+        ),
+        SchoolEvent(
+            id=_new_id("se-"), tenant_id=tenant.id, academic_year_id=academic_year.id,
+            name="Sports Day", event_type="activity", status="active",
+            event_date=date(2026, 12, 12), applies_to="entire_school",
+        ),
+    ])
+    db_session.flush()
+
+    user, _ = studying_user
+    audience = resolve_calendar_audience(user)
+
+    assert _names(list_school_events(academic_year.id, audience=audience)) == {"Sports Day"}
+
+
+def test_teacher_does_see_a_student_facing_event(
+    db_session, tenant, academic_year, teaching_user, request_ctx
+):
+    """A sports day is a teacher's working day too.
+
+    Only exams are class-filtered for teachers; events are not.
+    """
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from modules.academics.calendar.models import SchoolEvent
+    from modules.academics.calendar.services import list_school_events
+
+    db_session.add(
+        SchoolEvent(
+            id=_new_id("se-"), tenant_id=tenant.id, academic_year_id=academic_year.id,
+            name="Sports Day", event_type="activity", status="active",
+            event_date=date(2026, 12, 12), applies_to="students",
+        )
+    )
+    db_session.flush()
+
+    user, _ = teaching_user
+    audience = resolve_calendar_audience(user)
+
+    assert _names(list_school_events(academic_year.id, audience=audience)) == {"Sports Day"}
+
+
+# ---------------------------------------------------------------------------
+# The day feed and the summary answer the caller's question
+# ---------------------------------------------------------------------------
+
+def test_a_staff_only_holiday_is_a_working_day_for_a_student(
+    db_session, tenant, academic_year, studying_user, request_ctx
+):
+    """The summary answers the caller's question, not the school's.
+
+    A closure that applies only to staff does not close school for students,
+    so it must not be subtracted from their working days.
+    """
+    from modules.academics.calendar import services
+    from modules.academics.calendar.audience import UNRESTRICTED, resolve_calendar_audience
+    from tests.test_academic_calendar import _add_holiday, _configured_calendar
+
+    cal = _configured_calendar(services, academic_year)
+    staff_day = _add_holiday(db_session, tenant, academic_year, "Staff Development", "2026-06-10")
+    staff_day.applies_to = "staff"
+    db_session.flush()
+
+    user, _ = studying_user
+    student_view = services.compute_summary(cal, audience=resolve_calendar_audience(user))
+    school_view = services.compute_summary(cal, audience=UNRESTRICTED)
+
+    assert school_view["public_holiday_days"] == 1
+    assert student_view["public_holiday_days"] == 0
+    assert student_view["working_days"] == school_view["working_days"] + 1
+
+
+def test_the_day_feed_hides_another_class_exam_from_a_student(
+    db_session, tenant, academic_year, two_classes, studying_user, request_ctx
+):
+    from modules.academics.calendar import services
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from tests.test_academic_calendar import _configured_calendar
+
+    own, other = two_classes
+    cal = _configured_calendar(services, academic_year)
+    services.create_exam_window(
+        academic_year.id,
+        {"name": "Std 8 Unit Test", "start_date": "2026-06-08",
+         "end_date": "2026-06-09", "applicable_class_ids": [own.id]},
+    )
+    services.create_exam_window(
+        academic_year.id,
+        {"name": "Std 12 Pre-Board", "start_date": "2026-06-22",
+         "end_date": "2026-06-23", "applicable_class_ids": [other.id]},
+    )
+
+    user, _ = studying_user
+    feed = {
+        day["date"]: day
+        for day in services.get_days_feed(cal, audience=resolve_calendar_audience(user))
+    }
+
+    assert feed["2026-06-08"]["has_exam"] is True     # their own class
+    assert feed["2026-06-22"]["has_exam"] is False    # somebody else's
+
+
+def test_a_weekly_off_reaches_every_audience(
+    db_session, tenant, academic_year, studying_user, request_ctx
+):
+    """A weekly closure is the school's timetable, not an announcement.
+
+    It has no `applies_to` to narrow by, and narrowing it would tell a student
+    their school is open on a Sunday.
+    """
+    from modules.academics.calendar import services
+    from modules.academics.calendar.audience import resolve_calendar_audience
+    from tests.test_academic_calendar import _configured_calendar
+
+    cal = _configured_calendar(services, academic_year)
+    user, _ = studying_user
+
+    feed = {
+        day["date"]: day
+        for day in services.get_days_feed(cal, audience=resolve_calendar_audience(user))
+    }
+
+    assert feed["2026-06-07"]["day_type"] == "weekly_holiday"   # Sunday
+    assert feed["2026-06-27"]["day_type"] == "weekly_holiday"   # 4th Saturday
