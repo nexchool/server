@@ -47,7 +47,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set
 
 from core.database import db
 from core.school_time import school_today
@@ -280,6 +280,22 @@ def teaches_anything_in(
     if any(a.class_id == class_id for a in classes_taught_by(teacher_id, on=on)):
         return True
     return any(a.class_id == class_id for a in subjects_taught_by(teacher_id, on=on))
+
+
+def class_ids_taught_by(teacher_id: str, *, on: Optional[date] = None) -> Set[str]:
+    """Every class this teacher stands in front of.
+
+    Both kinds of responsibility, as a set of ids — the "which classes are
+    mine" question, where `teaches_anything_in` answers "is this one mine".
+
+    Deliberately not `classes_taught_by()` alone, which answers the narrower
+    "class teacher of" that attendance asks when deciding who may take a
+    register. Narrowing the calendar by that would hide a maths teacher's own
+    exam window from them because somebody else is the class teacher.
+    """
+    return {a.class_id for a in classes_taught_by(teacher_id, on=on)} | {
+        a.class_id for a in subjects_taught_by(teacher_id, on=on)
+    }
 
 
 def teacher_ids_teaching_in(
