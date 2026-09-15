@@ -610,3 +610,45 @@ def test_over_graphql_an_administrator_still_sees_everything(
 
     assert body.get("errors") is None, body
     assert len(body["data"]["examWindows"]) == 3
+
+
+CALENDAR_DAYS = """
+query D($calendarId: ID!) {
+  calendarDays(calendarId: $calendarId) { date semesterStart semesterEnd }
+}
+"""
+
+
+def test_a_term_boundary_names_the_term(
+    client, db_session, tenant, academic_year, request_ctx
+):
+    """The day feed carries the term's name, and the schema must not lose it.
+
+    Typed as a boolean, the name was coerced to `true` on the way out, and
+    admin-web — which types it as a string and renders "<name> starts" — put
+    the word "true starts" on the calendar.
+    """
+    from modules.academics.backbone.models import AcademicTerm
+    from modules.academics.calendar import services
+    from modules.auth.services import generate_access_token
+    from tests.test_academic_calendar import _configured_calendar
+    from tests.test_calendar_setup_graphql import _ask, _staff_with
+
+    cal = _configured_calendar(services, academic_year)
+    db_session.add(
+        AcademicTerm(
+            id=_new_id("term-"), tenant_id=tenant.id,
+            academic_year_id=academic_year.id, name="Term 1", sequence=1,
+            start_date=date(2026, 6, 1), end_date=date(2026, 6, 30),
+        )
+    )
+    db_session.flush()
+
+    _user, token = _staff_with(db_session, tenant, "academic_calendar.manage")
+    body = _ask(client, tenant, token, CALENDAR_DAYS, calendarId=cal.id)
+
+    assert body.get("errors") is None, body
+    feed = {day["date"]: day for day in body["data"]["calendarDays"]}
+    assert feed["2026-06-01"]["semesterStart"] == "Term 1"
+    assert feed["2026-06-30"]["semesterEnd"] == "Term 1"
+    assert feed["2026-06-15"]["semesterStart"] is None

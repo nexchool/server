@@ -235,8 +235,11 @@ class CalendarDay:
     holidays: List[DayHoliday] = strawberry.field(
         default_factory=list, description="Any closures falling on this day."
     )
-    semester_start: bool = False
-    semester_end: bool = False
+    # The name of the term starting or ending on this day, or null. Typed as
+    # a boolean once, which coerced the name to `true` on the way out and put
+    # the words "true starts" on admin-web's calendar.
+    semester_start: Optional[str] = None
+    semester_end: Optional[str] = None
 
 
 @strawberry.type(description="Something the school has planned — a sports day, a concert.")
@@ -389,8 +392,8 @@ def day_to_graphql(row: dict) -> CalendarDay:
             for holiday in (row.get("holidays") or [])
             if isinstance(holiday, dict)
         ],
-        semester_start=bool(row.get("semester_start")),
-        semester_end=bool(row.get("semester_end")),
+        semester_start=row.get("semester_start"),
+        semester_end=row.get("semester_end"),
     )
 
 
