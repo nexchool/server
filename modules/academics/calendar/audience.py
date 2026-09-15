@@ -93,9 +93,14 @@ def resolve_calendar_audience(user=None) -> CalendarAudience:
     if user is None:
         return NOBODY
 
-    if has_permission(user.id, "academic_calendar.manage") or has_permission(
-        user.id, "system.manage"
-    ):
+    # `has_permission` treats `<resource>.manage` as the superset of that
+    # resource, so this one check covers every calendar write permission an
+    # administrator holds. A platform super-admin is not checked here: their
+    # `system.manage` is minted into the token by `auth.routes`, never seeded,
+    # so asking the database for it always answers no. They reach the same
+    # answer at the bottom of this function, by being neither teacher nor
+    # student.
+    if has_permission(user.id, "academic_calendar.manage"):
         return UNRESTRICTED
 
     teacher = teacher_for_user(user.id)

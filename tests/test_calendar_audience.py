@@ -486,3 +486,21 @@ def test_a_weekly_off_reaches_every_audience(
 
     assert feed["2026-06-07"]["day_type"] == "weekly_holiday"   # Sunday
     assert feed["2026-06-27"]["day_type"] == "weekly_holiday"   # 4th Saturday
+
+
+# ---------------------------------------------------------------------------
+# Being allowed to open it at all
+# ---------------------------------------------------------------------------
+
+def test_student_and_parent_profiles_can_read_the_calendar():
+    """Without this they hold only `holiday.read` and the calendar 403s.
+
+    Asserted against the catalog rather than a seeded database so it fails at
+    the source of truth, which is where the fix belongs. Granting it is safe
+    because the read is audience-scoped: the permission says "may open the
+    calendar", and identity decides how much of it comes back.
+    """
+    from modules.rbac.catalog import DEFAULT_ROLES
+
+    assert "academic_calendar.read" in DEFAULT_ROLES["Student"]["permissions"]
+    assert "academic_calendar.read" in DEFAULT_ROLES["Parent"]["permissions"]

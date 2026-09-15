@@ -356,6 +356,9 @@ DEFAULT_ROLES: Dict[str, dict] = {
             'course.read',
             'timetable.read',
             'holiday.read',
+            # Safe to hold because the read is audience-scoped: a student is
+            # narrowed to their own class and to what is addressed to them.
+            'academic_calendar.read',
             'academics.read',
             'transport.info.read.self',
             'transport.student.read_own',
@@ -386,6 +389,8 @@ DEFAULT_ROLES: Dict[str, dict] = {
             'course.read',
             'timetable.read',
             'holiday.read',
+            # Scoped through the children (ADR-011), same as the student.
+            'academic_calendar.read',
             'transport.info.read.self',
             'transport.student.read_own',
             'announcement.read.own',
