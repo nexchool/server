@@ -92,6 +92,22 @@ Preparing new Academic Years.
 
 Managing working days, holidays and academic events.
 
+**Who sees what.** Every calendar read is answered from the caller's
+`CalendarAudience` (ADR-025), resolved from who they are rather than from which
+permission they hold. An administrator reads the whole calendar; a teacher's
+exam windows are limited to the classes they teach; a student's to their own
+class, and their events to those addressed to `entire_school` or `students`.
+Holidays, vacations, weekly offs and terms reach everybody. The working-day
+summary is computed over what the reader can see, so two people can correctly
+see different totals.
+
+**Surfaces.** Configuring and publishing the calendar is admin-web's. The Expo
+client has a read-only screen (`/(protected)/academic-calendar`) that opens with
+one GraphQL call, `currentAcademicCalendar`, returning the published calendar
+for the active year already narrowed to the caller. The standalone mobile
+Holidays screen was folded into it — holidays are one layer of the calendar, not
+a destination.
+
 ---
 
 ## Academic Structure
